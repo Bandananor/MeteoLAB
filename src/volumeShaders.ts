@@ -6,20 +6,52 @@ void main(){
   gl_Position = projectionMatrix * viewMatrix * w;
 }`
 
-export const volumeFragment = /* glsl */`
-precision highp float;
+const volumeCommon = /* glsl */`
 precision highp sampler3D;
 uniform sampler3D uDensity;
 uniform vec3 uBoxMin;
 uniform vec3 uBoxMax;
 uniform vec3 uGrid;
 uniform vec3 uSunDir;
+uniform float uHeight;
+uniform float uExtinction;
+
+// Grid node k sits at the box edge, texel centre is at (k+0.5)/N; vertical nodes span 0..H with NZ-1 intervals.
+vec3 toTex(vec3 p){
+  vec3 s = uBoxMax - uBoxMin;
+  return vec3(
+    (p.x - uBoxMin.x) / s.x + 0.5 / uGrid.x,
+    (p.z - uBoxMin.z) / s.z + 0.5 / uGrid.y,
+    (p.y / uHeight * (uGrid.z - 1.0) + 0.5) / uGrid.z);
+}
+
+vec2 fields(vec3 p){ return texture(uDensity, toTex(p)).rg; }
+`
+
+// Injected into the ground's MeshStandardMaterial; attenuates only direct sunlight so shaded ground keeps sky light.
+export const groundShadowPars = volumeCommon + /* glsl */`
+uniform float uShadowStrength;
+varying vec3 vCloudWorld;
+
+float cloudShadow(vec3 p){
+  const int N = 24;
+  float ds = (uHeight - p.y) / max(uSunDir.y, 0.1) / float(N);
+  float od = 0.0;
+  for(int i = 0; i < N; i++){
+    vec2 f = fields(p + uSunDir * (ds * (float(i) + 0.5)));
+    od += f.r + f.g * 0.3;
+  }
+  return mix(1.0, exp(-od * ds * uExtinction * 0.8), uShadowStrength);
+}
+`
+
+export const volumeFragment = /* glsl */`
+precision highp float;
+${volumeCommon}
 uniform vec3 uSunColor;
 uniform vec3 uFogColor;
 uniform float uFogDensity;
-uniform float uHeight;
 uniform float uTime;
-uniform float uExtinction;
 varying vec3 vWorld;
 
 const int STEPS = 96;
@@ -33,17 +65,6 @@ vec2 boxHit(vec3 ro, vec3 rd){
   vec3 tmin = min(t0, t1), tmax = max(t0, t1);
   return vec2(max(max(tmin.x, tmin.y), tmin.z), min(min(tmax.x, tmax.y), tmax.z));
 }
-
-// Grid node k sits at the box edge, texel centre is at (k+0.5)/N; vertical nodes span 0..H with NZ-1 intervals.
-vec3 toTex(vec3 p){
-  vec3 s = uBoxMax - uBoxMin;
-  return vec3(
-    (p.x - uBoxMin.x) / s.x + 0.5 / uGrid.x,
-    (p.z - uBoxMin.z) / s.z + 0.5 / uGrid.y,
-    (p.y / uHeight * (uGrid.z - 1.0) + 0.5) / uGrid.z);
-}
-
-vec2 fields(vec3 p){ return texture(uDensity, toTex(p)).rg; }
 
 float hash(vec3 p){
   p = fract(p * 0.3183099 + 0.1);
