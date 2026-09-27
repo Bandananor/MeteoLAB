@@ -179,6 +179,33 @@ void main(){
   gl_FragColor.rgb *= gl_FragColor.a;
 }`
 
+// aMelt: 0 = snowflake, 1 = raindrop, negative = inactive particle.
+export const precipVertex = /* glsl */`
+attribute float aMelt;
+uniform float uScale;
+varying float vMelt;
+void main(){
+  vMelt = aMelt;
+  if(aMelt < 0.0){ gl_Position = vec4(2.0, 2.0, 2.0, 1.0); gl_PointSize = 0.0; return; }
+  vec4 mv = modelViewMatrix * vec4(position, 1.0);
+  gl_Position = projectionMatrix * mv;
+  gl_PointSize = clamp(mix(0.7, 0.5, aMelt) * uScale / -mv.z, 3.0, 26.0);
+}`
+
+export const precipFragment = /* glsl */`
+varying float vMelt;
+void main(){
+  vec2 c = gl_PointCoord * 2.0 - 1.0;
+  float r = length(c);
+  float arms = pow(abs(cos(3.0 * atan(c.y, c.x))), 8.0);
+  float snow = clamp(smoothstep(1.0, 0.3, r) * arms + smoothstep(0.4, 0.1, r), 0.0, 1.0);
+  float rain = smoothstep(1.0, 0.5, length(vec2(c.x * 3.5, c.y)));
+  float alpha = mix(snow, rain, vMelt);
+  if(alpha < 0.05) discard;
+  gl_FragColor = vec4(mix(vec3(0.97, 0.98, 1.0), vec3(0.45, 0.64, 0.92), vMelt), alpha * 0.9);
+  #include <colorspace_fragment>
+}`
+
 const fieldSampling = /* glsl */`
 uniform sampler3D uField;
 uniform sampler2D uColormap;

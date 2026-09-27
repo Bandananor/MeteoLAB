@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
-import { fieldVolumeFragment, groundShadowPars, sliceFragment, volumeFragment, volumeVertex } from './volumeShaders'
+import { fieldVolumeFragment, groundShadowPars, precipFragment, precipVertex, sliceFragment, volumeFragment, volumeVertex } from './volumeShaders'
 
 export type FieldMode='composite'|'updraft'|'theta'|'moisture'|'vorticity'|'coldpool'
 export type ScalarField=Exclude<FieldMode,'composite'>
@@ -21,11 +21,13 @@ export interface SimConfig{
   latitude:number;turbulence:number;hour:number;solarMax:number;soilMoisture:number;surfaceType:SurfaceType
   precipEfficiency:number;evaporation:number;coldPoolStrength:number;speed:number;seed:number
 }
-export interface ParcelPoint{z:number;env:number;parcel:number;buoyancy:number}
+export interface ParcelPoint{z:number;env:number;dew:number;parcel:number;buoyancy:number}
+export interface WindPoint{z:number;u:number;v:number}
+export interface Sounding{profile:ParcelPoint[];wind:WindPoint[];cape:number;cin:number;lcl:number|null;lfc:number|null;el:number|null;freezing:number|null}
 
 const NX=40,NY=32,NZ=24,N=NX*NY*NZ,W=48_000,D=36_000,H=15_000,DX=W/NX,DY=D/NY,DZ=H/(NZ-1)
 const G=9.81,CP=1004,LV=2.5e6,KAPPA=.286,RD=287.05,EPS=.622,OMEGA=7.2921e-5,DT=1
-const FLOW_PARTICLES=10_000
+const FLOW_PARTICLES=10_000,PRECIP_PARTICLES=8000,MELT_DEPTH=600,SNOW_FALL=2,RAIN_FALL=7
 const clamp=(x:number,a=0,b=1)=>Math.max(a,Math.min(b,x)),lerp=(a:number,b:number,t:number)=>a+(b-a)*clamp(t)
 const mod=(x:number,n:number)=>((x%n)+n)%n
 const colormapTexture=(stops:string[])=>{const data=new Uint8Array(256*4),rgb=stops.map(s=>[1,3,5].map(k=>parseInt(s.slice(k,k+2),16)));for(let i=0;i<256;i++){const f=i/255*(rgb.length-1),k=Math.min(rgb.length-2,Math.floor(f)),t=f-k;for(let c=0;c<3;c++)data[i*4+c]=rgb[k][c]+(rgb[k+1][c]-rgb[k][c])*t;data[i*4+3]=255}const tex=new THREE.DataTexture(data,256,1);tex.colorSpace=THREE.SRGBColorSpace;tex.minFilter=tex.magFilter=THREE.LinearFilter;tex.needsUpdate=true;return tex}
@@ -41,15 +43,17 @@ export class Atmosphere{
   private fieldData=new Uint8Array(N);private fieldTexture:THREE.Data3DTexture;private colormap:THREE.DataTexture|null=null;private colormapField:ScalarField|null=null
   private fieldUniforms:{[k:string]:THREE.IUniform};private fieldMaterial:THREE.ShaderMaterial;private fieldMesh:THREE.Mesh;private sliceMaterial:THREE.ShaderMaterial;private sliceH:THREE.Mesh;private sliceV:THREE.Mesh
   private flowGeometry:THREE.BufferGeometry;private flowPoints:THREE.Points;private vectorGeometry:THREE.BufferGeometry;private vectorLines:THREE.LineSegments
-  private levelHelpers:THREE.GridHelper[]=[]
+  private levelHelpers:THREE.GridHelper[]=[];private freezingHelper:THREE.GridHelper
+  private precipModel=new Float32Array(PRECIP_PARTICLES*3);private precipAge=new Float32Array(PRECIP_PARTICLES);private precipAlive=new Uint8Array(PRECIP_PARTICLES);private precipNext=0
+  private precipGeometry:THREE.BufferGeometry;private precipMaterial:THREE.ShaderMaterial;private precipPoints:THREE.Points
   private u=new Float32Array(N);private v=new Float32Array(N);private w=new Float32Array(N);private theta=new Float32Array(N);private q=new Float32Array(N);private cloud=new Float32Array(N);private rain=new Float32Array(N);private cold=new Float32Array(N)
   private pressure=new Float32Array(N);private divergence=new Float32Array(N);private scratch=new Float32Array(N);private surfacePattern=new Float32Array(NX*NY)
   private particleModel=new Float32Array(FLOW_PARTICLES*3);private particleAge=new Float32Array(FLOW_PARTICLES);private rng:()=>number;private accumulator=0;private microburstOutflow=0;private frame=0
-  private cachedParcel:{profile:ParcelPoint[];cape:number;cin:number;lcl:number|null;lfc:number|null;el:number|null}
-  field:FieldMode='composite';showVectors=false;time=0;showFieldVolume=true;sliceHeight=2;sliceNorth=0
+  private cachedParcel:Sounding
+  field:FieldMode='composite';showVectors=false;showPrecip=false;time=0;showFieldVolume=true;sliceHeight=2;sliceNorth=0
 
   constructor(canvas:HTMLCanvasElement,config:SimConfig){
-    this.canvas=canvas;this.config=config;this.rng=this.mulberry32(config.seed);this.cachedParcel={profile:[],cape:0,cin:0,lcl:null,lfc:null,el:null}
+    this.canvas=canvas;this.config=config;this.rng=this.mulberry32(config.seed);this.cachedParcel={profile:[],wind:[],cape:0,cin:0,lcl:null,lfc:null,el:null,freezing:null}
     this.renderer=new THREE.WebGLRenderer({canvas,antialias:true,powerPreference:'high-performance'});this.renderer.setPixelRatio(Math.min(devicePixelRatio,1.5));this.renderer.outputColorSpace=THREE.SRGBColorSpace;this.renderer.toneMapping=THREE.ACESFilmicToneMapping;this.renderer.toneMappingExposure=1.05
     this.scene=new THREE.Scene();this.scene.background=new THREE.Color(0x172d3b);this.scene.fog=new THREE.FogExp2(0x172d3b,.012)
     this.camera=new THREE.PerspectiveCamera(42,1,.1,180);this.camera.position.set(38,24,39)
@@ -80,10 +84,14 @@ export class Atmosphere{
     const soft=softParticleTexture()
     this.flowGeometry=new THREE.BufferGeometry();this.flowGeometry.setAttribute('position',new THREE.BufferAttribute(new Float32Array(FLOW_PARTICLES*3),3));this.flowGeometry.setAttribute('color',new THREE.BufferAttribute(new Float32Array(FLOW_PARTICLES*3),3));this.flowPoints=new THREE.Points(this.flowGeometry,new THREE.PointsMaterial({size:.12,map:soft,alphaTest:.03,vertexColors:true,transparent:true,opacity:.82,depthWrite:false}));this.flowPoints.renderOrder=2;this.scene.add(this.flowPoints)
     this.vectorGeometry=new THREE.BufferGeometry();this.vectorGeometry.setAttribute('position',new THREE.BufferAttribute(new Float32Array(1800*3),3));this.vectorGeometry.setAttribute('color',new THREE.BufferAttribute(new Float32Array(1800*3),3));this.vectorLines=new THREE.LineSegments(this.vectorGeometry,new THREE.LineBasicMaterial({vertexColors:true,transparent:true,opacity:.72}));this.scene.add(this.vectorLines)
+    this.freezingHelper=new THREE.GridHelper(W/1000,24,0x9fd3f0,0x9fd3f0);this.freezingHelper.material.transparent=true;this.freezingHelper.material.opacity=.28;this.scene.add(this.freezingHelper)
+    this.precipGeometry=new THREE.BufferGeometry();this.precipGeometry.setAttribute('position',new THREE.BufferAttribute(new Float32Array(PRECIP_PARTICLES*3),3));this.precipGeometry.setAttribute('aMelt',new THREE.BufferAttribute(new Float32Array(PRECIP_PARTICLES).fill(-1),1))
+    this.precipMaterial=new THREE.ShaderMaterial({vertexShader:precipVertex,fragmentShader:precipFragment,transparent:true,depthWrite:false,toneMapped:false,uniforms:{uScale:{value:500}}})
+    this.precipPoints=new THREE.Points(this.precipGeometry,this.precipMaterial);this.precipPoints.frustumCulled=false;this.precipPoints.renderOrder=2;this.scene.add(this.precipPoints)
     this.initialize();this.cachedParcel=this.computeParcel();this.updateLevels();for(let p=0;p<FLOW_PARTICLES;p++)this.respawnParticle(p,true)
   }
 
-  dispose(){this.controls.dispose();[this.volumeTexture,this.fieldTexture,this.colormap,this.volumeMaterial,this.fieldMaterial,this.sliceMaterial,this.volumeMesh.geometry,this.sliceH.geometry,this.sliceV.geometry].forEach(r=>r?.dispose());this.renderer.dispose()}
+  dispose(){this.controls.dispose();[this.volumeTexture,this.fieldTexture,this.colormap,this.volumeMaterial,this.fieldMaterial,this.sliceMaterial,this.volumeMesh.geometry,this.sliceH.geometry,this.sliceV.geometry,this.precipGeometry,this.precipMaterial].forEach(r=>r?.dispose());this.renderer.dispose()}
   private surfaceColor(){return{grass:0x596d45,dry:0x776a51,water:0x315d70,urban:0x606469}[this.config.surfaceType]}
   private idx(x:number,y:number,z:number){return mod(x,NX)+NX*(mod(y,NY)+NY*clamp(z,0,NZ-1))}
   private mulberry32(seed:number){return()=>{seed|=0;seed=seed+0x6D2B79F5|0;let t=Math.imul(seed^seed>>>15,1|seed);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
@@ -136,12 +144,28 @@ export class Atmosphere{
       const spongeStart=Math.max(this.config.tropopause*1000+1600,13_000);if(alt>spongeStart){const s=clamp((alt-spongeStart)/(H-spongeStart))*.06*dt;this.w[i]*=1-s;this.u[i]=lerp(this.u[i],ue,s);this.v[i]=lerp(this.v[i],ve,s);this.theta[i]=lerp(this.theta[i],this.thetaEnv(alt),s)}
     }
     this.project(dt,16);for(let y=0;y<NY;y++)for(let x=0;x<NX;x++){const b=this.idx(x,y,0),t=this.idx(x,y,NZ-1);this.w[b]=0;this.u[b]*=.94;this.v[b]*=.94;this.w[t]=0}
-    this.updateParticles(dt)
+    this.updateParticles(dt);if(this.showPrecip)this.updatePrecip(dt)
   }
   private project(dt:number,iters:number){this.pressure.fill(0);const ix=1/(DX*DX),iy=1/(DY*DY),iz=1/(DZ*DZ),den=2*(ix+iy+iz);for(let z=1;z<NZ-1;z++)for(let y=0;y<NY;y++)for(let x=0;x<NX;x++){const i=this.idx(x,y,z);this.divergence[i]=(this.u[this.idx(x+1,y,z)]-this.u[this.idx(x-1,y,z)])/(2*DX)+(this.v[this.idx(x,y+1,z)]-this.v[this.idx(x,y-1,z)])/(2*DY)+(this.w[this.idx(x,y,z+1)]-this.w[this.idx(x,y,z-1)])/(2*DZ)}for(let k=0;k<iters;k++)for(let z=1;z<NZ-1;z++)for(let y=0;y<NY;y++)for(let x=0;x<NX;x++){const i=this.idx(x,y,z);this.pressure[i]=((this.pressure[this.idx(x+1,y,z)]+this.pressure[this.idx(x-1,y,z)])*ix+(this.pressure[this.idx(x,y+1,z)]+this.pressure[this.idx(x,y-1,z)])*iy+(this.pressure[this.idx(x,y,z+1)]+this.pressure[this.idx(x,y,z-1)])*iz-this.divergence[i]/dt)/den}for(let z=1;z<NZ-1;z++)for(let y=0;y<NY;y++)for(let x=0;x<NX;x++){const i=this.idx(x,y,z);this.u[i]-=dt*(this.pressure[this.idx(x+1,y,z)]-this.pressure[this.idx(x-1,y,z)])/(2*DX);this.v[i]-=dt*(this.pressure[this.idx(x,y+1,z)]-this.pressure[this.idx(x,y-1,z)])/(2*DY);this.w[i]-=dt*(this.pressure[this.idx(x,y,z+1)]-this.pressure[this.idx(x,y,z-1)])/(2*DZ);this.u[i]=clamp(this.u[i],-85,85);this.v[i]=clamp(this.v[i],-85,85);this.w[i]=clamp(this.w[i],-60,60)}}
 
   private respawnParticle(p:number,full=false){const j=p*3;this.particleModel[j]=this.rng()*W;this.particleModel[j+1]=this.rng()*D;this.particleModel[j+2]=full?this.rng()*H*.75:this.rng()*1800;this.particleAge[p]=this.rng()*500}
   private updateParticles(dt:number){const pos=this.flowGeometry.getAttribute('position') as THREE.BufferAttribute,col=this.flowGeometry.getAttribute('color') as THREE.BufferAttribute;for(let p=0;p<FLOW_PARTICLES;p++){const j=p*3;let x=this.particleModel[j],y=this.particleModel[j+1],z=this.particleModel[j+2],gx=x/DX,gy=y/DY,gz=z/DZ,uu=this.sample(this.u,gx,gy,gz),vv=this.sample(this.v,gx,gy,gz),ww=this.sample(this.w,gx,gy,gz);x=mod(x+uu*dt,W);y=mod(y+vv*dt,D);z+=ww*dt;this.particleAge[p]+=dt;if(z<0||z>H||this.particleAge[p]>900){this.respawnParticle(p);x=this.particleModel[j];y=this.particleModel[j+1];z=this.particleModel[j+2]}else{this.particleModel[j]=x;this.particleModel[j+1]=y;this.particleModel[j+2]=z}pos.setXYZ(p,x/1000-W/2000,z/1000,D/2000-y/1000);if(ww>1)col.setXYZ(p,1,.5,.18);else if(ww<-1)col.setXYZ(p,.25,.62,1);else col.setXYZ(p,.72,.82,.86)}pos.needsUpdate=true;col.needsUpdate=true}
+  // Visual only: the model has no ice, so a particle's phase comes from its height relative to the environmental 0 °C level.
+  private meltFraction(z:number){const f=this.cachedParcel.freezing;return f===null?1:clamp((f*1000-z)/MELT_DEPTH)}
+  private updatePrecip(dt:number){
+    for(let i=0;i<N;i++){const r=this.rain[i];if(r<3e-4||Math.random()>Math.min(1,r/.002)*.015*dt)continue
+      const p=this.precipNext,j=p*3,x=i%NX,y=Math.floor(i/NX)%NY,z=Math.floor(i/(NX*NY));this.precipNext=(p+1)%PRECIP_PARTICLES
+      this.precipModel[j]=mod((x+Math.random()-.5)*DX,W);this.precipModel[j+1]=mod((y+Math.random()-.5)*DY,D);this.precipModel[j+2]=clamp((z+Math.random()-.5)*DZ,0,H);this.precipAge[p]=0;this.precipAlive[p]=1}
+    for(let p=0;p<PRECIP_PARTICLES;p++){if(!this.precipAlive[p])continue
+      const j=p*3,x=this.precipModel[j],y=this.precipModel[j+1],z=this.precipModel[j+2],gx=x/DX,gy=y/DY,gz=z/DZ,fall=lerp(SNOW_FALL,RAIN_FALL,this.meltFraction(z))
+      const nz=z+(this.sample(this.w,gx,gy,gz)-fall)*dt;this.precipAge[p]+=dt
+      const evaporated=this.sample(this.rain,gx,gy,gz)<2e-5&&Math.random()<.02*dt
+      if(nz<=0||nz>H||this.precipAge[p]>2400||evaporated){this.precipAlive[p]=0;continue}
+      this.precipModel[j]=mod(x+this.sample(this.u,gx,gy,gz)*dt,W);this.precipModel[j+1]=mod(y+this.sample(this.v,gx,gy,gz)*dt,D);this.precipModel[j+2]=nz}
+  }
+  private syncPrecip(){const pos=this.precipGeometry.getAttribute('position') as THREE.BufferAttribute,melt=this.precipGeometry.getAttribute('aMelt') as THREE.BufferAttribute
+    for(let p=0;p<PRECIP_PARTICLES;p++){const j=p*3;if(!this.precipAlive[p]){melt.setX(p,-1);continue}pos.setXYZ(p,this.precipModel[j]/1000-W/2000,this.precipModel[j+2]/1000,D/2000-this.precipModel[j+1]/1000);melt.setX(p,this.meltFraction(this.precipModel[j+2]))}
+    pos.needsUpdate=true;melt.needsUpdate=true}
   private updateVolume(){const d=this.volumeData;for(let i=0;i<N;i++){d[i*2]=clamp((this.cloud[i]-.00003)/.0014)*255;d[i*2+1]=clamp(this.rain[i]/.0025)*255}this.volumeTexture.needsUpdate=true;this.volumeMaterial.uniforms.uTime.value=this.time}
   private fieldValue(field:ScalarField,i:number,x:number,y:number,z:number,alt:number,exner:number,thEnv:number){
     switch(field){
@@ -161,9 +185,13 @@ export class Atmosphere{
   }
   private updateVectors(){const p=this.vectorGeometry.getAttribute('position') as THREE.BufferAttribute,c=this.vectorGeometry.getAttribute('color') as THREE.BufferAttribute;let n=0;for(let z=2;z<NZ-2;z+=4)for(let y=2;y<NY;y+=5)for(let x=2;x<NX;x+=5){const i=this.idx(x,y,z),uu=this.u[i],vv=this.v[i],ww=this.w[i],mag=Math.hypot(uu,vv,ww);if(mag<1)continue;const scale=clamp(mag*.045,.18,1.3),sx=x*DX/1000-W/2000,sy=z*DZ/1000,sz=D/2000-y*DY/1000,ex=sx+uu/mag*scale,ey=sy+ww/mag*scale,ez=sz-vv/mag*scale;p.setXYZ(n,sx,sy,sz);p.setXYZ(n+1,ex,ey,ez);const color=ww>1?[1,.45,.12]:ww<-1?[.2,.6,1]:[.7,.82,.86];c.setXYZ(n,...color as [number,number,number]);c.setXYZ(n+1,...color as [number,number,number]);n+=2}this.vectorGeometry.setDrawRange(0,n);p.needsUpdate=true;c.needsUpdate=true}
 
-  private computeParcel(){const profile:ParcelPoint[]=[],dz=100;let temp=this.config.surfaceTemp+.5,q=this.config.rhSurface/100*this.qsat(temp,0),saturated=false,lcl:number|null=null,lfc:number|null=null,el:number|null=null,cape=0,cin=0;for(let z=0;z<=H;z+=dz){const sat=this.qsat(temp,z);if(q>=sat){saturated=true;q=sat;if(lcl===null)lcl=z/1000}const tv=(temp+273.15)*(1+.61*q),envT=this.temperatureEnv(z),envTv=(envT+273.15)*(1+.61*this.qEnv(z)),b=G*(tv-envTv)/envTv;if(lcl!==null&&lfc===null&&b>0)lfc=z/1000;if(lfc!==null&&el===null&&b<=0&&z/1000>lfc+.2)el=z/1000;if(lfc===null&&b<0)cin+=-b*dz;if(lfc!==null&&el===null&&b>0)cape+=b*dz;profile.push({z:z/1000,env:envT,parcel:temp,buoyancy:b});if(saturated){const tk=temp+273.15,gamma=G*(1+LV*sat/(RD*tk))/(CP+LV*LV*sat*EPS/(RD*tk*tk));temp-=gamma*dz}else temp-=.0098*dz;const mix=clamp(this.config.entrainment*.006,0,.02);temp=lerp(temp,this.temperatureEnv(z+dz),mix);q=lerp(q,this.qEnv(z+dz),mix)}return{profile,cape,cin,lcl,lfc,el}}
+  private computeParcel(){const profile:ParcelPoint[]=[],dz=100;let temp=this.config.surfaceTemp+.5,q=this.config.rhSurface/100*this.qsat(temp,0),saturated=false,lcl:number|null=null,lfc:number|null=null,el:number|null=null,cape=0,cin=0;for(let z=0;z<=H;z+=dz){const sat=this.qsat(temp,z);if(q>=sat){saturated=true;q=sat;if(lcl===null)lcl=z/1000}const tv=(temp+273.15)*(1+.61*q),envT=this.temperatureEnv(z),envTv=(envT+273.15)*(1+.61*this.qEnv(z)),b=G*(tv-envTv)/envTv;if(lcl!==null&&lfc===null&&b>0)lfc=z/1000;if(lfc!==null&&el===null&&b<=0&&z/1000>lfc+.2)el=z/1000;if(lfc===null&&b<0)cin+=-b*dz;if(lfc!==null&&el===null&&b>0)cape+=b*dz;profile.push({z:z/1000,env:envT,dew:this.dewpoint(this.qEnv(z),z),parcel:temp,buoyancy:b});if(saturated){const tk=temp+273.15,gamma=G*(1+LV*sat/(RD*tk))/(CP+LV*LV*sat*EPS/(RD*tk*tk));temp-=gamma*dz}else temp-=.0098*dz;const mix=clamp(this.config.entrainment*.006,0,.02);temp=lerp(temp,this.temperatureEnv(z+dz),mix);q=lerp(q,this.qEnv(z+dz),mix)}
+    const wind:WindPoint[]=[];for(let z=0;z<=10_000;z+=250){const[u,v]=this.windUV(z);wind.push({z:z/1000,u,v})}
+    let freezing:number|null=null;for(let z=0;z<=H;z+=25)if(this.temperatureEnv(z)<=0){freezing=z/1000;break}
+    return{profile,wind,cape,cin,lcl,lfc,el,freezing}}
+  private dewpoint(q:number,z:number){const e=Math.max(1,q*this.pressureAt(z)/(EPS+q)),l=Math.log(e/611.2);return 243.5*l/(17.67-l)}
   sounding(){return this.cachedParcel}
-  private updateLevels(){const lv=[this.cachedParcel.lcl,this.cachedParcel.lfc,this.cachedParcel.el];this.levelHelpers.forEach((h,i)=>{h.visible=lv[i]!==null;if(lv[i]!==null)h.position.y=lv[i]!})}
+  private updateLevels(){const lv=[this.cachedParcel.lcl,this.cachedParcel.lfc,this.cachedParcel.el];this.levelHelpers.forEach((h,i)=>{h.visible=lv[i]!==null;if(lv[i]!==null)h.position.y=lv[i]!});this.freezingHelper.position.y=this.cachedParcel.freezing??0}
   private countCores(){const mask=new Uint8Array(NX*NY);for(let y=0;y<NY;y++)for(let x=0;x<NX;x++){let active=false;for(let z=3;z<Math.min(NZ-2,11);z++){const i=this.idx(x,y,z);if(this.w[i]>2&&this.cloud[i]>.00007){active=true;break}}mask[x+NX*y]=active?1:0}let cores=0;const stack:number[]=[];for(let i=0;i<mask.length;i++){if(mask[i]!==1)continue;cores++;mask[i]=2;stack.push(i);while(stack.length){const a=stack.pop()!,x=a%NX,y=Math.floor(a/NX);for(const b of [mod(x+1,NX)+NX*y,mod(x-1,NX)+NX*y+x*0,x+NX*mod(y+1,NY),x+NX*mod(y-1,NY)])if(mask[b]===1){mask[b]=2;stack.push(b)}}}return cores}
   diagnostics(){let up=0,down=0,rainRate=0,top=0,coldMax=0,thermalTop=0,maxCloud=0;for(let z=0;z<NZ;z++)for(let y=0;y<NY;y++)for(let x=0;x<NX;x++){const i=this.idx(x,y,z),alt=z*DZ;up=Math.max(up,this.w[i]);down=Math.max(down,-this.w[i]);rainRate=Math.max(rainRate,this.rain[i]*12000);maxCloud=Math.max(maxCloud,this.cloud[i]);if(this.cloud[i]>.00007)top=Math.max(top,alt/1000);if(this.w[i]>.6)thermalTop=Math.max(thermalTop,alt/1000);if(alt<1500)coldMax=Math.max(coldMax,this.cold[i])}const cores=this.countCores(),shear=Math.hypot(...[this.windUV(6000)[0]-this.windUV(0)[0],this.windUV(6000)[1]-this.windUV(0)[1]] as [number,number]),cellType=coldMax>7&&up<2?'Outflow-dominant':cores>=3?'3D-мультиячейка':cores===2?'Две взаимодействующие ячейки':cores===1&&shear>18?'Наклонённая организованная ячейка':cores===1?'Одиночная 3D-ячейка':top>1?'Развивающийся 3D cumulus':'Термики пограничного слоя',cellReason=cores?`${cores} пространственно разделённых updraft-ядра`:'глубокое ядро ещё не сформировано';let logic='Трёхмерные термики перераспределяют тепло и влагу в пограничном слое.';if(top>=(this.cachedParcel.lcl??99))logic='На LCL объём воздуха насыщается; сухое вовлечение размывает края облака.';if(top>=(this.cachedParcel.lfc??99))logic='Выше LFC updraft ускоряется в объёме и наклоняется векторным сдвигом ветра.';if(top>=(this.cachedParcel.el??99)-.6)logic='У EL плавучесть исчезает: поток расходится во всех горизонтальных направлениях, формируя наковальню.';if(coldMax>3)logic+=coldMax>7?' Холодный купол подтекает под inflow и уничтожает исходное ядро.':' 3D gust front поднимает тёплый воздух на периферии cold pool.';if(this.microburstOutflow>8)logic+=' Нагруженный осадками downdraft создал радиально расходящийся микропорыв.';return{...this.cachedParcel,updraft:up,downdraft:down,rain:rainRate,cloudTop:top,thermalTop,cloudWater:maxCloud*1000,coldPool:coldMax,microburst:this.microburstOutflow,cellType,cellReason,logic,insolation:this.insolation(),sunElevation:Math.asin(clamp(this.sunDirection().y,-1,1))*180/Math.PI}}
 
@@ -173,5 +201,7 @@ export class Atmosphere{
     this.volumeMaterial.uniforms.uOpacity.value=field?.22:1
     this.fieldMesh.visible=!!field&&this.showFieldVolume;this.sliceH.visible=this.sliceV.visible=!!field
     this.shared.uSliceOn.value=field?1:0;this.shared.uSliceH.value=this.sliceH.position.y=this.sliceHeight;this.shared.uSliceZ.value=this.sliceV.position.z=-this.sliceNorth
-    this.flowPoints.visible=this.showVectors;this.vectorLines.visible=this.showVectors;if(this.showVectors&&this.frame%4===0)this.updateVectors();this.frame++;this.controls.update();this.renderer.render(this.scene,this.camera)}
+    this.flowPoints.visible=this.showVectors;this.vectorLines.visible=this.showVectors;
+    this.precipPoints.visible=this.showPrecip;this.freezingHelper.visible=this.showPrecip&&this.cachedParcel.freezing!==null
+    if(this.showPrecip){this.syncPrecip();this.precipMaterial.uniforms.uScale.value=this.renderer.getDrawingBufferSize(new THREE.Vector2()).y*.5}if(this.showVectors&&this.frame%4===0)this.updateVectors();this.frame++;this.controls.update();this.renderer.render(this.scene,this.camera)}
 }

@@ -81,7 +81,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
 
     <section class="workspace">
       <nav class="tabs" aria-label="Отображаемое поле">
-        <button class="active" data-field="composite">Облака</button><button data-field="updraft">Вертикальные потоки</button><button data-field="theta">Температура</button><button data-field="moisture">Влажность</button><button data-field="vorticity">Завихренность</button><button data-field="coldpool">Cold pool</button><button id="flowToggle" class="flow-toggle" aria-pressed="false">Потоки →</button>
+        <button class="active" data-field="composite">Облака</button><button data-field="updraft">Вертикальные потоки</button><button data-field="theta">Температура</button><button data-field="moisture">Влажность</button><button data-field="vorticity">Завихренность</button><button data-field="coldpool">Cold pool</button><button id="flowToggle" class="flow-toggle" aria-pressed="false">Потоки →</button><button id="precipToggle" class="flow-toggle" aria-pressed="false" title="Снежинки выше уровня 0 °C тают в капли по пути вниз">Снег и дождь</button>
       </nav>
       <div class="viewport">
         <canvas id="sim" width="960" height="600"></canvas>
@@ -103,8 +103,9 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
     <aside class="diagnostics">
       <h2>Состояние конвекции</h2>
       <div class="cell-type"><span>Режим</span><strong id="cellType">—</strong><small id="cellReason">ожидание инициализации</small></div>
-      <div class="sounding"><canvas id="sounding" width="216" height="190"></canvas><div class="sounding-key"><span><i class="env"></i>среда</span><span><i class="parcel"></i>частица</span></div></div>
-      <div class="levels"><div><span>LCL</span><b id="lcl">—</b></div><div><span>LFC</span><b id="lfc">—</b></div><div><span>EL</span><b id="el">—</b></div></div>
+      <div class="sounding"><canvas id="sounding"></canvas><div class="sounding-key"><span><i class="env"></i>среда</span><span><i class="dew"></i>точка росы</span><span><i class="parcel"></i>частица</span><span><i class="area cape"></i>CAPE</span><span><i class="area cin"></i>CIN</span></div></div>
+      <div class="levels"><div><span>LCL</span><b id="lcl">—</b></div><div><span>LFC</span><b id="lfc">—</b></div><div><span>EL</span><b id="el">—</b></div><div><span>0 °C</span><b id="freezing">—</b></div></div>
+      <div class="hodograph"><canvas id="hodograph"></canvas><div class="hodo-key"><span><i style="border-color:#c4553a"></i>0–3 км</span><span><i style="border-color:#4f8f5b"></i>3–6 км</span><span><i style="border-color:#3f6fa3"></i>6–10 км</span></div><div class="hodo-caption"><span>Сдвиг ветра 0–6 км</span><b id="shear">—</b><small id="shearHint"></small></div></div>
       <div class="energy"><div><span>CAPE</span><strong id="cape">—</strong><small>Дж/кг</small></div><div><span>CIN</span><strong id="cin">—</strong><small>Дж/кг</small></div></div>
       <div class="metric"><span>Макс. updraft</span><strong id="updraft">—</strong><small>м/с</small></div>
       <div class="metric"><span>Макс. downdraft</span><strong id="downdraft">—</strong><small>м/с</small></div>
@@ -120,7 +121,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
 
 const config: SimConfig = { ...defaults }
 const canvas = document.querySelector<HTMLCanvasElement>('#sim')!
-const view = { field: 'composite' as FieldMode, showVectors: false, showFieldVolume: true, sliceHeight: 2, sliceNorth: 0 }
+const view = { field: 'composite' as FieldMode, showVectors: false, showPrecip: false, showFieldVolume: true, sliceHeight: 2, sliceNorth: 0 }
 let sim = new Atmosphere(canvas, config)
 let running = true
 let last = performance.now(), frameCount = 0
@@ -184,6 +185,9 @@ document.querySelectorAll<HTMLButtonElement>('[data-field]').forEach(button => b
 document.querySelector<HTMLButtonElement>('#flowToggle')!.addEventListener('click', event => {
   const button=event.currentTarget as HTMLButtonElement;setView({ showVectors: !view.showVectors });button.classList.toggle('active',view.showVectors);button.setAttribute('aria-pressed',String(view.showVectors))
 })
+document.querySelector<HTMLButtonElement>('#precipToggle')!.addEventListener('click', event => {
+  const button=event.currentTarget as HTMLButtonElement;setView({ showPrecip: !view.showPrecip });button.classList.toggle('active',view.showPrecip);button.setAttribute('aria-pressed',String(view.showPrecip))
+})
 const sliceHeight = document.querySelector<HTMLInputElement>('#sliceHeight')!, sliceNorth = document.querySelector<HTMLInputElement>('#sliceNorth')!
 sliceHeight.addEventListener('input', () => { setView({ sliceHeight: Number(sliceHeight.value) }); text('sliceHeightOut', `${Number(sliceHeight.value).toFixed(1)} км`) })
 sliceNorth.addEventListener('input', () => {
@@ -194,15 +198,68 @@ document.querySelector<HTMLInputElement>('#fieldVolume')!.addEventListener('chan
 canvas.addEventListener('dblclick', event => { const r=canvas.getBoundingClientRect(); sim.perturb((event.clientX-r.left)/r.width,(event.clientY-r.top)/r.height,1.25) })
 
 const text = (id:string,value:string) => { document.querySelector(`#${id}`)!.textContent=value }
+const prepareCanvas = (id: string) => {
+  const c = document.querySelector<HTMLCanvasElement>(`#${id}`)!, dpr = Math.min(devicePixelRatio, 2), w = c.clientWidth, h = c.clientHeight
+  if (c.width !== Math.round(w * dpr) || c.height !== Math.round(h * dpr)) { c.width = Math.round(w * dpr); c.height = Math.round(h * dpr) }
+  const ctx = c.getContext('2d')!
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, w, h); ctx.font = '8px IBM Plex Mono'
+  return { ctx, w, h }
+}
+const T_MIN = -70, T_MAX = 45, Z_MAX = 15
 function drawSounding(){
-  const c=document.querySelector<HTMLCanvasElement>('#sounding')!,ctx=c.getContext('2d')!,s=sim.sounding(); ctx.clearRect(0,0,c.width,c.height); ctx.fillStyle='#e7ecee';ctx.fillRect(0,0,c.width,c.height)
-  ctx.strokeStyle='#ccd5d9';ctx.lineWidth=1;for(let k=0;k<=3;k++){const y=8+k*(c.height-18)/3;ctx.beginPath();ctx.moveTo(25,y);ctx.lineTo(c.width-5,y);ctx.stroke();ctx.fillStyle='#7c8c94';ctx.font='8px IBM Plex Mono';ctx.fillText(`${15-k*5}`,3,y+3)}
-  const plot=(kind:'env'|'parcel',color:string)=>{ctx.beginPath();s.profile.forEach((p,i)=>{const temp=kind==='env'?p.env:p.parcel,x=25+(temp+65)/110*(c.width-32),y=8+(1-p.z/15)*(c.height-18);i?ctx.lineTo(x,y):ctx.moveTo(x,y)});ctx.strokeStyle=color;ctx.lineWidth=2;ctx.stroke()};plot('env','#4f7180');plot('parcel','#b46e43')
+  const { ctx, w, h } = prepareCanvas('sounding'), s = sim.sounding()
+  const L = 22, R = w - 30, T = 6, B = h - 14
+  const X = (t: number) => L + (t - T_MIN) / (T_MAX - T_MIN) * (R - L), Y = (z: number) => T + (1 - z / Z_MAX) * (B - T)
+  ctx.strokeStyle = '#d2dade'; ctx.lineWidth = 1; ctx.fillStyle = '#7c8c94'
+  for (let z = 0; z <= Z_MAX; z += 5) { ctx.beginPath(); ctx.moveTo(L, Y(z)); ctx.lineTo(R, Y(z)); ctx.stroke(); ctx.fillText(`${z}`, 4, Y(z) + 3) }
+  for (let t = -60; t <= 40; t += 20) { ctx.beginPath(); ctx.moveTo(X(t), T); ctx.lineTo(X(t), B); ctx.stroke(); ctx.fillText(`${t}°`, X(t) - 8, h - 3) }
+  ctx.strokeStyle = '#8fbcd4'; ctx.setLineDash([3, 3]); ctx.beginPath(); ctx.moveTo(X(0), T); ctx.lineTo(X(0), B); ctx.stroke(); ctx.setLineDash([])
+  // CAPE: parcel warmer than environment between LFC and EL; CIN: parcel colder below LFC.
+  for (let i = 0; i + 1 < s.profile.length; i++) {
+    const a = s.profile[i], b = s.profile[i + 1]
+    const cape = s.lfc !== null && a.z >= s.lfc && (s.el === null || a.z < s.el) && a.buoyancy > 0
+    const cin = s.lfc !== null && a.z < s.lfc && a.buoyancy < 0
+    if (!cape && !cin) continue
+    ctx.fillStyle = cape ? 'rgba(207,109,73,.38)' : 'rgba(77,134,179,.3)'
+    ctx.beginPath(); ctx.moveTo(X(a.env), Y(a.z)); ctx.lineTo(X(a.parcel), Y(a.z)); ctx.lineTo(X(b.parcel), Y(b.z)); ctx.lineTo(X(b.env), Y(b.z)); ctx.fill()
+  }
+  const curve = (value: (p: typeof s.profile[number]) => number, color: string, dash: number[] = []) => {
+    ctx.beginPath(); s.profile.forEach((p, i) => { const x = Math.max(L, X(value(p))), y = Y(p.z); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y) })
+    ctx.strokeStyle = color; ctx.lineWidth = 1.8; ctx.setLineDash(dash); ctx.stroke(); ctx.setLineDash([])
+  }
+  curve(p => p.dew, '#5a9a6a', [4, 3]); curve(p => p.env, '#4f7180'); curve(p => p.parcel, '#b46e43')
+  const levels: [string, number | null, string][] = [['LCL', s.lcl, '#6f9fb0'], ['LFC', s.lfc, '#c39a4f'], ['EL', s.el, '#c0735b']]
+  for (const [name, z, color] of levels) {
+    if (z === null) continue
+    ctx.strokeStyle = color; ctx.setLineDash([2, 2]); ctx.beginPath(); ctx.moveTo(L, Y(z)); ctx.lineTo(R, Y(z)); ctx.stroke(); ctx.setLineDash([])
+    ctx.fillStyle = color; ctx.fillText(name, R + 3, Y(z) + 3)
+  }
+}
+function drawHodograph(){
+  const { ctx, w, h } = prepareCanvas('hodograph'), wind = sim.sounding().wind
+  const maxSpeed = Math.max(...wind.map(p => Math.hypot(p.u, p.v))), maxRing = Math.max(20, Math.ceil(maxSpeed / 10) * 10)
+  const cx = w / 2, cy = h / 2, scale = (Math.min(w, h) / 2 - 12) / maxRing
+  ctx.strokeStyle = '#d2dade'; ctx.fillStyle = '#8a9aa2'; ctx.lineWidth = 1
+  ctx.beginPath(); ctx.moveTo(cx - maxRing * scale, cy); ctx.lineTo(cx + maxRing * scale, cy); ctx.moveTo(cx, cy - maxRing * scale); ctx.lineTo(cx, cy + maxRing * scale); ctx.stroke()
+  for (let r = 10; r <= maxRing; r += 10) { ctx.beginPath(); ctx.arc(cx, cy, r * scale, 0, Math.PI * 2); ctx.stroke(); ctx.fillText(`${r}`, cx + r * scale * .71 + 2, cy - r * scale * .71 - 2) }
+  ctx.fillText('С', cx + 3, 10); ctx.fillText('В', w - 10, cy - 3)
+  const P = (p: { u: number, v: number }) => [cx + p.u * scale, cy - p.v * scale] as const
+  ctx.lineWidth = 2.2; ctx.lineCap = 'round'
+  for (let i = 0; i + 1 < wind.length; i++) {
+    const a = wind[i], b = wind[i + 1]
+    ctx.strokeStyle = a.z < 3 ? '#c4553a' : a.z < 6 ? '#4f8f5b' : '#3f6fa3'
+    ctx.beginPath(); ctx.moveTo(...P(a)); ctx.lineTo(...P(b)); ctx.stroke()
+  }
+  ctx.fillStyle = '#24323d'
+  for (const z of [0, 1, 3, 6, 10]) { const p = wind.find(q => Math.abs(q.z - z) < 1e-6); if (!p) continue; const [x, y] = P(p); ctx.beginPath(); ctx.arc(x, y, 2.4, 0, Math.PI * 2); ctx.fill(); ctx.fillText(`${z}`, x + 4, y - 3) }
+  const w0 = wind[0], w6 = wind.find(p => Math.abs(p.z - 6) < 1e-6)!, shear = Math.hypot(w6.u - w0.u, w6.v - w0.v)
+  text('shear', `${shear.toFixed(0)} м/с`)
+  text('shearHint', shear < 10 ? 'слабый: одиночные ячейки' : shear < 20 ? 'умеренный: мультиячейки' : 'сильный: возможны суперячейки')
 }
 function frame(now:number){
   const elapsed=Math.min(.2,(now-last)/1000);last=now;if(running)sim.advance(elapsed);sim.render();const d=sim.diagnostics()
   text('cape',d.cape.toFixed(0));text('cin',d.cin.toFixed(0));text('updraft',d.updraft.toFixed(1));text('downdraft',d.downdraft.toFixed(1));text('cloudTop',d.cloudTop.toFixed(1));text('thermalTop',d.thermalTop.toFixed(1));text('cloudWater',d.cloudWater.toFixed(2));text('coldPool',d.coldPool.toFixed(1));text('microburst',d.microburst.toFixed(1));text('rain',d.rain.toFixed(1));text('lcl',d.lcl===null?'—':`${d.lcl.toFixed(1)} км`);text('lfc',d.lfc===null?'—':`${d.lfc.toFixed(1)} км`);text('el',d.el===null?'—':`${d.el.toFixed(1)} км`);text('cellType',d.cellType);text('cellReason',d.cellReason);text('logicText',d.logic);text('sun',`${d.insolation.toFixed(0)} Вт/м²`);text('sunElevation',d.sunElevation>0?`${d.sunElevation.toFixed(0)}° над горизонтом`:'ночь')
   text('surfaceReadout',({grass:'ТРАВА',dry:'СУХАЯ ПОЧВА',water:'ВОДА',urban:'ГОРОД'} as const)[config.surfaceType])
-  const sec=Math.floor(sim.time);text('time',`${String(Math.floor(sec/60)).padStart(2,'0')}:${String(sec%60).padStart(2,'0')}`);if(frameCount++%20===0)drawSounding();requestAnimationFrame(frame)
+  const sec=Math.floor(sim.time);text('time',`${String(Math.floor(sec/60)).padStart(2,'0')}:${String(sec%60).padStart(2,'0')}`);text('freezing',d.freezing===null?'—':`${d.freezing.toFixed(1)} км`);if(frameCount++%20===0){drawSounding();drawHodograph()}requestAnimationFrame(frame)
 }
 requestAnimationFrame(frame)
