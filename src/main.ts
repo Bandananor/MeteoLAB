@@ -69,7 +69,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
         <canvas id="sim" width="960" height="600"></canvas>
         <div class="camera-help">ЛКМ — вращение · ПКМ — перемещение · колесо — масштаб · двойной клик — термик</div>
         <div class="surface-badge" id="surfaceReadout">ТРАВА</div>
-        <div class="legend"><span><i class="cloud"></i>облачная вода</span><span><i class="up"></i>updraft</span><span><i class="down"></i>downdraft</span></div>
+        <div class="legend"><span><i class="cloud"></i>облачная вода</span><span><i class="rain"></i>осадки</span><span><i class="up"></i>updraft</span><span><i class="down"></i>downdraft</span></div>
       </div>
       <div class="readout"><span>Сетка 40 × 32 × 24</span><span>Δx / Δy / Δz: 1.2 / 1.1 / 0.65 км</span><span>Δt: 1.0 с</span><span>Инсоляция: <b id="sun">—</b></span><span>T+: <b id="time">00:00</b></span></div>
     </section>
