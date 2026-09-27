@@ -6,6 +6,23 @@ const slider = (key: keyof SimConfig, label: string, min: number, max: number, s
     <input data-key="${key}" data-suffix="${suffix}" data-digits="${digits}" type="range" min="${min}" max="${max}" step="${step}" value="${value}">
   </label>`
 
+const defaults: SimConfig = {
+  surfaceTemp:30,lapseLow:8.4,lapseMid:7.2,lapseUpper:6.5,tropopause:11,stratoWarming:1.2,
+  rhSurface:72,rhLow:60,rhMid:42,rhUpper:28,entrainment:.65,
+  wind0:2,wind3:10,wind6:20,wind10:28,windDir0:160,windDir3:185,windDir6:215,windDir10:235,
+  latitude:45,turbulence:.55,
+  hour:13.5,solarMax:900,soilMoisture:45,surfaceType:'grass',
+  precipEfficiency:.85,evaporation:1,coldPoolStrength:1,speed:8,seed:42
+}
+const presets: {name:string;hint:string;values:Partial<SimConfig>}[] = [
+  {name:'Летний день',hint:'Исходные настройки: умеренно неустойчивая атмосфера',values:{}},
+  {name:'Мощная гроза',hint:'Жара, влажный нижний слой и крутой градиент: облако пробивает тропопаузу',values:{surfaceTemp:34,rhSurface:80,rhLow:70,rhMid:55,lapseLow:9}},
+  {name:'Сухой воздух',hint:'Сухой средний слой съедает края облака и душит конвекцию',values:{rhMid:10,rhUpper:10}},
+  {name:'Сдвиг ветра',hint:'Сильный ветер наверху наклоняет облако, дождь выпадает в стороне от восходящего потока',values:{surfaceTemp:32,rhSurface:78,wind3:18,wind6:40,wind10:50}},
+  {name:'Микропорыв',hint:'Сухой подоблачный слой и сильное испарение дождя: холодный поток ударяет в землю',values:{surfaceTemp:33,rhSurface:55,rhLow:35,lapseLow:9.5,evaporation:2,coldPoolStrength:2.5,precipEfficiency:1.4}},
+  {name:'Жаркий город',hint:'Городская застройка и сухая почва сильно греют воздух у земли',values:{surfaceType:'urban',soilMoisture:15,surfaceTemp:33,solarMax:1000}},
+]
+
 document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
   <header>
     <div><span class="eyebrow">ЧИСЛЕННАЯ ЛАБОРАТОРИЯ АТМОСФЕРЫ / 1.0 3D</span><h1>StormLab</h1></div>
@@ -13,6 +30,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
   </header>
   <main>
     <aside class="controls">
+      <div class="presets"><h2>Сценарии</h2><div class="preset-grid">${presets.map((p,i)=>`<button class="secondary" data-preset="${i}" title="${p.hint}">${p.name}</button>`).join('')}</div></div>
       <details open><summary>Температурный профиль</summary><div class="group">
         ${slider('surfaceTemp','Температура у земли',15,40,.5,30,' °C',1)}
         ${slider('lapseLow','Градиент 0–3 км',3,11,.1,8.4,' K/км',1)}
@@ -92,14 +110,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
     </aside>
   </main>`
 
-const config: SimConfig = {
-  surfaceTemp:30,lapseLow:8.4,lapseMid:7.2,lapseUpper:6.5,tropopause:11,stratoWarming:1.2,
-  rhSurface:72,rhLow:60,rhMid:42,rhUpper:28,entrainment:.65,
-  wind0:2,wind3:10,wind6:20,wind10:28,windDir0:160,windDir3:185,windDir6:215,windDir10:235,
-  latitude:45,turbulence:.55,
-  hour:13.5,solarMax:900,soilMoisture:45,surfaceType:'grass',
-  precipEfficiency:.85,evaporation:1,coldPoolStrength:1,speed:8,seed:42
-}
+const config: SimConfig = { ...defaults }
 const canvas = document.querySelector<HTMLCanvasElement>('#sim')!
 let sim = new Atmosphere(canvas, config)
 let running = true
@@ -108,19 +119,36 @@ let last = performance.now(), frameCount = 0
 const recreate = () => { sim.dispose(); sim = new Atmosphere(canvas, { ...config }); sim.showVectors = vectorsEnabled }
 
 const resetKeys = new Set<keyof SimConfig>(['surfaceTemp','lapseLow','lapseMid','lapseUpper','tropopause','stratoWarming','rhSurface','rhLow','rhMid','rhUpper','wind0','wind3','wind6','wind10','windDir0','windDir3','windDir6','windDir10','latitude','seed','surfaceType'])
+const surfaceSelect = document.querySelector<HTMLSelectElement>('#surfaceType')!
+const showOutput = (input: HTMLInputElement) => {
+  document.querySelector<HTMLOutputElement>(`[data-output="${input.dataset.key}"]`)!.textContent = `${Number(input.value).toFixed(Number(input.dataset.digits))}${input.dataset.suffix}`
+}
+const markPreset = (index: number | null) => document.querySelectorAll<HTMLButtonElement>('[data-preset]').forEach(b => b.classList.toggle('active', Number(b.dataset.preset) === index))
 document.querySelectorAll<HTMLInputElement>('input[data-key]').forEach(input => {
   const key = input.dataset.key as keyof SimConfig
   input.addEventListener('input', () => {
     ;(config[key] as number|string) = Number(input.value)
-    const output = document.querySelector<HTMLOutputElement>(`[data-output="${key}"]`)!
-    output.textContent = `${Number(input.value).toFixed(Number(input.dataset.digits))}${input.dataset.suffix}`
+    showOutput(input)
   })
-  if (resetKeys.has(key)) input.addEventListener('change', recreate)
+  if (resetKeys.has(key)) input.addEventListener('change', () => { markPreset(null); recreate() })
 })
-document.querySelector<HTMLSelectElement>('#surfaceType')!.addEventListener('change', event => {
-  config.surfaceType = (event.target as HTMLSelectElement).value as SimConfig['surfaceType']
+surfaceSelect.addEventListener('change', () => {
+  config.surfaceType = surfaceSelect.value as SimConfig['surfaceType']
+  markPreset(null)
   recreate()
 })
+document.querySelectorAll<HTMLButtonElement>('[data-preset]').forEach(button => button.addEventListener('click', () => {
+  const index = Number(button.dataset.preset)
+  Object.assign(config, defaults, { speed: config.speed }, presets[index].values)
+  document.querySelectorAll<HTMLInputElement>('input[data-key]').forEach(input => {
+    input.value = String(config[input.dataset.key as keyof SimConfig])
+    showOutput(input)
+  })
+  surfaceSelect.value = config.surfaceType
+  markPreset(index)
+  recreate(); running = true; updatePause()
+}))
+markPreset(0)
 document.querySelector('#restart')!.addEventListener('click', () => { recreate(); running = true; updatePause() })
 document.querySelector('#pause')!.addEventListener('click', () => { running = !running; updatePause() })
 const updatePause = () => {
