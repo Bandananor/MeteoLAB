@@ -1,5 +1,5 @@
 import './style.css'
-import { Atmosphere, type FieldMode, type SimConfig } from './simulator3d'
+import { Atmosphere, FIELDS, type FieldMode, type SimConfig } from './simulator3d'
 
 const slider = (key: keyof SimConfig, label: string, min: number, max: number, step: number, value: number, suffix: string, digits = 0) => `
   <label>${label}<output data-output="${key}">${value.toFixed(digits)}${suffix}</output>
@@ -81,15 +81,23 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
 
     <section class="workspace">
       <nav class="tabs" aria-label="Отображаемое поле">
-        <button class="active" data-field="composite">Облака</button><button data-field="theta">Температура</button><button data-field="moisture">Относительная влажность</button><button data-field="vorticity">Завихренность</button><button data-field="coldpool">Cold pool</button><button id="flowToggle" class="flow-toggle" aria-pressed="false">Потоки →</button>
+        <button class="active" data-field="composite">Облака</button><button data-field="updraft">Вертикальные потоки</button><button data-field="theta">Температура</button><button data-field="moisture">Влажность</button><button data-field="vorticity">Завихренность</button><button data-field="coldpool">Cold pool</button><button id="flowToggle" class="flow-toggle" aria-pressed="false">Потоки →</button>
       </nav>
       <div class="viewport">
         <canvas id="sim" width="960" height="600"></canvas>
         <div class="camera-help">ЛКМ — вращение · ПКМ — перемещение · колесо — масштаб · двойной клик — термик</div>
         <div class="surface-badge" id="surfaceReadout">ТРАВА</div>
-        <div class="legend"><span><i class="cloud"></i>облачная вода</span><span><i class="rain"></i>осадки</span><span><i class="up"></i>updraft</span><span><i class="down"></i>downdraft</span></div>
+        <div class="legend" id="cloudLegend"><span><i class="cloud"></i>облачная вода</span><span><i class="rain"></i>осадки</span><span><i class="up"></i>updraft</span><span><i class="down"></i>downdraft</span></div>
+        <div class="field-panel" id="fieldPanel" hidden>
+          <b id="fieldTitle"></b>
+          <div class="colorbar" id="colorbar"></div>
+          <div class="colorbar-labels"><span id="fieldMin"></span><span id="fieldMid"></span><span id="fieldMax"></span></div>
+          <label>Высота горизонтального среза<output id="sliceHeightOut">2.0 км</output><input id="sliceHeight" type="range" min="0.1" max="14.5" step="0.1" value="2"></label>
+          <label>Вертикальный разрез, север ↔ юг<output id="sliceNorthOut">0 км</output><input id="sliceNorth" type="range" min="-17.5" max="17.5" step="0.5" value="0"></label>
+          <label class="check"><input id="fieldVolume" type="checkbox" checked>Объём сильных отклонений</label>
+        </div>
       </div>
-      <div class="readout"><span>Сетка 40 × 32 × 24</span><span>Δx / Δy / Δz: 1.2 / 1.1 / 0.65 км</span><span>Δt: 1.0 с</span><span>Инсоляция: <b id="sun">—</b></span><span>T+: <b id="time">00:00</b></span></div>
+      <div class="readout"><span>Сетка 40 × 32 × 24</span><span>Δx / Δy / Δz: 1.2 / 1.1 / 0.65 км</span><span>Δt: 1.0 с</span><span>Инсоляция: <b id="sun">—</b></span><span>Солнце: <b id="sunElevation">—</b></span><span>T+: <b id="time">00:00</b></span></div>
     </section>
 
     <aside class="diagnostics">
@@ -112,11 +120,11 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
 
 const config: SimConfig = { ...defaults }
 const canvas = document.querySelector<HTMLCanvasElement>('#sim')!
+const view = { field: 'composite' as FieldMode, showVectors: false, showFieldVolume: true, sliceHeight: 2, sliceNorth: 0 }
 let sim = new Atmosphere(canvas, config)
 let running = true
-let vectorsEnabled = false
 let last = performance.now(), frameCount = 0
-const recreate = () => { sim.dispose(); sim = new Atmosphere(canvas, { ...config }); sim.showVectors = vectorsEnabled }
+const recreate = () => { sim.dispose(); sim = Object.assign(new Atmosphere(canvas, config), view) }
 
 const resetKeys = new Set<keyof SimConfig>(['surfaceTemp','lapseLow','lapseMid','lapseUpper','tropopause','stratoWarming','rhSurface','rhLow','rhMid','rhUpper','wind0','wind3','wind6','wind10','windDir0','windDir3','windDir6','windDir10','latitude','seed','surfaceType'])
 const surfaceSelect = document.querySelector<HTMLSelectElement>('#surfaceType')!
@@ -156,12 +164,33 @@ const updatePause = () => {
   document.querySelector('#statusText')!.textContent = running ? 'РАСЧЁТ ИДЁТ' : 'ПАУЗА'
   document.querySelector('.status')!.classList.toggle('paused', !running)
 }
+const setView = (patch: Partial<typeof view>) => { Object.assign(view, patch); Object.assign(sim, patch) }
+const fieldPanel = document.querySelector<HTMLDivElement>('#fieldPanel')!
+const formatValue = (v: number) => `${v > 0 ? '+' : ''}${Number.isInteger(v) ? v : v.toFixed(1)}`
 document.querySelectorAll<HTMLButtonElement>('[data-field]').forEach(button => button.addEventListener('click', () => {
-  document.querySelectorAll('[data-field]').forEach(b => b.classList.remove('active')); button.classList.add('active'); sim.field = button.dataset.field as FieldMode
+  document.querySelectorAll('[data-field]').forEach(b => b.classList.remove('active')); button.classList.add('active')
+  const field = button.dataset.field as FieldMode
+  setView({ field })
+  fieldPanel.hidden = field === 'composite'
+  document.querySelector<HTMLDivElement>('#cloudLegend')!.hidden = field !== 'composite'
+  if (field === 'composite') return
+  const info = FIELDS[field], signed = info.diverging
+  text('fieldTitle', `${info.title}, ${info.units}`)
+  document.querySelector<HTMLDivElement>('#colorbar')!.style.background = `linear-gradient(to right, ${info.stops.join(',')})`
+  text('fieldMin', signed ? formatValue(info.min) : String(info.min))
+  text('fieldMid', signed ? '0' : String((info.min + info.max) / 2))
+  text('fieldMax', signed ? formatValue(info.max) : String(info.max))
 }))
 document.querySelector<HTMLButtonElement>('#flowToggle')!.addEventListener('click', event => {
-  const button=event.currentTarget as HTMLButtonElement;vectorsEnabled=!vectorsEnabled;sim.showVectors=vectorsEnabled;button.classList.toggle('active',vectorsEnabled);button.setAttribute('aria-pressed',String(vectorsEnabled))
+  const button=event.currentTarget as HTMLButtonElement;setView({ showVectors: !view.showVectors });button.classList.toggle('active',view.showVectors);button.setAttribute('aria-pressed',String(view.showVectors))
 })
+const sliceHeight = document.querySelector<HTMLInputElement>('#sliceHeight')!, sliceNorth = document.querySelector<HTMLInputElement>('#sliceNorth')!
+sliceHeight.addEventListener('input', () => { setView({ sliceHeight: Number(sliceHeight.value) }); text('sliceHeightOut', `${Number(sliceHeight.value).toFixed(1)} км`) })
+sliceNorth.addEventListener('input', () => {
+  const km = Number(sliceNorth.value)
+  setView({ sliceNorth: km }); text('sliceNorthOut', km === 0 ? '0 км' : `${Math.abs(km)} км ${km > 0 ? 'к северу' : 'к югу'}`)
+})
+document.querySelector<HTMLInputElement>('#fieldVolume')!.addEventListener('change', event => setView({ showFieldVolume: (event.target as HTMLInputElement).checked }))
 canvas.addEventListener('dblclick', event => { const r=canvas.getBoundingClientRect(); sim.perturb((event.clientX-r.left)/r.width,(event.clientY-r.top)/r.height,1.25) })
 
 const text = (id:string,value:string) => { document.querySelector(`#${id}`)!.textContent=value }
@@ -172,7 +201,7 @@ function drawSounding(){
 }
 function frame(now:number){
   const elapsed=Math.min(.2,(now-last)/1000);last=now;if(running)sim.advance(elapsed);sim.render();const d=sim.diagnostics()
-  text('cape',d.cape.toFixed(0));text('cin',d.cin.toFixed(0));text('updraft',d.updraft.toFixed(1));text('downdraft',d.downdraft.toFixed(1));text('cloudTop',d.cloudTop.toFixed(1));text('thermalTop',d.thermalTop.toFixed(1));text('cloudWater',d.cloudWater.toFixed(2));text('coldPool',d.coldPool.toFixed(1));text('microburst',d.microburst.toFixed(1));text('rain',d.rain.toFixed(1));text('lcl',d.lcl===null?'—':`${d.lcl.toFixed(1)} км`);text('lfc',d.lfc===null?'—':`${d.lfc.toFixed(1)} км`);text('el',d.el===null?'—':`${d.el.toFixed(1)} км`);text('cellType',d.cellType);text('cellReason',d.cellReason);text('logicText',d.logic);text('sun',`${d.insolation.toFixed(0)} Вт/м²`)
+  text('cape',d.cape.toFixed(0));text('cin',d.cin.toFixed(0));text('updraft',d.updraft.toFixed(1));text('downdraft',d.downdraft.toFixed(1));text('cloudTop',d.cloudTop.toFixed(1));text('thermalTop',d.thermalTop.toFixed(1));text('cloudWater',d.cloudWater.toFixed(2));text('coldPool',d.coldPool.toFixed(1));text('microburst',d.microburst.toFixed(1));text('rain',d.rain.toFixed(1));text('lcl',d.lcl===null?'—':`${d.lcl.toFixed(1)} км`);text('lfc',d.lfc===null?'—':`${d.lfc.toFixed(1)} км`);text('el',d.el===null?'—':`${d.el.toFixed(1)} км`);text('cellType',d.cellType);text('cellReason',d.cellReason);text('logicText',d.logic);text('sun',`${d.insolation.toFixed(0)} Вт/м²`);text('sunElevation',d.sunElevation>0?`${d.sunElevation.toFixed(0)}° над горизонтом`:'ночь')
   text('surfaceReadout',({grass:'ТРАВА',dry:'СУХАЯ ПОЧВА',water:'ВОДА',urban:'ГОРОД'} as const)[config.surfaceType])
   const sec=Math.floor(sim.time);text('time',`${String(Math.floor(sec/60)).padStart(2,'0')}:${String(sec%60).padStart(2,'0')}`);if(frameCount++%20===0)drawSounding();requestAnimationFrame(frame)
 }
