@@ -12,7 +12,7 @@ const defaults: SimConfig = {
   wind0:2,wind3:10,wind6:20,wind10:28,windDir0:160,windDir3:185,windDir6:215,windDir10:235,
   latitude:45,turbulence:.55,
   hour:13.5,solarMax:900,soilMoisture:45,surfaceType:'grass',
-  precipEfficiency:.85,evaporation:1,coldPoolStrength:1,speed:8,seed:42
+  precipEfficiency:.85,evaporation:1,coldPoolStrength:1,speed:8,seed:42,bubble:1
 }
 const presets: {name:string;hint:string;values:Partial<SimConfig>}[] = [
   {name:'Летний день',hint:'Исходные настройки: умеренно неустойчивая атмосфера',values:{}},
@@ -20,6 +20,7 @@ const presets: {name:string;hint:string;values:Partial<SimConfig>}[] = [
   {name:'Сухой воздух',hint:'Сухой средний слой съедает края облака и душит конвекцию',values:{rhMid:10,rhUpper:10}},
   {name:'Сдвиг ветра',hint:'Сильный ветер наверху наклоняет облако, дождь выпадает в стороне от восходящего потока',values:{surfaceTemp:32,rhSurface:78,wind3:18,wind6:40,wind10:50}},
   {name:'Микропорыв',hint:'Сухой подоблачный слой и сильное испарение дождя: холодный поток ударяет в землю',values:{surfaceTemp:33,rhSurface:55,rhLow:35,lapseLow:9.5,evaporation:2,coldPoolStrength:2.5,precipEfficiency:1.4}},
+  {name:'Суперячейка',hint:'Ветер у земли дует с юго-востока и с высотой поворачивает к западу: восходящий поток закручивается в мезоциклон',values:{surfaceTemp:29,rhSurface:72,rhLow:60,rhMid:38,rhUpper:30,lapseLow:7.2,lapseMid:6.8,lapseUpper:6.5,entrainment:.5,bubble:1.8,wind0:6,wind3:12,wind6:20,wind10:28,windDir0:140,windDir3:200,windDir6:240,windDir10:255}},
   {name:'Жаркий город',hint:'Городская застройка и сухая почва сильно греют воздух у земли',values:{surfaceType:'urban',soilMoisture:15,surfaceTemp:33,solarMax:1000}},
 ]
 
@@ -74,6 +75,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
       <details><summary>Расчёт</summary><div class="group">
         ${slider('speed','Ускорение времени',1,30,1,8,'×')}
         ${slider('seed','Seed',1,999,1,42,'')}
+        ${slider('bubble','Сила начального термика',.3,2.5,.05,1,'×',2)}
       </div></details>
       <p class="hint">Двойной клик по поверхности создаёт локальный 3D-термик. Изменение профиля перезапускает эксперимент.</p>
       <div class="actions"><button id="restart">Перезапустить</button><button id="pause" class="secondary">Пауза</button></div>
@@ -81,7 +83,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
 
     <section class="workspace">
       <nav class="tabs" aria-label="Отображаемое поле">
-        <button class="active" data-field="composite">Облака</button><button data-field="updraft">Вертикальные потоки</button><button data-field="theta">Температура</button><button data-field="moisture">Влажность</button><button data-field="vorticity">Завихренность</button><button data-field="coldpool">Cold pool</button><button id="flowToggle" class="flow-toggle" aria-pressed="false">Потоки →</button><button id="precipToggle" class="flow-toggle" aria-pressed="false" title="Снежинки выше уровня 0 °C тают в капли по пути вниз">Снег и дождь</button>
+        <button class="active" data-field="composite">Облака</button><button data-field="updraft">Вертикальные потоки</button><button data-field="theta">Температура</button><button data-field="moisture">Влажность</button><button data-field="vorticity">Завихренность</button><button data-field="helicity" title="Спиральность восходящего потока: где поднимающийся воздух вращается (слой 2–5 км)">Вращение (UH)</button><button data-field="coldpool">Cold pool</button><button id="flowToggle" class="flow-toggle" aria-pressed="false">Потоки →</button><button id="precipToggle" class="flow-toggle" aria-pressed="false" title="Снежинки выше уровня 0 °C тают в капли по пути вниз">Снег и дождь</button>
       </nav>
       <div class="viewport">
         <canvas id="sim" width="960" height="600"></canvas>
@@ -109,6 +111,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
       <div class="energy"><div><span>CAPE</span><strong id="cape">—</strong><small>Дж/кг</small></div><div><span>CIN</span><strong id="cin">—</strong><small>Дж/кг</small></div></div>
       <div class="metric"><span>Макс. updraft</span><strong id="updraft">—</strong><small>м/с</small></div>
       <div class="metric"><span>Макс. downdraft</span><strong id="downdraft">—</strong><small>м/с</small></div>
+      <div class="metric" title="Спиральность восходящего потока: насколько поднимающийся воздух вращается циклонически в слое 2–5 км"><span>Вращение потока (UH 2–5 км)</span><strong id="uh">—</strong><small>м²/с²</small></div>
       <div class="metric"><span>Вершина облака</span><strong id="cloudTop">—</strong><small>км</small></div>
       <div class="metric"><span>Вершина термика</span><strong id="thermalTop">—</strong><small>км</small></div>
       <div class="metric"><span>Макс. облачная вода</span><strong id="cloudWater">—</strong><small>г/кг</small></div>
@@ -127,7 +130,7 @@ let running = true
 let last = performance.now(), frameCount = 0
 const recreate = () => { sim.dispose(); sim = Object.assign(new Atmosphere(canvas, config), view) }
 
-const resetKeys = new Set<keyof SimConfig>(['surfaceTemp','lapseLow','lapseMid','lapseUpper','tropopause','stratoWarming','rhSurface','rhLow','rhMid','rhUpper','wind0','wind3','wind6','wind10','windDir0','windDir3','windDir6','windDir10','latitude','seed','surfaceType'])
+const resetKeys = new Set<keyof SimConfig>(['surfaceTemp','lapseLow','lapseMid','lapseUpper','tropopause','stratoWarming','rhSurface','rhLow','rhMid','rhUpper','wind0','wind3','wind6','wind10','windDir0','windDir3','windDir6','windDir10','latitude','seed','bubble','surfaceType'])
 const surfaceSelect = document.querySelector<HTMLSelectElement>('#surfaceType')!
 const showOutput = (input: HTMLInputElement) => {
   document.querySelector<HTMLOutputElement>(`[data-output="${input.dataset.key}"]`)!.textContent = `${Number(input.value).toFixed(Number(input.dataset.digits))}${input.dataset.suffix}`
@@ -175,6 +178,9 @@ document.querySelectorAll<HTMLButtonElement>('[data-field]').forEach(button => b
   fieldPanel.hidden = field === 'composite'
   document.querySelector<HTMLDivElement>('#cloudLegend')!.hidden = field !== 'composite'
   if (field === 'composite') return
+  if (field === 'helicity' && (view.sliceHeight < 2.6 || view.sliceHeight > 4.6)) {
+    sliceHeight.value = '3.5'; sliceHeight.dispatchEvent(new Event('input'))
+  }
   const info = FIELDS[field], signed = info.diverging
   text('fieldTitle', `${info.title}, ${info.units}`)
   document.querySelector<HTMLDivElement>('#colorbar')!.style.background = `linear-gradient(to right, ${info.stops.join(',')})`
@@ -258,7 +264,7 @@ function drawHodograph(){
 }
 function frame(now:number){
   const elapsed=Math.min(.2,(now-last)/1000);last=now;if(running)sim.advance(elapsed);sim.render();const d=sim.diagnostics()
-  text('cape',d.cape.toFixed(0));text('cin',d.cin.toFixed(0));text('updraft',d.updraft.toFixed(1));text('downdraft',d.downdraft.toFixed(1));text('cloudTop',d.cloudTop.toFixed(1));text('thermalTop',d.thermalTop.toFixed(1));text('cloudWater',d.cloudWater.toFixed(2));text('coldPool',d.coldPool.toFixed(1));text('microburst',d.microburst.toFixed(1));text('rain',d.rain.toFixed(1));text('lcl',d.lcl===null?'—':`${d.lcl.toFixed(1)} км`);text('lfc',d.lfc===null?'—':`${d.lfc.toFixed(1)} км`);text('el',d.el===null?'—':`${d.el.toFixed(1)} км`);text('cellType',d.cellType);text('cellReason',d.cellReason);text('logicText',d.logic);text('sun',`${d.insolation.toFixed(0)} Вт/м²`);text('sunElevation',d.sunElevation>0?`${d.sunElevation.toFixed(0)}° над горизонтом`:'ночь')
+  text('cape',d.cape.toFixed(0));text('cin',d.cin.toFixed(0));text('updraft',d.updraft.toFixed(1));text('downdraft',d.downdraft.toFixed(1));text('uh',d.updraftHelicity.toFixed(0));text('cloudTop',d.cloudTop.toFixed(1));text('thermalTop',d.thermalTop.toFixed(1));text('cloudWater',d.cloudWater.toFixed(2));text('coldPool',d.coldPool.toFixed(1));text('microburst',d.microburst.toFixed(1));text('rain',d.rain.toFixed(1));text('lcl',d.lcl===null?'—':`${d.lcl.toFixed(1)} км`);text('lfc',d.lfc===null?'—':`${d.lfc.toFixed(1)} км`);text('el',d.el===null?'—':`${d.el.toFixed(1)} км`);text('cellType',d.cellType);text('cellReason',d.cellReason);text('logicText',d.logic);text('sun',`${d.insolation.toFixed(0)} Вт/м²`);text('sunElevation',d.sunElevation>0?`${d.sunElevation.toFixed(0)}° над горизонтом`:'ночь')
   text('surfaceReadout',({grass:'ТРАВА',dry:'СУХАЯ ПОЧВА',water:'ВОДА',urban:'ГОРОД'} as const)[config.surfaceType])
   const sec=Math.floor(sim.time);text('time',`${String(Math.floor(sec/60)).padStart(2,'0')}:${String(sec%60).padStart(2,'0')}`);text('freezing',d.freezing===null?'—':`${d.freezing.toFixed(1)} км`);if(frameCount++%20===0){drawSounding();drawHodograph()}requestAnimationFrame(frame)
 }

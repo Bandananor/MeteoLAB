@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { fieldVolumeFragment, groundShadowPars, precipFragment, precipVertex, sliceFragment, volumeFragment, volumeVertex } from './volumeShaders'
 
-export type FieldMode='composite'|'updraft'|'theta'|'moisture'|'vorticity'|'coldpool'
+export type FieldMode='composite'|'updraft'|'theta'|'moisture'|'vorticity'|'helicity'|'coldpool'
 export type ScalarField=Exclude<FieldMode,'composite'>
 export interface FieldInfo{title:string;units:string;min:number;max:number;diverging:boolean;threshold:number;stops:string[]}
 const DIVERGING=['#24476b','#4d86b3','#a9c9df','#f1efe9','#eab58f','#cf6d49','#8f2a1f']
@@ -11,6 +11,7 @@ export const FIELDS:Record<ScalarField,FieldInfo>={
   theta:{title:'Отклонение температуры от окружения',units:'K',min:-4,max:4,diverging:true,threshold:.3,stops:DIVERGING},
   moisture:{title:'Относительная влажность',units:'%',min:0,max:100,diverging:false,threshold:.85,stops:['#7a5a33','#b89a63','#e3dcc0','#9ccbbd','#4b9aa3','#1f5d78']},
   vorticity:{title:'Вертикальная завихренность',units:'10⁻³ с⁻¹',min:-4,max:4,diverging:true,threshold:.3,stops:DIVERGING},
+  helicity:{title:'Вращение восходящего потока UH (слой 2–5 км)',units:'м²/с²',min:-300,max:300,diverging:true,threshold:.3,stops:DIVERGING},
   coldpool:{title:'Охлаждение от испарения осадков',units:'K',min:0,max:8,diverging:false,threshold:.15,stops:['#f1efe9','#b9d7e6','#6ea6cc','#3769a0','#1d3565']},
 }
 export type SurfaceType='grass'|'dry'|'water'|'urban'
@@ -19,7 +20,7 @@ export interface SimConfig{
   rhSurface:number;rhLow:number;rhMid:number;rhUpper:number;entrainment:number
   wind0:number;wind3:number;wind6:number;wind10:number;windDir0:number;windDir3:number;windDir6:number;windDir10:number
   latitude:number;turbulence:number;hour:number;solarMax:number;soilMoisture:number;surfaceType:SurfaceType
-  precipEfficiency:number;evaporation:number;coldPoolStrength:number;speed:number;seed:number
+  precipEfficiency:number;evaporation:number;coldPoolStrength:number;speed:number;seed:number;bubble:number
 }
 export interface ParcelPoint{z:number;env:number;dew:number;parcel:number;buoyancy:number}
 export interface WindPoint{z:number;u:number;v:number}
@@ -27,9 +28,16 @@ export interface Sounding{profile:ParcelPoint[];wind:WindPoint[];cape:number;cin
 
 const NX=40,NY=32,NZ=24,N=NX*NY*NZ,W=48_000,D=36_000,H=15_000,DX=W/NX,DY=D/NY,DZ=H/(NZ-1)
 const G=9.81,CP=1004,LV=2.5e6,KAPPA=.286,RD=287.05,EPS=.622,OMEGA=7.2921e-5,DT=1
+// Updraft helicity (integral of w*zeta over 2-5 km, m2/s2) thresholds and the persistence that makes rotation a mesocyclone.
+// Calibrated for this ~1 km, diffusive grid: sustained rotating updrafts sit at 150-250 m2/s2 (3-km NWP uses ~75).
+const UH_ROTATING=100,UH_MESOCYCLONE=150,MESO_PERSISTENCE=600,UH_Z0=Math.ceil(2000/DZ),UH_Z1=Math.floor(5000/DZ)
 const FLOW_PARTICLES=10_000,PRECIP_PARTICLES=8000,MELT_DEPTH=600,SNOW_FALL=2,RAIN_FALL=7
 const clamp=(x:number,a=0,b=1)=>Math.max(a,Math.min(b,x)),lerp=(a:number,b:number,t:number)=>a+(b-a)*clamp(t)
 const mod=(x:number,n:number)=>((x%n)+n)%n
+// Periodic neighbour lookups: XP/XM hold x indices, YP/YM hold row offsets (y*NX).
+const LAYER=NX*NY
+const XP=Int32Array.from({length:NX},(_,x)=>(x+1)%NX),XM=Int32Array.from({length:NX},(_,x)=>(x+NX-1)%NX)
+const YP=Int32Array.from({length:NY},(_,y)=>(y+1)%NY*NX),YM=Int32Array.from({length:NY},(_,y)=>(y+NY-1)%NY*NX)
 const colormapTexture=(stops:string[])=>{const data=new Uint8Array(256*4),rgb=stops.map(s=>[1,3,5].map(k=>parseInt(s.slice(k,k+2),16)));for(let i=0;i<256;i++){const f=i/255*(rgb.length-1),k=Math.min(rgb.length-2,Math.floor(f)),t=f-k;for(let c=0;c<3;c++)data[i*4+c]=rgb[k][c]+(rgb[k+1][c]-rgb[k][c])*t;data[i*4+3]=255}const tex=new THREE.DataTexture(data,256,1);tex.colorSpace=THREE.SRGBColorSpace;tex.minFilter=tex.magFilter=THREE.LinearFilter;tex.needsUpdate=true;return tex}
 const texture3D=(data:Uint8Array,format:THREE.PixelFormat)=>{const t=new THREE.Data3DTexture(data,NX,NY,NZ);t.format=format;t.type=THREE.UnsignedByteType;t.minFilter=t.magFilter=THREE.LinearFilter;t.wrapS=t.wrapT=THREE.RepeatWrapping;t.wrapR=THREE.ClampToEdgeWrapping;t.unpackAlignment=1;t.needsUpdate=true;return t}
 const softParticleTexture=()=>{const c=document.createElement('canvas');c.width=c.height=64;const x=c.getContext('2d')!,g=x.createRadialGradient(32,32,2,32,32,31);g.addColorStop(0,'rgba(255,255,255,1)');g.addColorStop(.42,'rgba(255,255,255,.78)');g.addColorStop(1,'rgba(255,255,255,0)');x.fillStyle=g;x.fillRect(0,0,64,64);const t=new THREE.CanvasTexture(c);t.colorSpace=THREE.SRGBColorSpace;return t}
@@ -46,10 +54,13 @@ export class Atmosphere{
   private levelHelpers:THREE.GridHelper[]=[];private freezingHelper:THREE.GridHelper
   private precipModel=new Float32Array(PRECIP_PARTICLES*3);private precipAge=new Float32Array(PRECIP_PARTICLES);private precipAlive=new Uint8Array(PRECIP_PARTICLES);private precipNext=0
   private precipGeometry:THREE.BufferGeometry;private precipMaterial:THREE.ShaderMaterial;private precipPoints:THREE.Points
+  private rotation={uh:0,x:0,y:0,anticyclonic:0,persisted:0};private mesoMarker:THREE.Mesh
   private u=new Float32Array(N);private v=new Float32Array(N);private w=new Float32Array(N);private theta=new Float32Array(N);private q=new Float32Array(N);private cloud=new Float32Array(N);private rain=new Float32Array(N);private cold=new Float32Array(N)
   private pressure=new Float32Array(N);private divergence=new Float32Array(N);private scratch=new Float32Array(N);private surfacePattern=new Float32Array(NX*NY)
   private particleModel=new Float32Array(FLOW_PARTICLES*3);private particleAge=new Float32Array(FLOW_PARTICLES);private rng:()=>number;private accumulator=0;private microburstOutflow=0;private frame=0
   private cachedParcel:Sounding
+  // Environmental profile at each model level; the environment only changes on restart.
+  private env!:{p:Float64Array;exner:Float64Array;theta:Float64Array;q:Float64Array;u:Float64Array;v:Float64Array}
   field:FieldMode='composite';showVectors=false;showPrecip=false;time=0;showFieldVolume=true;sliceHeight=2;sliceNorth=0
 
   constructor(canvas:HTMLCanvasElement,config:SimConfig){
@@ -88,18 +99,24 @@ export class Atmosphere{
     this.precipGeometry=new THREE.BufferGeometry();this.precipGeometry.setAttribute('position',new THREE.BufferAttribute(new Float32Array(PRECIP_PARTICLES*3),3));this.precipGeometry.setAttribute('aMelt',new THREE.BufferAttribute(new Float32Array(PRECIP_PARTICLES).fill(-1),1))
     this.precipMaterial=new THREE.ShaderMaterial({vertexShader:precipVertex,fragmentShader:precipFragment,transparent:true,depthWrite:false,toneMapped:false,uniforms:{uScale:{value:500}}})
     this.precipPoints=new THREE.Points(this.precipGeometry,this.precipMaterial);this.precipPoints.frustumCulled=false;this.precipPoints.renderOrder=2;this.scene.add(this.precipPoints)
+    this.mesoMarker=new THREE.Mesh(new THREE.TorusGeometry(2.6,.07,8,64),new THREE.MeshBasicMaterial({color:0xf0b44c,transparent:true,opacity:.9,depthWrite:false}));this.mesoMarker.rotation.x=Math.PI/2;this.mesoMarker.position.y=3.5;this.mesoMarker.renderOrder=3;this.mesoMarker.visible=false;this.scene.add(this.mesoMarker)
     this.initialize();this.cachedParcel=this.computeParcel();this.updateLevels();for(let p=0;p<FLOW_PARTICLES;p++)this.respawnParticle(p,true)
   }
 
-  dispose(){this.controls.dispose();[this.volumeTexture,this.fieldTexture,this.colormap,this.volumeMaterial,this.fieldMaterial,this.sliceMaterial,this.volumeMesh.geometry,this.sliceH.geometry,this.sliceV.geometry,this.precipGeometry,this.precipMaterial].forEach(r=>r?.dispose());this.renderer.dispose()}
+  dispose(){this.controls.dispose();[this.volumeTexture,this.fieldTexture,this.colormap,this.volumeMaterial,this.fieldMaterial,this.sliceMaterial,this.volumeMesh.geometry,this.sliceH.geometry,this.sliceV.geometry,this.precipGeometry,this.precipMaterial,this.mesoMarker.geometry,this.mesoMarker.material as THREE.Material].forEach(r=>r?.dispose());this.renderer.dispose()}
   private surfaceColor(){return{grass:0x596d45,dry:0x776a51,water:0x315d70,urban:0x606469}[this.config.surfaceType]}
   private idx(x:number,y:number,z:number){return mod(x,NX)+NX*(mod(y,NY)+NY*clamp(z,0,NZ-1))}
   private mulberry32(seed:number){return()=>{seed|=0;seed=seed+0x6D2B79F5|0;let t=Math.imul(seed^seed>>>15,1|seed);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
   private pressureAt(z:number){return 101325*Math.exp(-z/8000)}
   private temperatureEnv(z:number){const tp=this.config.tropopause*1000,t3=this.config.surfaceTemp-this.config.lapseLow*3,t8=t3-this.config.lapseMid*5;if(z<=3000)return this.config.surfaceTemp-this.config.lapseLow*z/1000;if(z<=8000)return t3-this.config.lapseMid*(z-3000)/1000;const ttp=t8-this.config.lapseUpper*(tp-8000)/1000;if(z<=tp)return t8-this.config.lapseUpper*(z-8000)/1000;return ttp+this.config.stratoWarming*(z-tp)/1000}
   private thetaEnv(z:number){return(this.temperatureEnv(z)+273.15)*(100000/this.pressureAt(z))**KAPPA}
-  private tempFromTheta(th:number,z:number){return th*(this.pressureAt(z)/100000)**KAPPA-273.15}
-  private qsat(t:number,z:number){const es=611.2*Math.exp(17.67*t/(t+243.5));return clamp(.622*es/Math.max(1000,this.pressureAt(z)-es),0,.045)}
+  private qsat(t:number,z:number){return this.qsatP(t,this.pressureAt(z))}
+  private qsatP(t:number,p:number){const es=611.2*Math.exp(17.67*t/(t+243.5));return clamp(.622*es/Math.max(1000,p-es),0,.045)}
+  private computeEnv(){
+    const f=()=>new Float64Array(NZ),e={p:f(),exner:f(),theta:f(),q:f(),u:f(),v:f()}
+    for(let z=0;z<NZ;z++){const alt=z*DZ,[u,v]=this.windUV(alt);e.p[z]=this.pressureAt(alt);e.exner[z]=(e.p[z]/100000)**KAPPA;e.theta[z]=this.thetaEnv(alt);e.q[z]=this.qEnv(alt);e.u[z]=u;e.v[z]=v}
+    this.env=e
+  }
   private rhEnv(z:number){const tp=this.config.tropopause*1000;if(z<1500)return lerp(this.config.rhSurface,this.config.rhLow,z/1500)/100;if(z<5000)return lerp(this.config.rhLow,this.config.rhMid,(z-1500)/3500)/100;if(z<tp)return lerp(this.config.rhMid,this.config.rhUpper,(z-5000)/Math.max(1000,tp-5000))/100;return this.config.rhUpper/100*.7}
   private qEnv(z:number){return this.rhEnv(z)*this.qsat(this.temperatureEnv(z),z)}
   private windScalar(z:number){if(z<3000)return lerp(this.config.wind0,this.config.wind3,z/3000);if(z<6000)return lerp(this.config.wind3,this.config.wind6,(z-3000)/3000);if(z<10000)return lerp(this.config.wind6,this.config.wind10,(z-6000)/4000);return this.config.wind10}
@@ -119,37 +136,102 @@ export class Atmosphere{
     this.hemiLight.intensity=.45+.9*day
   }
 
-  private initialize(){let walk=0;for(let y=0;y<NY;y++)for(let x=0;x<NX;x++){walk=walk*.82+(this.rng()-.5)*.34;this.surfacePattern[x+NX*y]=walk}for(let z=0;z<NZ;z++)for(let y=0;y<NY;y++)for(let x=0;x<NX;x++){const i=this.idx(x,y,z),alt=z*DZ,[ue,ve]=this.windUV(alt);this.u[i]=ue;this.v[i]=ve;this.w[i]=0;this.theta[i]=this.thetaEnv(alt)+(this.rng()-.5)*.018;this.q[i]=this.qEnv(alt);this.cloud[i]=this.rain[i]=this.cold[i]=0}this.injectBubble(W*.38,D*.45,1);this.injectBubble(W*.61,D*.57,.72)}
+  private initialize(){this.computeEnv();let walk=0;for(let y=0;y<NY;y++)for(let x=0;x<NX;x++){walk=walk*.82+(this.rng()-.5)*.34;this.surfacePattern[x+NX*y]=walk}for(let z=0;z<NZ;z++)for(let y=0;y<NY;y++)for(let x=0;x<NX;x++){const i=this.idx(x,y,z),alt=z*DZ,[ue,ve]=this.windUV(alt);this.u[i]=ue;this.v[i]=ve;this.w[i]=0;this.theta[i]=this.thetaEnv(alt)+(this.rng()-.5)*.018;this.q[i]=this.qEnv(alt);this.cloud[i]=this.rain[i]=this.cold[i]=0}this.injectBubble(W*.38,D*.45,this.config.bubble);this.injectBubble(W*.61,D*.57,.72*this.config.bubble)}
   private injectBubble(cx:number,cy:number,strength:number){for(let z=0;z<Math.min(5,NZ);z++)for(let y=0;y<NY;y++)for(let x=0;x<NX;x++){let dx=x*DX-cx,dy=y*DY-cy;if(dx>W/2)dx-=W;if(dx<-W/2)dx+=W;if(dy>D/2)dy-=D;if(dy<-D/2)dy+=D;const d2=(dx/4200)**2+(dy/4200)**2+(z*DZ/1800)**2,a=Math.exp(-d2)*strength,i=this.idx(x,y,z);this.theta[i]+=3.2*a;this.q[i]+=.003*a;this.w[i]+=1.1*a}}
   perturb(nx:number,ny:number,strength=1){this.pointer.set(nx*2-1,-(ny*2-1));this.raycaster.setFromCamera(this.pointer,this.camera);const hit=this.raycaster.intersectObject(this.ground,false)[0];const cx=hit?clamp((hit.point.x+W/2000)*1000,0,W):W/2,cy=hit?clamp((D/2000-hit.point.z)*1000,0,D):D/2;this.injectBubble(cx,cy,strength)}
 
-  private sample(a:Float32Array,x:number,y:number,z:number){x=mod(x,NX);y=mod(y,NY);z=clamp(z,0,NZ-1.001);const x0=Math.floor(x),y0=Math.floor(y),z0=Math.floor(z),x1=(x0+1)%NX,y1=(y0+1)%NY,z1=Math.min(NZ-1,z0+1),fx=x-x0,fy=y-y0,fz=z-z0;const c000=a[this.idx(x0,y0,z0)],c100=a[this.idx(x1,y0,z0)],c010=a[this.idx(x0,y1,z0)],c110=a[this.idx(x1,y1,z0)],c001=a[this.idx(x0,y0,z1)],c101=a[this.idx(x1,y0,z1)],c011=a[this.idx(x0,y1,z1)],c111=a[this.idx(x1,y1,z1)],c00=lerp(c000,c100,fx),c10=lerp(c010,c110,fx),c01=lerp(c001,c101,fx),c11=lerp(c011,c111,fx);return lerp(lerp(c00,c10,fy),lerp(c01,c11,fy),fz)}
-  private advect(a:Float32Array,dt:number,decay=1,fall=0){for(let z=0;z<NZ;z++)for(let y=0;y<NY;y++)for(let x=0;x<NX;x++){const i=this.idx(x,y,z);this.scratch[i]=this.sample(a,x-this.u[i]*dt/DX,y-this.v[i]*dt/DY,z-(this.w[i]-fall)*dt/DZ)*decay}a.set(this.scratch)}
+  private sample(a:Float32Array,x:number,y:number,z:number){
+    x=mod(x,NX);y=mod(y,NY);z=clamp(z,0,NZ-1.001)
+    const x0=Math.floor(x),y0=Math.floor(y),z0=Math.floor(z),x1=(x0+1)%NX,y1=(y0+1)%NY,z1=Math.min(NZ-1,z0+1),fx=x-x0,fy=y-y0,fz=z-z0
+    const r0=NX*y0,r1=NX*y1,l0=LAYER*z0,l1=LAYER*z1
+    const c00=lerp(a[x0+r0+l0],a[x1+r0+l0],fx),c10=lerp(a[x0+r1+l0],a[x1+r1+l0],fx),c01=lerp(a[x0+r0+l1],a[x1+r0+l1],fx),c11=lerp(a[x0+r1+l1],a[x1+r1+l1],fx)
+    return lerp(lerp(c00,c10,fy),lerp(c01,c11,fy),fz)
+  }
+  private advect(a:Float32Array,dt:number,decay=1,fall=0){
+    const s=this.scratch,u=this.u,v=this.v,w=this.w
+    for(let z=0,i=0;z<NZ;z++)for(let y=0;y<NY;y++)for(let x=0;x<NX;x++,i++)s[i]=this.sample(a,x-u[i]*dt/DX,y-v[i]*dt/DY,z-(w[i]-fall)*dt/DZ)*decay
+    a.set(s)
+  }
+  // Departure points of one semi-Lagrangian step (8 corner indices + 3 weights per cell), shared by every field
+  // so that all of them are carried by the same, pre-step velocity.
+  private backtrace?:{corner:Int32Array;weight:Float64Array}
+  private computeBacktrace(dt:number){
+    const b=this.backtrace??=(this.backtrace={corner:new Int32Array(N*8),weight:new Float64Array(N*3)}),c=b.corner,wt=b.weight,u=this.u,v=this.v,w=this.w
+    for(let z=0,i=0;z<NZ;z++)for(let y=0;y<NY;y++)for(let x=0;x<NX;x++,i++){
+      const px=mod(x-u[i]*dt/DX,NX),py=mod(y-v[i]*dt/DY,NY),pz=clamp(z-w[i]*dt/DZ,0,NZ-1.001)
+      const x0=Math.floor(px),y0=Math.floor(py),z0=Math.floor(pz),x1=(x0+1)%NX,r0=NX*y0,r1=NX*((y0+1)%NY),l0=LAYER*z0,l1=LAYER*Math.min(NZ-1,z0+1),k=i*8
+      c[k]=x0+r0+l0;c[k+1]=x1+r0+l0;c[k+2]=x0+r1+l0;c[k+3]=x1+r1+l0;c[k+4]=x0+r0+l1;c[k+5]=x1+r0+l1;c[k+6]=x0+r1+l1;c[k+7]=x1+r1+l1
+      wt[i*3]=px-x0;wt[i*3+1]=py-y0;wt[i*3+2]=pz-z0
+    }
+  }
+  private advectBacktrace(a:Float32Array,decay:number){
+    const s=this.scratch,{corner:c,weight:wt}=this.backtrace!
+    for(let i=0;i<N;i++){const k=i*8,fx=wt[i*3],fy=wt[i*3+1],fz=wt[i*3+2]
+      const c00=a[c[k]]+(a[c[k+1]]-a[c[k]])*fx,c10=a[c[k+2]]+(a[c[k+3]]-a[c[k+2]])*fx,c01=a[c[k+4]]+(a[c[k+5]]-a[c[k+4]])*fx,c11=a[c[k+6]]+(a[c[k+7]]-a[c[k+6]])*fx
+      const lo=c00+(c10-c00)*fy,hi=c01+(c11-c01)*fy;s[i]=(lo+(hi-lo)*fz)*decay}
+    a.set(s)
+  }
   advance(realDt:number){this.accumulator+=realDt*this.config.speed;let steps=0;while(this.accumulator>=DT&&steps<12){this.step(DT);this.accumulator-=DT;this.time+=DT;steps++}}
   private step(dt:number){
-    this.microburstOutflow*=.993;this.advect(this.u,dt,.9999);this.advect(this.v,dt,.9999);this.advect(this.w,dt,.9995);this.advect(this.theta,dt);this.advect(this.q,dt,.999999);this.advect(this.cloud,dt,.99995);this.advect(this.rain,dt,.9995,7);this.advect(this.cold,dt,.9992)
-    const surf=this.surface(),solar=this.insolation(),absorbed=solar*(1-surf.albedo),heatFlux=absorbed*surf.sensible/surf.inertia,moistFlux=absorbed*(1-surf.sensible)*surf.evap*this.config.soilMoisture/100,lfcZ=(this.cachedParcel.lfc??1.5)*1000,f=2*OMEGA*Math.sin(this.config.latitude*Math.PI/180)
-    for(let z=0;z<NZ;z++)for(let y=0;y<NY;y++)for(let x=0;x<NX;x++){
-      const i=this.idx(x,y,z),alt=z*DZ,p=this.pressureAt(alt),exner=(p/100000)**KAPPA,temp=this.tempFromTheta(this.theta[i],alt),sat=this.qsat(temp,alt),rh=this.q[i]/Math.max(.00001,sat)
-      if(this.q[i]>sat){const cond=Math.min(this.q[i]-sat,(this.q[i]-sat)*.32*dt);this.q[i]-=cond;this.cloud[i]+=cond;this.theta[i]+=LV/CP/exner*cond}
-      if(rh<1&&this.cloud[i]>0){const evap=Math.min(this.cloud[i],.00006*this.config.entrainment*(1-rh)*dt);this.cloud[i]-=evap;this.q[i]+=evap;const cool=LV/CP/exner*evap;this.theta[i]-=cool;this.cold[i]+=cool*.14}
-      const auto=Math.max(0,this.cloud[i]-.0009)*.035*this.config.precipEfficiency*dt;this.cloud[i]-=auto;this.rain[i]+=auto
-      if(this.q[i]<sat&&this.rain[i]>0){const evap=Math.min(this.rain[i],(sat-this.q[i])*.018*this.config.evaporation*dt);this.rain[i]-=evap;this.q[i]+=evap;const cool=LV/CP/exner*evap*this.config.coldPoolStrength;this.theta[i]-=cool;this.cold[i]+=cool}
-      const buoy=(this.theta[i]-this.thetaEnv(alt))/Math.max(250,this.thetaEnv(alt))+.61*(this.q[i]-this.qEnv(alt))-1.8*this.cloud[i]-2.5*this.rain[i];this.w[i]+=G*buoy*dt
-      const[ue,ve]=this.windUV(alt),du=this.u[i]-ue,dv=this.v[i]-ve;this.u[i]+=f*dv*dt;this.v[i]-=f*du*dt
-      if(z<=1){const weight=Math.exp(-alt/300),pattern=1+this.surfacePattern[x+NX*y]*.32,rho=1.18*Math.exp(-alt/9000);this.theta[i]+=heatFlux*pattern/(rho*CP*300)*weight*dt;this.q[i]+=moistFlux*1.3e-10*weight*dt}
-      if(alt<Math.min(3200,lfcZ)){const s=this.idx(x,y,0),gx=this.cold[this.idx(x+1,y,0)]-this.cold[this.idx(x-1,y,0)],gy=this.cold[this.idx(x,y+1,0)]-this.cold[this.idx(x,y-1,0)],edge=Math.hypot(gx,gy),core=this.cold[s];this.w[i]+=G*edge/300*.45*this.config.coldPoolStrength*Math.max(.12,1-alt/Math.max(300,lfcZ))*dt;if(alt<1300&&core>1)this.w[i]-=G*core/300*.52*Math.exp(-alt/520)*dt}
-      if(z<=1&&this.w[i]<-5&&this.rain[i]>.0001){const impact=Math.min(38,-this.w[i]*Math.sqrt(this.rain[i]/.00055))*this.config.precipEfficiency,dpx=(-this.w[this.idx(x+1,y,z)]+this.w[this.idx(x-1,y,z)])*.5,dpy=(-this.w[this.idx(x,y+1,z)]+this.w[this.idx(x,y-1,z)])*.5;this.u[i]-=dpx*.12*dt;this.v[i]-=dpy*.12*dt;this.cold[i]+=impact*.0012*dt;this.microburstOutflow=Math.max(this.microburstOutflow,impact)}
-      const mix=clamp(this.config.turbulence*.0015*dt,0,.01);const thAvg=(this.theta[this.idx(x+1,y,z)]+this.theta[this.idx(x-1,y,z)]+this.theta[this.idx(x,y+1,z)]+this.theta[this.idx(x,y-1,z)])/4;this.theta[i]=lerp(this.theta[i],thAvg,mix);const qAvg=(this.q[this.idx(x+1,y,z)]+this.q[this.idx(x-1,y,z)]+this.q[this.idx(x,y+1,z)]+this.q[this.idx(x,y-1,z)])/4;this.q[i]=lerp(this.q[i],qAvg,mix);this.cold[i]=clamp(this.cold[i],0,15)
-      const spongeStart=Math.max(this.config.tropopause*1000+1600,13_000);if(alt>spongeStart){const s=clamp((alt-spongeStart)/(H-spongeStart))*.06*dt;this.w[i]*=1-s;this.u[i]=lerp(this.u[i],ue,s);this.v[i]=lerp(this.v[i],ve,s);this.theta[i]=lerp(this.theta[i],this.thetaEnv(alt),s)}
+    this.microburstOutflow*=.993
+    this.advect(this.rain,dt,.9995,RAIN_FALL)
+    this.computeBacktrace(dt)
+    this.advectBacktrace(this.u,1);this.advectBacktrace(this.v,1);this.advectBacktrace(this.w,.9995);this.advectBacktrace(this.theta,1);this.advectBacktrace(this.q,.999999);this.advectBacktrace(this.cloud,.99995);this.advectBacktrace(this.cold,.9992)
+    const cfg=this.config,e=this.env,u=this.u,v=this.v,w=this.w,theta=this.theta,q=this.q,cloud=this.cloud,rain=this.rain,cold=this.cold
+    const surf=this.surface(),solar=this.insolation(),absorbed=solar*(1-surf.albedo),heatFlux=absorbed*surf.sensible/surf.inertia,moistFlux=absorbed*(1-surf.sensible)*surf.evap*cfg.soilMoisture/100,lfcZ=(this.cachedParcel.lfc??1.5)*1000,f=2*OMEGA*Math.sin(cfg.latitude*Math.PI/180)
+    const mix=clamp(cfg.turbulence*.0015*dt,0,.01),spongeStart=Math.max(cfg.tropopause*1000+1600,13_000),liftTop=Math.min(3200,lfcZ)
+    for(let z=0,i=0;z<NZ;z++){
+      const alt=z*DZ,p=e.p[z],exner=e.exner[z],thEnv=e.theta[z],qEnv=e.q[z],ue=e.u[z],ve=e.v[z],l=z*LAYER
+      for(let y=0;y<NY;y++){const row=y*NX,yp=YP[y],ym=YM[y]
+        for(let x=0;x<NX;x++,i++){
+          const xp=XP[x],xm=XM[x],temp=theta[i]*exner-273.15,sat=this.qsatP(temp,p),rh=q[i]/Math.max(.00001,sat)
+          if(q[i]>sat){const cond=Math.min(q[i]-sat,(q[i]-sat)*.32*dt);q[i]-=cond;cloud[i]+=cond;theta[i]+=LV/CP/exner*cond}
+          if(rh<1&&cloud[i]>0){const evap=Math.min(cloud[i],.00006*cfg.entrainment*(1-rh)*dt);cloud[i]-=evap;q[i]+=evap;const cool=LV/CP/exner*evap;theta[i]-=cool;cold[i]+=cool*.14}
+          const auto=Math.max(0,cloud[i]-.0009)*.035*cfg.precipEfficiency*dt;cloud[i]-=auto;rain[i]+=auto
+          if(q[i]<sat&&rain[i]>0){const evap=Math.min(rain[i],(sat-q[i])*.018*cfg.evaporation*dt);rain[i]-=evap;q[i]+=evap;const cool=LV/CP/exner*evap*cfg.coldPoolStrength;theta[i]-=cool;cold[i]+=cool}
+          const buoy=(theta[i]-thEnv)/Math.max(250,thEnv)+.61*(q[i]-qEnv)-1.8*cloud[i]-2.5*rain[i];w[i]+=G*buoy*dt
+          // Damp and rotate only the departure from the environmental wind, so the imposed shear profile is not eroded.
+          const du=(u[i]-ue)*.9999,dv=(v[i]-ve)*.9999;u[i]=ue+du+f*dv*dt;v[i]=ve+dv-f*du*dt
+          if(z<=1){const weight=Math.exp(-alt/300),pattern=1+this.surfacePattern[x+row]*.32,rho=1.18*Math.exp(-alt/9000);theta[i]+=heatFlux*pattern/(rho*CP*300)*weight*dt;q[i]+=moistFlux*1.3e-10*weight*dt}
+          if(alt<liftTop){const gx=cold[xp+row]-cold[xm+row],gy=cold[x+yp]-cold[x+ym],edge=Math.hypot(gx,gy),core=cold[x+row];w[i]+=G*edge/300*.45*cfg.coldPoolStrength*Math.max(.12,1-alt/Math.max(300,lfcZ))*dt;if(alt<1300&&core>1)w[i]-=G*core/300*.52*Math.exp(-alt/520)*dt}
+          if(z<=1&&w[i]<-5&&rain[i]>.0001){const impact=Math.min(38,-w[i]*Math.sqrt(rain[i]/.00055))*cfg.precipEfficiency,dpx=(-w[xp+row+l]+w[xm+row+l])*.5,dpy=(-w[x+yp+l]+w[x+ym+l])*.5;u[i]-=dpx*.12*dt;v[i]-=dpy*.12*dt;cold[i]+=impact*.0012*dt;this.microburstOutflow=Math.max(this.microburstOutflow,impact)}
+          const thAvg=(theta[xp+row+l]+theta[xm+row+l]+theta[x+yp+l]+theta[x+ym+l])/4;theta[i]=lerp(theta[i],thAvg,mix);const qAvg=(q[xp+row+l]+q[xm+row+l]+q[x+yp+l]+q[x+ym+l])/4;q[i]=lerp(q[i],qAvg,mix);cold[i]=clamp(cold[i],0,15)
+          if(alt>spongeStart){const s=clamp((alt-spongeStart)/(H-spongeStart))*.06*dt;w[i]*=1-s;u[i]=lerp(u[i],ue,s);v[i]=lerp(v[i],ve,s);theta[i]=lerp(theta[i],thEnv,s)}
+        }
+      }
     }
-    this.project(dt,16);for(let y=0;y<NY;y++)for(let x=0;x<NX;x++){const b=this.idx(x,y,0),t=this.idx(x,y,NZ-1);this.w[b]=0;this.u[b]*=.94;this.v[b]*=.94;this.w[t]=0}
-    this.updateParticles(dt);if(this.showPrecip)this.updatePrecip(dt)
+    this.project(dt,16);for(let b=0;b<LAYER;b++){w[b]=0;u[b]*=.94;v[b]*=.94;w[b+(NZ-1)*LAYER]=0}
+    if(this.showVectors)this.updateParticles(dt)
+    if(this.showPrecip)this.updatePrecip(dt)
+    this.updateRotation(dt)
   }
-  private project(dt:number,iters:number){this.pressure.fill(0);const ix=1/(DX*DX),iy=1/(DY*DY),iz=1/(DZ*DZ),den=2*(ix+iy+iz);for(let z=1;z<NZ-1;z++)for(let y=0;y<NY;y++)for(let x=0;x<NX;x++){const i=this.idx(x,y,z);this.divergence[i]=(this.u[this.idx(x+1,y,z)]-this.u[this.idx(x-1,y,z)])/(2*DX)+(this.v[this.idx(x,y+1,z)]-this.v[this.idx(x,y-1,z)])/(2*DY)+(this.w[this.idx(x,y,z+1)]-this.w[this.idx(x,y,z-1)])/(2*DZ)}for(let k=0;k<iters;k++)for(let z=1;z<NZ-1;z++)for(let y=0;y<NY;y++)for(let x=0;x<NX;x++){const i=this.idx(x,y,z);this.pressure[i]=((this.pressure[this.idx(x+1,y,z)]+this.pressure[this.idx(x-1,y,z)])*ix+(this.pressure[this.idx(x,y+1,z)]+this.pressure[this.idx(x,y-1,z)])*iy+(this.pressure[this.idx(x,y,z+1)]+this.pressure[this.idx(x,y,z-1)])*iz-this.divergence[i]/dt)/den}for(let z=1;z<NZ-1;z++)for(let y=0;y<NY;y++)for(let x=0;x<NX;x++){const i=this.idx(x,y,z);this.u[i]-=dt*(this.pressure[this.idx(x+1,y,z)]-this.pressure[this.idx(x-1,y,z)])/(2*DX);this.v[i]-=dt*(this.pressure[this.idx(x,y+1,z)]-this.pressure[this.idx(x,y-1,z)])/(2*DY);this.w[i]-=dt*(this.pressure[this.idx(x,y,z+1)]-this.pressure[this.idx(x,y,z-1)])/(2*DZ);this.u[i]=clamp(this.u[i],-85,85);this.v[i]=clamp(this.v[i],-85,85);this.w[i]=clamp(this.w[i],-60,60)}}
+  // Approximate projection: Poisson solve by SOR, warm-started from the previous step (dt is constant).
+  // Ground: dp/dz=0, consistent with w=0 there. Top: p=0 under the sponge layer. Sides: periodic.
+  private project(dt:number,iters:number){
+    const p=this.pressure,div=this.divergence,u=this.u,v=this.v,w=this.w,ix=1/(DX*DX),iy=1/(DY*DY),iz=1/(DZ*DZ),den=2*(ix+iy+iz),omega=1.7
+    for(let z=1;z<NZ-1;z++){const l=z*LAYER;for(let y=0;y<NY;y++){const row=y*NX+l,yp=YP[y]+l,ym=YM[y]+l;for(let x=0;x<NX;x++){const i=x+row;div[i]=(u[XP[x]+row]-u[XM[x]+row])/(2*DX)+(v[x+yp]-v[x+ym])/(2*DY)+(w[i+LAYER]-w[i-LAYER])/(2*DZ)}}}
+    p.fill(0,(NZ-1)*LAYER)
+    for(let k=0;k<iters;k++){
+      for(let i=0;i<LAYER;i++)p[i]=p[i+LAYER]
+      for(let z=1;z<NZ-1;z++){const l=z*LAYER;for(let y=0;y<NY;y++){const row=y*NX+l,yp=YP[y]+l,ym=YM[y]+l;for(let x=0;x<NX;x++){const i=x+row,gs=((p[XP[x]+row]+p[XM[x]+row])*ix+(p[x+yp]+p[x+ym])*iy+(p[i+LAYER]+p[i-LAYER])*iz-div[i]/dt)/den;p[i]+=omega*(gs-p[i])}}}
+    }
+    for(let i=0;i<LAYER;i++)p[i]=p[i+LAYER]
+    for(let z=1;z<NZ-1;z++){const l=z*LAYER;for(let y=0;y<NY;y++){const row=y*NX+l,yp=YP[y]+l,ym=YM[y]+l;for(let x=0;x<NX;x++){const i=x+row
+      u[i]-=dt*(p[XP[x]+row]-p[XM[x]+row])/(2*DX);v[i]-=dt*(p[x+yp]-p[x+ym])/(2*DY);w[i]-=dt*(p[i+LAYER]-p[i-LAYER])/(2*DZ)
+      u[i]=clamp(u[i],-85,85);v[i]=clamp(v[i],-85,85);w[i]=clamp(w[i],-60,60)}}}
+  }
 
   private respawnParticle(p:number,full=false){const j=p*3;this.particleModel[j]=this.rng()*W;this.particleModel[j+1]=this.rng()*D;this.particleModel[j+2]=full?this.rng()*H*.75:this.rng()*1800;this.particleAge[p]=this.rng()*500}
   private updateParticles(dt:number){const pos=this.flowGeometry.getAttribute('position') as THREE.BufferAttribute,col=this.flowGeometry.getAttribute('color') as THREE.BufferAttribute;for(let p=0;p<FLOW_PARTICLES;p++){const j=p*3;let x=this.particleModel[j],y=this.particleModel[j+1],z=this.particleModel[j+2],gx=x/DX,gy=y/DY,gz=z/DZ,uu=this.sample(this.u,gx,gy,gz),vv=this.sample(this.v,gx,gy,gz),ww=this.sample(this.w,gx,gy,gz);x=mod(x+uu*dt,W);y=mod(y+vv*dt,D);z+=ww*dt;this.particleAge[p]+=dt;if(z<0||z>H||this.particleAge[p]>900){this.respawnParticle(p);x=this.particleModel[j];y=this.particleModel[j+1];z=this.particleModel[j+2]}else{this.particleModel[j]=x;this.particleModel[j+1]=y;this.particleModel[j+2]=z}pos.setXYZ(p,x/1000-W/2000,z/1000,D/2000-y/1000);if(ww>1)col.setXYZ(p,1,.5,.18);else if(ww<-1)col.setXYZ(p,.25,.62,1);else col.setXYZ(p,.72,.82,.86)}pos.needsUpdate=true;col.needsUpdate=true}
+  private uhColumn?:Float32Array
+  private updateRotation(dt:number){
+    const r=this.rotation,col=this.uhColumn??=new Float32Array(LAYER);let max=0,min=0,bx=0,by=0
+    for(let y=0;y<NY;y++)for(let x=0;x<NX;x++){let uh=0
+      for(let z=UH_Z0;z<=UH_Z1;z++){const zeta=(this.v[this.idx(x+1,y,z)]-this.v[this.idx(x-1,y,z)])/(2*DX)-(this.u[this.idx(x,y+1,z)]-this.u[this.idx(x,y-1,z)])/(2*DY);uh+=this.w[this.idx(x,y,z)]*zeta*DZ}
+      col[x+NX*y]=uh
+      if(uh>max){max=uh;bx=x;by=y}min=Math.min(min,uh)}
+    r.uh=max;r.anticyclonic=-min;r.x=bx;r.y=by;r.persisted=max>=UH_MESOCYCLONE?r.persisted+dt:0
+  }
   // Visual only: the model has no ice, so a particle's phase comes from its height relative to the environmental 0 °C level.
   private meltFraction(z:number){const f=this.cachedParcel.freezing;return f===null?1:clamp((f*1000-z)/MELT_DEPTH)}
   private updatePrecip(dt:number){
@@ -173,6 +255,7 @@ export class Atmosphere{
       case 'theta':return(this.theta[i]-thEnv)*exner
       case 'moisture':return 100*this.q[i]/Math.max(1e-5,this.qsat(this.theta[i]*exner-273.15,alt))
       case 'vorticity':return 1000*((this.v[this.idx(x+1,y,z)]-this.v[this.idx(x-1,y,z)])/(2*DX)-(this.u[this.idx(x,y+1,z)]-this.u[this.idx(x,y-1,z)])/(2*DY))
+      case 'helicity':return z>=UH_Z0&&z<=UH_Z1&&this.uhColumn?this.uhColumn[x+NX*y]:0
       case 'coldpool':return this.cold[i]
     }
   }
@@ -193,7 +276,14 @@ export class Atmosphere{
   sounding(){return this.cachedParcel}
   private updateLevels(){const lv=[this.cachedParcel.lcl,this.cachedParcel.lfc,this.cachedParcel.el];this.levelHelpers.forEach((h,i)=>{h.visible=lv[i]!==null;if(lv[i]!==null)h.position.y=lv[i]!});this.freezingHelper.position.y=this.cachedParcel.freezing??0}
   private countCores(){const mask=new Uint8Array(NX*NY);for(let y=0;y<NY;y++)for(let x=0;x<NX;x++){let active=false;for(let z=3;z<Math.min(NZ-2,11);z++){const i=this.idx(x,y,z);if(this.w[i]>2&&this.cloud[i]>.00007){active=true;break}}mask[x+NX*y]=active?1:0}let cores=0;const stack:number[]=[];for(let i=0;i<mask.length;i++){if(mask[i]!==1)continue;cores++;mask[i]=2;stack.push(i);while(stack.length){const a=stack.pop()!,x=a%NX,y=Math.floor(a/NX);for(const b of [mod(x+1,NX)+NX*y,mod(x-1,NX)+NX*y+x*0,x+NX*mod(y+1,NY),x+NX*mod(y-1,NY)])if(mask[b]===1){mask[b]=2;stack.push(b)}}}return cores}
-  diagnostics(){let up=0,down=0,rainRate=0,top=0,coldMax=0,thermalTop=0,maxCloud=0;for(let z=0;z<NZ;z++)for(let y=0;y<NY;y++)for(let x=0;x<NX;x++){const i=this.idx(x,y,z),alt=z*DZ;up=Math.max(up,this.w[i]);down=Math.max(down,-this.w[i]);rainRate=Math.max(rainRate,this.rain[i]*12000);maxCloud=Math.max(maxCloud,this.cloud[i]);if(this.cloud[i]>.00007)top=Math.max(top,alt/1000);if(this.w[i]>.6)thermalTop=Math.max(thermalTop,alt/1000);if(alt<1500)coldMax=Math.max(coldMax,this.cold[i])}const cores=this.countCores(),shear=Math.hypot(...[this.windUV(6000)[0]-this.windUV(0)[0],this.windUV(6000)[1]-this.windUV(0)[1]] as [number,number]),cellType=coldMax>7&&up<2?'Outflow-dominant':cores>=3?'3D-мультиячейка':cores===2?'Две взаимодействующие ячейки':cores===1&&shear>18?'Наклонённая организованная ячейка':cores===1?'Одиночная 3D-ячейка':top>1?'Развивающийся 3D cumulus':'Термики пограничного слоя',cellReason=cores?`${cores} пространственно разделённых updraft-ядра`:'глубокое ядро ещё не сформировано';let logic='Трёхмерные термики перераспределяют тепло и влагу в пограничном слое.';if(top>=(this.cachedParcel.lcl??99))logic='На LCL объём воздуха насыщается; сухое вовлечение размывает края облака.';if(top>=(this.cachedParcel.lfc??99))logic='Выше LFC updraft ускоряется в объёме и наклоняется векторным сдвигом ветра.';if(top>=(this.cachedParcel.el??99)-.6)logic='У EL плавучесть исчезает: поток расходится во всех горизонтальных направлениях, формируя наковальню.';if(coldMax>3)logic+=coldMax>7?' Холодный купол подтекает под inflow и уничтожает исходное ядро.':' 3D gust front поднимает тёплый воздух на периферии cold pool.';if(this.microburstOutflow>8)logic+=' Нагруженный осадками downdraft создал радиально расходящийся микропорыв.';return{...this.cachedParcel,updraft:up,downdraft:down,rain:rainRate,cloudTop:top,thermalTop,cloudWater:maxCloud*1000,coldPool:coldMax,microburst:this.microburstOutflow,cellType,cellReason,logic,insolation:this.insolation(),sunElevation:Math.asin(clamp(this.sunDirection().y,-1,1))*180/Math.PI}}
+  diagnostics(){let up=0,down=0,rainRate=0,top=0,coldMax=0,thermalTop=0,maxCloud=0;for(let z=0;z<NZ;z++)for(let y=0;y<NY;y++)for(let x=0;x<NX;x++){const i=this.idx(x,y,z),alt=z*DZ;up=Math.max(up,this.w[i]);down=Math.max(down,-this.w[i]);rainRate=Math.max(rainRate,this.rain[i]*12000);maxCloud=Math.max(maxCloud,this.cloud[i]);if(this.cloud[i]>.00007)top=Math.max(top,alt/1000);if(this.w[i]>.6)thermalTop=Math.max(thermalTop,alt/1000);if(alt<1500)coldMax=Math.max(coldMax,this.cold[i])}const cores=this.countCores(),shear=Math.hypot(...[this.windUV(6000)[0]-this.windUV(0)[0],this.windUV(6000)[1]-this.windUV(0)[1]] as [number,number]),cellType=coldMax>7&&up<2?'Outflow-dominant':cores>=3?'3D-мультиячейка':cores===2?'Две взаимодействующие ячейки':cores===1&&shear>18?'Наклонённая организованная ячейка':cores===1?'Одиночная 3D-ячейка':top>1?'Развивающийся 3D cumulus':'Термики пограничного слоя',cellReason=cores?`${cores} пространственно разделённых updraft-ядра`:'глубокое ядро ещё не сформировано';let logic='Трёхмерные термики перераспределяют тепло и влагу в пограничном слое.';if(top>=(this.cachedParcel.lcl??99))logic='На LCL объём воздуха насыщается; сухое вовлечение размывает края облака.';if(top>=(this.cachedParcel.lfc??99))logic='Выше LFC updraft ускоряется в объёме и наклоняется векторным сдвигом ветра.';if(top>=(this.cachedParcel.el??99)-.6)logic='У EL плавучесть исчезает: поток расходится во всех горизонтальных направлениях, формируя наковальню.';if(coldMax>3)logic+=coldMax>7?' Холодный купол подтекает под inflow и уничтожает исходное ядро.':' 3D gust front поднимает тёплый воздух на периферии cold pool.';if(this.microburstOutflow>8)logic+=' Нагруженный осадками downdraft создал радиально расходящийся микропорыв.'
+    const r=this.rotation,meso=r.persisted>=MESO_PERSISTENCE,rotating=r.uh>=UH_ROTATING
+    if(meso)logic+=` Восходящий поток вращается циклонически уже ${Math.floor(r.persisted/60)} мин: горизонтальные вихри от сдвига ветра наклонены потоком и растянуты в мезоциклон.`
+    else if(rotating)logic+=' Восходящий поток наклоняет горизонтальную завихренность сдвига ветра: появляется вращение.'
+    if(r.anticyclonic>=UH_MESOCYCLONE)logic+=' Есть и антициклонически вращающийся поток — признак расщепления на правую и левую ячейки.'
+    return{...this.cachedParcel,updraft:up,downdraft:down,rain:rainRate,cloudTop:top,thermalTop,cloudWater:maxCloud*1000,coldPool:coldMax,microburst:this.microburstOutflow,
+      cellType:meso?'Суперячейка с мезоциклоном':cellType,cellReason:meso?`вращение держится ${Math.floor(r.persisted/60)} мин, UH ${r.uh.toFixed(0)} м²/с²`:rotating?`${cellReason}; в потоке появилось вращение`:cellReason,
+      updraftHelicity:r.uh,mesocyclone:meso,logic,insolation:this.insolation(),sunElevation:Math.asin(clamp(this.sunDirection().y,-1,1))*180/Math.PI}}
 
   render(){const width=Math.max(2,this.canvas.clientWidth),height=Math.max(2,this.canvas.clientHeight);if(this.canvas.width!==Math.floor(width*Math.min(devicePixelRatio,1.5))||this.canvas.height!==Math.floor(height*Math.min(devicePixelRatio,1.5))){this.renderer.setSize(width,height,false);this.camera.aspect=width/height;this.camera.updateProjectionMatrix()}
     const field=this.field==='composite'?null:this.field
@@ -202,6 +292,7 @@ export class Atmosphere{
     this.fieldMesh.visible=!!field&&this.showFieldVolume;this.sliceH.visible=this.sliceV.visible=!!field
     this.shared.uSliceOn.value=field?1:0;this.shared.uSliceH.value=this.sliceH.position.y=this.sliceHeight;this.shared.uSliceZ.value=this.sliceV.position.z=-this.sliceNorth
     this.flowPoints.visible=this.showVectors;this.vectorLines.visible=this.showVectors;
+    this.mesoMarker.visible=this.rotation.uh>=UH_ROTATING;if(this.mesoMarker.visible){this.mesoMarker.position.x=this.rotation.x*DX/1000-W/2000;this.mesoMarker.position.z=D/2000-this.rotation.y*DY/1000;(this.mesoMarker.material as THREE.MeshBasicMaterial).color.set(this.rotation.persisted>=MESO_PERSISTENCE?0xf0b44c:0xc9d6dc)}
     this.precipPoints.visible=this.showPrecip;this.freezingHelper.visible=this.showPrecip&&this.cachedParcel.freezing!==null
     if(this.showPrecip){this.syncPrecip();this.precipMaterial.uniforms.uScale.value=this.renderer.getDrawingBufferSize(new THREE.Vector2()).y*.5}if(this.showVectors&&this.frame%4===0)this.updateVectors();this.frame++;this.controls.update();this.renderer.render(this.scene,this.camera)}
 }
