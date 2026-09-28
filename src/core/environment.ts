@@ -1,7 +1,7 @@
 import type { SimConfig } from './config'
 import { EPS, G, KAPPA, RD } from './constants'
 import type { Grid } from './grid'
-import { clamp, lerp } from './math'
+import { clamp, lerp, lerpAngle, mod } from './math'
 
 const SURFACE_PRESSURE = 101325, PRESSURE_STEP = 10
 
@@ -78,12 +78,13 @@ export class Environment {
     return c.wind10
   }
 
+  /** Direction the wind blows from, turning along the shorter arc between the nodes (350° to 10° passes north). */
   windDirection(z: number) {
     const c = this.config
-    if (z < 3000) return lerp(c.windDir0, c.windDir3, z / 3000)
-    if (z < 6000) return lerp(c.windDir3, c.windDir6, (z - 3000) / 3000)
-    if (z < 10000) return lerp(c.windDir6, c.windDir10, (z - 6000) / 4000)
-    return c.windDir10
+    if (z < 3000) return lerpAngle(c.windDir0, c.windDir3, z / 3000)
+    if (z < 6000) return lerpAngle(c.windDir3, c.windDir6, (z - 3000) / 3000)
+    if (z < 10000) return lerpAngle(c.windDir6, c.windDir10, (z - 6000) / 4000)
+    return mod(c.windDir10, 360)
   }
 
   /** Wind components (u eastward, v northward) from the meteorological speed/direction profile. */
