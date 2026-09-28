@@ -51,11 +51,10 @@ describe('pressure projection', () => {
 })
 
 describe('water budget', () => {
-  // No sunshine, so no surface evaporation. Rain does leave through the ground but is not counted yet. Fails because
-  // trilinear semi-Lagrangian transport is not conservative: even on exactly divergence-free velocities it creates
-  // ~7.5 % of water per hour in a storm (it was +27 % before the consistent projection). Roadmap: water conservation
-  // of transport, rain fallout accounting, hidden sinks.
-  it.fails('conserves total water within 1 % per hour in a storm', () => {
+  // No sunshine, so no surface evaporation; rain that reaches the ground is counted. Transport creates no water since the
+  // mass fixer (it created +27 %/h before the consistent projection, +7.5 %/h after it). Today's -0.98 %/h is the
+  // hidden sinks (q, cloud and rain decay factors): tighten this to 0.1 % once they are removed.
+  it('conserves total water within 1 % per hour in a storm', () => {
     const model = new AtmosphereModel({ ...SUMMER_DAY, solarMax: 0 }, smallGrid(20, 16))
     const before = totalWater(model)
     run(model, 3600)

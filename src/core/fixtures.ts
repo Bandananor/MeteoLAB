@@ -36,15 +36,21 @@ export function levelMean(model: AtmosphereModel, field: Float32Array, z: number
   return sum / layer
 }
 
-/** Total water (vapour + cloud + rain) in the domain, kg per m2 of ground, with the base-state air density. */
+/**
+ * Total water (vapour + cloud + rain) in the air plus the rain that has reached the ground, per m2 of ground,
+ * as a volume integral of mixing ratio (m): the model is incompressible, so transport conserves volume integrals.
+ * Switch to base-state density weights together with the anelastic approximation.
+ */
 export function totalWater(model: AtmosphereModel) {
-  const { nz, dz, layer } = model.grid
+  const { nz, dz, layer } = model.grid, e = model.env, rhoGround = e.p[0] / (287.05 * e.theta[0] * e.exner[0])
   let total = 0
   for (let z = 0; z < nz; z++) {
-    const rho = model.env.p[z] / (287.05 * model.env.theta[z] * model.env.exner[z]), weight = z === 0 || z === nz - 1 ? dz / 2 : dz
+    const weight = z === 0 || z === nz - 1 ? dz / 2 : dz
     let level = 0
     for (let i = z * layer; i < (z + 1) * layer; i++) level += model.q[i] + model.cloud[i] + model.rain[i]
-    total += rho * weight * level / layer
+    total += weight * level / layer
   }
-  return total
+  let fallen = 0
+  for (let i = 0; i < layer; i++) fallen += model.precipitation[i] / rhoGround
+  return total + fallen / layer
 }

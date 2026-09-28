@@ -27,6 +27,8 @@ export class AtmosphereModel {
   readonly pressure: Float64Array
   /** Updraft helicity of every column (2-5 km), m2/s2. */
   readonly uhColumn: Float32Array
+  /** Rain that has reached the ground in each column since the start, mm (kg/m2). */
+  readonly precipitation: Float32Array
   readonly rotation: RotationState = { uh: 0, x: 0, y: 0, anticyclonic: 0, persisted: 0 }
   readonly sounding: Sounding
   /** Lowest and highest level of the 2-5 km updraft-helicity layer. */
@@ -35,6 +37,8 @@ export class AtmosphereModel {
   private readonly solver: PressureSolver; private divergence: Float64Array
   private scratch: Float32Array; private surfacePattern: Float32Array
   private backtraceCorner: Int32Array; private backtraceWeight: Float64Array
+  /** Volume weight of each level: nodes on the ground and top walls own half a layer. */
+  private levelWeight: Float64Array
   private rng: () => number; private accumulator = 0
 
   constructor(config: SimConfig, grid: Grid = createGrid()) {
@@ -43,7 +47,8 @@ export class AtmosphereModel {
     this.u = f(); this.v = f(); this.w = f(); this.theta = f(); this.q = f(); this.cloud = f(); this.rain = f(); this.cold = f()
     this.solver = new PressureSolver(grid)
     this.pressure = new Float64Array(this.solver.cells); this.divergence = new Float64Array(this.solver.cells); this.scratch = f()
-    this.surfacePattern = new Float32Array(grid.layer); this.uhColumn = new Float32Array(grid.layer)
+    this.surfacePattern = new Float32Array(grid.layer); this.uhColumn = new Float32Array(grid.layer); this.precipitation = new Float32Array(grid.layer)
+    this.levelWeight = Float64Array.from({ length: grid.nz }, (_, z) => z === 0 || z === grid.nz - 1 ? .5 : 1)
     this.backtraceCorner = new Int32Array(grid.n * 8); this.backtraceWeight = new Float64Array(grid.n * 3)
     this.uhLevels = [Math.ceil(2000 / grid.dz), Math.floor(5000 / grid.dz)]
     this.rng = mulberry32(config.seed)
@@ -87,10 +92,35 @@ export class AtmosphereModel {
     return lerp(lerp(c00, c10, fy), lerp(c01, c11, fy), fz)
   }
 
-  private advect(a: Float32Array, dt: number, decay = 1, fall = 0) {
+  /** Semi-Lagrangian transport of `a` with an extra downward fall speed into the scratch buffer (see commit). */
+  private advectFalling(a: Float32Array, dt: number, fall: number) {
     const { nx, ny, nz, dx, dy, dz } = this.grid, s = this.scratch, u = this.u, v = this.v, w = this.w
-    for (let z = 0, i = 0; z < nz; z++) for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++, i++) s[i] = this.sample(a, x - u[i] * dt / dx, y - v[i] * dt / dy, z - (w[i] - fall) * dt / dz) * decay
-    a.set(s)
+    for (let z = 0, i = 0; z < nz; z++) for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++, i++) s[i] = this.sample(a, x - u[i] * dt / dx, y - v[i] * dt / dy, z - (w[i] - fall) * dt / dz)
+  }
+
+  /**
+   * Writes the transported values (scratch) back into `a`, then applies `decay`. With `conserve`, the transport's own
+   * mass error is removed first: trilinear semi-Lagrangian transport is not conservative, so the total (volume-weighted,
+   * as the flow is incompressible) is restored to its old value minus `loss`, with the correction placed where the
+   * transport changed the field (proportional to |new - old|), not spread over quiet air.
+   */
+  private commit(a: Float32Array, decay: number, conserve = false, loss = 0) {
+    const s = this.scratch, { nz, layer } = this.grid, lw = this.levelWeight
+    if (conserve) {
+      let before = 0, after = 0, moved = 0
+      for (let z = 0, i = 0; z < nz; z++) { const wz = lw[z]; for (let e = i + layer; i < e; i++) { before += wz * a[i]; after += wz * s[i]; moved += wz * Math.abs(s[i] - a[i]) } }
+      const excess = after - (before - loss)
+      if (moved > 0) { const c = excess / moved; for (let i = 0; i < s.length; i++) s[i] = Math.max(0, s[i] - c * Math.abs(s[i] - a[i])) }
+    }
+    for (let i = 0; i < s.length; i++) a[i] = s[i] * decay
+  }
+
+  /** Rain leaving through the ground this step: adds it to `precipitation` (mm) and returns it in level-weight units. */
+  private rainFallout(dt: number, fall: number) {
+    const { layer, dz } = this.grid, e = this.env, rhoGround = e.p[0] / (287.05 * e.theta[0] * e.exner[0])
+    let total = 0
+    for (let i = 0; i < layer; i++) { const flux = this.rain[i] * fall * dt; this.precipitation[i] += rhoGround * flux; total += flux / dz }
+    return total
   }
 
   // Departure points of one semi-Lagrangian step (8 corner indices + 3 weights per cell), shared by every field
@@ -105,14 +135,14 @@ export class AtmosphereModel {
     }
   }
 
-  private advectBacktrace(a: Float32Array, decay: number) {
+  /** Transport of `a` along the shared backtrace into the scratch buffer (see commit). */
+  private advectBacktrace(a: Float32Array) {
     const n = this.grid.n, s = this.scratch, c = this.backtraceCorner, wt = this.backtraceWeight
     for (let i = 0; i < n; i++) {
       const k = i * 8, fx = wt[i * 3], fy = wt[i * 3 + 1], fz = wt[i * 3 + 2]
       const c00 = a[c[k]] + (a[c[k + 1]] - a[c[k]]) * fx, c10 = a[c[k + 2]] + (a[c[k + 3]] - a[c[k + 2]]) * fx, c01 = a[c[k + 4]] + (a[c[k + 5]] - a[c[k + 4]]) * fx, c11 = a[c[k + 6]] + (a[c[k + 7]] - a[c[k + 6]]) * fx
-      const lo = c00 + (c10 - c00) * fy, hi = c01 + (c11 - c01) * fy; s[i] = (lo + (hi - lo) * fz) * decay
+      const lo = c00 + (c10 - c00) * fy, hi = c01 + (c11 - c01) * fy; s[i] = lo + (hi - lo) * fz
     }
-    a.set(s)
   }
 
   /** Advances by real elapsed seconds scaled by the speed setting; returns the number of model steps taken. */
@@ -126,9 +156,12 @@ export class AtmosphereModel {
   step(dt: number) {
     const { nx, ny, nz, dz, height: H, layer, xp: XP, xm: XM, yp: YP, ym: YM } = this.grid
     this.microburstOutflow *= .993
-    this.advect(this.rain, dt, .9995, RAIN_FALL)
+    // Water is transported conservatively (mass fixer); the decay factors are the roadmap's "hidden sinks", kept for now.
+    const fallout = this.rainFallout(dt, RAIN_FALL)
+    this.advectFalling(this.rain, dt, RAIN_FALL); this.commit(this.rain, .9995, true, fallout)
     this.computeBacktrace(dt)
-    this.advectBacktrace(this.u, 1); this.advectBacktrace(this.v, 1); this.advectBacktrace(this.w, .9995); this.advectBacktrace(this.theta, 1); this.advectBacktrace(this.q, .999999); this.advectBacktrace(this.cloud, .99995); this.advectBacktrace(this.cold, .9992)
+    const carry = (a: Float32Array, decay: number, conserve = false) => { this.advectBacktrace(a); this.commit(a, decay, conserve) }
+    carry(this.u, 1); carry(this.v, 1); carry(this.w, .9995); carry(this.theta, 1); carry(this.q, .999999, true); carry(this.cloud, .99995, true); carry(this.cold, .9992)
     const cfg = this.config, e = this.env, u = this.u, v = this.v, w = this.w, theta = this.theta, q = this.q, cloud = this.cloud, rain = this.rain, cold = this.cold
     const surf = SURFACES[cfg.surfaceType], solar = insolation(cfg, this.time), absorbed = solar * (1 - surf.albedo), heatFlux = absorbed * surf.sensible / surf.inertia, moistFlux = absorbed * (1 - surf.sensible) * surf.evap * cfg.soilMoisture / 100, lfcZ = (this.sounding.lfc ?? 1.5) * 1000, f = 2 * OMEGA * Math.sin(cfg.latitude * Math.PI / 180)
     const mix = clamp(cfg.turbulence * .0015 * dt, 0, .01), spongeStart = Math.max(cfg.tropopause * 1000 + 1600, 13_000), liftTop = Math.min(3200, lfcZ)
