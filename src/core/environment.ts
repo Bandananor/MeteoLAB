@@ -1,7 +1,9 @@
 import type { SimConfig } from './config'
-import { EPS, KAPPA } from './constants'
+import { EPS, G, KAPPA, RD } from './constants'
 import type { Grid } from './grid'
 import { clamp, lerp } from './math'
+
+const SURFACE_PRESSURE = 101325, PRESSURE_STEP = 10
 
 /** The horizontally uniform environment (base state) the model starts from and relaxes towards. */
 export class Environment {
@@ -9,9 +11,12 @@ export class Environment {
   readonly p: Float64Array; readonly exner: Float64Array; readonly theta: Float64Array
   readonly q: Float64Array; readonly u: Float64Array; readonly v: Float64Array
   private readonly config: SimConfig
+  /** ln p every PRESSURE_STEP metres from the ground, integrated hydrostatically. */
+  private readonly lnP: Float64Array
 
   constructor(config: SimConfig, grid: Grid) {
     this.config = config
+    this.lnP = this.integrateHydrostatic(grid.height + 2000)
     const f = () => new Float64Array(grid.nz)
     this.p = f(); this.exner = f(); this.theta = f(); this.q = f(); this.u = f(); this.v = f()
     for (let z = 0; z < grid.nz; z++) {
@@ -21,7 +26,25 @@ export class Environment {
     }
   }
 
-  pressureAt(z: number) { return 101325 * Math.exp(-z / 8000) }
+  /**
+   * dp/dz = -p g / (Rd Tv) with Tv = T (1 + 0.61 q) of the environment itself, so pressure, temperature
+   * and humidity of the base state are consistent (the old p0 exp(-z/8 km) was 20 % off at 15 km).
+   */
+  private integrateHydrostatic(top: number) {
+    const n = Math.ceil(top / PRESSURE_STEP) + 1, lnP = new Float64Array(n)
+    lnP[0] = Math.log(SURFACE_PRESSURE)
+    const tv = (z: number, p: number) => { const t = this.temperatureEnv(z), q = this.rhEnv(z) * this.qsatP(t, p); return (t + 273.15) * (1 + .61 * q) }
+    for (let k = 0; k + 1 < n; k++) {
+      const z = k * PRESSURE_STEP, p = Math.exp(lnP[k])
+      lnP[k + 1] = lnP[k] - G * PRESSURE_STEP / (RD * .5 * (tv(z, p) + tv(z + PRESSURE_STEP, p)))
+    }
+    return lnP
+  }
+
+  pressureAt(z: number) {
+    const lnP = this.lnP, x = Math.max(0, z) / PRESSURE_STEP, k = Math.min(Math.floor(x), lnP.length - 2)
+    return Math.exp(lnP[k] + (lnP[k + 1] - lnP[k]) * (x - k))
+  }
 
   temperatureEnv(z: number) {
     const c = this.config, tp = c.tropopause * 1000, t3 = c.surfaceTemp - c.lapseLow * 3, t8 = t3 - c.lapseMid * 5
