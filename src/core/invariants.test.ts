@@ -24,8 +24,9 @@ describe('background state without a trigger', () => {
     expect(worst(model.u, env.u)).toBeLessThan(.05)
     expect(worst(model.v, env.v)).toBeLessThan(.05)
   })
-  // Fails: q *= 0.999999 every step (hidden sinks).
-  it.fails('keeps q(z) within 0.2 % for 3 hours', () => { expect(worst(model.q, env.q, true)).toBeLessThan(.002) })
+  // Measured against the surface value: near the tropopause q is ~1000x smaller and a relative error there is noise.
+  // Passing since the hidden q *= 0.999999 sink was removed (it destroyed 1 % in 3 h).
+  it('keeps q(z) within 0.2 % of its surface value for 3 hours', () => { expect(worst(model.q, env.q) / env.q[0]).toBeLessThan(.002) })
 })
 
 describe('pressure projection', () => {
@@ -51,13 +52,12 @@ describe('pressure projection', () => {
 })
 
 describe('water budget', () => {
-  // No sunshine, so no surface evaporation; rain that reaches the ground is counted. Transport creates no water since the
-  // mass fixer (it created +27 %/h before the consistent projection, +7.5 %/h after it). Today's -0.98 %/h is the
-  // hidden sinks (q, cloud and rain decay factors): tighten this to 0.1 % once they are removed.
-  it('conserves total water within 1 % per hour in a storm', () => {
+  // No sunshine, so no surface evaporation; rain that reaches the ground is counted. History: +27 %/h before the
+  // consistent projection, +7.5 %/h after it (transport), -0.98 %/h with the mass fixer (hidden decay sinks), ~0 now.
+  it('conserves total water within 0.1 % per hour in a storm', () => {
     const model = new AtmosphereModel({ ...SUMMER_DAY, solarMax: 0 }, smallGrid(20, 16))
     const before = totalWater(model)
     run(model, 3600)
-    expect(Math.abs(totalWater(model) / before - 1)).toBeLessThan(.01)
+    expect(Math.abs(totalWater(model) / before - 1)).toBeLessThan(.001)
   })
 })

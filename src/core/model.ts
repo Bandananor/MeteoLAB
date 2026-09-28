@@ -156,12 +156,13 @@ export class AtmosphereModel {
   step(dt: number) {
     const { nx, ny, nz, dz, height: H, layer, xp: XP, xm: XM, yp: YP, ym: YM } = this.grid
     this.microburstOutflow *= .993
-    // Water is transported conservatively (mass fixer); the decay factors are the roadmap's "hidden sinks", kept for now.
+    // Water is transported conservatively (mass fixer). Only the cold-pool indicator decays: it belongs to the
+    // cold-pool parameterisation and goes away with it.
     const fallout = this.rainFallout(dt, RAIN_FALL)
-    this.advectFalling(this.rain, dt, RAIN_FALL); this.commit(this.rain, .9995, true, fallout)
+    this.advectFalling(this.rain, dt, RAIN_FALL); this.commit(this.rain, 1, true, fallout)
     this.computeBacktrace(dt)
     const carry = (a: Float32Array, decay: number, conserve = false) => { this.advectBacktrace(a); this.commit(a, decay, conserve) }
-    carry(this.u, 1); carry(this.v, 1); carry(this.w, .9995); carry(this.theta, 1); carry(this.q, .999999, true); carry(this.cloud, .99995, true); carry(this.cold, .9992)
+    carry(this.u, 1); carry(this.v, 1); carry(this.w, 1); carry(this.theta, 1); carry(this.q, 1, true); carry(this.cloud, 1, true); carry(this.cold, .9992)
     const cfg = this.config, e = this.env, u = this.u, v = this.v, w = this.w, theta = this.theta, q = this.q, cloud = this.cloud, rain = this.rain, cold = this.cold
     const surf = SURFACES[cfg.surfaceType], solar = insolation(cfg, this.time), absorbed = solar * (1 - surf.albedo), heatFlux = absorbed * surf.sensible / surf.inertia, moistFlux = absorbed * (1 - surf.sensible) * surf.evap * cfg.soilMoisture / 100, lfcZ = (this.sounding.lfc ?? 1.5) * 1000, f = 2 * OMEGA * Math.sin(cfg.latitude * Math.PI / 180)
     const mix = clamp(cfg.turbulence * .0015 * dt, 0, .01), spongeStart = Math.max(cfg.tropopause * 1000 + 1600, 13_000), liftTop = Math.min(3200, lfcZ)
