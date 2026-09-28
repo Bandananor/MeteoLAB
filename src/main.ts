@@ -1,5 +1,7 @@
 import './style.css'
-import { Atmosphere, FIELDS, type FieldMode, type SimConfig } from './simulator3d'
+import { Atmosphere } from './atmosphere'
+import type { SimConfig } from './core'
+import { FIELDS, type FieldMode } from './render/fields'
 
 const slider = (key: keyof SimConfig, label: string, min: number, max: number, step: number, value: number, suffix: string, digits = 0) => `
   <label>${label}<output data-output="${key}">${value.toFixed(digits)}${suffix}</output>
