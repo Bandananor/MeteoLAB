@@ -10,10 +10,18 @@ export interface Sounding {
   cape: number; cin: number; lcl: number | null; lfc: number | null; el: number | null; freezing: number | null
 }
 
-/** Parcel ascent from the surface (heights in km), plus the wind profile and the 0 °C level of the environment. */
-export function computeSounding(config: SimConfig, env: Environment, height: number): Sounding {
+export interface ParcelOptions {
+  /** Surface parcel temperature excess, K. */ excess?: number
+  /** Mix the parcel with the environment according to config.entrainment. */ entrain?: boolean
+}
+
+/**
+ * Parcel ascent from the surface (heights in km), plus the wind profile and the 0 °C level of the environment.
+ * Defaults reproduce the app's diagnostic parcel; `{ excess: 0, entrain: false }` is the standard surface-based parcel.
+ */
+export function computeSounding(config: SimConfig, env: Environment, height: number, { excess = .5, entrain = true }: ParcelOptions = {}): Sounding {
   const profile: ParcelPoint[] = [], dz = 100
-  let temp = config.surfaceTemp + .5, q = config.rhSurface / 100 * env.qsat(temp, 0), saturated = false
+  let temp = config.surfaceTemp + excess, q = config.rhSurface / 100 * env.qsat(temp, 0), saturated = false
   let lcl: number | null = null, lfc: number | null = null, el: number | null = null, cape = 0, cin = 0
   for (let z = 0; z <= height; z += dz) {
     const sat = env.qsat(temp, z)
@@ -25,7 +33,7 @@ export function computeSounding(config: SimConfig, env: Environment, height: num
     if (lfc !== null && el === null && b > 0) cape += b * dz
     profile.push({ z: z / 1000, env: envT, dew: env.dewpoint(env.qEnv(z), z), parcel: temp, buoyancy: b })
     if (saturated) { const tk = temp + 273.15, gamma = G * (1 + LV * sat / (RD * tk)) / (CP + LV * LV * sat * EPS / (RD * tk * tk)); temp -= gamma * dz } else temp -= .0098 * dz
-    const mix = clamp(config.entrainment * .006, 0, .02)
+    const mix = entrain ? clamp(config.entrainment * .006, 0, .02) : 0
     temp = lerp(temp, env.temperatureEnv(z + dz), mix); q = lerp(q, env.qEnv(z + dz), mix)
   }
   const wind: WindPoint[] = []
