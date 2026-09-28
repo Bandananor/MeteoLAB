@@ -3,6 +3,7 @@ import { CP, DT, G, LV, OMEGA, RAIN_FALL } from './constants'
 import { Environment } from './environment'
 import { createGrid, type Grid } from './grid'
 import { clamp, lerp, mod, mulberry32 } from './math'
+import { saturationAdjust } from './microphysics'
 import { PressureSolver } from './pressure'
 import { insolation } from './solar'
 import { computeSounding, type Sounding } from './sounding'
@@ -171,9 +172,11 @@ export class AtmosphereModel {
       for (let y = 0; y < ny; y++) {
         const row = y * nx, yp = YP[y], ym = YM[y]
         for (let x = 0; x < nx; x++, i++) {
-          const xp = XP[x], xm = XM[x], temp = theta[i] * exner - 273.15, sat = e.qsatP(temp, p), rh = q[i] / Math.max(.00001, sat)
-          if (q[i] > sat) { const cond = Math.min(q[i] - sat, (q[i] - sat) * .32 * dt); q[i] -= cond; cloud[i] += cond; theta[i] += LV / CP / exner * cond }
-          if (rh < 1 && cloud[i] > 0) { const evap = Math.min(cloud[i], .00006 * cfg.entrainment * (1 - rh) * dt); cloud[i] -= evap; q[i] += evap; const cool = LV / CP / exner * evap; theta[i] -= cool; cold[i] += cool * .14 }
+          const xp = XP[x], xm = XM[x]
+          // Vapour and cloud water are in equilibrium after every step; evaporating cloud still feeds the cold-pool indicator.
+          const cond = saturationAdjust(theta, q, cloud, i, exner, p)
+          if (cond < 0) cold[i] -= LV / CP / exner * cond * .14
+          const sat = e.qsatP(theta[i] * exner - 273.15, p)
           const auto = Math.max(0, cloud[i] - .0009) * .035 * cfg.precipEfficiency * dt; cloud[i] -= auto; rain[i] += auto
           if (q[i] < sat && rain[i] > 0) { const evap = Math.min(rain[i], (sat - q[i]) * .018 * cfg.evaporation * dt); rain[i] -= evap; q[i] += evap; const cool = LV / CP / exner * evap * cfg.coldPoolStrength; theta[i] -= cool; cold[i] += cool }
           // B = g [(θv − θv_env) / θv_env − q_c − q_r]: condensate loads the air with its own mass, no extra weight.

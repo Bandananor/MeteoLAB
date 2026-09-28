@@ -1,7 +1,8 @@
 import type { SimConfig } from './config'
 import { EPS, G, KAPPA, RD } from './constants'
 import type { Grid } from './grid'
-import { clamp, lerp, lerpAngle, mod } from './math'
+import { lerp, lerpAngle, mod } from './math'
+import { qsatP } from './microphysics'
 
 const SURFACE_PRESSURE = 101325, PRESSURE_STEP = 10
 
@@ -58,7 +59,7 @@ export class Environment {
   thetaEnv(z: number) { return (this.temperatureEnv(z) + 273.15) * (100000 / this.pressureAt(z)) ** KAPPA }
 
   qsat(t: number, z: number) { return this.qsatP(t, this.pressureAt(z)) }
-  qsatP(t: number, p: number) { const es = 611.2 * Math.exp(17.67 * t / (t + 243.5)); return clamp(.622 * es / Math.max(1000, p - es), 0, .045) }
+  qsatP(t: number, p: number) { return qsatP(t, p) }
 
   rhEnv(z: number) {
     const c = this.config, tp = c.tropopause * 1000
