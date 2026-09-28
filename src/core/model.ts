@@ -3,6 +3,7 @@ import { CP, DT, G, LV, OMEGA, RAIN_FALL } from './constants'
 import { Environment } from './environment'
 import { createGrid, type Grid } from './grid'
 import { clamp, lerp, mod, mulberry32 } from './math'
+import { PressureSolver } from './pressure'
 import { insolation } from './solar'
 import { computeSounding, type Sounding } from './sounding'
 
@@ -22,7 +23,8 @@ export class AtmosphereModel {
   readonly grid: Grid; readonly config: SimConfig; readonly env: Environment
   readonly u: Float32Array; readonly v: Float32Array; readonly w: Float32Array; readonly theta: Float32Array
   readonly q: Float32Array; readonly cloud: Float32Array; readonly rain: Float32Array; readonly cold: Float32Array
-  readonly pressure: Float32Array
+  /** Projection pressure (times dt, per unit density) at the dual-cell centres between nodes; see PressureSolver. */
+  readonly pressure: Float64Array
   /** Updraft helicity of every column (2-5 km), m2/s2. */
   readonly uhColumn: Float32Array
   readonly rotation: RotationState = { uh: 0, x: 0, y: 0, anticyclonic: 0, persisted: 0 }
@@ -30,7 +32,8 @@ export class AtmosphereModel {
   /** Lowest and highest level of the 2-5 km updraft-helicity layer. */
   readonly uhLevels: readonly [number, number]
   time = 0; microburstOutflow = 0
-  private divergence: Float32Array; private scratch: Float32Array; private surfacePattern: Float32Array
+  private readonly solver: PressureSolver; private divergence: Float64Array
+  private scratch: Float32Array; private surfacePattern: Float32Array
   private backtraceCorner: Int32Array; private backtraceWeight: Float64Array
   private rng: () => number; private accumulator = 0
 
@@ -38,7 +41,8 @@ export class AtmosphereModel {
     this.config = config; this.grid = grid
     const f = () => new Float32Array(grid.n)
     this.u = f(); this.v = f(); this.w = f(); this.theta = f(); this.q = f(); this.cloud = f(); this.rain = f(); this.cold = f()
-    this.pressure = f(); this.divergence = f(); this.scratch = f()
+    this.solver = new PressureSolver(grid)
+    this.pressure = new Float64Array(this.solver.cells); this.divergence = new Float64Array(this.solver.cells); this.scratch = f()
     this.surfacePattern = new Float32Array(grid.layer); this.uhColumn = new Float32Array(grid.layer)
     this.backtraceCorner = new Int32Array(grid.n * 8); this.backtraceWeight = new Float64Array(grid.n * 3)
     this.uhLevels = [Math.ceil(2000 / grid.dz), Math.floor(5000 / grid.dz)]
@@ -75,8 +79,9 @@ export class AtmosphereModel {
   /** Trilinear sample at fractional grid coordinates (periodic in x, y; clamped in z). */
   sample(a: Float32Array, x: number, y: number, z: number) {
     const { nx, ny, nz, layer } = this.grid
-    x = mod(x, nx); y = mod(y, ny); z = clamp(z, 0, nz - 1.001)
-    const x0 = Math.floor(x), y0 = Math.floor(y), z0 = Math.floor(z), x1 = (x0 + 1) % nx, y1 = (y0 + 1) % ny, z1 = Math.min(nz - 1, z0 + 1), fx = x - x0, fy = y - y0, fz = z - z0
+    // z0 stops one level below the top so the top node itself can take weight 1 (no leak from the level below).
+    x = mod(x, nx); y = mod(y, ny); z = clamp(z, 0, nz - 1)
+    const x0 = Math.floor(x), y0 = Math.floor(y), z0 = Math.min(Math.floor(z), nz - 2), x1 = (x0 + 1) % nx, y1 = (y0 + 1) % ny, z1 = z0 + 1, fx = x - x0, fy = y - y0, fz = z - z0
     const r0 = nx * y0, r1 = nx * y1, l0 = layer * z0, l1 = layer * z1
     const c00 = lerp(a[x0 + r0 + l0], a[x1 + r0 + l0], fx), c10 = lerp(a[x0 + r1 + l0], a[x1 + r1 + l0], fx), c01 = lerp(a[x0 + r0 + l1], a[x1 + r0 + l1], fx), c11 = lerp(a[x0 + r1 + l1], a[x1 + r1 + l1], fx)
     return lerp(lerp(c00, c10, fy), lerp(c01, c11, fy), fz)
@@ -93,8 +98,8 @@ export class AtmosphereModel {
   private computeBacktrace(dt: number) {
     const { nx, ny, nz, dx, dy, dz, layer } = this.grid, c = this.backtraceCorner, wt = this.backtraceWeight, u = this.u, v = this.v, w = this.w
     for (let z = 0, i = 0; z < nz; z++) for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++, i++) {
-      const px = mod(x - u[i] * dt / dx, nx), py = mod(y - v[i] * dt / dy, ny), pz = clamp(z - w[i] * dt / dz, 0, nz - 1.001)
-      const x0 = Math.floor(px), y0 = Math.floor(py), z0 = Math.floor(pz), x1 = (x0 + 1) % nx, r0 = nx * y0, r1 = nx * ((y0 + 1) % ny), l0 = layer * z0, l1 = layer * Math.min(nz - 1, z0 + 1), k = i * 8
+      const px = mod(x - u[i] * dt / dx, nx), py = mod(y - v[i] * dt / dy, ny), pz = clamp(z - w[i] * dt / dz, 0, nz - 1)
+      const x0 = Math.floor(px), y0 = Math.floor(py), z0 = Math.min(Math.floor(pz), nz - 2), x1 = (x0 + 1) % nx, r0 = nx * y0, r1 = nx * ((y0 + 1) % ny), l0 = layer * z0, l1 = layer * (z0 + 1), k = i * 8
       c[k] = x0 + r0 + l0; c[k + 1] = x1 + r0 + l0; c[k + 2] = x0 + r1 + l0; c[k + 3] = x1 + r1 + l0; c[k + 4] = x0 + r0 + l1; c[k + 5] = x1 + r0 + l1; c[k + 6] = x0 + r1 + l1; c[k + 7] = x1 + r1 + l1
       wt[i * 3] = px - x0; wt[i * 3 + 1] = py - y0; wt[i * 3 + 2] = pz - z0
     }
@@ -148,34 +153,19 @@ export class AtmosphereModel {
         }
       }
     }
-    this.project(dt, 16)
-    for (let b = 0; b < layer; b++) { w[b] = 0; u[b] *= .94; v[b] *= .94; w[b + (nz - 1) * layer] = 0 }
+    // Ground drag and the rigid ground/top are applied before the projection, so the transport velocity is D-free.
+    for (let b = 0; b < layer; b++) { u[b] *= .94; v[b] *= .94; w[b] = 0; w[b + (nz - 1) * layer] = 0 }
+    this.project(dt)
     this.updateRotation(dt)
   }
 
-  // Approximate projection: Poisson solve by SOR, warm-started from the previous step (dt is constant).
-  // Ground: dp/dz=0, consistent with w=0 there. Top: p=0 under the sponge layer. Sides: periodic.
-  private project(dt: number, iters: number) {
-    const { nx, ny, nz, dx: DX, dy: DY, dz: DZ, layer: LAYER, xp: XP, xm: XM, yp: YP, ym: YM } = this.grid
-    const p = this.pressure, div = this.divergence, u = this.u, v = this.v, w = this.w, ix = 1 / (DX * DX), iy = 1 / (DY * DY), iz = 1 / (DZ * DZ), den = 2 * (ix + iy + iz), omega = 1.7
-    for (let z = 1; z < nz - 1; z++) { const l = z * LAYER; for (let y = 0; y < ny; y++) { const row = y * nx + l, yp = YP[y] + l, ym = YM[y] + l; for (let x = 0; x < nx; x++) { const i = x + row; div[i] = (u[XP[x] + row] - u[XM[x] + row]) / (2 * DX) + (v[x + yp] - v[x + ym]) / (2 * DY) + (w[i + LAYER] - w[i - LAYER]) / (2 * DZ) } } }
-    p.fill(0, (nz - 1) * LAYER)
-    for (let k = 0; k < iters; k++) {
-      for (let i = 0; i < LAYER; i++) p[i] = p[i + LAYER]
-      for (let z = 1; z < nz - 1; z++) { const l = z * LAYER; for (let y = 0; y < ny; y++) { const row = y * nx + l, yp = YP[y] + l, ym = YM[y] + l; for (let x = 0; x < nx; x++) { const i = x + row, gs = ((p[XP[x] + row] + p[XM[x] + row]) * ix + (p[x + yp] + p[x + ym]) * iy + (p[i + LAYER] + p[i - LAYER]) * iz - div[i] / dt) / den; p[i] += omega * (gs - p[i]) } } }
-    }
-    for (let i = 0; i < LAYER; i++) p[i] = p[i + LAYER]
-    for (let z = 1; z < nz - 1; z++) {
-      const l = z * LAYER
-      for (let y = 0; y < ny; y++) {
-        const row = y * nx + l, yp = YP[y] + l, ym = YM[y] + l
-        for (let x = 0; x < nx; x++) {
-          const i = x + row
-          u[i] -= dt * (p[XP[x] + row] - p[XM[x] + row]) / (2 * DX); v[i] -= dt * (p[x + yp] - p[x + ym]) / (2 * DY); w[i] -= dt * (p[i + LAYER] - p[i - LAYER]) / (2 * DZ)
-          u[i] = clamp(u[i], -85, 85); v[i] = clamp(v[i], -85, 85); w[i] = clamp(w[i], -60, 60)
-        }
-      }
-    }
+  /** Makes the node velocities exactly free of dual-cell divergence (see PressureSolver); ground and top are rigid walls. */
+  private project(dt: number) {
+    const u = this.u, v = this.v, w = this.w
+    this.solver.divergence(u, v, w, dt, this.divergence)
+    this.solver.solve(this.divergence, this.pressure)
+    this.solver.correct(this.pressure, u, v, w, dt)
+    for (let i = 0; i < this.grid.n; i++) { u[i] = clamp(u[i], -85, 85); v[i] = clamp(v[i], -85, 85); w[i] = clamp(w[i], -60, 60) }
   }
 
   /** Vertical vorticity dv/dx - du/dy at a grid node, s-1. */

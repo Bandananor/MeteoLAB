@@ -5,9 +5,9 @@ import { levelMean, QUIET, run, SUMMER_DAY, totalWater } from './fixtures'
 // Default vertical grid, smaller periodic box: the invariants do not depend on the domain width and run ~10x faster.
 const smallGrid = (nx: number, ny: number) => createGrid({ nx, ny, nz: 24, width: nx * 1200, depth: ny * 1125, height: 15_000 })
 
-// Every test here is a known failure today; each comment names the roadmap item that should make it pass.
-// Measured on 2026-09-28 (commit after 9279b97): theta drifts 0.28 K and u 0.052 m/s in 3 h, q up to 15 % near the top,
-// and a storm creates +27 % of total water in 1 h.
+// Known failures are marked it.fails; each comment names the roadmap item that should make it pass.
+// Before the consistent projection (2026-09-28): theta drifted 0.28 K and u 0.052 m/s in 3 h and a storm created
+// +27 % of total water in 1 h. After it: theta 0.004 K, u 0.005 m/s, and +7.5 %/h of water from transport alone.
 
 describe('background state without a trigger', () => {
   const model = new AtmosphereModel({ ...QUIET }, smallGrid(12, 10))
@@ -18,35 +18,43 @@ describe('background state without a trigger', () => {
   const worst = (field: Float32Array, reference: Float64Array, relative = false) =>
     Math.max(...levels.map(z => Math.abs(levelMean(model, field, z) - reference[z]) / (relative ? reference[z] : 1)))
 
-  // Fails: the projection removes only half of a level-mean w, leaving ~ -1.6 mm/s of spurious subsidence
-  // (consistent projection operator), and the top level mixes in 0.1 %/step of the level below (top-boundary advection).
-  it.fails('keeps theta(z) within 0.05 K for 3 hours', () => { expect(worst(model.theta, env.theta)).toBeLessThan(.05) })
-  // Fails for the same spurious subsidence advecting the sheared wind profile.
-  it.fails('keeps the wind profile within 0.05 m/s for 3 hours', () => {
+  // Passing since the consistent projection and the top-boundary advection fix (before: 0.28 K and 0.052 m/s).
+  it('keeps theta(z) within 0.05 K for 3 hours', () => { expect(worst(model.theta, env.theta)).toBeLessThan(.05) })
+  it('keeps the wind profile within 0.05 m/s for 3 hours', () => {
     expect(worst(model.u, env.u)).toBeLessThan(.05)
     expect(worst(model.v, env.v)).toBeLessThan(.05)
   })
-  // Fails: q *= 0.999999 every step (hidden sinks), plus the two problems above.
+  // Fails: q *= 0.999999 every step (hidden sinks).
   it.fails('keeps q(z) within 0.2 % for 3 hours', () => { expect(worst(model.q, env.q, true)).toBeLessThan(.002) })
 })
 
 describe('pressure projection', () => {
   // A horizontally uniform w with w=0 at the ground and the top violates mass conservation, so a projection must remove it.
-  // Fails: with the compact Laplacian but central-difference divergence/gradient, even a fully converged solve removes
-  // exactly half of it (10 mm/s -> 5.00 mm/s). Roadmap: consistent projection operator.
-  it.fails('removes a horizontally uniform vertical velocity', () => {
+  // The old SOR projection (compact Laplacian, central divergence/gradient) removed exactly half of it.
+  it('removes a horizontally uniform vertical velocity', () => {
     const model = new AtmosphereModel({ ...QUIET }, smallGrid(12, 10)), { layer, nz } = model.grid
     model.u.fill(0); model.v.fill(0); model.w.fill(0); model.pressure.fill(0)
     for (let i = layer; i < (nz - 1) * layer; i++) model.w[i] = .01
-    ;(model as unknown as { project(dt: number, iters: number): void }).project(1, 2000)
+    ;(model as unknown as { project(dt: number): void }).project(1)
     for (let z = 1; z < nz - 1; z++) expect(Math.abs(levelMean(model, model.w, z))).toBeLessThan(1e-4)
+  })
+
+  it('leaves no dual-cell divergence after a stormy step', () => {
+    const model = new AtmosphereModel({ ...SUMMER_DAY }, smallGrid(20, 16))
+    run(model, 900)
+    const solver = (model as unknown as { solver: { cells: number; divergence(u: Float32Array, v: Float32Array, w: Float32Array, dt: number, out: Float64Array): void } }).solver
+    const div = new Float64Array(solver.cells)
+    solver.divergence(model.u, model.v, model.w, 1, div)
+    // Velocities are stored as float32 (~1e-8 s-1 of rounding); storm divergence before the projection is ~1e-3 s-1.
+    expect(Math.max(...div.map(Math.abs))).toBeLessThan(1e-7)
   })
 })
 
 describe('water budget', () => {
-  // No sunshine, so no surface evaporation. Rain does leave through the ground but is not counted yet, so this compares
-  // q + cloud + rain in the air plus nothing. Fails today mainly because semi-Lagrangian transport on the checkerboard
-  // velocity left by the inconsistent projection creates water (+27 % in 1 h); then rain fallout accounting and hidden sinks.
+  // No sunshine, so no surface evaporation. Rain does leave through the ground but is not counted yet. Fails because
+  // trilinear semi-Lagrangian transport is not conservative: even on exactly divergence-free velocities it creates
+  // ~7.5 % of water per hour in a storm (it was +27 % before the consistent projection). Roadmap: water conservation
+  // of transport, rain fallout accounting, hidden sinks.
   it.fails('conserves total water within 1 % per hour in a storm', () => {
     const model = new AtmosphereModel({ ...SUMMER_DAY, solarMax: 0 }, smallGrid(20, 16))
     const before = totalWater(model)
