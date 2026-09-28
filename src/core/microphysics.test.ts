@@ -1,5 +1,39 @@
 import { describe, expect, it } from 'vitest'
-import { CP, KAPPA, LV, qsatP, saturationAdjust } from '.'
+import { CP, fallSpeed, KAPPA, LV, qsatP, rainProcesses, saturationAdjust } from '.'
+
+describe('Kessler warm rain', () => {
+  const one = (x: number) => Float32Array.of(x)
+
+  it('fall speed grows with rain content and with height (thinner air)', () => {
+    // 1 g/kg near the ground: 36.34 * (1.2e-6)^0.1364 = 5.7 m/s (the old constant was 7 m/s for any rain).
+    expect(fallSpeed(.001, 1.2, 1.2)).toBeCloseTo(5.68, 1)
+    expect(fallSpeed(.005, 1.2, 1.2)).toBeCloseTo(7.05, 1)
+    expect(fallSpeed(.001, .6, 1.2) / fallSpeed(.001, 1.2, 1.2)).toBeCloseTo((.5 ** .1364) * Math.SQRT2, 6)
+    expect(fallSpeed(0, 1.2, 1.2)).toBe(0)
+  })
+
+  it('autoconverts 0.1 %/s above 1 g/kg and accretes cloud onto rain', () => {
+    const q = one(.01), cloud = one(.003), rain = one(0)
+    rainProcesses(q, cloud, rain, 0, 280, 80000, 1, 1)
+    expect(rain[0]).toBeCloseTo(.001 * .002, 8)
+    const cloud2 = one(.002), rain2 = one(.002)
+    rainProcesses(one(.01), cloud2, rain2, 0, 280, 80000, 1, 1)
+    expect(rain2[0] - .002).toBeCloseTo(.001 * .001 + 2.2 * .002 * .002 ** .875, 8)
+    expect(cloud2[0] + rain2[0]).toBeCloseTo(.004, 8)
+  })
+
+  it('evaporates rain in dry air at the Kessler rate, never past saturation', () => {
+    const p = 85000, tk = 290, qs = qsatP(tk - 273.15, p)
+    const q = one(.5 * qs), rain = one(.001), evap = rainProcesses(q, one(0), rain, 0, tk, p, 1, 1)
+    // ~0.5 %/s of 1 g/kg at 50 % humidity: rain from cloud base evaporates over minutes, not seconds.
+    expect(evap / .001).toBeGreaterThan(.002); expect(evap / .001).toBeLessThan(.01)
+    expect(q[0] + rain[0]).toBeCloseTo(.5 * qs + .001, 8)
+    const nearly = one(.999 * qs), lots = one(.01)
+    rainProcesses(nearly, one(0), lots, 0, tk, p, 1, 1000)
+    expect(nearly[0]).toBeLessThanOrEqual(qs)
+    expect(rainProcesses(one(1.1 * qs), one(0), one(.001), 0, tk, p, 1, 1)).toBe(0)
+  })
+})
 
 describe('saturation adjustment', () => {
   const p = 70000, exner = (p / 100000) ** KAPPA

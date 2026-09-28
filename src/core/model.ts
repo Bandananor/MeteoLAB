@@ -1,9 +1,9 @@
 import { SURFACES, type SimConfig } from './config'
-import { CP, DT, G, LV, OMEGA, RAIN_FALL } from './constants'
+import { CP, DT, G, LV, OMEGA } from './constants'
 import { Environment } from './environment'
 import { createGrid, type Grid } from './grid'
 import { clamp, lerp, mod, mulberry32 } from './math'
-import { saturationAdjust } from './microphysics'
+import { fallSpeed, rainProcesses, saturationAdjust } from './microphysics'
 import { PressureSolver } from './pressure'
 import { insolation } from './solar'
 import { computeSounding, type Sounding } from './sounding'
@@ -30,6 +30,8 @@ export class AtmosphereModel {
   readonly uhColumn: Float32Array
   /** Rain that has reached the ground in each column since the start, mm (kg/m2). */
   readonly precipitation: Float32Array
+  /** Terminal fall speed of rain at every node (Kessler), m/s; updated at the start of each step. */
+  readonly fallSpeed: Float32Array
   readonly rotation: RotationState = { uh: 0, x: 0, y: 0, anticyclonic: 0, persisted: 0 }
   readonly sounding: Sounding
   /** Lowest and highest level of the 2-5 km updraft-helicity layer. */
@@ -48,7 +50,7 @@ export class AtmosphereModel {
     this.u = f(); this.v = f(); this.w = f(); this.theta = f(); this.q = f(); this.cloud = f(); this.rain = f(); this.cold = f()
     this.solver = new PressureSolver(grid)
     this.pressure = new Float64Array(this.solver.cells); this.divergence = new Float64Array(this.solver.cells); this.scratch = f()
-    this.surfacePattern = new Float32Array(grid.layer); this.uhColumn = new Float32Array(grid.layer); this.precipitation = new Float32Array(grid.layer)
+    this.surfacePattern = new Float32Array(grid.layer); this.uhColumn = new Float32Array(grid.layer); this.precipitation = new Float32Array(grid.layer); this.fallSpeed = f()
     this.levelWeight = Float64Array.from({ length: grid.nz }, (_, z) => z === 0 || z === grid.nz - 1 ? .5 : 1)
     this.backtraceCorner = new Int32Array(grid.n * 8); this.backtraceWeight = new Float64Array(grid.n * 3)
     this.uhLevels = [Math.ceil(2000 / grid.dz), Math.floor(5000 / grid.dz)]
@@ -93,10 +95,10 @@ export class AtmosphereModel {
     return lerp(lerp(c00, c10, fy), lerp(c01, c11, fy), fz)
   }
 
-  /** Semi-Lagrangian transport of `a` with an extra downward fall speed into the scratch buffer (see commit). */
-  private advectFalling(a: Float32Array, dt: number, fall: number) {
+  /** Semi-Lagrangian transport of `a` with an extra downward fall speed per node into the scratch buffer (see commit). */
+  private advectFalling(a: Float32Array, dt: number, fall: Float32Array) {
     const { nx, ny, nz, dx, dy, dz } = this.grid, s = this.scratch, u = this.u, v = this.v, w = this.w
-    for (let z = 0, i = 0; z < nz; z++) for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++, i++) s[i] = this.sample(a, x - u[i] * dt / dx, y - v[i] * dt / dy, z - (w[i] - fall) * dt / dz)
+    for (let z = 0, i = 0; z < nz; z++) for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++, i++) s[i] = this.sample(a, x - u[i] * dt / dx, y - v[i] * dt / dy, z - (w[i] - fall[i]) * dt / dz)
   }
 
   /**
@@ -117,10 +119,10 @@ export class AtmosphereModel {
   }
 
   /** Rain leaving through the ground this step: adds it to `precipitation` (mm) and returns it in level-weight units. */
-  private rainFallout(dt: number, fall: number) {
-    const { layer, dz } = this.grid, e = this.env, rhoGround = e.p[0] / (287.05 * e.theta[0] * e.exner[0])
+  private rainFallout(dt: number) {
+    const { layer, dz } = this.grid, rhoGround = this.env.rho[0]
     let total = 0
-    for (let i = 0; i < layer; i++) { const flux = this.rain[i] * fall * dt; this.precipitation[i] += rhoGround * flux; total += flux / dz }
+    for (let i = 0; i < layer; i++) { const flux = this.rain[i] * this.fallSpeed[i] * dt; this.precipitation[i] += rhoGround * flux; total += flux / dz }
     return total
   }
 
@@ -159,8 +161,10 @@ export class AtmosphereModel {
     this.microburstOutflow *= .993
     // Water is transported conservatively (mass fixer). Only the cold-pool indicator decays: it belongs to the
     // cold-pool parameterisation and goes away with it.
-    const fallout = this.rainFallout(dt, RAIN_FALL)
-    this.advectFalling(this.rain, dt, RAIN_FALL); this.commit(this.rain, 1, true, fallout)
+    const { rho } = this.env
+    for (let z = 0, i = 0; z < nz; z++) for (let end = i + layer; i < end; i++) this.fallSpeed[i] = fallSpeed(this.rain[i], rho[z], rho[0])
+    const fallout = this.rainFallout(dt)
+    this.advectFalling(this.rain, dt, this.fallSpeed); this.commit(this.rain, 1, true, fallout)
     this.computeBacktrace(dt)
     const carry = (a: Float32Array, decay: number, conserve = false) => { this.advectBacktrace(a); this.commit(a, decay, conserve) }
     carry(this.u, 1); carry(this.v, 1); carry(this.w, 1); carry(this.theta, 1); carry(this.q, 1, true); carry(this.cloud, 1, true); carry(this.cold, .9992)
@@ -168,17 +172,17 @@ export class AtmosphereModel {
     const surf = SURFACES[cfg.surfaceType], solar = insolation(cfg, this.time), absorbed = solar * (1 - surf.albedo), heatFlux = absorbed * surf.sensible / surf.inertia, moistFlux = absorbed * (1 - surf.sensible) * surf.evap * cfg.soilMoisture / 100, lfcZ = (this.sounding.lfc ?? 1.5) * 1000, f = 2 * OMEGA * Math.sin(cfg.latitude * Math.PI / 180)
     const mix = clamp(cfg.turbulence * .0015 * dt, 0, .01), spongeStart = Math.max(cfg.tropopause * 1000 + 1600, 13_000), liftTop = Math.min(3200, lfcZ)
     for (let z = 0, i = 0; z < nz; z++) {
-      const alt = z * dz, p = e.p[z], exner = e.exner[z], thEnv = e.theta[z], qEnv = e.q[z], thvEnv = thEnv * (1 + .61 * qEnv), ue = e.u[z], ve = e.v[z], l = z * layer
+      const alt = z * dz, p = e.p[z], rhoZ = e.rho[z], exner = e.exner[z], thEnv = e.theta[z], qEnv = e.q[z], thvEnv = thEnv * (1 + .61 * qEnv), ue = e.u[z], ve = e.v[z], l = z * layer
       for (let y = 0; y < ny; y++) {
         const row = y * nx, yp = YP[y], ym = YM[y]
         for (let x = 0; x < nx; x++, i++) {
           const xp = XP[x], xm = XM[x]
-          // Vapour and cloud water are in equilibrium after every step; evaporating cloud still feeds the cold-pool indicator.
+          // Kessler warm rain, then saturation adjustment (vapour and cloud water in equilibrium after every step).
+          // Evaporation of rain and cloud feeds the cold-pool indicator.
+          const evap = rainProcesses(q, cloud, rain, i, theta[i] * exner, p, rhoZ, dt, cfg.precipEfficiency, cfg.evaporation)
+          if (evap > 0) { const cool = LV / CP / exner * evap * cfg.coldPoolStrength; theta[i] -= cool; cold[i] += cool }
           const cond = saturationAdjust(theta, q, cloud, i, exner, p)
           if (cond < 0) cold[i] -= LV / CP / exner * cond * .14
-          const sat = e.qsatP(theta[i] * exner - 273.15, p)
-          const auto = Math.max(0, cloud[i] - .0009) * .035 * cfg.precipEfficiency * dt; cloud[i] -= auto; rain[i] += auto
-          if (q[i] < sat && rain[i] > 0) { const evap = Math.min(rain[i], (sat - q[i]) * .018 * cfg.evaporation * dt); rain[i] -= evap; q[i] += evap; const cool = LV / CP / exner * evap * cfg.coldPoolStrength; theta[i] -= cool; cold[i] += cool }
           // B = g [(θv − θv_env) / θv_env − q_c − q_r]: condensate loads the air with its own mass, no extra weight.
           const buoy = (theta[i] * (1 + .61 * q[i]) - thvEnv) / thvEnv - cloud[i] - rain[i]; w[i] += G * buoy * dt
           // Damp and rotate only the departure from the environmental wind, so the imposed shear profile is not eroded.

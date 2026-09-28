@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
-import { type AtmosphereModel, computeScalarField, MESO_PERSISTENCE, RAIN_FALL, sunDirection, UH_ROTATING } from '../core'
+import { type AtmosphereModel, computeScalarField, MESO_PERSISTENCE, sunDirection, UH_ROTATING } from '../core'
 import { clamp, lerp, mod, mulberry32 } from '../core/math'
 import { colormapTexture, FIELDS, type FieldMode } from './fields'
 import { fieldVolumeFragment, groundShadowPars, precipFragment, precipVertex, sliceFragment, volumeFragment, volumeVertex } from './shaders'
@@ -195,7 +195,7 @@ export class StormView {
     }
     for (let p = 0; p < PRECIP_PARTICLES; p++) {
       if (!this.precipAlive[p]) continue
-      const j = p * 3, x = this.precipModel[j], y = this.precipModel[j + 1], z = this.precipModel[j + 2], gx = x / dx, gy = y / dy, gz = z / dz, fall = lerp(SNOW_FALL, RAIN_FALL, this.meltFraction(z))
+      const j = p * 3, x = this.precipModel[j], y = this.precipModel[j + 1], z = this.precipModel[j + 2], gx = x / dx, gy = y / dy, gz = z / dz, fall = lerp(SNOW_FALL, Math.max(2, m.sample(m.fallSpeed, gx, gy, gz)), this.meltFraction(z))
       const nz = z + (m.sample(m.w, gx, gy, gz) - fall) * dt; this.precipAge[p] += dt
       const evaporated = m.sample(m.rain, gx, gy, gz) < 2e-5 && Math.random() < .02 * dt
       if (nz <= 0 || nz > height || this.precipAge[p] > 2400 || evaporated) { this.precipAlive[p] = 0; continue }

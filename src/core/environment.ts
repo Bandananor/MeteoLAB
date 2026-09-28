@@ -11,6 +11,8 @@ export class Environment {
   /** Base state at each model level; the environment only changes on restart. */
   readonly p: Float64Array; readonly exner: Float64Array; readonly theta: Float64Array
   readonly q: Float64Array; readonly u: Float64Array; readonly v: Float64Array
+  /** Air density of the base state, kg/m3. */
+  readonly rho: Float64Array
   private readonly config: SimConfig
   /** ln p every PRESSURE_STEP metres from the ground, integrated hydrostatically. */
   private readonly lnP: Float64Array
@@ -19,11 +21,12 @@ export class Environment {
     this.config = config
     this.lnP = this.integrateHydrostatic(grid.height + 2000)
     const f = () => new Float64Array(grid.nz)
-    this.p = f(); this.exner = f(); this.theta = f(); this.q = f(); this.u = f(); this.v = f()
+    this.p = f(); this.exner = f(); this.theta = f(); this.q = f(); this.u = f(); this.v = f(); this.rho = f()
     for (let z = 0; z < grid.nz; z++) {
       const alt = z * grid.dz, [u, v] = this.windUV(alt)
       this.p[z] = this.pressureAt(alt); this.exner[z] = (this.p[z] / 100000) ** KAPPA
       this.theta[z] = this.thetaEnv(alt); this.q[z] = this.qEnv(alt); this.u[z] = u; this.v[z] = v
+      this.rho[z] = this.p[z] / (RD * this.theta[z] * this.exner[z] * (1 + .61 * this.q[z]))
     }
   }
 

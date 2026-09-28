@@ -42,7 +42,7 @@ export function levelMean(model: AtmosphereModel, field: Float32Array, z: number
  * Switch to base-state density weights together with the anelastic approximation.
  */
 export function totalWater(model: AtmosphereModel) {
-  const { nz, dz, layer } = model.grid, e = model.env, rhoGround = e.p[0] / (287.05 * e.theta[0] * e.exner[0])
+  const { nz, dz, layer } = model.grid, rhoGround = model.env.rho[0]
   let total = 0
   for (let z = 0; z < nz; z++) {
     const weight = z === 0 || z === nz - 1 ? dz / 2 : dz
