@@ -167,7 +167,7 @@ export class AtmosphereModel {
     const surf = SURFACES[cfg.surfaceType], solar = insolation(cfg, this.time), absorbed = solar * (1 - surf.albedo), heatFlux = absorbed * surf.sensible / surf.inertia, moistFlux = absorbed * (1 - surf.sensible) * surf.evap * cfg.soilMoisture / 100, lfcZ = (this.sounding.lfc ?? 1.5) * 1000, f = 2 * OMEGA * Math.sin(cfg.latitude * Math.PI / 180)
     const mix = clamp(cfg.turbulence * .0015 * dt, 0, .01), spongeStart = Math.max(cfg.tropopause * 1000 + 1600, 13_000), liftTop = Math.min(3200, lfcZ)
     for (let z = 0, i = 0; z < nz; z++) {
-      const alt = z * dz, p = e.p[z], exner = e.exner[z], thEnv = e.theta[z], qEnv = e.q[z], ue = e.u[z], ve = e.v[z], l = z * layer
+      const alt = z * dz, p = e.p[z], exner = e.exner[z], thEnv = e.theta[z], qEnv = e.q[z], thvEnv = thEnv * (1 + .61 * qEnv), ue = e.u[z], ve = e.v[z], l = z * layer
       for (let y = 0; y < ny; y++) {
         const row = y * nx, yp = YP[y], ym = YM[y]
         for (let x = 0; x < nx; x++, i++) {
@@ -176,7 +176,8 @@ export class AtmosphereModel {
           if (rh < 1 && cloud[i] > 0) { const evap = Math.min(cloud[i], .00006 * cfg.entrainment * (1 - rh) * dt); cloud[i] -= evap; q[i] += evap; const cool = LV / CP / exner * evap; theta[i] -= cool; cold[i] += cool * .14 }
           const auto = Math.max(0, cloud[i] - .0009) * .035 * cfg.precipEfficiency * dt; cloud[i] -= auto; rain[i] += auto
           if (q[i] < sat && rain[i] > 0) { const evap = Math.min(rain[i], (sat - q[i]) * .018 * cfg.evaporation * dt); rain[i] -= evap; q[i] += evap; const cool = LV / CP / exner * evap * cfg.coldPoolStrength; theta[i] -= cool; cold[i] += cool }
-          const buoy = (theta[i] - thEnv) / Math.max(250, thEnv) + .61 * (q[i] - qEnv) - 1.8 * cloud[i] - 2.5 * rain[i]; w[i] += G * buoy * dt
+          // B = g [(θv − θv_env) / θv_env − q_c − q_r]: condensate loads the air with its own mass, no extra weight.
+          const buoy = (theta[i] * (1 + .61 * q[i]) - thvEnv) / thvEnv - cloud[i] - rain[i]; w[i] += G * buoy * dt
           // Damp and rotate only the departure from the environmental wind, so the imposed shear profile is not eroded.
           const du = (u[i] - ue) * .9999, dv = (v[i] - ve) * .9999; u[i] = ue + du + f * dv * dt; v[i] = ve + dv - f * du * dt
           if (z <= 1) { const weight = Math.exp(-alt / 300), pattern = 1 + this.surfacePattern[x + row] * .32, rho = 1.18 * Math.exp(-alt / 9000); theta[i] += heatFlux * pattern / (rho * CP * 300) * weight * dt; q[i] += moistFlux * 1.3e-10 * weight * dt }
