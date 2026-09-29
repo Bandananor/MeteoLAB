@@ -5,8 +5,13 @@ import { clamp, lerp, mod, mulberry32 } from '../core/math'
 import { colormapTexture, FIELDS, type FieldMode } from './fields'
 import { fieldVolumeFragment, groundShadowPars, precipFragment, precipVertex, sliceFragment, volumeFragment, volumeVertex } from './shaders'
 
+/** How a field layer is drawn: opaque slices with a volume of strong deviations, slices only, or the whole field as a volume. */
+export type LayerMode = 'both' | 'slices' | 'volume'
+
 export interface ViewSettings {
-  field: FieldMode; showVectors: boolean; showPrecip: boolean; showFieldVolume: boolean
+  field: FieldMode; showVectors: boolean; showPrecip: boolean; layerMode: LayerMode
+  /** 'volume' mode: fraction of the colour range below which the field is transparent (0 shows everything). */ volumeThreshold: number
+  /** 'volume' mode: opacity multiplier of the field volume. */ volumeDensity: number
   /** Horizontal slice height, km. */ sliceHeight: number
   /** Vertical north-south slice position, km north of the domain centre. */ sliceNorth: number
 }
@@ -89,7 +94,7 @@ export class StormView {
     this.volumeMesh = new THREE.Mesh(volumeBox, this.volumeMaterial); this.volumeMesh.renderOrder = 1; this.scene.add(this.volumeMesh)
 
     this.fieldTexture = texture3D(this.fieldData, THREE.RedFormat, nx, ny, nz)
-    this.fieldUniforms = { ...this.shared, uField: { value: this.fieldTexture }, uColormap: { value: null }, uDiverging: { value: 0 }, uThreshold: { value: .3 } }
+    this.fieldUniforms = { ...this.shared, uField: { value: this.fieldTexture }, uColormap: { value: null }, uDiverging: { value: 0 }, uThreshold: { value: .3 }, uDensity: { value: 1 } }
     this.fieldMaterial = new THREE.ShaderMaterial({ vertexShader: volumeVertex, fragmentShader: fieldVolumeFragment, side: THREE.BackSide, transparent: true, depthWrite: false, depthTest: false, premultipliedAlpha: true, toneMapped: false, uniforms: this.fieldUniforms })
     this.fieldMesh = new THREE.Mesh(volumeBox, this.fieldMaterial); this.fieldMesh.renderOrder = 1.5; this.scene.add(this.fieldMesh)
     this.sliceMaterial = new THREE.ShaderMaterial({ vertexShader: volumeVertex, fragmentShader: sliceFragment, side: THREE.DoubleSide, toneMapped: false, uniforms: this.fieldUniforms })
@@ -223,7 +228,7 @@ export class StormView {
     const info = FIELDS[field]
     if (this.colormapField !== field) {
       this.colormap?.dispose(); this.colormap = colormapTexture(info.stops); this.colormapField = field
-      this.fieldUniforms.uColormap.value = this.colormap; this.fieldUniforms.uDiverging.value = info.diverging ? 1 : 0; this.fieldUniforms.uThreshold.value = info.threshold
+      this.fieldUniforms.uColormap.value = this.colormap; this.fieldUniforms.uDiverging.value = info.diverging ? 1 : 0
     }
     computeScalarField(this.model, field, this.fieldValues)
     const span = info.max - info.min
@@ -255,8 +260,12 @@ export class StormView {
     const field = s.field === 'composite' ? null : s.field
     this.updateSun(); this.updateVolume(); if (field) this.updateFieldTexture(field)
     this.volumeMaterial.uniforms.uOpacity.value = field ? .22 : 1
-    this.fieldMesh.visible = !!field && s.showFieldVolume; this.sliceH.visible = this.sliceV.visible = !!field
-    this.shared.uSliceOn.value = field ? 1 : 0; this.shared.uSliceH.value = this.sliceH.position.y = s.sliceHeight; this.shared.uSliceZ.value = this.sliceV.position.z = -s.sliceNorth
+    const slices = !!field && s.layerMode !== 'volume', wholeVolume = s.layerMode === 'volume'
+    this.fieldMesh.visible = !!field && s.layerMode !== 'slices'; this.sliceH.visible = this.sliceV.visible = slices
+    // With slices the volume shows only strong deviations (the field's own threshold); alone it can show weak structure too.
+    this.fieldUniforms.uThreshold.value = field ? wholeVolume ? s.volumeThreshold : FIELDS[field].threshold : 1
+    this.fieldUniforms.uDensity.value = wholeVolume ? s.volumeDensity : 1
+    this.shared.uSliceOn.value = slices ? 1 : 0; this.shared.uSliceH.value = this.sliceH.position.y = s.sliceHeight; this.shared.uSliceZ.value = this.sliceV.position.z = -s.sliceNorth
     this.flowPoints.visible = s.showVectors; this.vectorLines.visible = s.showVectors
     const r = m.rotation
     this.mesoMarker.visible = r.uh >= UH_ROTATING

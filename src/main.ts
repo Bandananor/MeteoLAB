@@ -2,6 +2,7 @@ import './style.css'
 import { Atmosphere } from './atmosphere'
 import type { SimConfig } from './core'
 import { FIELDS, type FieldMode } from './render/fields'
+import type { LayerMode } from './render/view'
 
 const slider = (key: keyof SimConfig, label: string, min: number, max: number, step: number, value: number, suffix: string, digits = 0) => `
   <label>${label}<output data-output="${key}">${value.toFixed(digits)}${suffix}</output>
@@ -91,7 +92,11 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
           <div class="colorbar-labels"><span id="fieldMin"></span><span id="fieldMid"></span><span id="fieldMax"></span></div>
           <label>Высота горизонтального среза<output id="sliceHeightOut">2.0 км</output><input id="sliceHeight" type="range" min="0.1" max="14.5" step="0.1" value="2"></label>
           <label>Вертикальный разрез, север ↔ юг<output id="sliceNorthOut">0 км</output><input id="sliceNorth" type="range" min="-17.5" max="17.5" step="0.5" value="0"></label>
-          <label class="check"><input id="fieldVolume" type="checkbox" checked>Объём сильных отклонений</label>
+          <label>Отображение<select id="layerMode"><option value="both">Срезы + объём сильных отклонений</option><option value="slices">Только срезы</option><option value="volume">Только объём (всё поле)</option></select></label>
+          <div id="volumeControls" hidden>
+            <label>Порог прозрачности<output id="volumeThresholdOut">10 %</output><input id="volumeThreshold" type="range" min="0" max="0.8" step="0.02" value="0.1"></label>
+            <label>Плотность объёма<output id="volumeDensityOut">1.0×</output><input id="volumeDensity" type="range" min="0.2" max="4" step="0.1" value="1"></label>
+          </div>
         </div>
       </div>
       <div class="readout"><span>Сетка 40 × 32 × 24</span><span>Δx / Δy / Δz: 1.2 / 1.1 / 0.65 км</span><span>Δt: 1.0 с</span><span>Инсоляция: <b id="sun">—</b></span><span>Солнце: <b id="sunElevation">—</b></span><span>T+: <b id="time">00:00</b></span></div>
@@ -126,7 +131,7 @@ const nextSeed = () => { const [x] = crypto.getRandomValues(new Uint32Array(1));
 const useSeed = (seed: number) => { config.seed = seed; const url = new URL(location.href); url.searchParams.set('seed', String(seed)); history.replaceState(null, '', url) }
 useSeed(Number.isInteger(urlSeed) && urlSeed > 0 ? urlSeed : nextSeed())
 const canvas = document.querySelector<HTMLCanvasElement>('#sim')!
-const view = { field: 'composite' as FieldMode, showVectors: false, showPrecip: false, showFieldVolume: true, sliceHeight: 2, sliceNorth: 0 }
+const view = { field: 'composite' as FieldMode, showVectors: false, showPrecip: false, layerMode: 'both' as LayerMode, volumeThreshold: .1, volumeDensity: 1, sliceHeight: 2, sliceNorth: 0 }
 let sim = new Atmosphere(canvas, config)
 let running = true
 let last = performance.now(), frameCount = 0
@@ -202,7 +207,11 @@ sliceNorth.addEventListener('input', () => {
   const km = Number(sliceNorth.value)
   setView({ sliceNorth: km }); text('sliceNorthOut', km === 0 ? '0 км' : `${Math.abs(km)} км ${km > 0 ? 'к северу' : 'к югу'}`)
 })
-document.querySelector<HTMLInputElement>('#fieldVolume')!.addEventListener('change', event => setView({ showFieldVolume: (event.target as HTMLInputElement).checked }))
+const layerMode = document.querySelector<HTMLSelectElement>('#layerMode')!, volumeControls = document.querySelector<HTMLDivElement>('#volumeControls')!
+layerMode.addEventListener('change', () => { const mode = layerMode.value as LayerMode; setView({ layerMode: mode }); volumeControls.hidden = mode !== 'volume' })
+const volumeThreshold = document.querySelector<HTMLInputElement>('#volumeThreshold')!, volumeDensity = document.querySelector<HTMLInputElement>('#volumeDensity')!
+volumeThreshold.addEventListener('input', () => { setView({ volumeThreshold: Number(volumeThreshold.value) }); text('volumeThresholdOut', `${Math.round(Number(volumeThreshold.value) * 100)} %`) })
+volumeDensity.addEventListener('input', () => { setView({ volumeDensity: Number(volumeDensity.value) }); text('volumeDensityOut', `${Number(volumeDensity.value).toFixed(1)}×`) })
 canvas.addEventListener('dblclick', event => { const r=canvas.getBoundingClientRect(); sim.perturb((event.clientX-r.left)/r.width,(event.clientY-r.top)/r.height,1.25) })
 
 const text = (id:string,value:string) => { document.querySelector(`#${id}`)!.textContent=value }

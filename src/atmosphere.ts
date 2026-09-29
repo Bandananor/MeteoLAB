@@ -1,7 +1,7 @@
 import { AtmosphereModel, insolation, type ModelDiagnostics, type SimConfig, sunDirection } from './core'
 import { describeConvection } from './describe'
 import type { FieldMode } from './render/fields'
-import { StormView, type ViewSettings } from './render/view'
+import { type LayerMode, StormView, type ViewSettings } from './render/view'
 import { SNAPSHOT_COLUMNS, SNAPSHOT_FIELDS, type Snapshot, type WorkerRequest } from './simulation'
 
 /**
@@ -10,7 +10,7 @@ import { SNAPSHOT_COLUMNS, SNAPSHOT_FIELDS, type Snapshot, type WorkerRequest } 
  * of every snapshot, so the view and the field slices read it exactly as they would read the live model.
  */
 export class Atmosphere implements ViewSettings {
-  field: FieldMode = 'composite'; showVectors = false; showPrecip = false; showFieldVolume = true; sliceHeight = 2; sliceNorth = 0
+  field: FieldMode = 'composite'; showVectors = false; showPrecip = false; layerMode: LayerMode = 'both'; volumeThreshold = .1; volumeDensity = 1; sliceHeight = 2; sliceNorth = 0
   private readonly mirror: AtmosphereModel; private readonly view: StormView; private readonly worker: Worker
   private readonly config: SimConfig; private sentConfig: string
   private latest: ModelDiagnostics

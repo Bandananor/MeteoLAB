@@ -220,6 +220,7 @@ ${raymarchCommon}
 ${fieldSampling}
 uniform float uDiverging;
 uniform float uThreshold;
+uniform float uDensity;
 
 const int STEPS = 72;
 
@@ -240,7 +241,7 @@ void main(){
     if(T < 0.03) break;
     float s = fieldValue(ro + rd * tt);
     float strength = uDiverging > 0.5 ? abs(s * 2.0 - 1.0) : s;
-    float sigma = smoothstep(uThreshold, 1.0, strength) * 0.9;
+    float sigma = smoothstep(uThreshold, 1.0, strength) * 0.9 * uDensity;
     if(sigma > 1e-4){
       float a = exp(-sigma * dt);
       col += T * (1.0 - a) * fieldColor(s);
