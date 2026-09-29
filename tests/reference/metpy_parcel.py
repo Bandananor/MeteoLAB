@@ -15,10 +15,12 @@ import metpy.calc as mpcalc
 from metpy.units import units
 
 BASE = dict(surfaceTemp=30, lapseLow=8.4, lapseMid=7.2, lapseUpper=6.5, tropopause=11, stratoWarming=1.2,
-            rhSurface=72, rhLow=60, rhMid=42, rhUpper=28)
+            rhSurface=72, rhLow=60, rhMid=42, rhUpper=28,
+            wind=[(0, 2, 160), (3000, 10, 185), (6000, 20, 215), (10000, 28, 235)])
 PROFILES = {
     'summer': {},
-    'supercell': dict(surfaceTemp=29, rhSurface=72, rhLow=60, rhMid=38, rhUpper=30, lapseLow=7.2, lapseMid=6.8, lapseUpper=6.5),
+    'supercell': dict(surfaceTemp=29, rhSurface=72, rhLow=60, rhMid=38, rhUpper=30, lapseLow=7.2, lapseMid=6.8, lapseUpper=6.5,
+                      wind=[(0, 6, 140), (3000, 12, 200), (6000, 20, 240), (10000, 28, 255)]),
     'capped': dict(surfaceTemp=28, rhSurface=62, rhLow=50, rhMid=40, rhUpper=30, lapseLow=6.0, lapseMid=7.5, lapseUpper=6.5),
 }
 
@@ -44,6 +46,20 @@ def rel_humidity(z, c):
     if z < 5000: return lerp(c['rhLow'], c['rhMid'], (z - 1500) / 3500) / 100
     if z < tp: return lerp(c['rhMid'], c['rhUpper'], (z - 5000) / max(1000, tp - 5000)) / 100
     return c['rhUpper'] / 100 * .7
+
+
+def wind(z, c):
+    """Speed linear, direction along the shorter arc between nodes (Environment.windUV); u east, v north."""
+    nodes = c['wind']
+    for (z0, s0, d0), (z1, s1, d1) in zip(nodes, nodes[1:]):
+        if z < z1:
+            t = (z - z0) / (z1 - z0)
+            s, d = s0 + (s1 - s0) * t, d0 + ((d1 - d0 + 180) % 360 - 180) * t
+            break
+    else:
+        s, d = nodes[-1][1], nodes[-1][2]
+    a = np.radians(270 - d)
+    return s * np.cos(a), s * np.sin(a)
 
 
 def reference(c):
@@ -81,11 +97,24 @@ def reference(c):
     # downdraft_cape selects its 700-500 hPa layer correctly only with pressure in hPa (NaN with Pa in MetPy 1.7.1).
     dcape, _, _ = mpcalc.downdraft_cape(P.to('hPa'), T, Td)
     r1 = lambda q: round(float(np.ravel(q.magnitude)[0]), 1)
+    # Kinematics on a 10 m grid up to 6 km, as StormIndices integrates.
+    zk = np.arange(0, 6000 + 10, 10.0)
+    uk, vk = np.array([wind(h, c) for h in zk]).T
+    pk = np.interp(zk, z, p) * units.Pa
+    Hk, Uk, Vk = zk * units.m, uk * units('m/s'), vk * units('m/s')
+    right, _, _ = mpcalc.bunkers_storm_motion(pk, Uk, Vk, Hk)
+    srh = lambda top: mpcalc.storm_relative_helicity(Hk, Uk, Vk, top * units.m, storm_u=right[0], storm_v=right[1])[2]
+    shear06 = float(np.hypot(uk[-1] - uk[0], vk[-1] - vk[0]))
+    lcl_h = to_km(lcl_p) * 1000 * units.m
+    scp = mpcalc.supercell_composite(mu_cape, srh(3000), shear06 * units('m/s'))
+    stp = mpcalc.significant_tornado(cape, lcl_h, srh(1000), shear06 * units('m/s'))
     return dict(cape=round(float(cape.magnitude), 1), cin=round(float(cin.magnitude), 1),
                 lcl=round(to_km(lcl_p), 3), lfc=None if to_km(lfc_p) is None else round(to_km(lfc_p), 3),
                 el=None if to_km(el_p) is None else round(to_km(el_p), 3),
                 pressureAt10km=round(float(np.interp(10000, z, p)), 1),
-                mlcape=r1(ml_cape), mlcin=r1(ml_cin), mucape=r1(mu_cape), mucin=r1(mu_cin), dcape=r1(dcape))
+                mlcape=r1(ml_cape), mlcin=r1(ml_cin), mucape=r1(mu_cape), mucin=r1(mu_cin), dcape=r1(dcape),
+                right=[round(float(right[0].m), 2), round(float(right[1].m), 2)], srh01=r1(srh(1000)), srh03=r1(srh(3000)),
+                shear06=round(shear06, 2), scp=round(float(np.ravel(scp.m)[0]), 3), stp=round(float(np.ravel(stp.m)[0]), 3))
 
 
 out = {name: reference({**BASE, **over}) for name, over in PROFILES.items()}

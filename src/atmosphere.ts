@@ -1,4 +1,4 @@
-import { AtmosphereModel, insolation, type ModelDiagnostics, parcelIndices, type ParcelIndices, type SimConfig, sunDirection } from './core'
+import { AtmosphereModel, insolation, type ModelDiagnostics, parcelIndices, type ParcelIndices, type SimConfig, stormIndices, type StormIndices, sunDirection } from './core'
 import { describeConvection } from './describe'
 import type { FieldMode } from './render/fields'
 import { type LayerMode, StormView, type ViewSettings } from './render/view'
@@ -16,12 +16,15 @@ export class Atmosphere implements ViewSettings {
   private latest: ModelDiagnostics
   /** Standard parcel indices of the environment (it does not change during a run). */
   private readonly indices: ParcelIndices
+  /** Bunkers motion, SRH, SCP and STP of the environment. */
+  readonly storm: StormIndices
 
   constructor(canvas: HTMLCanvasElement, config: SimConfig) {
     this.config = config; this.sentConfig = JSON.stringify(config)
     this.mirror = new AtmosphereModel({ ...config })
     this.latest = this.mirror.diagnostics()
     this.indices = parcelIndices(this.mirror.env, this.mirror.grid.height)
+    this.storm = stormIndices(this.mirror.env, this.indices)
     this.view = new StormView(canvas, this.mirror, this)
     this.worker = new Worker(new URL('./simulation.worker.ts', import.meta.url), { type: 'module' })
     this.worker.addEventListener('message', (event: MessageEvent<Snapshot>) => this.receive(event.data))
@@ -46,7 +49,7 @@ export class Atmosphere implements ViewSettings {
   diagnostics() {
     const m = this.mirror, d = this.latest, text = describeConvection(d, m.sounding, m.rotation)
     return {
-      ...m.sounding, ...text, indices: this.indices,
+      ...m.sounding, ...text, indices: this.indices, storm: this.storm,
       updraft: d.updraft, downdraft: d.downdraft, rain: d.rainRate, cloudTop: d.cloudTop, thermalTop: d.thermalTop,
       cloudWater: d.maxCloud * 1000, coldPool: d.coldMax, microburst: d.microburst, clipped: d.clipped, updraftHelicity: m.rotation.uh,
       insolation: insolation(m.config, m.time), sunElevation: Math.asin(Math.max(-1, Math.min(1, sunDirection(m.config, m.time).y))) * 180 / Math.PI,
