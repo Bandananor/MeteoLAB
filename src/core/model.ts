@@ -1,6 +1,6 @@
 import { SURFACES, type SimConfig } from './config'
 import { CP, DT, G, LV, OMEGA } from './constants'
-import { Environment } from './environment'
+import { Environment, type EnvironmentProfile } from './environment'
 import { createGrid, type Grid } from './grid'
 import { clamp, lerp, mod, mulberry32 } from './math'
 import { fallSpeed, rainProcesses, saturationAdjust } from './microphysics'
@@ -44,7 +44,8 @@ export class AtmosphereModel {
   private levelWeight: Float64Array
   private rng: () => number; private accumulator = 0
 
-  constructor(config: SimConfig, grid: Grid = createGrid()) {
+  /** `profile` replaces the slider environment with an analytic one (idealised test cases). */
+  constructor(config: SimConfig, grid: Grid = createGrid(), profile?: EnvironmentProfile) {
     this.config = config; this.grid = grid
     const f = () => new Float32Array(grid.n)
     this.u = f(); this.v = f(); this.w = f(); this.theta = f(); this.q = f(); this.cloud = f(); this.rain = f(); this.cold = f()
@@ -55,7 +56,7 @@ export class AtmosphereModel {
     this.backtraceCorner = new Int32Array(grid.n * 8); this.backtraceWeight = new Float64Array(grid.n * 3)
     this.uhLevels = [Math.ceil(2000 / grid.dz), Math.floor(5000 / grid.dz)]
     this.rng = mulberry32(config.seed)
-    this.env = new Environment(config, grid)
+    this.env = new Environment(config, grid, profile)
     this.initialize()
     this.sounding = computeSounding(config, this.env, grid.height)
   }

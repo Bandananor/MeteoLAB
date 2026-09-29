@@ -22,10 +22,10 @@ export interface ParcelOptions {
  * Parcel ascent from the surface (heights in km), plus the wind profile and the 0 °C level of the environment.
  * Defaults reproduce the app's diagnostic parcel; `{ excess: 0, entrain: false }` is the standard surface-based parcel.
  */
-export function computeSounding(config: SimConfig, env: Environment, height: number, { excess = .5, entrain = true }: ParcelOptions = {}): Sounding {
+export function computeSounding(_config: SimConfig, env: Environment, height: number, { excess = .5, entrain = true }: ParcelOptions = {}): Sounding {
   // 25 m: the switch to the moist adiabat happens at the first saturated level, so a coarse step shifts the LCL.
   const profile: ParcelPoint[] = [], dz = 25
-  let temp = config.surfaceTemp + excess, q = config.rhSurface / 100 * env.qsat(temp, 0), saturated = false
+  let temp = env.temperatureEnv(0) + excess, q = env.mixingRatio(0, temp, env.pressureAt(0)), saturated = false
   let lcl: number | null = null, lfc: number | null = null, el: number | null = null, cape = 0, cin = 0
   for (let z = 0; z <= height; z += dz) {
     const sat = env.qsat(temp, z)
