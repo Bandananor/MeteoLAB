@@ -17,19 +17,18 @@ export function fallSpeed(rain: number, rho: number, rhoGround: number) {
 
 /**
  * Rain processes at cell i over dt: autoconversion and accretion move cloud water to rain, rain evaporates in
- * subsaturated air (never past saturation). `productionScale` and `evaporationScale` multiply the rates (the tuning
- * sliders, 1 = Kessler). Returns the evaporated rain; the caller applies the latent cooling.
+ * subsaturated air (never past saturation). Returns the evaporated rain; the caller applies the latent cooling.
  */
-export function rainProcesses(q: Float32Array, cloud: Float32Array, rain: Float32Array, i: number, tk: number, p: number, rho: number, dt: number, productionScale = 1, evaporationScale = 1) {
+export function rainProcesses(q: Float32Array, cloud: Float32Array, rain: Float32Array, i: number, tk: number, p: number, rho: number, dt: number) {
   const qc = cloud[i], qr = rain[i]
   const rate = AUTOCONVERSION_RATE * Math.max(0, qc - AUTOCONVERSION_THRESHOLD) + (qr > 0 ? 2.2 * qc * qr ** .875 : 0)
-  const production = Math.min(qc, rate * productionScale * dt)
+  const production = Math.min(qc, rate * dt)
   cloud[i] -= production; rain[i] += production
   const qs = qsatP(tk - 273.15, p)
   if (rain[i] <= 0 || q[i] >= qs) return 0
   const rq = .001 * rho * rain[i], ventilation = 1.6 + 124.9 * rq ** .2046
   const er = (1 - q[i] / qs) * ventilation * rq ** .525 / (.001 * rho * (5.4e5 + 2.55e6 / (p / 100 * qs)))
-  const evaporation = Math.min(rain[i], er * evaporationScale * dt, (qs - q[i]) / (1 + LV * LV * qs / (CP * RV * tk * tk)))
+  const evaporation = Math.min(rain[i], er * dt, (qs - q[i]) / (1 + LV * LV * qs / (CP * RV * tk * tk)))
   rain[i] -= evaporation; q[i] += evaporation
   return evaporation
 }

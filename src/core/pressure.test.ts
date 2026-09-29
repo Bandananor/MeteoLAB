@@ -6,9 +6,10 @@ import { PressureSolver } from './pressure'
 const cases: [number, number, number][] = [[1, 1, 4], [4, 1, 3], [4, 4, 4], [8, 6, 5], [12, 10, 24], [40, 32, 24]]
 
 describe('PressureSolver', () => {
-  for (const [nx, ny, nz] of cases) {
-    it(`removes the dual-cell divergence of a random field on ${nx}x${ny}x${nz}`, () => {
-      const grid = createGrid({ nx, ny, nz, width: nx * 1200, depth: ny * 1125, height: 15_000 }), solver = new PressureSolver(grid)
+  for (const [nx, ny, nz] of cases) for (const anelastic of [false, true]) {
+    it(`removes the dual-cell divergence of a random ${anelastic ? 'mass flux (rho0 falls 6x)' : 'field'} on ${nx}x${ny}x${nz}`, () => {
+      const grid = createGrid({ nx, ny, nz, width: nx * 1200, depth: ny * 1125, height: 15_000 })
+      const solver = new PressureSolver(grid, anelastic ? Array.from({ length: nz }, (_, z) => 1.2 * Math.exp(-z * grid.dz / 8400)) : undefined)
       let seed = 12345
       const random = () => (seed = (seed * 16807) % 2147483647) / 2147483647 - .5
       const u = new Float32Array(grid.n).map(random), v = new Float32Array(grid.n).map(random), w = new Float32Array(grid.n).map(random)

@@ -1,7 +1,8 @@
 import './style.css'
 import { Atmosphere } from './atmosphere'
-import type { SimConfig } from './core'
+import { createGrid, Environment, parcelIndices, SCENARIOS, type SimConfig, stormIndices, weismanKlemp } from './core'
 import { FIELDS, type FieldMode } from './render/fields'
+import type { LayerMode } from './render/view'
 
 const slider = (key: keyof SimConfig, label: string, min: number, max: number, step: number, value: number, suffix: string, digits = 0) => `
   <label>${label}<output data-output="${key}">${value.toFixed(digits)}${suffix}</output>
@@ -9,27 +10,24 @@ const slider = (key: keyof SimConfig, label: string, min: number, max: number, s
   </label>`
 
 const defaults: SimConfig = {
-  surfaceTemp:30,lapseLow:8.4,lapseMid:7.2,lapseUpper:6.5,tropopause:11,stratoWarming:1.2,
-  rhSurface:72,rhLow:60,rhMid:42,rhUpper:28,entrainment:.65,
+  surfaceTemp:30,lapseLow:8.4,lapseMid:7.2,lapseUpper:6.5,tropopause:11,stratoWarming:1.2,capHeight:1.5,capStrength:0,moistLayer:0,
+  rhSurface:72,rhLow:60,rhMid:42,rhUpper:28,
   wind0:2,wind3:10,wind6:20,wind10:28,windDir0:160,windDir3:185,windDir6:215,windDir10:235,
   latitude:45,turbulence:.55,
-  hour:13.5,solarMax:900,soilMoisture:45,surfaceType:'grass',
-  precipEfficiency:.85,evaporation:1,coldPoolStrength:1,speed:8,seed:42,bubble:1
+  hour:13.5,solarMax:1000,soilMoisture:45,surfaceType:'grass',
+  speed:8,seed:42,bubble:1
 }
-const presets: {name:string;hint:string;values:Partial<SimConfig>}[] = [
-  {name:'Летний день',hint:'Исходные настройки: умеренно неустойчивая атмосфера',values:{}},
-  {name:'Мощная гроза',hint:'Жара, влажный нижний слой и крутой градиент: облако пробивает тропопаузу',values:{surfaceTemp:34,rhSurface:80,rhLow:70,rhMid:55,lapseLow:9}},
-  {name:'Сухой воздух',hint:'Сухой средний слой съедает края облака и душит конвекцию',values:{rhMid:10,rhUpper:10}},
-  {name:'Сдвиг ветра',hint:'Сильный ветер наверху наклоняет облако, дождь выпадает в стороне от восходящего потока',values:{surfaceTemp:32,rhSurface:78,wind3:18,wind6:40,wind10:50}},
-  {name:'Микропорыв',hint:'Сухой подоблачный слой и сильное испарение дождя: холодный поток ударяет в землю',values:{surfaceTemp:33,rhSurface:55,rhLow:35,lapseLow:9.5,evaporation:2,coldPoolStrength:2.5,precipEfficiency:1.4}},
-  {name:'Суперячейка',hint:'Ветер у земли дует с юго-востока и с высотой поворачивает к западу: восходящий поток закручивается в мезоциклон',values:{surfaceTemp:29,rhSurface:72,rhLow:60,rhMid:38,rhUpper:30,lapseLow:7.2,lapseMid:6.8,lapseUpper:6.5,entrainment:.5,bubble:1.8,wind0:6,wind3:12,wind6:20,wind10:28,windDir0:140,windDir3:200,windDir6:240,windDir10:255}},
-  {name:'Жаркий город',hint:'Городская застройка и сухая почва сильно греют воздух у земли',values:{surfaceType:'urban',soilMoisture:15,surfaceTemp:33,solarMax:1000}},
-]
+// Scenario button tooltips end with the environment's own numbers (standard parcels, MetPy conventions).
+const presets = SCENARIOS.map(s => {
+  const c: SimConfig = { ...defaults, ...s.values }, grid = createGrid()
+  const env = new Environment(c, grid, c.profile === 'weisman-klemp' ? weismanKlemp({ qvMax: .016 }) : undefined), p = parcelIndices(env, grid.height), k = stormIndices(env, p)
+  return { ...s, hint: `${s.hint}.\nML CAPE ${Math.round(p.ml.cape)} Дж/кг, ML CIN ${Math.round(p.ml.cin)} Дж/кг, сдвиг 0–6 км ${Math.round(k.shear06)} м/с, SRH 0–1 км ${Math.round(k.srh01)} м²/с²` }
+})
 
 document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
   <header>
     <div><span class="eyebrow">ЧИСЛЕННАЯ ЛАБОРАТОРИЯ АТМОСФЕРЫ / 1.0 3D</span><h1>StormLab</h1></div>
-    <div class="header-stats"><span>3D non-hydrostatic</span><span>48 × 36 × 15 км</span><div class="status"><i></i><span id="statusText">РАСЧЁТ ИДЁТ</span></div></div>
+    <div class="header-stats"><span>3D non-hydrostatic</span><span>48 × 36 × 19 км</span><div class="status"><i></i><span id="statusText">РАСЧЁТ ИДЁТ</span></div></div>
   </header>
   <main>
     <aside class="controls">
@@ -41,20 +39,26 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
         ${slider('lapseUpper','Градиент 8 км–TP',3,11,.1,6.5,' K/км',1)}
         ${slider('tropopause','Тропопауза',8,14,.5,11,' км',1)}
         ${slider('stratoWarming','Стратосферный градиент',-1,4,.1,1.2,' K/км',1)}
+        ${slider('capStrength','Задерживающий слой (инверсия)',0,6,.25,0,' K',2)}
+        ${slider('capHeight','Высота инверсии',.5,4,.1,1.5,' км',1)}
       </div></details>
       <details open><summary>Влажность по слоям</summary><div class="group">
         ${slider('rhSurface','У земли',20,100,1,72,' %')}
         ${slider('rhLow','1–3 км',10,100,1,60,' %')}
         ${slider('rhMid','3–7 км',5,100,1,42,' %')}
         ${slider('rhUpper','7 км–TP',5,100,1,28,' %')}
-        ${slider('entrainment','Вовлечение сухого воздуха',0,2,.05,.65,'×',2)}
+        ${slider('moistLayer','Влажный перемешанный слой',0,2.5,.1,0,' км',1)}
       </div></details>
       <details><summary>Профиль ветра</summary><div class="group">
         ${slider('wind0','Ветер у земли',-20,30,1,2,' м/с')}
+        ${slider('wind05','Ветер на 0,5 км',-20,35,1,3,' м/с')}
+        ${slider('wind1','Ветер на 1 км',-20,40,1,5,' м/с')}
         ${slider('wind3','Ветер на 3 км',-10,45,1,10,' м/с')}
         ${slider('wind6','Ветер на 6 км',-10,60,1,20,' м/с')}
         ${slider('wind10','Ветер на 10 км',-10,75,1,28,' м/с')}
         ${slider('windDir0','Направление у земли',0,360,5,160,'°')}
+        ${slider('windDir05','Направление на 0,5 км',0,360,5,165,'°')}
+        ${slider('windDir1','Направление на 1 км',0,360,5,170,'°')}
         ${slider('windDir3','Направление на 3 км',0,360,5,185,'°')}
         ${slider('windDir6','Направление на 6 км',0,360,5,215,'°')}
         ${slider('windDir10','Направление на 10 км',0,360,5,235,'°')}
@@ -66,18 +70,13 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
       <details><summary>Поверхность и радиация</summary><div class="group">
         <label>Тип поверхности<select id="surfaceType"><option value="grass">Трава</option><option value="dry">Сухая почва</option><option value="water">Вода</option><option value="urban">Город</option></select></label>
         ${slider('hour','Местное солнечное время',5,21,.25,13.5,' ч',2)}
-        ${slider('solarMax','Максимальная инсоляция',300,1100,25,900,' Вт/м²')}
+        ${slider('solarMax','Солнце в зените',300,1200,25,1000,' Вт/м²')}
         ${slider('soilMoisture','Влажность почвы',0,100,1,45,' %')}
       </div></details>
-      <details open><summary>Микрофизика и cold pool</summary><div class="group">
-        ${slider('precipEfficiency','Эффективность осадков',0,2,.05,.85,'×',2)}
-        ${slider('evaporation','Испарение осадков',0,2,.05,1,'×',2)}
-        ${slider('coldPoolStrength','Сила cold pool',0,2.5,.05,1,'×',2)}
-      </div></details>
       <details><summary>Расчёт</summary><div class="group">
+        <label title="Точный перенос (WENO 5-го порядка) почти не размывает восходящие потоки: суперячейки живут дольше и расщепляются, но расчёт примерно вдвое медленнее">Перенос<select id="transport"><option value="semi-lagrangian">Быстрый (полулагранжев)</option><option value="weno">Точный (WENO5)</option></select></label>
         ${slider('speed','Ускорение времени',1,30,1,8,'×')}
-        ${slider('seed','Seed',1,999,1,42,'')}
-        ${slider('bubble','Сила начального термика',.3,2.5,.05,1,'×',2)}
+        ${slider('bubble','Сила начального термика (0 — без термика)',0,2.5,.05,1,'×',2)}
       </div></details>
       <p class="hint">Двойной клик по поверхности создаёт локальный 3D-термик. Изменение профиля перезапускает эксперимент.</p>
       <div class="actions"><button id="restart">Перезапустить</button><button id="pause" class="secondary">Пауза</button></div>
@@ -85,7 +84,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
 
     <section class="workspace">
       <nav class="tabs" aria-label="Отображаемое поле">
-        <button class="active" data-field="composite">Облака</button><button data-field="updraft">Вертикальные потоки</button><button data-field="theta">Температура</button><button data-field="moisture">Влажность</button><button data-field="vorticity">Завихренность</button><button data-field="helicity" title="Спиральность восходящего потока: где поднимающийся воздух вращается (слой 2–5 км)">Вращение (UH)</button><button data-field="coldpool">Cold pool</button><button id="flowToggle" class="flow-toggle" aria-pressed="false">Потоки →</button><button id="precipToggle" class="flow-toggle" aria-pressed="false" title="Снежинки выше уровня 0 °C тают в капли по пути вниз">Снег и дождь</button>
+        <button class="active" data-field="composite">Облака</button><button data-field="updraft">Вертикальные потоки</button><button data-field="theta">Температура</button><button data-field="moisture">Влажность</button><button data-field="vorticity">Завихренность</button><button data-field="helicity" title="Спиральность восходящего потока: где поднимающийся воздух вращается (слой 2–5 км)">Вращение (UH)</button><button data-field="coldpool">Cold pool</button><button id="flowToggle" class="flow-toggle" aria-pressed="false">Потоки →</button><button id="precipToggle" class="flow-toggle" aria-pressed="false" title="Снежинки выше уровня 0 °C тают в капли по пути вниз">Снег и дождь</button><button id="mesoToggle" class="flow-toggle active" aria-pressed="true" title="Кольцо над вращающимся восходящим потоком (UH 2–5 км выше порога вращения)">Мезоциклон</button><button id="swathToggle" class="flow-toggle" aria-pressed="false" title="Сколько дождя выпало на землю с начала расчёта: голубой до 5 мм, зелёный до 10, жёлтый до 25, оранжевый до 50, красный больше">Сумма осадков</button>
       </nav>
       <div class="viewport">
         <canvas id="sim" width="960" height="600"></canvas>
@@ -96,12 +95,16 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
           <b id="fieldTitle"></b>
           <div class="colorbar" id="colorbar"></div>
           <div class="colorbar-labels"><span id="fieldMin"></span><span id="fieldMid"></span><span id="fieldMax"></span></div>
-          <label>Высота горизонтального среза<output id="sliceHeightOut">2.0 км</output><input id="sliceHeight" type="range" min="0.1" max="14.5" step="0.1" value="2"></label>
+          <label>Высота горизонтального среза<output id="sliceHeightOut">2.0 км</output><input id="sliceHeight" type="range" min="0.1" max="18.5" step="0.1" value="2"></label>
           <label>Вертикальный разрез, север ↔ юг<output id="sliceNorthOut">0 км</output><input id="sliceNorth" type="range" min="-17.5" max="17.5" step="0.5" value="0"></label>
-          <label class="check"><input id="fieldVolume" type="checkbox" checked>Объём сильных отклонений</label>
+          <label>Отображение<select id="layerMode"><option value="both">Срезы + объём сильных отклонений</option><option value="slices">Только срезы</option><option value="volume">Только объём (всё поле)</option></select></label>
+          <div id="volumeControls" hidden>
+            <label>Порог прозрачности<output id="volumeThresholdOut">10 %</output><input id="volumeThreshold" type="range" min="0" max="0.8" step="0.02" value="0.1"></label>
+            <label>Плотность объёма<output id="volumeDensityOut">1.0×</output><input id="volumeDensity" type="range" min="0.2" max="4" step="0.1" value="1"></label>
+          </div>
         </div>
       </div>
-      <div class="readout"><span>Сетка 40 × 32 × 24</span><span>Δx / Δy / Δz: 1.2 / 1.1 / 0.65 км</span><span>Δt: 1.0 с</span><span>Инсоляция: <b id="sun">—</b></span><span>Солнце: <b id="sunElevation">—</b></span><span>T+: <b id="time">00:00</b></span></div>
+      <div class="readout"><span>Сетка 40 × 32 × 30</span><span>Δx / Δy / Δz: 1.2 / 1.1 / 0.65 км</span><span>Δt: 1.0 с</span><span>Инсоляция: <b id="sun">—</b></span><span>Солнце: <b id="sunElevation">—</b></span><span>T+: <b id="time">00:00</b></span></div>
     </section>
 
     <aside class="diagnostics">
@@ -110,33 +113,62 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
       <div class="sounding"><canvas id="sounding"></canvas><div class="sounding-key"><span><i class="env"></i>среда</span><span><i class="dew"></i>точка росы</span><span><i class="parcel"></i>частица</span><span><i class="area cape"></i>CAPE</span><span><i class="area cin"></i>CIN</span></div></div>
       <div class="levels"><div><span>LCL</span><b id="lcl">—</b></div><div><span>LFC</span><b id="lfc">—</b></div><div><span>EL</span><b id="el">—</b></div><div><span>0 °C</span><b id="freezing">—</b></div></div>
       <div class="hodograph"><canvas id="hodograph"></canvas><div class="hodo-key"><span><i style="border-color:#c4553a"></i>0–3 км</span><span><i style="border-color:#4f8f5b"></i>3–6 км</span><span><i style="border-color:#3f6fa3"></i>6–10 км</span></div><div class="hodo-caption"><span>Сдвиг ветра 0–6 км</span><b id="shear">—</b><small id="shearHint"></small></div></div>
-      <div class="energy"><div><span>CAPE</span><strong id="cape">—</strong><small>Дж/кг</small></div><div><span>CIN</span><strong id="cin">—</strong><small>Дж/кг</small></div></div>
+      <div class="energy"><div title="Частица приложения: +0,5 K и вовлечение сухого воздуха (разбавленная CAPE)"><span>CAPE</span><strong id="cape">—</strong><small>Дж/кг</small></div><div><span>CIN</span><strong id="cin">—</strong><small>Дж/кг</small></div></div>
+      <div class="energy"><div title="Перемешанный слой 100 гПа (стандартная частица, без добавок)"><span>MLCAPE</span><strong id="mlcape">—</strong><small>Дж/кг</small></div><div title="CIN частицы перемешанного слоя"><span>MLCIN</span><strong id="mlcin">—</strong><small>Дж/кг</small></div></div>
+      <div class="energy"><div title="Спиральность относительно правой ячейки (движение по Банкерсу), слой 0–1 км: главный признак смерчеопасной среды"><span>SRH 0–1 км</span><strong id="srh01">—</strong><small>м²/с²</small></div><div title="Спиральность относительно правой ячейки, слой 0–3 км"><span>SRH 0–3 км</span><strong id="srh03">—</strong><small>м²/с²</small></div></div>
+      <div class="energy"><div title="Сложный параметр суперячейки (MUCAPE, SRH 0–3 км, сдвиг 0–6 км). Больше 1 — среда благоприятна для суперячеек"><span>SCP</span><strong id="scp">—</strong><small>безразм.</small></div><div title="Параметр значимого смерча, фиксированный слой (SBCAPE, LCL, SRH 0–1 км, сдвиг 0–6 км). Больше 1 — благоприятно для сильных смерчей"><span>STP</span><strong id="stp">—</strong><small>безразм.</small></div></div>
+      <div class="energy"><div title="Наиболее неустойчивая частица в нижних 300 гПа"><span>MUCAPE</span><strong id="mucape">—</strong><small>Дж/кг</small></div><div title="Энергия нисходящего потока: сила холодных оттоков и микропорывов"><span>DCAPE</span><strong id="dcape">—</strong><small>Дж/кг</small></div></div>
       <div class="metric"><span>Макс. updraft</span><strong id="updraft">—</strong><small>м/с</small></div>
       <div class="metric"><span>Макс. downdraft</span><strong id="downdraft">—</strong><small>м/с</small></div>
       <div class="metric" title="Спиральность восходящего потока: насколько поднимающийся воздух вращается циклонически в слое 2–5 км"><span>Вращение потока (UH 2–5 км)</span><strong id="uh">—</strong><small>м²/с²</small></div>
+      <div class="metric" title="Вращение восходящего потока у земли: низкоуровневый мезоциклон — признак ячейки, опасной по смерчам. На сетке ~0,65 км слой 0–1 км — один уровень, 0–3 км — четыре"><span>Низкое вращение (UH 0–1 / 0–3 км)</span><strong id="uhLow">—</strong><small>м²/с²</small></div>
       <div class="metric"><span>Вершина облака</span><strong id="cloudTop">—</strong><small>км</small></div>
       <div class="metric"><span>Вершина термика</span><strong id="thermalTop">—</strong><small>км</small></div>
       <div class="metric"><span>Макс. облачная вода</span><strong id="cloudWater">—</strong><small>г/кг</small></div>
       <div class="metric"><span>Cold pool Δθ</span><strong id="coldPool">—</strong><small>K</small></div>
       <div class="metric"><span>Микропорыв</span><strong id="microburst">—</strong><small>м/с outflow</small></div>
-      <div class="metric"><span>Осадки</span><strong id="rain">—</strong><small>мм/ч proxy</small></div>
+      <div class="metric" title="Сколько раз скорость упёрлась в предохранитель (|u|,|v| ≤ 85, |w| ≤ 60 м/с). Не ноль — модель вышла из рабочего диапазона, цифрам доверять нельзя."><span>Срабатывания ограничителей</span><strong id="clipped">—</strong><small>с начала расчёта</small></div>
+      <div class="metric" title="Самый сильный дождь у земли сейчас: поток ρ·q_r·V_t"><span>Интенсивность дождя</span><strong id="rain">—</strong><small>мм/ч</small></div>
+      <div class="metric" title="Наибольшая сумма дождя на земле с начала расчёта"><span>Сумма осадков, макс.</span><strong id="rainTotal">—</strong><small>мм</small></div>
       <div class="note"><b>Логика</b><p id="logicText">Частица ещё не достигла уровня свободной конвекции.</p></div>
     </aside>
   </main>`
 
-const config: SimConfig = { ...defaults }
+// The page opens on the first scenario ("Летний день"); the controls are synced to it below.
+const config: SimConfig = { ...defaults, ...SCENARIOS[0].values }
+// Scenarios without the 0.5 and 1 km wind nodes get them on the straight 0-3 km line, so their hodograph is unchanged
+// and the sliders show where the nodes are.
+const fillLowWind = (c: SimConfig) => {
+  const along = (a: number, b: number, t: number) => a + (b - a) * t, turn = (a: number, b: number, t: number) => ((a + (((b - a + 540) % 360) - 180) * t) % 360 + 360) % 360
+  c.wind05 ??= along(c.wind0, c.wind3, 1 / 6); c.wind1 ??= along(c.wind0, c.wind3, 1 / 3)
+  c.windDir05 ??= turn(c.windDir0, c.windDir3, 1 / 6); c.windDir1 ??= turn(c.windDir0, c.windDir3, 1 / 3)
+}
+fillLowWind(config)
+// Every start, restart and scenario gets a fresh random seed, so no two runs give the same storm. The seed is not shown,
+// only kept in the address (?seed=...), so opening that link repeats the first run of the page.
+const urlSeed = Number(new URLSearchParams(location.search).get('seed'))
+const nextSeed = () => { const [x] = crypto.getRandomValues(new Uint32Array(1)); return x }
+const useSeed = (seed: number) => { config.seed = seed; const url = new URL(location.href); url.searchParams.set('seed', String(seed)); history.replaceState(null, '', url) }
+useSeed(Number.isInteger(urlSeed) && urlSeed > 0 ? urlSeed : nextSeed())
 const canvas = document.querySelector<HTMLCanvasElement>('#sim')!
-const view = { field: 'composite' as FieldMode, showVectors: false, showPrecip: false, showFieldVolume: true, sliceHeight: 2, sliceNorth: 0 }
+const view = { field: 'composite' as FieldMode, showVectors: false, showPrecip: false, showRainTotal: false, showMesocyclone: true, layerMode: 'both' as LayerMode, volumeThreshold: .1, volumeDensity: 1, sliceHeight: 2, sliceNorth: 0 }
 let sim = new Atmosphere(canvas, config)
 let running = true
 let last = performance.now(), frameCount = 0
-const recreate = () => { sim.dispose(); sim = Object.assign(new Atmosphere(canvas, config), view) }
+const recreate = () => { useSeed(nextSeed()); sim.dispose(); sim = Object.assign(new Atmosphere(canvas, config), view) }
 
-const resetKeys = new Set<keyof SimConfig>(['surfaceTemp','lapseLow','lapseMid','lapseUpper','tropopause','stratoWarming','rhSurface','rhLow','rhMid','rhUpper','wind0','wind3','wind6','wind10','windDir0','windDir3','windDir6','windDir10','latitude','seed','bubble','surfaceType'])
+const resetKeys = new Set<keyof SimConfig>(['surfaceTemp','lapseLow','lapseMid','lapseUpper','tropopause','stratoWarming','capStrength','capHeight','rhSurface','rhLow','rhMid','rhUpper','moistLayer','wind0','wind05','wind1','wind3','wind6','wind10','windDir0','windDir05','windDir1','windDir3','windDir6','windDir10','latitude','bubble','surfaceType'])
 const surfaceSelect = document.querySelector<HTMLSelectElement>('#surfaceType')!
+const transportSelect = document.querySelector<HTMLSelectElement>('#transport')!
+transportSelect.addEventListener('change', () => { config.transport = transportSelect.value as SimConfig['transport'] })
 const showOutput = (input: HTMLInputElement) => {
   document.querySelector<HTMLOutputElement>(`[data-output="${input.dataset.key}"]`)!.textContent = `${Number(input.value).toFixed(Number(input.dataset.digits))}${input.dataset.suffix}`
 }
+// With an analytic profile (the Weisman-Klemp scenario) the temperature, humidity and wind sliders do nothing: dim them.
+const markProfileGroups = () => document.querySelectorAll<HTMLDetailsElement>('.controls details').forEach(d => {
+  const title = d.querySelector('summary')?.textContent ?? '', profileGroup = /Температурный|Влажность по слоям|Профиль ветра/.test(title), off = profileGroup && !!config.profile
+  d.style.opacity = off ? '.45' : ''; d.title = off ? 'Профиль задан сценарием (формулы Weisman–Klemp), ползунки не действуют' : ''
+})
 const markPreset = (index: number | null) => document.querySelectorAll<HTMLButtonElement>('[data-preset]').forEach(b => b.classList.toggle('active', Number(b.dataset.preset) === index))
 document.querySelectorAll<HTMLInputElement>('input[data-key]').forEach(input => {
   const key = input.dataset.key as keyof SimConfig
@@ -153,15 +185,22 @@ surfaceSelect.addEventListener('change', () => {
 })
 document.querySelectorAll<HTMLButtonElement>('[data-preset]').forEach(button => button.addEventListener('click', () => {
   const index = Number(button.dataset.preset)
-  Object.assign(config, defaults, { speed: config.speed }, presets[index].values)
+  Object.assign(config, defaults, { speed: config.speed, wind05: undefined, wind1: undefined, windDir05: undefined, windDir1: undefined, profile: undefined, transport: 'semi-lagrangian' }, presets[index].values)
+  fillLowWind(config)
+  syncControls()
+  markPreset(index)
+  recreate(); running = true; updatePause()
+}))
+function syncControls() {
   document.querySelectorAll<HTMLInputElement>('input[data-key]').forEach(input => {
     input.value = String(config[input.dataset.key as keyof SimConfig])
     showOutput(input)
   })
   surfaceSelect.value = config.surfaceType
-  markPreset(index)
-  recreate(); running = true; updatePause()
-}))
+  transportSelect.value = config.transport ?? 'semi-lagrangian'
+  markProfileGroups()
+}
+syncControls()
 markPreset(0)
 document.querySelector('#restart')!.addEventListener('click', () => { recreate(); running = true; updatePause() })
 document.querySelector('#pause')!.addEventListener('click', () => { running = !running; updatePause() })
@@ -193,6 +232,12 @@ document.querySelectorAll<HTMLButtonElement>('[data-field]').forEach(button => b
 document.querySelector<HTMLButtonElement>('#flowToggle')!.addEventListener('click', event => {
   const button=event.currentTarget as HTMLButtonElement;setView({ showVectors: !view.showVectors });button.classList.toggle('active',view.showVectors);button.setAttribute('aria-pressed',String(view.showVectors))
 })
+document.querySelector<HTMLButtonElement>('#mesoToggle')!.addEventListener('click', event => {
+  const button=event.currentTarget as HTMLButtonElement;setView({ showMesocyclone: !view.showMesocyclone });button.classList.toggle('active',view.showMesocyclone);button.setAttribute('aria-pressed',String(view.showMesocyclone))
+})
+document.querySelector<HTMLButtonElement>('#swathToggle')!.addEventListener('click', event => {
+  const button=event.currentTarget as HTMLButtonElement;setView({ showRainTotal: !view.showRainTotal });button.classList.toggle('active',view.showRainTotal);button.setAttribute('aria-pressed',String(view.showRainTotal))
+})
 document.querySelector<HTMLButtonElement>('#precipToggle')!.addEventListener('click', event => {
   const button=event.currentTarget as HTMLButtonElement;setView({ showPrecip: !view.showPrecip });button.classList.toggle('active',view.showPrecip);button.setAttribute('aria-pressed',String(view.showPrecip))
 })
@@ -202,7 +247,11 @@ sliceNorth.addEventListener('input', () => {
   const km = Number(sliceNorth.value)
   setView({ sliceNorth: km }); text('sliceNorthOut', km === 0 ? '0 км' : `${Math.abs(km)} км ${km > 0 ? 'к северу' : 'к югу'}`)
 })
-document.querySelector<HTMLInputElement>('#fieldVolume')!.addEventListener('change', event => setView({ showFieldVolume: (event.target as HTMLInputElement).checked }))
+const layerMode = document.querySelector<HTMLSelectElement>('#layerMode')!, volumeControls = document.querySelector<HTMLDivElement>('#volumeControls')!
+layerMode.addEventListener('change', () => { const mode = layerMode.value as LayerMode; setView({ layerMode: mode }); volumeControls.hidden = mode !== 'volume' })
+const volumeThreshold = document.querySelector<HTMLInputElement>('#volumeThreshold')!, volumeDensity = document.querySelector<HTMLInputElement>('#volumeDensity')!
+volumeThreshold.addEventListener('input', () => { setView({ volumeThreshold: Number(volumeThreshold.value) }); text('volumeThresholdOut', `${Math.round(Number(volumeThreshold.value) * 100)} %`) })
+volumeDensity.addEventListener('input', () => { setView({ volumeDensity: Number(volumeDensity.value) }); text('volumeDensityOut', `${Number(volumeDensity.value).toFixed(1)}×`) })
 canvas.addEventListener('dblclick', event => { const r=canvas.getBoundingClientRect(); sim.perturb((event.clientX-r.left)/r.width,(event.clientY-r.top)/r.height,1.25) })
 
 const text = (id:string,value:string) => { document.querySelector(`#${id}`)!.textContent=value }
@@ -213,7 +262,7 @@ const prepareCanvas = (id: string) => {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, w, h); ctx.font = '8px IBM Plex Mono'
   return { ctx, w, h }
 }
-const T_MIN = -70, T_MAX = 45, Z_MAX = 15
+const T_MIN = -75, T_MAX = 45, Z_MAX = 18
 function drawSounding(){
   const { ctx, w, h } = prepareCanvas('sounding'), s = sim.sounding()
   const L = 22, R = w - 30, T = 6, B = h - 14
@@ -252,6 +301,9 @@ function drawHodograph(){
   for (let r = 10; r <= maxRing; r += 10) { ctx.beginPath(); ctx.arc(cx, cy, r * scale, 0, Math.PI * 2); ctx.stroke(); ctx.fillText(`${r}`, cx + r * scale * .71 + 2, cy - r * scale * .71 - 2) }
   ctx.fillText('С', cx + 3, 10); ctx.fillText('В', w - 10, cy - 3)
   const P = (p: { u: number, v: number }) => [cx + p.u * scale, cy - p.v * scale] as const
+  // Bunkers right (RM) and left (LM) movers.
+  for (const [label, [u, v]] of [['RM', sim.storm.rightMover], ['LM', sim.storm.leftMover]] as const) { const [x, y] = P({ u, v }); ctx.fillStyle = '#7b3fa0'; ctx.beginPath(); ctx.arc(x, y, 2.6, 0, Math.PI * 2); ctx.fill(); ctx.fillText(label, x + 4, y + 9) }
+  ctx.fillStyle = '#8a9aa2'
   ctx.lineWidth = 2.2; ctx.lineCap = 'round'
   for (let i = 0; i + 1 < wind.length; i++) {
     const a = wind[i], b = wind[i + 1]
@@ -266,7 +318,7 @@ function drawHodograph(){
 }
 function frame(now:number){
   const elapsed=Math.min(.2,(now-last)/1000);last=now;if(running)sim.advance(elapsed);sim.render();const d=sim.diagnostics()
-  text('cape',d.cape.toFixed(0));text('cin',d.cin.toFixed(0));text('updraft',d.updraft.toFixed(1));text('downdraft',d.downdraft.toFixed(1));text('uh',d.updraftHelicity.toFixed(0));text('cloudTop',d.cloudTop.toFixed(1));text('thermalTop',d.thermalTop.toFixed(1));text('cloudWater',d.cloudWater.toFixed(2));text('coldPool',d.coldPool.toFixed(1));text('microburst',d.microburst.toFixed(1));text('rain',d.rain.toFixed(1));text('lcl',d.lcl===null?'—':`${d.lcl.toFixed(1)} км`);text('lfc',d.lfc===null?'—':`${d.lfc.toFixed(1)} км`);text('el',d.el===null?'—':`${d.el.toFixed(1)} км`);text('cellType',d.cellType);text('cellReason',d.cellReason);text('logicText',d.logic);text('sun',`${d.insolation.toFixed(0)} Вт/м²`);text('sunElevation',d.sunElevation>0?`${d.sunElevation.toFixed(0)}° над горизонтом`:'ночь')
+  text('cape',d.cape.toFixed(0));text('mlcape',d.indices.ml.cape.toFixed(0));text('mlcin',d.indices.ml.cin.toFixed(0));text('mucape',d.indices.mu.cape.toFixed(0));text('dcape',d.indices.dcape.toFixed(0));text('srh01',d.storm.srh01.toFixed(0));text('srh03',d.storm.srh03.toFixed(0));text('scp',d.storm.scp.toFixed(1));text('stp',d.storm.stp.toFixed(1));text('cin',d.cin.toFixed(0));text('updraft',d.updraft.toFixed(1));text('downdraft',d.downdraft.toFixed(1));text('uh',d.updraftHelicity.toFixed(0));text('uhLow',`${d.uh01.toFixed(0)} / ${d.uh03.toFixed(0)}`);text('cloudTop',d.cloudTop.toFixed(1));text('thermalTop',d.thermalTop.toFixed(1));text('cloudWater',d.cloudWater.toFixed(2));text('coldPool',d.coldPool.toFixed(1));text('microburst',d.microburst.toFixed(1));text('clipped',String(d.clipped));text('rain',d.rain.toFixed(1));text('rainTotal',d.rainTotal.toFixed(1));text('lcl',d.lcl===null?'—':`${d.lcl.toFixed(1)} км`);text('lfc',d.lfc===null?'—':`${d.lfc.toFixed(1)} км`);text('el',d.el===null?'—':`${d.el.toFixed(1)} км`);text('cellType',d.cellType);text('cellReason',d.cellReason);text('logicText',d.logic);text('sun',`${d.insolation.toFixed(0)} Вт/м²`);text('sunElevation',d.sunElevation>0?`${d.sunElevation.toFixed(0)}° над горизонтом`:'ночь')
   text('surfaceReadout',({grass:'ТРАВА',dry:'СУХАЯ ПОЧВА',water:'ВОДА',urban:'ГОРОД'} as const)[config.surfaceType])
   const sec=Math.floor(sim.time);text('time',`${String(Math.floor(sec/60)).padStart(2,'0')}:${String(sec%60).padStart(2,'0')}`);text('freezing',d.freezing===null?'—':`${d.freezing.toFixed(1)} км`);if(frameCount++%20===0){drawSounding();drawHodograph()}requestAnimationFrame(frame)
 }

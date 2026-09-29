@@ -2,9 +2,9 @@ import type { SimConfig } from './config'
 
 const localHour = (config: SimConfig, time: number) => config.hour + time / 3600
 
-/** Solar irradiance at the surface, W/m2. */
+/** Solar irradiance on the horizontal surface, W/m2: solarMax (sun in the zenith) times the cosine of the zenith angle. */
 export function insolation(config: SimConfig, time: number) {
-  return config.solarMax * Math.max(0, Math.sin(Math.PI * (localHour(config, time) - 6) / 12))
+  return config.solarMax * Math.max(0, sunDirection(config, time).y)
 }
 
 /**
