@@ -6,14 +6,14 @@ describe('Smagorinsky-Lilly turbulence', () => {
   const rho = Array.from({ length: grid.nz }, (_, z) => 1.2 * Math.exp(-z * grid.dz / 8400))
   const f = (g: (x: number, y: number, z: number) => number) => Float32Array.from({ length: grid.n }, (_, i) => g(i % grid.nx, Math.floor(i / grid.nx) % grid.ny, Math.floor(i / grid.layer)))
   // A sheared jet: strong deformation in the middle of the box.
-  const u = f((x, y, z) => 10 * Math.sin(2 * Math.PI * y / grid.ny) * (z > 0 && z < grid.nz - 1 ? 1 : 0)), v = f(() => 0), w = f(() => 0)
+  const u = f((_x, y, z) => 10 * Math.sin(2 * Math.PI * y / grid.ny) * (z > 0 && z < grid.nz - 1 ? 1 : 0)), v = f(() => 0), w = f(() => 0)
 
   it('mixes where the flow deforms and the air is not too stable, never in a stable calm environment', () => {
     const t = new Turbulence(grid, rho), neutral = new Array(grid.nz).fill(300)
     t.viscosity(u, v, w, f(() => 300), neutral, .18, 1)
     expect(Math.max(...t.km)).toBeGreaterThan(50)
     const stable = Array.from({ length: grid.nz }, (_, z) => 300 + z * grid.dz * .004)
-    t.viscosity(f(() => 5), v, w, f((x, y, z) => stable[z]), stable, .18, 1)
+    t.viscosity(f(() => 5), v, w, f((_x, _y, z) => stable[z]), stable, .18, 1)
     expect(Math.max(...t.km)).toBe(0)
   })
 

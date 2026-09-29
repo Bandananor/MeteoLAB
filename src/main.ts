@@ -25,6 +25,7 @@ const presets: {name:string;hint:string;values:Partial<SimConfig>}[] = [
   {name:'Микропорыв',hint:'Сухой подоблачный слой и сильное испарение дождя: холодный поток ударяет в землю',values:{surfaceTemp:33,rhSurface:55,rhLow:35,lapseLow:9.5}},
   {name:'Суперячейка',hint:'Ветер у земли дует с юго-востока и с высотой поворачивает к западу: восходящий поток закручивается в мезоциклон',values:{surfaceTemp:31,rhSurface:78,rhLow:68,rhMid:45,rhUpper:30,lapseLow:8.4,lapseMid:7.2,lapseUpper:6.5,bubble:1.5,wind0:8,wind3:16,wind6:24,wind10:30,windDir0:140,windDir3:200,windDir6:240,windDir10:255}},
   {name:'Жаркий город',hint:'Городская застройка и сухая почва сильно греют воздух у земли',values:{surfaceType:'urban',soilMoisture:15,surfaceTemp:33,solarMax:1100}},
+  {name:'Суперячейка WK',hint:'Классический опыт Weisman–Klemp: реалистичная CAPE ~2,3 кДж/кг, годограф «четверть окружности», один термик, точный перенос. Ячейка живёт больше часа и расщепляется на правую (циклоническую) и левую. Профиль задан формулами — ползунки температуры, влажности и ветра не действуют',values:{profile:'weisman-klemp',transport:'weno',solarMax:0,bubble:1.5}},
 ]
 
 document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
@@ -179,13 +180,14 @@ surfaceSelect.addEventListener('change', () => {
 })
 document.querySelectorAll<HTMLButtonElement>('[data-preset]').forEach(button => button.addEventListener('click', () => {
   const index = Number(button.dataset.preset)
-  Object.assign(config, defaults, { speed: config.speed, wind05: undefined, wind1: undefined, windDir05: undefined, windDir1: undefined }, presets[index].values)
+  Object.assign(config, defaults, { speed: config.speed, wind05: undefined, wind1: undefined, windDir05: undefined, windDir1: undefined, profile: undefined, transport: 'semi-lagrangian' }, presets[index].values)
   fillLowWind(config)
   document.querySelectorAll<HTMLInputElement>('input[data-key]').forEach(input => {
     input.value = String(config[input.dataset.key as keyof SimConfig])
     showOutput(input)
   })
   surfaceSelect.value = config.surfaceType
+  transportSelect.value = config.transport ?? 'semi-lagrangian'
   markPreset(index)
   recreate(); running = true; updatePause()
 }))

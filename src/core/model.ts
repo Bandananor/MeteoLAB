@@ -4,6 +4,7 @@ import { Environment, type EnvironmentProfile } from './environment'
 import { createGrid, type Grid } from './grid'
 import { clamp, lerp, mod, mulberry32 } from './math'
 import { FluxTransport } from './advection'
+import { weismanKlemp } from './profiles'
 import { SMAGORINSKY, Turbulence } from './turbulence'
 import { fallSpeed, rainProcesses, saturationAdjust } from './microphysics'
 import { PressureSolver } from './pressure'
@@ -61,7 +62,7 @@ export class AtmosphereModel {
   /** `profile` replaces the slider environment with an analytic one (idealised test cases). */
   constructor(config: SimConfig, grid: Grid = createGrid(), profile?: EnvironmentProfile) {
     this.config = config; this.grid = grid
-    this.env = new Environment(config, grid, profile)
+    this.env = new Environment(config, grid, profile ?? (config.profile === 'weisman-klemp' ? weismanKlemp({ qvMax: .016 }) : undefined))
     const f = () => new Float32Array(grid.n)
     this.u = f(); this.v = f(); this.w = f(); this.theta = f(); this.q = f(); this.cloud = f(); this.rain = f(); this.cold = f()
     // Anelastic: the projection makes the mass flux rho0 u divergence-free (rho0 falls ~6x over 15 km).
@@ -89,7 +90,9 @@ export class AtmosphereModel {
       this.theta[i] = this.env.thetaEnv(alt) + (this.rng() - .5) * .018; this.q[i] = this.env.qEnv(alt)
       this.cloud[i] = this.rain[i] = this.cold[i] = 0
     }
-    this.injectBubble(W * .38, D * .45, this.config.bubble); this.injectBubble(W * .61, D * .57, .72 * this.config.bubble)
+    // The Weisman-Klemp case starts from a single thermal, as in the calibration test.
+    if (this.config.profile === 'weisman-klemp') this.injectBubble(W * .3, D * .5, this.config.bubble)
+    else { this.injectBubble(W * .38, D * .45, this.config.bubble); this.injectBubble(W * .61, D * .57, .72 * this.config.bubble) }
   }
 
   /** Warm, moist thermal centred at (cx, cy) metres from the domain corner, near the ground. */

@@ -8,6 +8,8 @@ export interface SimConfig {
   wind05?: number; wind1?: number; windDir05?: number; windDir1?: number
   /** Transport scheme; overrides AtmosphereModel.transport when set (the UI switch). */
   transport?: 'semi-lagrangian' | 'weno'
+  /** An analytic environment instead of the slider profile: 'weisman-klemp' (WK82 sounding, 16 g/kg, quarter-circle hodograph, one thermal). */
+  profile?: 'weisman-klemp'
   latitude: number; turbulence: number; hour: number; solarMax: number; soilMoisture: number; surfaceType: SurfaceType
   speed: number; seed: number; bubble: number
 }
