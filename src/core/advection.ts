@@ -58,14 +58,12 @@ export class FluxTransport {
     this.start.set(a)
     const start = this.start, tend = this.tend, n = a.length
     for (const fraction of [1 / 3, 1 / 2, 1]) {
-      if (monotone) this.tendency(a, true); else this.tendency(a, false)
+      if (monotone) this.tendency(a); else this.tendencyLinear(a)
       for (let i = 0; i < n; i++) a[i] = start[i] + fraction * dt * tend[i]
     }
   }
 
-  private tendency(q: Float32Array, monotone: boolean) {
-    // Direct calls (not a function parameter) so the engine inlines the reconstruction.
-    const face = (a: number, b: number, c: number, d: number, e: number) => monotone ? weno(a, b, c, d, e) : upwind5(a, b, c, d, e)
+  private tendency(q: Float32Array) {
     const { nx, ny, nz, dx, dy, layer } = this.grid, { mx, my, mz, div, fx, fy, fz, tend, xo, yo, h, rho } = this
     const [xm2, xm1, , xp1, xp2, xp3] = xo, [ym2, ym1, , yp1, yp2, yp3] = yo
     for (let z = 0, i = 0; z < nz; z++) {
@@ -76,11 +74,40 @@ export class FluxTransport {
         for (let x = 0; x < nx; x++, i++) {
           // Face between this node and the next one in each direction; the upwind side picks the stencil.
           const m1 = mx[i]
-          fx[i] = m1 >= 0 ? m1 * face(q[xm2[x] + row], q[xm1[x] + row], q[i], q[xp1[x] + row], q[xp2[x] + row]) : m1 * face(q[xp3[x] + row], q[xp2[x] + row], q[xp1[x] + row], q[i], q[xm1[x] + row])
+          fx[i] = m1 >= 0 ? m1 * weno(q[xm2[x] + row], q[xm1[x] + row], q[i], q[xp1[x] + row], q[xp2[x] + row]) : m1 * weno(q[xp3[x] + row], q[xp2[x] + row], q[xp1[x] + row], q[i], q[xm1[x] + row])
           const m2 = my[i]
-          fy[i] = m2 >= 0 ? m2 * face(q[x + ym2[y] + l], q[x + ym1[y] + l], q[i], q[x + yp1[y] + l], q[x + yp2[y] + l]) : m2 * face(q[x + yp3[y] + l], q[x + yp2[y] + l], q[x + yp1[y] + l], q[i], q[x + ym1[y] + l])
+          fy[i] = m2 >= 0 ? m2 * weno(q[x + ym2[y] + l], q[x + ym1[y] + l], q[i], q[x + yp1[y] + l], q[x + yp2[y] + l]) : m2 * weno(q[x + yp3[y] + l], q[x + yp2[y] + l], q[x + yp1[y] + l], q[i], q[x + ym1[y] + l])
           const m3 = mz[i], c = x + c0
-          fz[i] = top ? 0 : m3 >= 0 ? m3 * face(q[c + zm2], q[c + zm1], q[i], q[c + zp1], q[c + zp2]) : m3 * face(q[c + zp3], q[c + zp2], q[c + zp1], q[i], q[c + zm1])
+          fz[i] = top ? 0 : m3 >= 0 ? m3 * weno(q[c + zm2], q[c + zm1], q[i], q[c + zp1], q[c + zp2]) : m3 * weno(q[c + zp3], q[c + zp2], q[c + zp1], q[i], q[c + zm1])
+        }
+      }
+    }
+    for (let z = 0, i = 0; z < nz; z++) {
+      const l = z * layer, r = rho[z], hz = h[z]
+      for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++, i++) {
+        const flux = (fx[i] - fx[xm1[x] + y * nx + l]) / dx + (fy[i] - fy[x + ym1[y] + l]) / dy + (fz[i] - (z > 0 ? fz[i - layer] : 0)) / hz
+        tend[i] = -(flux - q[i] * div[i]) / r
+      }
+    }
+  }
+
+  // Same as tendency with the linear reconstruction: a separate copy keeps each loop monomorphic for the JIT.
+  private tendencyLinear(q: Float32Array) {
+    const { nx, ny, nz, dx, dy, layer } = this.grid, { mx, my, mz, div, fx, fy, fz, tend, xo, yo, h, rho } = this
+    const [xm2, xm1, , xp1, xp2, xp3] = xo, [ym2, ym1, , yp1, yp2, yp3] = yo
+    for (let z = 0, i = 0; z < nz; z++) {
+      const l = z * layer, top = z === nz - 1
+      const zm2 = Math.max(0, z - 2) * layer, zm1 = Math.max(0, z - 1) * layer, zp1 = Math.min(nz - 1, z + 1) * layer, zp2 = Math.min(nz - 1, z + 2) * layer, zp3 = Math.min(nz - 1, z + 3) * layer
+      for (let y = 0; y < ny; y++) {
+        const row = y * nx + l, c0 = y * nx
+        for (let x = 0; x < nx; x++, i++) {
+          // Face between this node and the next one in each direction; the upwind side picks the stencil.
+          const m1 = mx[i]
+          fx[i] = m1 >= 0 ? m1 * upwind5(q[xm2[x] + row], q[xm1[x] + row], q[i], q[xp1[x] + row], q[xp2[x] + row]) : m1 * upwind5(q[xp3[x] + row], q[xp2[x] + row], q[xp1[x] + row], q[i], q[xm1[x] + row])
+          const m2 = my[i]
+          fy[i] = m2 >= 0 ? m2 * upwind5(q[x + ym2[y] + l], q[x + ym1[y] + l], q[i], q[x + yp1[y] + l], q[x + yp2[y] + l]) : m2 * upwind5(q[x + yp3[y] + l], q[x + yp2[y] + l], q[x + yp1[y] + l], q[i], q[x + ym1[y] + l])
+          const m3 = mz[i], c = x + c0
+          fz[i] = top ? 0 : m3 >= 0 ? m3 * upwind5(q[c + zm2], q[c + zm1], q[i], q[c + zp1], q[c + zp2]) : m3 * upwind5(q[c + zp3], q[c + zp2], q[c + zp1], q[i], q[c + zm1])
         }
       }
     }
