@@ -2,10 +2,10 @@ export type SurfaceType = 'grass' | 'dry' | 'water' | 'urban'
 
 export interface SimConfig {
   surfaceTemp: number; lapseLow: number; lapseMid: number; lapseUpper: number; tropopause: number; stratoWarming: number
-  rhSurface: number; rhLow: number; rhMid: number; rhUpper: number; entrainment: number
+  rhSurface: number; rhLow: number; rhMid: number; rhUpper: number
   wind0: number; wind3: number; wind6: number; wind10: number; windDir0: number; windDir3: number; windDir6: number; windDir10: number
   latitude: number; turbulence: number; hour: number; solarMax: number; soilMoisture: number; surfaceType: SurfaceType
-  precipEfficiency: number; evaporation: number; coldPoolStrength: number; speed: number; seed: number; bubble: number
+  speed: number; seed: number; bubble: number
 }
 
 export const SURFACES: Record<SurfaceType, { albedo: number; sensible: number; evap: number; inertia: number }> = {

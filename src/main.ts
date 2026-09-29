@@ -10,19 +10,19 @@ const slider = (key: keyof SimConfig, label: string, min: number, max: number, s
 
 const defaults: SimConfig = {
   surfaceTemp:30,lapseLow:8.4,lapseMid:7.2,lapseUpper:6.5,tropopause:11,stratoWarming:1.2,
-  rhSurface:72,rhLow:60,rhMid:42,rhUpper:28,entrainment:.65,
+  rhSurface:72,rhLow:60,rhMid:42,rhUpper:28,
   wind0:2,wind3:10,wind6:20,wind10:28,windDir0:160,windDir3:185,windDir6:215,windDir10:235,
   latitude:45,turbulence:.55,
   hour:13.5,solarMax:900,soilMoisture:45,surfaceType:'grass',
-  precipEfficiency:.85,evaporation:1,coldPoolStrength:1,speed:8,seed:42,bubble:1
+  speed:8,seed:42,bubble:1
 }
 const presets: {name:string;hint:string;values:Partial<SimConfig>}[] = [
   {name:'Летний день',hint:'Исходные настройки: умеренно неустойчивая атмосфера',values:{}},
   {name:'Мощная гроза',hint:'Жара, влажный нижний слой и крутой градиент: облако пробивает тропопаузу',values:{surfaceTemp:34,rhSurface:80,rhLow:70,rhMid:55,lapseLow:9}},
   {name:'Сухой воздух',hint:'Сухой средний слой съедает края облака и душит конвекцию',values:{rhMid:10,rhUpper:10}},
   {name:'Сдвиг ветра',hint:'Сильный ветер наверху наклоняет облако, дождь выпадает в стороне от восходящего потока',values:{surfaceTemp:32,rhSurface:78,wind3:18,wind6:40,wind10:50}},
-  {name:'Микропорыв',hint:'Сухой подоблачный слой и сильное испарение дождя: холодный поток ударяет в землю',values:{surfaceTemp:33,rhSurface:55,rhLow:35,lapseLow:9.5,evaporation:2,coldPoolStrength:2.5,precipEfficiency:1.4}},
-  {name:'Суперячейка',hint:'Ветер у земли дует с юго-востока и с высотой поворачивает к западу: восходящий поток закручивается в мезоциклон',values:{surfaceTemp:29,rhSurface:72,rhLow:60,rhMid:38,rhUpper:30,lapseLow:7.2,lapseMid:6.8,lapseUpper:6.5,entrainment:.5,bubble:1.8,wind0:6,wind3:12,wind6:20,wind10:28,windDir0:140,windDir3:200,windDir6:240,windDir10:255}},
+  {name:'Микропорыв',hint:'Сухой подоблачный слой и сильное испарение дождя: холодный поток ударяет в землю',values:{surfaceTemp:33,rhSurface:55,rhLow:35,lapseLow:9.5}},
+  {name:'Суперячейка',hint:'Ветер у земли дует с юго-востока и с высотой поворачивает к западу: восходящий поток закручивается в мезоциклон',values:{surfaceTemp:29,rhSurface:72,rhLow:60,rhMid:38,rhUpper:30,lapseLow:7.2,lapseMid:6.8,lapseUpper:6.5,bubble:1.8,wind0:6,wind3:12,wind6:20,wind10:28,windDir0:140,windDir3:200,windDir6:240,windDir10:255}},
   {name:'Жаркий город',hint:'Городская застройка и сухая почва сильно греют воздух у земли',values:{surfaceType:'urban',soilMoisture:15,surfaceTemp:33,solarMax:1000}},
 ]
 
@@ -47,7 +47,6 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
         ${slider('rhLow','1–3 км',10,100,1,60,' %')}
         ${slider('rhMid','3–7 км',5,100,1,42,' %')}
         ${slider('rhUpper','7 км–TP',5,100,1,28,' %')}
-        ${slider('entrainment','Вовлечение сухого воздуха',0,2,.05,.65,'×',2)}
       </div></details>
       <details><summary>Профиль ветра</summary><div class="group">
         ${slider('wind0','Ветер у земли',-20,30,1,2,' м/с')}
@@ -68,11 +67,6 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
         ${slider('hour','Местное солнечное время',5,21,.25,13.5,' ч',2)}
         ${slider('solarMax','Максимальная инсоляция',300,1100,25,900,' Вт/м²')}
         ${slider('soilMoisture','Влажность почвы',0,100,1,45,' %')}
-      </div></details>
-      <details open><summary>Микрофизика и cold pool</summary><div class="group">
-        ${slider('precipEfficiency','Эффективность осадков',0,2,.05,.85,'×',2)}
-        ${slider('evaporation','Испарение осадков',0,2,.05,1,'×',2)}
-        ${slider('coldPoolStrength','Сила cold pool',0,2.5,.05,1,'×',2)}
       </div></details>
       <details><summary>Расчёт</summary><div class="group">
         ${slider('speed','Ускорение времени',1,30,1,8,'×')}

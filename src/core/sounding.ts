@@ -1,7 +1,7 @@
 import type { SimConfig } from './config'
 import { CP, EPS, G, KAPPA, LV, RD } from './constants'
 import type { Environment } from './environment'
-import { clamp, lerp } from './math'
+import { lerp } from './math'
 
 export interface ParcelPoint { z: number; env: number; dew: number; parcel: number; buoyancy: number }
 export interface WindPoint { z: number; u: number; v: number }
@@ -10,9 +10,12 @@ export interface Sounding {
   cape: number; cin: number; lcl: number | null; lfc: number | null; el: number | null; freezing: number | null
 }
 
+/** Fraction of the parcel replaced by environmental air per 100 m of ascent in the diagnostic (entraining) parcel. */
+export const PARCEL_ENTRAINMENT = .0039
+
 export interface ParcelOptions {
   /** Surface parcel temperature excess, K. */ excess?: number
-  /** Mix the parcel with the environment according to config.entrainment. */ entrain?: boolean
+  /** Mix the parcel with the environment at PARCEL_ENTRAINMENT. */ entrain?: boolean
 }
 
 /**
@@ -42,7 +45,7 @@ export function computeSounding(config: SimConfig, env: Environment, height: num
       temp += dTdp(mid, (p0 + p1) / 2) * (p1 - p0)
     } else temp = (temp + 273.15) * (p1 / p0) ** KAPPA - 273.15
     // Entrainment is a rate per 100 m (as it was with the old 100 m step), scaled to the actual step.
-    const mix = entrain ? clamp(config.entrainment * .006, 0, .02) * dz / 100 : 0
+    const mix = entrain ? PARCEL_ENTRAINMENT * dz / 100 : 0
     temp = lerp(temp, env.temperatureEnv(z + dz), mix); q = lerp(q, env.qEnv(z + dz), mix)
   }
   const wind: WindPoint[] = []

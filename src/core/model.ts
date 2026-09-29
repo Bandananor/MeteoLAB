@@ -179,8 +179,9 @@ export class AtmosphereModel {
           const xp = XP[x], xm = XM[x]
           // Kessler warm rain, then saturation adjustment (vapour and cloud water in equilibrium after every step).
           // Evaporation of rain and cloud feeds the cold-pool indicator.
-          const evap = rainProcesses(q, cloud, rain, i, theta[i] * exner, p, rhoZ, dt, cfg.precipEfficiency, cfg.evaporation)
-          if (evap > 0) { const cool = LV / CP / exner * evap * cfg.coldPoolStrength; theta[i] -= cool; cold[i] += cool }
+          const evap = rainProcesses(q, cloud, rain, i, theta[i] * exner, p, rhoZ, dt)
+          // Evaporation takes exactly L/cp per unit mass from the air (no strength multiplier): energy is conserved.
+          if (evap > 0) { const cool = LV / CP / exner * evap; theta[i] -= cool; cold[i] += cool }
           const cond = saturationAdjust(theta, q, cloud, i, exner, p)
           if (cond < 0) cold[i] -= LV / CP / exner * cond * .14
           // B = g [(θv − θv_env) / θv_env − q_c − q_r]: condensate loads the air with its own mass, no extra weight.
@@ -188,8 +189,8 @@ export class AtmosphereModel {
           // Damp and rotate only the departure from the environmental wind, so the imposed shear profile is not eroded.
           const du = (u[i] - ue) * .9999, dv = (v[i] - ve) * .9999; u[i] = ue + du + f * dv * dt; v[i] = ve + dv - f * du * dt
           if (z <= 1) { const weight = Math.exp(-alt / 300), pattern = 1 + this.surfacePattern[x + row] * .32, rho = 1.18 * Math.exp(-alt / 9000); theta[i] += heatFlux * pattern / (rho * CP * 300) * weight * dt; q[i] += moistFlux * 1.3e-10 * weight * dt }
-          if (alt < liftTop) { const gx = cold[xp + row] - cold[xm + row], gy = cold[x + yp] - cold[x + ym], edge = Math.hypot(gx, gy), core = cold[x + row]; w[i] += G * edge / 300 * .45 * cfg.coldPoolStrength * Math.max(.12, 1 - alt / Math.max(300, lfcZ)) * dt; if (alt < 1300 && core > 1) w[i] -= G * core / 300 * .52 * Math.exp(-alt / 520) * dt }
-          if (z <= 1 && w[i] < -5 && rain[i] > .0001) { const impact = Math.min(38, -w[i] * Math.sqrt(rain[i] / .00055)) * cfg.precipEfficiency, dpx = (-w[xp + row + l] + w[xm + row + l]) * .5, dpy = (-w[x + yp + l] + w[x + ym + l]) * .5; u[i] -= dpx * .12 * dt; v[i] -= dpy * .12 * dt; cold[i] += impact * .0012 * dt; this.microburstOutflow = Math.max(this.microburstOutflow, impact) }
+          if (alt < liftTop) { const gx = cold[xp + row] - cold[xm + row], gy = cold[x + yp] - cold[x + ym], edge = Math.hypot(gx, gy), core = cold[x + row]; w[i] += G * edge / 300 * .45 * Math.max(.12, 1 - alt / Math.max(300, lfcZ)) * dt; if (alt < 1300 && core > 1) w[i] -= G * core / 300 * .52 * Math.exp(-alt / 520) * dt }
+          if (z <= 1 && w[i] < -5 && rain[i] > .0001) { const impact = Math.min(38, -w[i] * Math.sqrt(rain[i] / .00055)), dpx = (-w[xp + row + l] + w[xm + row + l]) * .5, dpy = (-w[x + yp + l] + w[x + ym + l]) * .5; u[i] -= dpx * .12 * dt; v[i] -= dpy * .12 * dt; cold[i] += impact * .0012 * dt; this.microburstOutflow = Math.max(this.microburstOutflow, impact) }
           const thAvg = (theta[xp + row + l] + theta[xm + row + l] + theta[x + yp + l] + theta[x + ym + l]) / 4; theta[i] = lerp(theta[i], thAvg, mix); const qAvg = (q[xp + row + l] + q[xm + row + l] + q[x + yp + l] + q[x + ym + l]) / 4; q[i] = lerp(q[i], qAvg, mix); cold[i] = clamp(cold[i], 0, 15)
           if (alt > spongeStart) { const s = clamp((alt - spongeStart) / (H - spongeStart)) * .06 * dt; w[i] *= 1 - s; u[i] = lerp(u[i], ue, s); v[i] = lerp(v[i], ve, s); theta[i] = lerp(theta[i], thEnv, s) }
         }

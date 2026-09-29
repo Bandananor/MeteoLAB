@@ -4,15 +4,15 @@ import type { AtmosphereModel } from './model'
 
 export const SUMMER_DAY: SimConfig = {
   surfaceTemp: 30, lapseLow: 8.4, lapseMid: 7.2, lapseUpper: 6.5, tropopause: 11, stratoWarming: 1.2,
-  rhSurface: 72, rhLow: 60, rhMid: 42, rhUpper: 28, entrainment: .65,
+  rhSurface: 72, rhLow: 60, rhMid: 42, rhUpper: 28,
   wind0: 2, wind3: 10, wind6: 20, wind10: 28, windDir0: 160, windDir3: 185, windDir6: 215, windDir10: 235,
   latitude: 45, turbulence: .55, hour: 13.5, solarMax: 900, soilMoisture: 45, surfaceType: 'grass',
-  precipEfficiency: .85, evaporation: 1, coldPoolStrength: 1, speed: 8, seed: 42, bubble: 1,
+  speed: 8, seed: 42, bubble: 1,
 }
 
 export const SUPERCELL: SimConfig = {
   ...SUMMER_DAY, surfaceTemp: 29, rhSurface: 72, rhLow: 60, rhMid: 38, rhUpper: 30, lapseLow: 7.2, lapseMid: 6.8, lapseUpper: 6.5,
-  entrainment: .5, bubble: 1.8, wind0: 6, wind3: 12, wind6: 20, wind10: 28, windDir0: 140, windDir3: 200, windDir6: 240, windDir10: 255,
+  bubble: 1.8, wind0: 6, wind3: 12, wind6: 20, wind10: 28, windDir0: 140, windDir3: 200, windDir6: 240, windDir10: 255,
 }
 
 /** Conditionally unstable but convection-free without a trigger: a moderate CAPE profile with a cap. */
