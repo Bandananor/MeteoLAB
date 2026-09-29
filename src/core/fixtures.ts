@@ -46,7 +46,7 @@ export function totalWater(model: AtmosphereModel) {
   for (let z = 0; z < nz; z++) {
     const weight = (z === 0 || z === nz - 1 ? dz / 2 : dz) * rho[z]
     let level = 0
-    for (let i = z * layer; i < (z + 1) * layer; i++) level += model.q[i] + model.cloud[i] + model.rain[i]
+    for (let i = z * layer; i < (z + 1) * layer; i++) level += model.q[i] + model.cloud[i] + model.ice[i] + model.rain[i] + model.snow[i] + model.graupel[i]
     total += weight * level / layer
   }
   let fallen = 0

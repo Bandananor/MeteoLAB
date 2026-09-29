@@ -6,6 +6,8 @@ import { clamp, lerp, mod, mulberry32 } from './math'
 import { FluxTransport } from './advection'
 import { weismanKlemp } from './profiles'
 import { SMAGORINSKY, Turbulence } from './turbulence'
+import { graupelFallSpeed, graupelProcesses } from './graupel'
+import { freezeRain, saturationAdjustMixed, snowFallSpeed, snowProcesses } from './ice'
 import { fallSpeed, rainProcesses, saturationAdjust } from './microphysics'
 import { PressureSolver } from './pressure'
 import { dragCoefficient, surfaceFluxes } from './surface'
@@ -16,6 +18,8 @@ import { computeSounding, type Sounding } from './sounding'
 // tilt the environmental vorticity into vortex pairs of both signs with UH up to ~380 cyclonic and ~320 anticyclonic;
 // supercells hold 700-1900 with the anticyclonic maximum several times weaker (3-km NWP uses ~75).
 export const UH_ROTATING = 200, UH_MESOCYCLONE = 400, MESO_PERSISTENCE = 600
+/** Safety limits of the horizontal and vertical velocity, m/s (see AtmosphereModel.clipped). */
+export const U_LIMIT = 120, W_LIMIT = 100
 /** A mesocyclone must also outweigh the strongest anticyclonic rotation by this factor (a vortex pair is not one). */
 export const MESO_DOMINANCE = 1.5
 
@@ -30,15 +34,21 @@ export interface ModelDiagnostics {
   /** Largest rain total on the ground since the start, mm. */ rainTotal: number
   updraft: number; downdraft: number; cloudTop: number; thermalTop: number
   maxCloud: number; coldMax: number; cores: number; shear06: number; microburst: number
-  /** Velocity components clipped by the safety limits (|u|, |v| <= 85, |w| <= 60 m/s) since the start. */
+  /**
+   * Velocity components clipped by the safety limits since the start. The limits (|u|, |v| <= 120, |w| <= 100 m/s,
+   * raised from 85 / 60 on 2026-09-29) lie well above any real storm and well inside the stability of both transports
+   * (Courant number ~0.1-0.15 at dt = 1 s): a non-zero count means a genuine blow-up, not a strong updraught.
+   */
   clipped: number
 }
 
-/** Cloud-scale atmosphere on a periodic box: prognostic u, v, w, theta, q, cloud, rain and the cold-pool indicator. */
+/** Cloud-scale atmosphere on a periodic box: prognostic u, v, w, theta, q, cloud water, cloud ice, rain, snow and the cold-pool indicator. */
 export class AtmosphereModel {
   readonly grid: Grid; readonly config: SimConfig; readonly env: Environment
   readonly u: Float32Array; readonly v: Float32Array; readonly w: Float32Array; readonly theta: Float32Array
   readonly q: Float32Array; readonly cloud: Float32Array; readonly rain: Float32Array; readonly cold: Float32Array
+  /** Cloud ice, snow and graupel mixing ratios, kg/kg (ice microphysics, src/core/ice.ts and graupel.ts). */
+  readonly ice: Float32Array; readonly snow: Float32Array; readonly graupel: Float32Array
   /** Projection pressure (times dt, per unit density) at the dual-cell centres between nodes; see PressureSolver. */
   readonly pressure: Float64Array
   /** Updraft helicity of every column (2-5 km), m2/s2. */
@@ -47,6 +57,8 @@ export class AtmosphereModel {
   readonly precipitation: Float32Array
   /** Fall speed of rain at every node (Kessler), m/s, raised to that of the rain just above (sedimentation), updated each step. */
   readonly fallSpeed: Float32Array
+  /** Mass-weighted fall speeds of snow and graupel at each node, m/s. */
+  readonly snowFall: Float32Array; readonly graupelFall: Float32Array
   readonly rotation: RotationState = { uh: 0, x: 0, y: 0, anticyclonic: 0, persisted: 0, uh01: 0, uh03: 0 }
   readonly sounding: Sounding
   /** Lowest and highest level of the 2-5 km updraft-helicity layer. */
@@ -71,6 +83,7 @@ export class AtmosphereModel {
     this.env = new Environment(config, grid, profile ?? (config.profile === 'weisman-klemp' ? weismanKlemp({ qvMax: .016 }) : undefined))
     const f = () => new Float32Array(grid.n)
     this.u = f(); this.v = f(); this.w = f(); this.theta = f(); this.q = f(); this.cloud = f(); this.rain = f(); this.cold = f()
+    this.ice = f(); this.snow = f(); this.snowFall = f(); this.graupel = f(); this.graupelFall = f()
     // Anelastic: the projection makes the mass flux rho0 u divergence-free (rho0 falls ~6x over 15 km).
     this.solver = new PressureSolver(grid, this.env.rho)
     this.pressure = new Float64Array(this.solver.cells); this.divergence = new Float64Array(this.solver.cells); this.scratch = f()
@@ -94,21 +107,25 @@ export class AtmosphereModel {
       const alt = z * dz, [ue, ve] = this.env.windUV(alt)
       this.u[i] = ue; this.v[i] = ve; this.w[i] = 0
       this.theta[i] = this.env.thetaEnv(alt) + (this.rng() - .5) * .018; this.q[i] = this.env.qEnv(alt)
-      this.cloud[i] = this.rain[i] = this.cold[i] = 0
+      this.cloud[i] = this.rain[i] = this.cold[i] = this.ice[i] = this.snow[i] = this.graupel[i] = 0
     }
     // The Weisman-Klemp case starts from a single thermal, as in the calibration test.
     if (this.config.profile === 'weisman-klemp') this.injectBubble(W * .3, D * .5, this.config.bubble)
     else { this.injectBubble(W * .38, D * .45, this.config.bubble); this.injectBubble(W * .61, D * .57, .72 * this.config.bubble) }
   }
 
-  /** Warm, moist thermal centred at (cx, cy) metres from the domain corner, near the ground. */
+  /**
+   * Warm thermal centred at (cx, cy) metres from the domain corner, near the ground: +3.2 K and 1.1 m/s times strength.
+   * No added vapour since 2026-09-29 (as in Weisman-Klemp and other reference cases): +3 g/kg gave the bubble air a far
+   * larger CAPE than the environment it is meant to probe.
+   */
   injectBubble(cx: number, cy: number, strength: number) {
     const { nx, ny, nz, dx, dy, dz, width: W, depth: D } = this.grid
     for (let z = 0; z < Math.min(5, nz); z++) for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++) {
       let ddx = x * dx - cx, ddy = y * dy - cy
       if (ddx > W / 2) ddx -= W; if (ddx < -W / 2) ddx += W; if (ddy > D / 2) ddy -= D; if (ddy < -D / 2) ddy += D
       const d2 = (ddx / 4200) ** 2 + (ddy / 4200) ** 2 + (z * dz / 1800) ** 2, a = Math.exp(-d2) * strength, i = x + nx * (y + ny * z)
-      this.theta[i] += 3.2 * a; this.q[i] += .003 * a; this.w[i] += 1.1 * a
+      this.theta[i] += 3.2 * a; this.w[i] += 1.1 * a
     }
   }
 
@@ -147,12 +164,12 @@ export class AtmosphereModel {
   }
 
   /**
-   * Flux-form sedimentation of rain (first-order upwind from above, conservative): the mass flux through the face
-   * between two levels is rho0 qr Vt of the node above it, and the ground node loses rho0 qr Vt through the ground,
-   * which is added to `precipitation` (mm).
+   * Flux-form sedimentation of a precipitation field (first-order upwind from above, conservative): the mass flux through
+   * the face between two levels is rho0 q Vt of the node above it, and the ground node loses rho0 q Vt through the
+   * ground, which is added to `precipitation` (mm of water).
    */
-  private sediment(dt: number) {
-    const { nz, layer } = this.grid, rain = this.rain, vt = this.fallSpeed, rho = this.env.rho, lw = this.levelWeight, dz = this.grid.dz
+  private sediment(rain: Float32Array, vt: Float32Array, dt: number) {
+    const { nz, layer } = this.grid, rho = this.env.rho, lw = this.levelWeight, dz = this.grid.dz
     for (let i = 0; i < layer; i++) this.precipitation[i] += rho[0] * rain[i] * vt[i] * dt
     // Level weight lw = rho0 h / dz, so dq = dt (F_in - F_out) / (lw dz). Bottom-up, so each face uses pre-step values above.
     for (let z = 0; z < nz; z++) {
@@ -175,11 +192,11 @@ export class AtmosphereModel {
     this.negativeFilled += negative
   }
 
-  /** Rain leaving through the ground this step: adds it to `precipitation` (mm) and returns it in level-weight (mass) units. */
-  private rainFallout(dt: number) {
+  /** Precipitation leaving through the ground this step: adds it to `precipitation` (mm) and returns it in level-weight (mass) units. */
+  private fallout(rain: Float32Array, vt: Float32Array, dt: number) {
     const { layer, dz } = this.grid, rhoGround = this.env.rho[0]
     let total = 0
-    for (let i = 0; i < layer; i++) { const flux = this.rain[i] * this.fallSpeed[i] * dt; this.precipitation[i] += rhoGround * flux; total += rhoGround * flux / dz }
+    for (let i = 0; i < layer; i++) { const flux = rain[i] * vt[i] * dt; this.precipitation[i] += rhoGround * flux; total += rhoGround * flux / dz }
     return total
   }
 
@@ -206,10 +223,15 @@ export class AtmosphereModel {
   }
 
   /**
-   * Transport: trilinear semi-Lagrangian (default; fast, diffusive, needs the mass fixer) or flux-form WENO5 + RK3
-   * (about twice as slow, conserves water by itself).
+   * Transport: flux-form WENO5 + RK3 (default since 2026-09-29; conserves water by itself) or the old trilinear
+   * semi-Lagrangian one (about twice as fast, diffusive, needs the mass fixer).
    */
-  transport: 'semi-lagrangian' | 'weno' = 'semi-lagrangian'
+  transport: 'semi-lagrangian' | 'weno' = 'weno'
+  /**
+   * Microphysics: Kessler warm rain (default) or with ice: cloud ice and snow (src/core/ice.ts) and graupel
+   * (src/core/graupel.ts), Lin et al. (1983). Optional until the scenarios are re-checked with it.
+   */
+  microphysics: 'warm' | 'ice' = 'warm'
   private flux: FluxTransport | null = null
   private turbulence: Turbulence | null = null
 
@@ -226,34 +248,40 @@ export class AtmosphereModel {
     this.microburstOutflow *= .993
     // Water is transported conservatively (WENO: by the flux form; semi-Lagrangian: by the mass fixer). Only the
     // cold-pool indicator decays: it belongs to the cold-pool parameterisation and goes away with it.
-    const { rho } = this.env
-    for (let z = 0, i = 0; z < nz; z++) for (let end = i + layer; i < end; i++) this.fallSpeed[i] = fallSpeed(this.rain[i], rho[z], rho[0])
+    const { rho } = this.env, withIce = (this.config.microphysics ?? this.microphysics) === 'ice'
+    // Precipitation fields with their fall speeds (snow only with ice microphysics).
+    const falling: [Float32Array, Float32Array][] = withIce ? [[this.rain, this.fallSpeed], [this.snow, this.snowFall], [this.graupel, this.graupelFall]] : [[this.rain, this.fallSpeed]]
+    for (let z = 0, i = 0; z < nz; z++) for (let end = i + layer; i < end; i++) { this.fallSpeed[i] = fallSpeed(this.rain[i], rho[z], rho[0]); this.snowFall[i] = snowFallSpeed(this.snow[i], rho[z], rho[0]); this.graupelFall[i] = graupelFallSpeed(this.graupel[i], rho[z]) }
     let carry: (a: Float32Array, decay: number, conserve?: boolean) => void
     if ((this.config.transport ?? this.transport) === 'weno') {
       // Flux-form WENO5 + RK3 with the velocity frozen at the start of the step. The face fluxes are projected to zero
       // divergence, so water is conserved by the scheme itself: no mass fixer, only a positivity fix (fillNegative).
       const flux = this.flux ??= new FluxTransport(this.grid, this.env.rho)
       flux.setVelocity(this.u, this.v, this.w)
-      this.sediment(dt)
-      this.scratch.set(this.rain); flux.advect(this.scratch, dt); this.fillNegative(this.scratch); this.commit(this.rain, 1)
+      for (const [field, vt] of falling) {
+        this.sediment(field, vt, dt)
+        this.scratch.set(field); flux.advect(this.scratch, dt); this.fillNegative(this.scratch); this.commit(field, 1)
+      }
       // WENO for water and the cold-pool indicator (no overshoots); linear 5th-order upwind for the smooth u, v, w, theta.
       carry = (a, decay, conserve = false) => {
-        this.scratch.set(a); flux.advect(this.scratch, dt, a === this.q || a === this.cloud || a === this.cold)
+        this.scratch.set(a); flux.advect(this.scratch, dt, a === this.q || a === this.cloud || a === this.ice || a === this.cold)
         if (conserve) this.fillNegative(this.scratch)
         this.commit(a, decay)
       }
     } else {
-      const fallout = this.rainFallout(dt)
-      // Semi-Lagrangian sedimentation looks up from the arrival node, so the rain-free air under a rain shaft must fall at
-      // the speed of the rain above it: with its own (zero) speed rain only ever came down in downdrafts.
-      const fs = this.fallSpeed
-      for (let i = 0; i < fs.length - layer; i++) if (fs[i + layer] > fs[i]) fs[i] = fs[i + layer]
-      this.advectFalling(this.rain, dt, fs); this.commit(this.rain, 1, true, fallout)
+      for (const [field, fs] of falling) {
+        const lost = this.fallout(field, fs, dt)
+        // Semi-Lagrangian sedimentation looks up from the arrival node, so the rain-free air under a rain shaft must fall
+        // at the speed of the rain above it: with its own (zero) speed rain only ever came down in downdrafts.
+        for (let i = 0; i < fs.length - layer; i++) if (fs[i + layer] > fs[i]) fs[i] = fs[i + layer]
+        this.advectFalling(field, dt, fs); this.commit(field, 1, true, lost)
+      }
       this.computeBacktrace(dt)
       carry = (a, decay, conserve = false) => { this.advectBacktrace(a); this.commit(a, decay, conserve) }
     }
-    carry(this.u, 1); carry(this.v, 1); carry(this.w, 1); carry(this.theta, 1); carry(this.q, 1, true); carry(this.cloud, 1, true); carry(this.cold, .9992)
+    carry(this.u, 1); carry(this.v, 1); carry(this.w, 1); carry(this.theta, 1); carry(this.q, 1, true); carry(this.cloud, 1, true); if (withIce) carry(this.ice, 1, true); carry(this.cold, .9992)
     const cfg = this.config, e = this.env, u = this.u, v = this.v, w = this.w, theta = this.theta, q = this.q, cloud = this.cloud, rain = this.rain, cold = this.cold
+    const ice = this.ice, snow = this.snow, graupel = this.graupel, rhoGround = e.rho[0]
     const flux = surfaceFluxes(cfg, this.time), lfcZ = (this.sounding.lfc ?? 1.5) * 1000, f = 2 * OMEGA * Math.sin(cfg.latitude * Math.PI / 180)
     const spongeStart = Math.max(cfg.tropopause * 1000 + 2500, 14_000), liftTop = Math.min(3200, lfcZ)
     for (let z = 0, i = 0; z < nz; z++) {
@@ -267,10 +295,20 @@ export class AtmosphereModel {
           const evap = rainProcesses(q, cloud, rain, i, theta[i] * exner, p, rhoZ, dt)
           // Evaporation takes exactly L/cp per unit mass from the air (no strength multiplier): energy is conserved.
           if (evap > 0) { const cool = LV / CP / exner * evap; theta[i] -= cool; cold[i] += cool }
-          const cond = saturationAdjust(theta, q, cloud, i, exner, p)
+          // Ice: rain freezes (Bigg into graupel, below -40 °C at once into snow), snow aggregates, rimes, grows by
+          // deposition, sublimates and melts, graupel rimes, collects and melts; melting and sublimation feed the cold-pool
+          // indicator like evaporation.
+          let cond: number
+          if (withIce) {
+            freezeRain(theta, rain, snow, i, exner)
+            cold[i] += snowProcesses(theta, q, cloud, ice, snow, rain, i, exner, p, rhoZ, rhoGround, dt)
+            cold[i] += graupelProcesses(theta, q, cloud, ice, snow, rain, graupel, i, exner, p, rhoZ, dt)
+            // Mixed-phase saturation adjustment: water saturation above 0 °C, ice-weighted below, condensate frozen by T.
+            cond = saturationAdjustMixed(theta, q, cloud, ice, i, exner, p)
+          } else cond = saturationAdjust(theta, q, cloud, i, exner, p)
           if (cond < 0) cold[i] -= LV / CP / exner * cond * .14
-          // B = g [(θv − θv_env) / θv_env − q_c − q_r]: condensate loads the air with its own mass, no extra weight.
-          const buoy = (theta[i] * (1 + .61 * q[i]) - thvEnv) / thvEnv - cloud[i] - rain[i]; w[i] += G * buoy * dt
+          // B = g [(θv − θv_env) / θv_env − q_c − q_i − q_r − q_s − q_g]: condensate loads the air with its own mass.
+          const buoy = (theta[i] * (1 + .61 * q[i]) - thvEnv) / thvEnv - cloud[i] - ice[i] - rain[i] - snow[i] - graupel[i]; w[i] += G * buoy * dt
           // Damp and rotate only the departure from the environmental wind, so the imposed shear profile is not eroded.
           const du = (u[i] - ue) * .9999, dv = (v[i] - ve) * .9999; u[i] = ue + du + f * dv * dt; v[i] = ve + dv - f * du * dt
           // Surface fluxes enter the lowest levels with the shares in surfaceShare, so the column receives exactly H and LE.
@@ -286,7 +324,7 @@ export class AtmosphereModel {
     const turb = this.turbulence ??= new Turbulence(this.grid, e.rho)
     turb.viscosity(u, v, w, theta, e.theta, SMAGORINSKY * cfg.turbulence / .55, dt)
     turb.mix(u, e.u, 1, dt); turb.mix(v, e.v, 1, dt); turb.mix(w, null, 1, dt)
-    turb.mix(theta, e.theta, 3, dt); turb.mix(q, e.q, 3, dt); turb.mix(cloud, null, 3, dt)
+    turb.mix(theta, e.theta, 3, dt); turb.mix(q, e.q, 3, dt); turb.mix(cloud, null, 3, dt); if (withIce) turb.mix(ice, null, 3, dt)
     // Surface drag on the ground node, which owns half a layer: dV/dt = -C_D (|V| V - |V_env| V_env) / (dz / 2). The
     // environment's own drag is taken as balanced by the large-scale flow that maintains the profile, so the background
     // stays steady (was: u, v *= 0.94 every step, which stopped the ground wind in ~16 s). Applied with the rigid
@@ -309,9 +347,9 @@ export class AtmosphereModel {
     this.solver.correct(this.pressure, u, v, w, dt)
     let clipped = 0
     for (let i = 0; i < this.grid.n; i++) {
-      if (u[i] < -85 || u[i] > 85) { u[i] = clamp(u[i], -85, 85); clipped++ }
-      if (v[i] < -85 || v[i] > 85) { v[i] = clamp(v[i], -85, 85); clipped++ }
-      if (w[i] < -60 || w[i] > 60) { w[i] = clamp(w[i], -60, 60); clipped++ }
+      if (u[i] < -U_LIMIT || u[i] > U_LIMIT) { u[i] = clamp(u[i], -U_LIMIT, U_LIMIT); clipped++ }
+      if (v[i] < -U_LIMIT || v[i] > U_LIMIT) { v[i] = clamp(v[i], -U_LIMIT, U_LIMIT); clipped++ }
+      if (w[i] < -W_LIMIT || w[i] > W_LIMIT) { w[i] = clamp(w[i], -W_LIMIT, W_LIMIT); clipped++ }
     }
     this.clipped += clipped
   }
@@ -343,7 +381,7 @@ export class AtmosphereModel {
     const { nx, ny, nz, layer } = this.grid, mask = new Uint8Array(layer)
     for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++) {
       let active = false
-      for (let z = 3; z < Math.min(nz - 2, 11); z++) { const i = x + nx * y + z * layer; if (this.w[i] > 2 && this.cloud[i] > .00007) { active = true; break } }
+      for (let z = 3; z < Math.min(nz - 2, 11); z++) { const i = x + nx * y + z * layer; if (this.w[i] > 2 && this.cloud[i] + this.ice[i] > .00007) { active = true; break } }
       mask[x + nx * y] = active ? 1 : 0
     }
     let cores = 0; const stack: number[] = []
@@ -363,16 +401,16 @@ export class AtmosphereModel {
     let up = 0, down = 0, rainRate = 0, top = 0, coldMax = 0, thermalTop = 0, maxCloud = 0
     for (let z = 0, i = 0; z < nz; z++) for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++, i++) {
       const alt = z * dz
-      up = Math.max(up, this.w[i]); down = Math.max(down, -this.w[i]); maxCloud = Math.max(maxCloud, this.cloud[i])
-      if (this.cloud[i] > .00007) top = Math.max(top, alt / 1000)
+      up = Math.max(up, this.w[i]); down = Math.max(down, -this.w[i]); maxCloud = Math.max(maxCloud, this.cloud[i] + this.ice[i])
+      if (this.cloud[i] + this.ice[i] > .00007) top = Math.max(top, alt / 1000)
       if (this.w[i] > .6) thermalTop = Math.max(thermalTop, alt / 1000)
       if (alt < 1500) coldMax = Math.max(coldMax, this.cold[i])
     }
     const [u0, v0] = this.env.windUV(0), [u6, v6] = this.env.windUV(6000)
-    // Surface rain flux (was the largest q_r anywhere times 12000, 2-2.5x too low).
+    // Surface precipitation flux, rain and snow as water (was the largest q_r anywhere times 12000, 2-2.5x too low).
     const rho0 = this.env.rho[0]
     let rainTotal = 0
-    for (let i = 0; i < this.grid.layer; i++) { rainRate = Math.max(rainRate, rho0 * this.rain[i] * fallSpeed(this.rain[i], rho0, rho0) * 3600); rainTotal = Math.max(rainTotal, this.precipitation[i]) }
+    for (let i = 0; i < this.grid.layer; i++) { rainRate = Math.max(rainRate, rho0 * (this.rain[i] * fallSpeed(this.rain[i], rho0, rho0) + this.snow[i] * snowFallSpeed(this.snow[i], rho0, rho0) + this.graupel[i] * graupelFallSpeed(this.graupel[i], rho0)) * 3600); rainTotal = Math.max(rainTotal, this.precipitation[i]) }
     return { updraft: up, downdraft: down, rainRate, rainTotal, cloudTop: top, thermalTop, maxCloud, coldMax, cores: this.countCores(), shear06: Math.hypot(u6 - u0, v6 - v0), microburst: this.microburstOutflow, clipped: this.clipped }
   }
 }

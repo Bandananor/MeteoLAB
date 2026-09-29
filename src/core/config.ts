@@ -14,7 +14,9 @@ export interface SimConfig {
   capHeight?: number; capStrength?: number
   /** Optional depth of a well-mixed moist boundary layer, km: the surface mixing ratio holds up to it (0 or absent = off). */
   moistLayer?: number
-  /** Transport scheme; overrides AtmosphereModel.transport when set (the UI switch). */
+  /** Microphysics; overrides AtmosphereModel.microphysics (default warm rain) when set (the UI switch). */
+  microphysics?: 'warm' | 'ice'
+  /** Transport scheme; overrides AtmosphereModel.transport (default WENO) when set (the UI switch). */
   transport?: 'semi-lagrangian' | 'weno'
   /** An analytic environment instead of the slider profile: 'weisman-klemp' (WK82 sounding, 16 g/kg, quarter-circle hodograph, one thermal). */
   profile?: 'weisman-klemp'
