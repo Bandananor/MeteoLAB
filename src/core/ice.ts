@@ -2,7 +2,7 @@ import { CP, EPS, LV, RV } from './constants'
 import { clamp } from './math'
 import { qsatP } from './microphysics'
 
-// Ice microphysics, stage 1 (2026-09-29, not yet wired into the model): cloud ice and snow, single-moment, after
+// Ice microphysics, stage 1 (2026-09-29): cloud ice and snow, single-moment, after
 // Lin, Farley & Orville (1983) with the mixed-phase saturation adjustment of Tao, Simpson & McCumber (1989).
 // Graupel and hail are stage 2. SI units throughout; the Lin constants are converted from cgs.
 
@@ -62,6 +62,13 @@ export function saturationAdjustMixed(theta: Float32Array, q: Float32Array, clou
   }
   partitionCondensate(theta, cloud, ice, i, exner)
   return total
+}
+
+/** Rain below -40 °C freezes at once (homogeneous freezing) into snow, releasing L_f; graupel is stage 2. */
+export function freezeRain(theta: Float32Array, rain: Float32Array, snow: Float32Array, i: number, exner: number) {
+  const r = rain[i]
+  if (r <= 0 || theta[i] * exner >= T_HOMOGENEOUS) return
+  rain[i] = 0; snow[i] += r; theta[i] += LF / (CP * exner) * r
 }
 
 /** Splits the cloud condensate into water and ice by iceFraction(T), with the heat of fusion; returns the mass frozen. */

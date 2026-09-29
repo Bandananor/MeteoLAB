@@ -81,4 +81,14 @@ describe('water budget', () => {
     expect(Math.max(...model.precipitation)).toBeGreaterThan(.1)
     expect(Math.abs(totalWater(model) / before - 1)).toBeLessThan(1e-4)
   })
+
+  // Ice stage 1: vapour, cloud water, cloud ice, rain and snow together, with snow sedimenting into the precipitation.
+  it('conserves total water within 0.01 % in a 30-minute storm with ice microphysics', () => {
+    const model = new AtmosphereModel({ ...STORM, solarMax: 0, microphysics: 'ice' }, smallGrid(20, 16))
+    const before = totalWater(model)
+    run(model, 1800)
+    expect(Math.max(...model.ice)).toBeGreaterThan(1e-4)
+    expect(Math.max(...model.snow)).toBeGreaterThan(1e-4)
+    expect(Math.abs(totalWater(model) / before - 1)).toBeLessThan(1e-4)
+  })
 })

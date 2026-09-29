@@ -75,6 +75,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
       </div></details>
       <details><summary>Расчёт</summary><div class="group">
         <label title="Точный перенос (WENO 5-го порядка, по умолчанию) почти не размывает восходящие потоки и сам сохраняет массу воды. Быстрый (полулагранжев) примерно вдвое дешевле, но размывает потоки: в сильном сдвиге термик не стартует">Перенос<select id="transport"><option value="weno">Точный (WENO5)</option><option value="semi-lagrangian">Быстрый (полулагранжев)</option></select></label>
+        <label title="Со льдом (этап 1): облачный лёд и снег — наковальня из кристаллов, теплота замерзания, таяние. Пока без крупы и града, поэтому дождя у земли намного меньше, чем в природе; основной станет вместе с ними">Микрофизика<select id="microphysics"><option value="warm">Тёплый дождь (Кесслер)</option><option value="ice">Со льдом — снег, без крупы (эксперимент)</option></select></label>
         ${slider('speed','Ускорение времени',1,30,1,8,'×')}
         ${slider('bubble','Сила начального термика (0 — без термика)',0,2.5,.05,1,'×',2)}
       </div></details>
@@ -161,6 +162,8 @@ const resetKeys = new Set<keyof SimConfig>(['surfaceTemp','lapseLow','lapseMid',
 const surfaceSelect = document.querySelector<HTMLSelectElement>('#surfaceType')!
 const transportSelect = document.querySelector<HTMLSelectElement>('#transport')!
 transportSelect.addEventListener('change', () => { config.transport = transportSelect.value as SimConfig['transport'] })
+const microSelect = document.querySelector<HTMLSelectElement>('#microphysics')!
+microSelect.addEventListener('change', () => { config.microphysics = microSelect.value as SimConfig['microphysics']; markPreset(null); recreate() })
 const showOutput = (input: HTMLInputElement) => {
   document.querySelector<HTMLOutputElement>(`[data-output="${input.dataset.key}"]`)!.textContent = `${Number(input.value).toFixed(Number(input.dataset.digits))}${input.dataset.suffix}`
 }
@@ -198,6 +201,7 @@ function syncControls() {
   })
   surfaceSelect.value = config.surfaceType
   transportSelect.value = config.transport ?? 'weno'
+  microSelect.value = config.microphysics ?? 'warm'
   markProfileGroups()
 }
 syncControls()
