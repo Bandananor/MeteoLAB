@@ -153,11 +153,38 @@ export class AtmosphereModel {
 
   /** Transport of `a` along the shared backtrace into the scratch buffer (see commit). */
   private advectBacktrace(a: Float32Array) {
+    if (this.cubicTransport === 'all' || this.cubicTransport === 'scalars' && a !== this.u && a !== this.v && a !== this.w) { this.advectCubic(a); return }
     const n = this.grid.n, s = this.scratch, c = this.backtraceCorner, wt = this.backtraceWeight
     for (let i = 0; i < n; i++) {
       const k = i * 8, fx = wt[i * 3], fy = wt[i * 3 + 1], fz = wt[i * 3 + 2]
       const c00 = a[c[k]] + (a[c[k + 1]] - a[c[k]]) * fx, c10 = a[c[k + 2]] + (a[c[k + 3]] - a[c[k + 2]]) * fx, c01 = a[c[k + 4]] + (a[c[k + 5]] - a[c[k + 4]]) * fx, c11 = a[c[k + 6]] + (a[c[k + 7]] - a[c[k + 6]]) * fx
       const lo = c00 + (c10 - c00) * fy, hi = c01 + (c11 - c01) * fy; s[i] = lo + (hi - lo) * fz
+    }
+  }
+
+  /**
+   * EXPERIMENT (off by default): tricubic Catmull-Rom interpolation at the departure point, clipped to the range of the
+   * 8 surrounding nodes (quasi-monotone, Bermejo & Staniforth 1992). Less diffusive than trilinear, ~5x more work.
+   */
+  cubicTransport: false | 'all' | 'scalars' = false
+  private advectCubic(a: Float32Array) {
+    const { n, nx, ny, nz, layer } = this.grid, s = this.scratch, c = this.backtraceCorner, wt = this.backtraceWeight
+    const cr = (p0: number, p1: number, p2: number, p3: number, t: number) => p1 + .5 * t * (p2 - p0 + t * (2 * p0 - 5 * p1 + 4 * p2 - p3 + t * (3 * (p1 - p2) + p3 - p0)))
+    const col = new Float64Array(4), row = new Float64Array(4)
+    for (let i = 0; i < n; i++) {
+      const k = i * 8, base = c[k], z0 = Math.floor(base / layer), y0 = Math.floor((base - z0 * layer) / nx), x0 = base - z0 * layer - y0 * nx
+      const fx = wt[i * 3], fy = wt[i * 3 + 1], fz = wt[i * 3 + 2]
+      for (let dzi = 0; dzi < 4; dzi++) {
+        const l = Math.min(nz - 1, Math.max(0, z0 + dzi - 1)) * layer
+        for (let dyi = 0; dyi < 4; dyi++) {
+          const r = ((y0 + dyi - 1 + ny) % ny) * nx + l
+          row[dyi] = cr(a[r + (x0 + nx - 1) % nx], a[r + x0], a[r + (x0 + 1) % nx], a[r + (x0 + 2) % nx], fx)
+        }
+        col[dzi] = cr(row[0], row[1], row[2], row[3], fy)
+      }
+      let v = cr(col[0], col[1], col[2], col[3], fz), lo = Infinity, hi = -Infinity
+      for (let q = 0; q < 8; q++) { const x = a[c[k + q]]; if (x < lo) lo = x; if (x > hi) hi = x }
+      s[i] = v < lo ? lo : v > hi ? hi : v
     }
   }
 
