@@ -241,7 +241,7 @@ export class StormView {
 
   private updateVolume() {
     const m = this.model, d = this.volumeData
-    for (let i = 0; i < m.grid.n; i++) { d[i * 2] = clamp((m.cloud[i] + m.ice[i] - .00003) / .0014) * 255; d[i * 2 + 1] = clamp((m.rain[i] + m.snow[i]) / .0025) * 255 }
+    for (let i = 0; i < m.grid.n; i++) { d[i * 2] = clamp((m.cloud[i] + m.ice[i] - .00003) / .0014) * 255; d[i * 2 + 1] = clamp((m.rain[i] + m.snow[i] + m.graupel[i]) / .0025) * 255 }
     this.volumeTexture.needsUpdate = true; this.volumeMaterial.uniforms.uTime.value = m.time
   }
 

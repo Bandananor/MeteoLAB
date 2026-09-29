@@ -5,7 +5,7 @@ import { qsatP } from './microphysics'
 
 const one = (x: number) => Float32Array.of(x)
 
-describe('ice microphysics (stage 1, not yet in the model)', () => {
+describe('ice microphysics (stage 1)', () => {
   it('saturates over ice below water saturation (82 % of it at -20 °C) and joins it at 0 °C', () => {
     expect(qsatIce(-20, 50000) / qsatP(-20, 50000)).toBeCloseTo(.82, 2)
     expect(qsatIce(-1e-9, 80000) / qsatP(0, 80000)).toBeCloseTo(1, 3)

@@ -1,7 +1,7 @@
 import { CP, G, RV } from './constants'
 import { CW, KA, LF, LS, NU, PSI, qsatIce, SC, T0 } from './ice'
 
-// Ice microphysics, stage 2 (2026-09-29, not yet wired into the model): graupel after Lin, Farley & Orville (1983).
+// Ice microphysics, stage 2 (2026-09-29): graupel after Lin, Farley & Orville (1983).
 // Exponential size distribution with intercept N0G and density RHO_G; fall law V = (4 g rho_g D / (3 C_D rho))^0.5.
 const N0G = 4e4, RHO_G = 400, CD = .6
 // Rain distribution of the Lin scheme (for the freezing of rain) and the Bigg (1953) freezing constants B', A'.

@@ -11,7 +11,7 @@ const cell = (tk: number, p: number, values: Partial<Record<'q' | 'cloud' | 'ice
 const water = (c: ReturnType<typeof cell>) => c.q[0] + c.cloud[0] + c.ice[0] + c.snow[0] + c.rain[0] + c.graupel[0]
 const step = (c: ReturnType<typeof cell>, p: number, rho: number, dt: number) => graupelProcesses(c.theta, c.q, c.cloud, c.ice, c.snow, c.rain, c.graupel, 0, c.exner, p, rho, dt)
 
-describe('graupel (ice stage 2, not yet in the model)', () => {
+describe('graupel (ice stage 2)', () => {
   it('falls at 5-10 m/s with 1 g/m3 near the ground', () => {
     const v = graupelFallSpeed(1e-3 / 1.1, 1.1)
     expect(v).toBeGreaterThan(5); expect(v).toBeLessThan(10)
