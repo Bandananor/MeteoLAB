@@ -75,7 +75,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
         ${slider('soilMoisture','Влажность почвы',0,100,1,45,' %')}
       </div></details>
       <details><summary>Расчёт</summary><div class="group">
-        <label title="Точный перенос (WENO 5-го порядка) почти не размывает восходящие потоки: суперячейки живут дольше и расщепляются, но расчёт примерно в 2,5 раза медленнее">Перенос<select id="transport"><option value="semi-lagrangian">Быстрый (полулагранжев)</option><option value="weno">Точный (WENO5)</option></select></label>
+        <label title="Точный перенос (WENO 5-го порядка) почти не размывает восходящие потоки: суперячейки живут дольше и расщепляются, но расчёт примерно вдвое медленнее">Перенос<select id="transport"><option value="semi-lagrangian">Быстрый (полулагранжев)</option><option value="weno">Точный (WENO5)</option></select></label>
         ${slider('speed','Ускорение времени',1,30,1,8,'×')}
         ${slider('bubble','Сила начального термика',.3,2.5,.05,1,'×',2)}
       </div></details>
