@@ -4,6 +4,7 @@ import { Environment, type EnvironmentProfile } from './environment'
 import { createGrid, type Grid } from './grid'
 import { clamp, lerp, mod, mulberry32 } from './math'
 import { FluxTransport } from './advection'
+import { SMAGORINSKY, Turbulence } from './turbulence'
 import { fallSpeed, rainProcesses, saturationAdjust } from './microphysics'
 import { PressureSolver } from './pressure'
 import { dragCoefficient, surfaceFluxes } from './surface'
@@ -169,6 +170,7 @@ export class AtmosphereModel {
   /** Transport of u, v, w, theta, q, cloud and the cold-pool indicator: trilinear semi-Lagrangian or flux-form WENO5 + RK3. */
   transport: 'semi-lagrangian' | 'weno' = 'semi-lagrangian'
   private flux: FluxTransport | null = null
+  private turbulence: Turbulence | null = null
 
   /** Advances by real elapsed seconds scaled by the speed setting; returns the number of model steps taken. */
   advance(realDt: number) {
@@ -205,7 +207,7 @@ export class AtmosphereModel {
     carry(this.u, 1); carry(this.v, 1); carry(this.w, 1); carry(this.theta, 1); carry(this.q, 1, true); carry(this.cloud, 1, true); carry(this.cold, .9992)
     const cfg = this.config, e = this.env, u = this.u, v = this.v, w = this.w, theta = this.theta, q = this.q, cloud = this.cloud, rain = this.rain, cold = this.cold
     const flux = surfaceFluxes(cfg, this.time), lfcZ = (this.sounding.lfc ?? 1.5) * 1000, f = 2 * OMEGA * Math.sin(cfg.latitude * Math.PI / 180)
-    const mix = clamp(cfg.turbulence * .0015 * dt, 0, .01), spongeStart = Math.max(cfg.tropopause * 1000 + 2500, 14_000), liftTop = Math.min(3200, lfcZ)
+    const spongeStart = Math.max(cfg.tropopause * 1000 + 2500, 14_000), liftTop = Math.min(3200, lfcZ)
     for (let z = 0, i = 0; z < nz; z++) {
       const alt = z * dz, p = e.p[z], rhoZ = e.rho[z], exner = e.exner[z], thEnv = e.theta[z], qEnv = e.q[z], thvEnv = thEnv * (1 + .61 * qEnv), ue = e.u[z], ve = e.v[z], l = z * layer
       for (let y = 0; y < ny; y++) {
@@ -227,11 +229,16 @@ export class AtmosphereModel {
           if (z < this.surfaceShare.length) { const pattern = 1 + this.surfacePattern[x + row] * .32, per = pattern * this.surfaceShare[z] * dt / rhoZ; theta[i] += flux.sensible * per / (CP * exner); q[i] += flux.latent * per / LV }
           if (alt < liftTop) { const gx = cold[xp + row] - cold[xm + row], gy = cold[x + yp] - cold[x + ym], edge = Math.hypot(gx, gy), core = cold[x + row]; w[i] += G * edge / 300 * .45 * Math.max(.12, 1 - alt / Math.max(300, lfcZ)) * dt; if (alt < 1300 && core > 1) w[i] -= G * core / 300 * .52 * Math.exp(-alt / 520) * dt }
           if (z <= 1 && w[i] < -5 && rain[i] > .0001) { const impact = Math.min(38, -w[i] * Math.sqrt(rain[i] / .00055)), dpx = (-w[xp + row + l] + w[xm + row + l]) * .5, dpy = (-w[x + yp + l] + w[x + ym + l]) * .5; u[i] -= dpx * .12 * dt; v[i] -= dpy * .12 * dt; cold[i] += impact * .0012 * dt; this.microburstOutflow = Math.max(this.microburstOutflow, impact) }
-          const thAvg = (theta[xp + row + l] + theta[xm + row + l] + theta[x + yp + l] + theta[x + ym + l]) / 4; theta[i] = lerp(theta[i], thAvg, mix); const qAvg = (q[xp + row + l] + q[xm + row + l] + q[x + yp + l] + q[x + ym + l]) / 4; q[i] = lerp(q[i], qAvg, mix); cold[i] = clamp(cold[i], 0, 15)
+          cold[i] = clamp(cold[i], 0, 15)
           if (alt > spongeStart) { const s = clamp((alt - spongeStart) / (H - spongeStart)) * .06 * dt; w[i] *= 1 - s; u[i] = lerp(u[i], ue, s); v[i] = lerp(v[i], ve, s); theta[i] = lerp(theta[i], thEnv, s) }
         }
       }
     }
+    // Smagorinsky-Lilly subgrid mixing of momentum, heat and water (replaces the old horizontal smoothing of theta and q).
+    const turb = this.turbulence ??= new Turbulence(this.grid, e.rho)
+    turb.viscosity(u, v, w, theta, e.theta, SMAGORINSKY * cfg.turbulence / .55, dt)
+    turb.mix(u, e.u, 1, dt); turb.mix(v, e.v, 1, dt); turb.mix(w, null, 1, dt)
+    turb.mix(theta, e.theta, 3, dt); turb.mix(q, e.q, 3, dt); turb.mix(cloud, null, 3, dt)
     // Surface drag on the ground node, which owns half a layer: dV/dt = -C_D (|V| V - |V_env| V_env) / (dz / 2). The
     // environment's own drag is taken as balanced by the large-scale flow that maintains the profile, so the background
     // stays steady (was: u, v *= 0.94 every step, which stopped the ground wind in ~16 s). Applied with the rigid
