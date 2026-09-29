@@ -164,6 +164,11 @@ transportSelect.addEventListener('change', () => { config.transport = transportS
 const showOutput = (input: HTMLInputElement) => {
   document.querySelector<HTMLOutputElement>(`[data-output="${input.dataset.key}"]`)!.textContent = `${Number(input.value).toFixed(Number(input.dataset.digits))}${input.dataset.suffix}`
 }
+// With an analytic profile (the Weisman-Klemp scenario) the temperature, humidity and wind sliders do nothing: dim them.
+const markProfileGroups = () => document.querySelectorAll<HTMLDetailsElement>('.controls details').forEach(d => {
+  const title = d.querySelector('summary')?.textContent ?? '', profileGroup = /Температурный|Влажность по слоям|Профиль ветра/.test(title), off = profileGroup && !!config.profile
+  d.style.opacity = off ? '.45' : ''; d.title = off ? 'Профиль задан сценарием (формулы Weisman–Klemp), ползунки не действуют' : ''
+})
 const markPreset = (index: number | null) => document.querySelectorAll<HTMLButtonElement>('[data-preset]').forEach(b => b.classList.toggle('active', Number(b.dataset.preset) === index))
 document.querySelectorAll<HTMLInputElement>('input[data-key]').forEach(input => {
   const key = input.dataset.key as keyof SimConfig
@@ -188,6 +193,7 @@ document.querySelectorAll<HTMLButtonElement>('[data-preset]').forEach(button => 
   })
   surfaceSelect.value = config.surfaceType
   transportSelect.value = config.transport ?? 'semi-lagrangian'
+  markProfileGroups()
   markPreset(index)
   recreate(); running = true; updatePause()
 }))
