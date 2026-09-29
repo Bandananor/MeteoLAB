@@ -45,7 +45,7 @@ export class Atmosphere implements ViewSettings {
     return {
       ...m.sounding, ...text,
       updraft: d.updraft, downdraft: d.downdraft, rain: d.rainRate, cloudTop: d.cloudTop, thermalTop: d.thermalTop,
-      cloudWater: d.maxCloud * 1000, coldPool: d.coldMax, microburst: d.microburst, updraftHelicity: m.rotation.uh,
+      cloudWater: d.maxCloud * 1000, coldPool: d.coldMax, microburst: d.microburst, clipped: d.clipped, updraftHelicity: m.rotation.uh,
       insolation: insolation(m.config, m.time), sunElevation: Math.asin(Math.max(-1, Math.min(1, sunDirection(m.config, m.time).y))) * 180 / Math.PI,
     }
   }

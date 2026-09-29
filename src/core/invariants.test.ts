@@ -48,6 +48,8 @@ describe('pressure projection', () => {
     solver.divergence(model.u, model.v, model.w, 1, div)
     // Velocities are stored as float32 (~1e-8 s-1 of rounding); storm divergence before the projection is ~1e-3 s-1.
     expect(Math.max(...div.map(Math.abs))).toBeLessThan(1e-7)
+    // A 15-minute storm stays inside the working range: the velocity safety limits never fire.
+    expect(model.clipped).toBe(0)
   })
 })
 

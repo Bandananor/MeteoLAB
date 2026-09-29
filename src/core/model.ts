@@ -17,6 +17,8 @@ export interface RotationState { uh: number; x: number; y: number; anticyclonic:
 export interface ModelDiagnostics {
   updraft: number; downdraft: number; rainRate: number; cloudTop: number; thermalTop: number
   maxCloud: number; coldMax: number; cores: number; shear06: number; microburst: number
+  /** Velocity components clipped by the safety limits (|u|, |v| <= 85, |w| <= 60 m/s) since the start. */
+  clipped: number
 }
 
 /** Cloud-scale atmosphere on a periodic box: prognostic u, v, w, theta, q, cloud, rain and the cold-pool indicator. */
@@ -37,6 +39,8 @@ export class AtmosphereModel {
   /** Lowest and highest level of the 2-5 km updraft-helicity layer. */
   readonly uhLevels: readonly [number, number]
   time = 0; microburstOutflow = 0
+  /** Velocity components clipped by the safety limits since the start: the model is outside its working range. */
+  clipped = 0
   private readonly solver: PressureSolver; private divergence: Float64Array
   private scratch: Float32Array; private surfacePattern: Float32Array
   private backtraceCorner: Int32Array; private backtraceWeight: Float64Array
@@ -216,7 +220,13 @@ export class AtmosphereModel {
     this.solver.divergence(u, v, w, dt, this.divergence)
     this.solver.solve(this.divergence, this.pressure)
     this.solver.correct(this.pressure, u, v, w, dt)
-    for (let i = 0; i < this.grid.n; i++) { u[i] = clamp(u[i], -85, 85); v[i] = clamp(v[i], -85, 85); w[i] = clamp(w[i], -60, 60) }
+    let clipped = 0
+    for (let i = 0; i < this.grid.n; i++) {
+      if (u[i] < -85 || u[i] > 85) { u[i] = clamp(u[i], -85, 85); clipped++ }
+      if (v[i] < -85 || v[i] > 85) { v[i] = clamp(v[i], -85, 85); clipped++ }
+      if (w[i] < -60 || w[i] > 60) { w[i] = clamp(w[i], -60, 60); clipped++ }
+    }
+    this.clipped += clipped
   }
 
   /** Vertical vorticity dv/dx - du/dy at a grid node, s-1. */
@@ -268,6 +278,6 @@ export class AtmosphereModel {
       if (alt < 1500) coldMax = Math.max(coldMax, this.cold[i])
     }
     const [u0, v0] = this.env.windUV(0), [u6, v6] = this.env.windUV(6000)
-    return { updraft: up, downdraft: down, rainRate, cloudTop: top, thermalTop, maxCloud, coldMax, cores: this.countCores(), shear06: Math.hypot(u6 - u0, v6 - v0), microburst: this.microburstOutflow }
+    return { updraft: up, downdraft: down, rainRate, cloudTop: top, thermalTop, maxCloud, coldMax, cores: this.countCores(), shear06: Math.hypot(u6 - u0, v6 - v0), microburst: this.microburstOutflow, clipped: this.clipped }
   }
 }
