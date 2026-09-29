@@ -70,7 +70,6 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
       </div></details>
       <details><summary>Расчёт</summary><div class="group">
         ${slider('speed','Ускорение времени',1,30,1,8,'×')}
-        ${slider('seed','Seed',1,999,1,42,'')}
         ${slider('bubble','Сила начального термика',.3,2.5,.05,1,'×',2)}
       </div></details>
       <p class="hint">Двойной клик по поверхности создаёт локальный 3D-термик. Изменение профиля перезапускает эксперимент.</p>
@@ -119,14 +118,20 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
   </main>`
 
 const config: SimConfig = { ...defaults }
+// Every start, restart and scenario gets a fresh random seed, so no two runs give the same storm. The seed is not shown,
+// only kept in the address (?seed=...), so opening that link repeats the first run of the page.
+const urlSeed = Number(new URLSearchParams(location.search).get('seed'))
+const nextSeed = () => { const [x] = crypto.getRandomValues(new Uint32Array(1)); return x }
+const useSeed = (seed: number) => { config.seed = seed; const url = new URL(location.href); url.searchParams.set('seed', String(seed)); history.replaceState(null, '', url) }
+useSeed(Number.isInteger(urlSeed) && urlSeed > 0 ? urlSeed : nextSeed())
 const canvas = document.querySelector<HTMLCanvasElement>('#sim')!
 const view = { field: 'composite' as FieldMode, showVectors: false, showPrecip: false, showFieldVolume: true, sliceHeight: 2, sliceNorth: 0 }
 let sim = new Atmosphere(canvas, config)
 let running = true
 let last = performance.now(), frameCount = 0
-const recreate = () => { sim.dispose(); sim = Object.assign(new Atmosphere(canvas, config), view) }
+const recreate = () => { useSeed(nextSeed()); sim.dispose(); sim = Object.assign(new Atmosphere(canvas, config), view) }
 
-const resetKeys = new Set<keyof SimConfig>(['surfaceTemp','lapseLow','lapseMid','lapseUpper','tropopause','stratoWarming','rhSurface','rhLow','rhMid','rhUpper','wind0','wind3','wind6','wind10','windDir0','windDir3','windDir6','windDir10','latitude','seed','bubble','surfaceType'])
+const resetKeys = new Set<keyof SimConfig>(['surfaceTemp','lapseLow','lapseMid','lapseUpper','tropopause','stratoWarming','rhSurface','rhLow','rhMid','rhUpper','wind0','wind3','wind6','wind10','windDir0','windDir3','windDir6','windDir10','latitude','bubble','surfaceType'])
 const surfaceSelect = document.querySelector<HTMLSelectElement>('#surfaceType')!
 const showOutput = (input: HTMLInputElement) => {
   document.querySelector<HTMLOutputElement>(`[data-output="${input.dataset.key}"]`)!.textContent = `${Number(input.value).toFixed(Number(input.dataset.digits))}${input.dataset.suffix}`
