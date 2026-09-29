@@ -181,7 +181,7 @@ export class AtmosphereModel {
     carry(this.u, 1); carry(this.v, 1); carry(this.w, 1); carry(this.theta, 1); carry(this.q, 1, true); carry(this.cloud, 1, true); carry(this.cold, .9992)
     const cfg = this.config, e = this.env, u = this.u, v = this.v, w = this.w, theta = this.theta, q = this.q, cloud = this.cloud, rain = this.rain, cold = this.cold
     const flux = surfaceFluxes(cfg, this.time), lfcZ = (this.sounding.lfc ?? 1.5) * 1000, f = 2 * OMEGA * Math.sin(cfg.latitude * Math.PI / 180)
-    const mix = clamp(cfg.turbulence * .0015 * dt, 0, .01), spongeStart = Math.max(cfg.tropopause * 1000 + 1600, 13_000), liftTop = Math.min(3200, lfcZ)
+    const mix = clamp(cfg.turbulence * .0015 * dt, 0, .01), spongeStart = Math.max(cfg.tropopause * 1000 + 2500, 14_000), liftTop = Math.min(3200, lfcZ)
     for (let z = 0, i = 0; z < nz; z++) {
       const alt = z * dz, p = e.p[z], rhoZ = e.rho[z], exner = e.exner[z], thEnv = e.theta[z], qEnv = e.q[z], thvEnv = thEnv * (1 + .61 * qEnv), ue = e.u[z], ve = e.v[z], l = z * layer
       for (let y = 0; y < ny; y++) {

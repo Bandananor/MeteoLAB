@@ -30,7 +30,7 @@ const presets: {name:string;hint:string;values:Partial<SimConfig>}[] = [
 document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
   <header>
     <div><span class="eyebrow">ЧИСЛЕННАЯ ЛАБОРАТОРИЯ АТМОСФЕРЫ / 1.0 3D</span><h1>StormLab</h1></div>
-    <div class="header-stats"><span>3D non-hydrostatic</span><span>48 × 36 × 15 км</span><div class="status"><i></i><span id="statusText">РАСЧЁТ ИДЁТ</span></div></div>
+    <div class="header-stats"><span>3D non-hydrostatic</span><span>48 × 36 × 19 км</span><div class="status"><i></i><span id="statusText">РАСЧЁТ ИДЁТ</span></div></div>
   </header>
   <main>
     <aside class="controls">
@@ -90,7 +90,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
           <b id="fieldTitle"></b>
           <div class="colorbar" id="colorbar"></div>
           <div class="colorbar-labels"><span id="fieldMin"></span><span id="fieldMid"></span><span id="fieldMax"></span></div>
-          <label>Высота горизонтального среза<output id="sliceHeightOut">2.0 км</output><input id="sliceHeight" type="range" min="0.1" max="14.5" step="0.1" value="2"></label>
+          <label>Высота горизонтального среза<output id="sliceHeightOut">2.0 км</output><input id="sliceHeight" type="range" min="0.1" max="18.5" step="0.1" value="2"></label>
           <label>Вертикальный разрез, север ↔ юг<output id="sliceNorthOut">0 км</output><input id="sliceNorth" type="range" min="-17.5" max="17.5" step="0.5" value="0"></label>
           <label>Отображение<select id="layerMode"><option value="both">Срезы + объём сильных отклонений</option><option value="slices">Только срезы</option><option value="volume">Только объём (всё поле)</option></select></label>
           <div id="volumeControls" hidden>
@@ -99,7 +99,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
           </div>
         </div>
       </div>
-      <div class="readout"><span>Сетка 40 × 32 × 24</span><span>Δx / Δy / Δz: 1.2 / 1.1 / 0.65 км</span><span>Δt: 1.0 с</span><span>Инсоляция: <b id="sun">—</b></span><span>Солнце: <b id="sunElevation">—</b></span><span>T+: <b id="time">00:00</b></span></div>
+      <div class="readout"><span>Сетка 40 × 32 × 30</span><span>Δx / Δy / Δz: 1.2 / 1.1 / 0.65 км</span><span>Δt: 1.0 с</span><span>Инсоляция: <b id="sun">—</b></span><span>Солнце: <b id="sunElevation">—</b></span><span>T+: <b id="time">00:00</b></span></div>
     </section>
 
     <aside class="diagnostics">
@@ -224,7 +224,7 @@ const prepareCanvas = (id: string) => {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, w, h); ctx.font = '8px IBM Plex Mono'
   return { ctx, w, h }
 }
-const T_MIN = -70, T_MAX = 45, Z_MAX = 15
+const T_MIN = -75, T_MAX = 45, Z_MAX = 18
 function drawSounding(){
   const { ctx, w, h } = prepareCanvas('sounding'), s = sim.sounding()
   const L = 22, R = w - 30, T = 6, B = h - 14

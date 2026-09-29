@@ -11,7 +11,8 @@ export interface Grid extends GridOptions {
   xp: Int32Array; xm: Int32Array; yp: Int32Array; ym: Int32Array
 }
 
-export const DEFAULT_GRID: GridOptions = { nx: 40, ny: 32, nz: 24, width: 48_000, depth: 36_000, height: 15_000 }
+// The top is at 18.9 km (dz 652 m as before) so strong storms overshoot the tropopause below the sponge, not into it.
+export const DEFAULT_GRID: GridOptions = { nx: 40, ny: 32, nz: 30, width: 48_000, depth: 36_000, height: 18_900 }
 
 export function createGrid(options: GridOptions = DEFAULT_GRID): Grid {
   const { nx, ny, nz, width, depth, height } = options
