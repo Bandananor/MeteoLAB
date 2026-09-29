@@ -54,6 +54,8 @@ export class AtmosphereModel {
   time = 0; microburstOutflow = 0
   /** Velocity components clipped by the safety limits since the start: the model is outside its working range. */
   clipped = 0
+  /** Water mass (level-weight units, summed over all fields) that the WENO positivity fix has moved since the start. */
+  negativeFilled = 0
   private readonly solver: PressureSolver; private divergence: Float64Array
   private scratch: Float32Array; private surfacePattern: Float32Array
   private backtraceCorner: Int32Array; private backtraceWeight: Float64Array
@@ -144,6 +146,35 @@ export class AtmosphereModel {
     for (let i = 0; i < s.length; i++) a[i] = s[i] * decay
   }
 
+  /**
+   * Flux-form sedimentation of rain (first-order upwind from above, conservative): the mass flux through the face
+   * between two levels is rho0 qr Vt of the node above it, and the ground node loses rho0 qr Vt through the ground,
+   * which is added to `precipitation` (mm).
+   */
+  private sediment(dt: number) {
+    const { nz, layer } = this.grid, rain = this.rain, vt = this.fallSpeed, rho = this.env.rho, lw = this.levelWeight, dz = this.grid.dz
+    for (let i = 0; i < layer; i++) this.precipitation[i] += rho[0] * rain[i] * vt[i] * dt
+    // Level weight lw = rho0 h / dz, so dq = dt (F_in - F_out) / (lw dz). Bottom-up, so each face uses pre-step values above.
+    for (let z = 0; z < nz; z++) {
+      const l = z * layer, inflow = z < nz - 1 ? rho[z + 1] : 0
+      for (let i = l; i < l + layer; i++) rain[i] += dt * (inflow * (z < nz - 1 ? rain[i + layer] * vt[i + layer] : 0) - rho[z] * rain[i] * vt[i]) / (lw[z] * dz)
+    }
+  }
+
+  /**
+   * Removes the small negative values WENO leaves behind (it is not positivity-preserving) without changing the total:
+   * negatives are set to zero and the same mass is taken from the positive values in proportion to them.
+   */
+  private fillNegative(a: Float32Array) {
+    const { nz, layer } = this.grid, lw = this.levelWeight
+    let negative = 0, positive = 0
+    for (let z = 0, i = 0; z < nz; z++) { const wz = lw[z]; for (let e = i + layer; i < e; i++) { if (a[i] < 0) negative -= wz * a[i]; else positive += wz * a[i] } }
+    if (negative === 0) return
+    const keep = positive > negative ? 1 - negative / positive : 0
+    for (let i = 0; i < a.length; i++) a[i] = a[i] < 0 ? 0 : a[i] * keep
+    this.negativeFilled += negative
+  }
+
   /** Rain leaving through the ground this step: adds it to `precipitation` (mm) and returns it in level-weight (mass) units. */
   private rainFallout(dt: number) {
     const { layer, dz } = this.grid, rhoGround = this.env.rho[0]
@@ -174,7 +205,10 @@ export class AtmosphereModel {
     }
   }
 
-  /** Transport of u, v, w, theta, q, cloud and the cold-pool indicator: trilinear semi-Lagrangian or flux-form WENO5 + RK3. */
+  /**
+   * Transport: trilinear semi-Lagrangian (default; fast, diffusive, needs the mass fixer) or flux-form WENO5 + RK3
+   * (about twice as slow, conserves water by itself).
+   */
   transport: 'semi-lagrangian' | 'weno' = 'semi-lagrangian'
   private flux: FluxTransport | null = null
   private turbulence: Turbulence | null = null
@@ -190,24 +224,31 @@ export class AtmosphereModel {
   step(dt: number) {
     const { nx, ny, nz, dz, height: H, layer, xp: XP, xm: XM, yp: YP, ym: YM } = this.grid
     this.microburstOutflow *= .993
-    // Water is transported conservatively (mass fixer). Only the cold-pool indicator decays: it belongs to the
-    // cold-pool parameterisation and goes away with it.
+    // Water is transported conservatively (WENO: by the flux form; semi-Lagrangian: by the mass fixer). Only the
+    // cold-pool indicator decays: it belongs to the cold-pool parameterisation and goes away with it.
     const { rho } = this.env
     for (let z = 0, i = 0; z < nz; z++) for (let end = i + layer; i < end; i++) this.fallSpeed[i] = fallSpeed(this.rain[i], rho[z], rho[0])
-    const fallout = this.rainFallout(dt)
-    // Semi-Lagrangian sedimentation looks up from the arrival node, so the rain-free air under a rain shaft must fall at
-    // the speed of the rain above it: with its own (zero) speed rain only ever came down in downdrafts.
-    const fs = this.fallSpeed
-    for (let i = 0; i < fs.length - layer; i++) if (fs[i + layer] > fs[i]) fs[i] = fs[i + layer]
-    this.advectFalling(this.rain, dt, fs); this.commit(this.rain, 1, true, fallout)
     let carry: (a: Float32Array, decay: number, conserve?: boolean) => void
     if ((this.config.transport ?? this.transport) === 'weno') {
-      // Flux-form WENO5 + RK3 with the velocity frozen at the start of the step; the mass fixer still runs on water.
+      // Flux-form WENO5 + RK3 with the velocity frozen at the start of the step. The face fluxes are projected to zero
+      // divergence, so water is conserved by the scheme itself: no mass fixer, only a positivity fix (fillNegative).
       const flux = this.flux ??= new FluxTransport(this.grid, this.env.rho)
       flux.setVelocity(this.u, this.v, this.w)
+      this.sediment(dt)
+      this.scratch.set(this.rain); flux.advect(this.scratch, dt); this.fillNegative(this.scratch); this.commit(this.rain, 1)
       // WENO for water and the cold-pool indicator (no overshoots); linear 5th-order upwind for the smooth u, v, w, theta.
-      carry = (a, decay, conserve = false) => { this.scratch.set(a); flux.advect(this.scratch, dt, a === this.q || a === this.cloud || a === this.cold); this.commit(a, decay, conserve) }
+      carry = (a, decay, conserve = false) => {
+        this.scratch.set(a); flux.advect(this.scratch, dt, a === this.q || a === this.cloud || a === this.cold)
+        if (conserve) this.fillNegative(this.scratch)
+        this.commit(a, decay)
+      }
     } else {
+      const fallout = this.rainFallout(dt)
+      // Semi-Lagrangian sedimentation looks up from the arrival node, so the rain-free air under a rain shaft must fall at
+      // the speed of the rain above it: with its own (zero) speed rain only ever came down in downdrafts.
+      const fs = this.fallSpeed
+      for (let i = 0; i < fs.length - layer; i++) if (fs[i + layer] > fs[i]) fs[i] = fs[i + layer]
+      this.advectFalling(this.rain, dt, fs); this.commit(this.rain, 1, true, fallout)
       this.computeBacktrace(dt)
       carry = (a, decay, conserve = false) => { this.advectBacktrace(a); this.commit(a, decay, conserve) }
     }

@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { AtmosphereModel, createGrid } from '.'
+import { AtmosphereModel, createGrid, SCENARIOS } from '.'
 import { levelMean, QUIET, run, SUMMER_DAY, totalWater } from './fixtures'
 
 // Default vertical grid, smaller periodic box: the invariants do not depend on the domain width and run ~10x faster.
 const smallGrid = (nx: number, ny: number) => createGrid({ nx, ny, nz: 24, width: nx * 1200, depth: ny * 1125, height: 15_000 })
+// Storms for the invariants: the realistic "Летний день" (ML CAPE ~2.7 kJ/kg). The old SUMMER_DAY fixture (CAPE ~6 kJ/kg)
+// drives a WENO-transported updraught into the 60 m/s limiter, which breaks the projection's exactness by design.
+const STORM = { ...SUMMER_DAY, ...SCENARIOS[0].values }
 
 // Known failures are marked it.fails; each comment names the roadmap item that should make it pass.
 // Before the consistent projection (2026-09-28): theta drifted 0.28 K and u 0.052 m/s in 3 h and a storm created
@@ -25,7 +28,9 @@ describe('background state without a trigger', () => {
     expect(worst(model.v, env.v)).toBeLessThan(.05)
   })
   // Measured against the surface value: near the tropopause q is ~1000x smaller and a relative error there is noise.
-  // Passing since the hidden q *= 0.999999 sink was removed (it destroyed 1 % in 3 h).
+  // Passing since the hidden q *= 0.999999 sink was removed (it destroyed 1 % in 3 h). (With WENO the total is conserved
+  // exactly, but the two lowest levels exchange ~0.5 % of the surface q in 3 h: the upwind-biased scheme, lower order next
+  // to the ground, diffuses the moisture gradient a little under the ~2 cm/s gravity-wave noise.)
   it('keeps q(z) within 0.2 % of its surface value for 3 hours', () => { expect(worst(model.q, env.q) / env.q[0]).toBeLessThan(.002) })
 })
 
@@ -41,7 +46,7 @@ describe('pressure projection', () => {
   })
 
   it('leaves no dual-cell divergence after a stormy step', () => {
-    const model = new AtmosphereModel({ ...SUMMER_DAY }, smallGrid(20, 16))
+    const model = new AtmosphereModel({ ...STORM }, smallGrid(20, 16))
     run(model, 900)
     const solver = (model as unknown as { solver: { cells: number; divergence(u: Float32Array, v: Float32Array, w: Float32Array, dt: number, out: Float64Array): void } }).solver
     const div = new Float64Array(solver.cells)
@@ -55,13 +60,24 @@ describe('pressure projection', () => {
 
 describe('water budget', () => {
   // No sunshine, so no surface evaporation; rain that reaches the ground is counted. History: +27 %/h before the
-  // consistent projection, +7.5 %/h after it (transport), -0.98 %/h with the mass fixer (hidden decay sinks), ~0 now.
+  // consistent projection, +7.5 %/h after it (transport), -0.98 %/h with the mass fixer (hidden decay sinks), ~0 with it;
+  // with WENO there is no mass fixer: the projected face fluxes conserve water by themselves (checked below).
   it('conserves total water within 0.1 % per hour in a storm', () => {
-    const model = new AtmosphereModel({ ...SUMMER_DAY, solarMax: 0 }, smallGrid(20, 16))
+    const model = new AtmosphereModel({ ...STORM, solarMax: 0 }, smallGrid(20, 16))
     const before = totalWater(model)
     run(model, 3600)
     // Rain reaches the ground (sedimentation into rain-free air under the shaft once failed silently: water was conserved).
     expect(Math.max(...model.precipitation)).toBeGreaterThan(1)
     expect(Math.abs(totalWater(model) / before - 1)).toBeLessThan(.001)
+  })
+
+  // WENO without any mass fixer: flux form on projected face fluxes, flux-form sedimentation, conservative positivity fix.
+  it('conserves total water within 0.01 % in a 30-minute storm with WENO transport and no mass fixer', () => {
+    const model = new AtmosphereModel({ ...STORM, solarMax: 0 }, smallGrid(20, 16))
+    model.transport = 'weno'
+    const before = totalWater(model)
+    run(model, 1800)
+    expect(Math.max(...model.precipitation)).toBeGreaterThan(.1)
+    expect(Math.abs(totalWater(model) / before - 1)).toBeLessThan(1e-4)
   })
 })

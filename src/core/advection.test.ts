@@ -29,6 +29,22 @@ describe('WENO5 flux-form transport', () => {
     expect(Math.abs(mass(blob) / before - 1)).toBeLessThan(1e-5)
   })
 
+  it('projects any face fluxes to zero divergence: exact mass conservation and uniformity together', () => {
+    // A random, strongly divergent node velocity (the model\'s node velocity is free of the dual-cell divergence only).
+    const grid = createGrid({ nx: 12, ny: 10, nz: 8, width: 12000, depth: 10000, height: 7000 }), rho = [1.2, 1.1, 1, .9, .8, .7, .6, .5]
+    const t = new FluxTransport(grid, rho), random = () => new Float32Array(grid.n).map(() => 20 * (Math.random() - .5))
+    const w = random(); for (let i = 0; i < grid.layer; i++) w[i] = w[grid.n - 1 - i] = 0
+    t.setVelocity(random(), random(), w)
+    const uniform = new Float32Array(grid.n).fill(.01)
+    for (let s = 0; s < 50; s++) t.advect(uniform, 5)
+    expect(Math.max(...uniform.map(x => Math.abs(x - .01)))).toBeLessThan(1e-7)
+    // Mass per node: rho0 times the control-volume height (half a layer on the ground and top).
+    const mass = (a: Float32Array) => { let m = 0; for (let i = 0; i < a.length; i++) { const z = Math.floor(i / grid.layer); m += a[i] * rho[z] * (z === 0 || z === grid.nz - 1 ? .5 : 1) } return m }
+    const blob = new Float32Array(grid.n).map((_, i) => Math.exp(-(((i % 12) - 6) ** 2 + ((Math.floor(i / 12) % 10) - 5) ** 2) / 4)), before = mass(blob)
+    for (let s = 0; s < 50; s++) t.advect(blob, 5)
+    expect(Math.abs(mass(blob) / before - 1)).toBeLessThan(1e-6)
+  })
+
   it('carries a 3-node blob once around the domain keeping most of its peak', () => {
     const { grid, t } = setup(40), q = new Float32Array(grid.n).map((_, i) => Math.exp(-((((i % 40) - 20) / 3) ** 2)))
     // 40 km at 10 m/s = 4000 steps of the model's 1 s: WENO keeps 0.91 of the peak, trilinear semi-Lagrangian 0.32.

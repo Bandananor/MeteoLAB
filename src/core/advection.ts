@@ -1,13 +1,16 @@
 import type { Grid } from './grid'
+import { HorizontalDFT } from './spectral'
 
 /**
  * Flux-form transport with fifth-order WENO reconstruction (Jiang & Shu 1996) and the three-stage Runge-Kutta scheme
  * of Wicker & Skamarock (2002), as in research cloud models.
  *
  * Each node owns a control volume (the ground and top nodes half a layer); the mass flux through a face between two
- * nodes is rho0 times the mean of their velocities. The tendency is -(1/rho0) [div(rho0 u q) - q div(rho0 u)]: the
- * second term keeps a uniform field uniform even though the face divergence differs slightly from the projection's
- * dual-cell divergence, at the cost of exact conservation (the model's mass fixer takes care of water).
+ * nodes starts as rho0 times the mean of their velocities. The pressure projection makes the node velocities free of
+ * the dual-cell divergence, which is not the same as the divergence of these face fluxes, so the face fluxes get their
+ * own exact projection (the MAC projection of Bell, Colella & Glaz 1989): a Poisson problem on the node control volumes,
+ * solved spectrally like the pressure. With divergence-free face fluxes the flux form both conserves mass exactly and
+ * keeps a uniform field uniform; the tendency keeps the -q div(rho0 u) term, which is now round-off.
  * Periodic in x and y; no flux through the ground and top (stencils there are clamped to the domain).
  */
 export class FluxTransport {
@@ -19,6 +22,10 @@ export class FluxTransport {
   private readonly xo: Int32Array[]; private readonly yo: Int32Array[]
   /** Control-volume height of each level. */
   private readonly h: Float64Array
+  // Face projection: spectral transform of the node divergence, potential, Thomas work arrays, horizontal eigenvalues.
+  private readonly dft: HorizontalDFT; private readonly phi: Float64Array
+  private readonly cp: Float64Array; private readonly dRe: Float64Array; private readonly dIm: Float64Array
+  private readonly lambda: Float64Array
 
   constructor(grid: Grid, rho: ArrayLike<number>) {
     const { n, nx, ny, nz, dz } = grid
@@ -29,11 +36,18 @@ export class FluxTransport {
     this.xo = [-2, -1, 0, 1, 2, 3].map(o => Int32Array.from({ length: nx }, (_, x) => (x + o + 2 * nx) % nx))
     this.yo = [-2, -1, 0, 1, 2, 3].map(o => Int32Array.from({ length: ny }, (_, y) => ((y + o + 2 * ny) % ny) * nx))
     this.h = Float64Array.from({ length: nz }, (_, z) => z === 0 || z === nz - 1 ? dz / 2 : dz)
+    this.dft = new HorizontalDFT(nx, ny, nz); this.phi = f()
+    this.cp = new Float64Array(nz); this.dRe = new Float64Array(nz); this.dIm = new Float64Array(nz)
+    // -lambda is the symbol of the periodic second difference in x plus y (exactly 0 for the uniform mode).
+    this.lambda = Float64Array.from({ length: nx * ny }, (_, mode) => {
+      const m = mode % nx, n = Math.floor(mode / nx)
+      return m === 0 && n === 0 ? 0 : 4 * Math.sin(Math.PI * m / nx) ** 2 / (grid.dx * grid.dx) + 4 * Math.sin(Math.PI * n / ny) ** 2 / (grid.dy * grid.dy)
+    })
   }
 
-  /** Face mass fluxes of the (frozen) transport velocity and their divergence per unit volume. */
+  /** Face mass fluxes of the (frozen) transport velocity, projected to zero divergence (div keeps the round-off). */
   setVelocity(u: Float32Array, v: Float32Array, w: Float32Array) {
-    const { nx, ny, nz, dx, dy, layer } = this.grid, rho = this.rho, { mx, my, mz, div, xo, yo, h } = this
+    const { nx, ny, nz, layer } = this.grid, rho = this.rho, { mx, my, mz, xo, yo } = this
     for (let z = 0, i = 0; z < nz; z++) {
       const l = z * layer, r = rho[z], rUp = z < nz - 1 ? (rho[z] + rho[z + 1]) / 2 : 0
       for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++, i++) {
@@ -42,10 +56,53 @@ export class FluxTransport {
         mz[i] = z < nz - 1 ? rUp * (w[i] + w[i + layer]) / 2 : 0
       }
     }
+    this.divergence()
+    this.projectFaces()
+    this.divergence()
+  }
+
+  private divergence() {
+    const { nx, ny, nz, dx, dy, layer } = this.grid, { mx, my, mz, div, xo, yo, h } = this
     for (let z = 0, i = 0; z < nz; z++) {
       const l = z * layer
       for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++, i++) {
         div[i] = (mx[i] - mx[xo[1][x] + y * nx + l]) / dx + (my[i] - my[x + yo[1][y] + l]) / dy + (mz[i] - (z > 0 ? mz[i - layer] : 0)) / h[z]
+      }
+    }
+  }
+
+  /**
+   * Solves L phi = div on the node control volumes and subtracts rho0 grad(phi) from the face fluxes (none through the
+   * ground and top). Per horizontal mode, multiplied by h_k: -rho_k h_k lambda phi_k + [rho_(k+1/2) (phi_(k+1) - phi_k)
+   * - rho_(k-1/2) (phi_k - phi_(k-1))] / dz = h_k div_k, a tridiagonal system; the uniform mode is pinned at the ground.
+   */
+  private projectFaces() {
+    const { nx, ny, nz, dx, dy, dz, layer } = this.grid, { mx, my, mz, div, xo, yo, h, rho, phi, dft, cp, dRe, dIm, lambda } = this
+    const re = dft.re, im = dft.im, face = (k: number) => k < 0 || k >= nz - 1 ? 0 : (rho[k] + rho[k + 1]) / 2
+    dft.forward(div, nz)
+    for (let n = 0; n < ny; n++) for (let m = 0; m <= dft.mh; m++) {
+      const mode = m + nx * n, lam = lambda[mode], pinned = lam === 0
+      for (let k = 0; k < nz; k++) {
+        let lo = face(k - 1) / dz, up = face(k) / dz, di = -rho[k] * h[k] * lam - lo - up, rr = h[k] * re[mode + k * layer], ri = h[k] * im[mode + k * layer]
+        if (pinned && k === 0) { lo = 0; di = 1; up = 0; rr = 0; ri = 0 }
+        if (pinned && k === 1) lo = 0
+        const piv = k === 0 ? di : di - lo * cp[k - 1]
+        cp[k] = up / piv
+        dRe[k] = (rr - (k === 0 ? 0 : lo * dRe[k - 1])) / piv
+        dIm[k] = (ri - (k === 0 ? 0 : lo * dIm[k - 1])) / piv
+      }
+      for (let k = nz - 1; k >= 0; k--) {
+        if (k < nz - 1) { dRe[k] -= cp[k] * dRe[k + 1]; dIm[k] -= cp[k] * dIm[k + 1] }
+        re[mode + k * layer] = dRe[k]; im[mode + k * layer] = dIm[k]
+      }
+    }
+    dft.inverse(phi, nz)
+    for (let z = 0, i = 0; z < nz; z++) {
+      const l = z * layer, r = rho[z], rUp = face(z)
+      for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++, i++) {
+        mx[i] -= r * (phi[xo[3][x] + y * nx + l] - phi[i]) / dx
+        my[i] -= r * (phi[x + yo[3][y] + l] - phi[i]) / dy
+        if (z < nz - 1) mz[i] -= rUp * (phi[i + layer] - phi[i]) / dz
       }
     }
   }

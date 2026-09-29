@@ -1,4 +1,5 @@
 import type { Grid } from './grid'
+import { HorizontalDFT } from './spectral'
 
 /**
  * Exact, consistent pressure projection for node-based velocities, anelastic: the mass flux rho0(z) u is made
@@ -16,12 +17,10 @@ import type { Grid } from './grid'
 export class PressureSolver {
   readonly cells: number
   private readonly grid: Grid
-  private readonly cosX: Float64Array; private readonly sinX: Float64Array
-  private readonly cosY: Float64Array; private readonly sinY: Float64Array
+  private readonly dft: HorizontalDFT
   /** Horizontal symbols per mode (m + nx*n): alpha multiplies Z_A, beta multiplies Z_delta / dz^2. */
   private readonly alpha: Float64Array; private readonly beta: Float64Array
   private readonly re: Float64Array; private readonly im: Float64Array
-  private readonly rowRe: Float64Array; private readonly rowIm: Float64Array
   private readonly cp: Float64Array; private readonly dRe: Float64Array; private readonly dIm: Float64Array
   /** Base-state density of each node level (ones: incompressible). */
   private readonly rho: Float64Array
@@ -32,8 +31,7 @@ export class PressureSolver {
     this.rho = density ? Float64Array.from(density) : new Float64Array(nz).fill(1)
     if (this.rho.length !== nz) throw new Error(`density needs ${nz} levels, got ${this.rho.length}`)
     this.cells = nx * ny * (nz - 1)
-    const table = (n: number, f: (a: number) => number) => { const t = new Float64Array(n * n); for (let a = 0; a < n; a++) for (let b = 0; b < n; b++) t[a * n + b] = f(2 * Math.PI * ((a * b) % n) / n); return t }
-    this.cosX = table(nx, Math.cos); this.sinX = table(nx, Math.sin); this.cosY = table(ny, Math.cos); this.sinY = table(ny, Math.sin)
+    this.dft = new HorizontalDFT(nx, ny, nz - 1)
     this.alpha = new Float64Array(nx * ny); this.beta = new Float64Array(nx * ny)
     // cos^2 of pi/2 is 3.7e-33 in floating point, not 0; the null modes must be exactly zero or the solve blows up.
     const exact = (x: number) => x < 1e-12 ? 0 : x > 1 - 1e-12 ? 1 : x
@@ -42,8 +40,7 @@ export class PressureSolver {
       this.alpha[m + nx * n] = 4 * (sx * cy / (dx * dx) + cx * sy / (dy * dy))
       this.beta[m + nx * n] = cx * cy / (dz * dz)
     }
-    this.re = new Float64Array(this.cells); this.im = new Float64Array(this.cells)
-    this.rowRe = new Float64Array(Math.max(nx, ny)); this.rowIm = new Float64Array(Math.max(nx, ny))
+    this.re = this.dft.re; this.im = this.dft.im
     this.cp = new Float64Array(nz); this.dRe = new Float64Array(nz); this.dIm = new Float64Array(nz)
   }
 
@@ -92,45 +89,15 @@ export class PressureSolver {
 
   /** Solves (D·R·G) p = rhs exactly; rhs is consumed (overwritten). Null modes of D·R·G get p = 0. */
   solve(rhs: Float64Array, p: Float64Array) {
-    const { nx, ny, nz } = this.grid, cl = nx * ny, nc = nz - 1, re = this.re, im = this.im
-    // rhs is real, so its spectrum is Hermitian: only x-wavenumbers 0..nx/2 are computed, the rest are conjugates.
-    const mh = Math.floor(nx / 2)
-    // Forward 2D DFT of every cell layer (x then y), exp(-i theta).
-    for (let k = 0; k < nc; k++) {
-      const base = k * cl
-      for (let j = 0; j < ny; j++) {
-        const row = base + j * nx
-        for (let m = 0; m <= mh; m++) { let a = 0, b = 0; for (let i = 0; i < nx; i++) { const x = rhs[row + i], t = m * nx + i; a += x * this.cosX[t]; b -= x * this.sinX[t] } this.rowRe[m] = a; this.rowIm[m] = b }
-        for (let m = 0; m <= mh; m++) { re[row + m] = this.rowRe[m]; im[row + m] = this.rowIm[m] }
-      }
-      for (let m = 0; m <= mh; m++) {
-        for (let n = 0; n < ny; n++) { let a = 0, b = 0; for (let j = 0; j < ny; j++) { const x = re[base + j * nx + m], y = im[base + j * nx + m], t = n * ny + j, c = this.cosY[t], s = this.sinY[t]; a += x * c + y * s; b += y * c - x * s } this.rowRe[n] = a; this.rowIm[n] = b }
-        for (let n = 0; n < ny; n++) { re[base + n * nx + m] = this.rowRe[n]; im[base + n * nx + m] = this.rowIm[n] }
-      }
-    }
+    const { nx, ny, nz } = this.grid, cl = nx * ny, nc = nz - 1, re = this.re, im = this.im, mh = this.dft.mh
+    this.dft.forward(rhs, nc)
     // One tridiagonal system per mode: (-alpha Z_A + beta Z_delta) p = r.
     for (let n = 0; n < ny; n++) for (let m = 0; m <= mh; m++) {
       const mode = m + nx * n, a = this.alpha[mode], b = this.beta[mode]
       if (a === 0 && b === 0 || nc === 1 && a === 0) { for (let k = 0; k < nc; k++) re[mode + k * cl] = im[mode + k * cl] = 0; continue }
       this.tridiagonal(mode, a, b, nc, cl)
     }
-    // Inverse 2D DFT, exp(+i theta), keep the real part.
-    for (let k = 0; k < nc; k++) {
-      const base = k * cl
-      for (let m = 0; m <= mh; m++) {
-        for (let j = 0; j < ny; j++) { let a = 0, b = 0; for (let n = 0; n < ny; n++) { const x = re[base + n * nx + m], y = im[base + n * nx + m], t = j * ny + n, c = this.cosY[t], s = this.sinY[t]; a += x * c - y * s; b += y * c + x * s } this.rowRe[j] = a; this.rowIm[j] = b }
-        for (let j = 0; j < ny; j++) { re[base + j * nx + m] = this.rowRe[j]; im[base + j * nx + m] = this.rowIm[j] }
-      }
-      for (let j = 0; j < ny; j++) {
-        const row = base + j * nx
-        // Wavenumbers strictly between 0 and nx/2 stand for themselves and their conjugate partner (weight 2).
-        for (let i = 0; i < nx; i++) {
-          let a = 0
-          for (let m = 0; m <= mh; m++) { const t = i * nx + m, weight = m === 0 || 2 * m === nx ? 1 : 2; a += weight * (re[row + m] * this.cosX[t] - im[row + m] * this.sinX[t]) }
-          p[row + i] = a / cl
-        }
-      }
-    }
+    this.dft.inverse(p, nc)
   }
 
   // Thomas algorithm for one horizontal mode. Row k (cell between node levels k and k+1) collects, from each of its two
