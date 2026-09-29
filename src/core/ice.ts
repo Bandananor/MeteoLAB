@@ -8,9 +8,9 @@ import { qsatP } from './microphysics'
 
 /** Latent heat of fusion and of sublimation, J/kg. */
 export const LF = 3.34e5, LS = LV + LF
-const T0 = 273.15, T_HOMOGENEOUS = 233.15, CW = 4187
+export const T0 = 273.15, T_HOMOGENEOUS = 233.15, CW = 4187
 /** Thermal conductivity of air, W/(m K); vapour diffusivity, m2/s; kinematic viscosity, m2/s; Schmidt number. */
-const KA = 2.43e-2, PSI = 2.26e-5, NU = 1.51e-5, SC = .6
+export const KA = 2.43e-2, PSI = 2.26e-5, NU = 1.51e-5, SC = .6
 // Snow: exponential size distribution with intercept N0s, bulk density RHO_S, fall law V = C D^D_EXP (Lin 1983:
 // c = 152.93 cm^0.75/s, d = 0.25, n0s = 0.03 cm^-4, rho_s = 0.1 g/cm3).
 const N0S = 3e6, RHO_S = 100, C_S = 152.93 * .01 ** .75, D_S = .25
