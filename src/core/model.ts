@@ -40,7 +40,7 @@ export class AtmosphereModel {
   private readonly solver: PressureSolver; private divergence: Float64Array
   private scratch: Float32Array; private surfacePattern: Float32Array
   private backtraceCorner: Int32Array; private backtraceWeight: Float64Array
-  /** Volume weight of each level: nodes on the ground and top walls own half a layer. */
+  /** Mass weight of each level: rho0 times the layer share (nodes on the ground and top walls own half a layer). */
   private levelWeight: Float64Array
   /** Share of the surface fluxes deposited at each of the lowest levels, per metre of that level's thickness. */
   private surfaceShare: Float64Array
@@ -49,19 +49,20 @@ export class AtmosphereModel {
   /** `profile` replaces the slider environment with an analytic one (idealised test cases). */
   constructor(config: SimConfig, grid: Grid = createGrid(), profile?: EnvironmentProfile) {
     this.config = config; this.grid = grid
+    this.env = new Environment(config, grid, profile)
     const f = () => new Float32Array(grid.n)
     this.u = f(); this.v = f(); this.w = f(); this.theta = f(); this.q = f(); this.cloud = f(); this.rain = f(); this.cold = f()
-    this.solver = new PressureSolver(grid)
+    // Anelastic: the projection makes the mass flux rho0 u divergence-free (rho0 falls ~6x over 15 km).
+    this.solver = new PressureSolver(grid, this.env.rho)
     this.pressure = new Float64Array(this.solver.cells); this.divergence = new Float64Array(this.solver.cells); this.scratch = f()
     this.surfacePattern = new Float32Array(grid.layer); this.uhColumn = new Float32Array(grid.layer); this.precipitation = new Float32Array(grid.layer); this.fallSpeed = f()
-    this.levelWeight = Float64Array.from({ length: grid.nz }, (_, z) => z === 0 || z === grid.nz - 1 ? .5 : 1)
+    this.levelWeight = Float64Array.from({ length: grid.nz }, (_, z) => (z === 0 || z === grid.nz - 1 ? .5 : 1) * this.env.rho[z])
     this.backtraceCorner = new Int32Array(grid.n * 8); this.backtraceWeight = new Float64Array(grid.n * 3)
     this.uhLevels = [Math.ceil(2000 / grid.dz), Math.floor(5000 / grid.dz)]
     // exp(-z / 300 m) per unit volume over the two lowest levels (the ground node owns half a layer), normalised.
     const shape = [0, 1].map(z => Math.exp(-z * grid.dz / 300)), thick = [grid.dz / 2, grid.dz], total = shape[0] * thick[0] + shape[1] * thick[1]
     this.surfaceShare = Float64Array.from(shape, s => s / total)
     this.rng = mulberry32(config.seed)
-    this.env = new Environment(config, grid, profile)
     this.initialize()
     this.sounding = computeSounding(config, this.env, grid.height)
   }
@@ -109,8 +110,8 @@ export class AtmosphereModel {
 
   /**
    * Writes the transported values (scratch) back into `a`, then applies `decay`. With `conserve`, the transport's own
-   * mass error is removed first: trilinear semi-Lagrangian transport is not conservative, so the total (volume-weighted,
-   * as the flow is incompressible) is restored to its old value minus `loss`, with the correction placed where the
+   * mass error is removed first: trilinear semi-Lagrangian transport is not conservative, so the total (mass-weighted with
+   * rho0, which the anelastic flow conserves) is restored to its old value minus `loss`, with the correction placed where the
    * transport changed the field (proportional to |new - old|), not spread over quiet air.
    */
   private commit(a: Float32Array, decay: number, conserve = false, loss = 0) {
@@ -124,11 +125,11 @@ export class AtmosphereModel {
     for (let i = 0; i < s.length; i++) a[i] = s[i] * decay
   }
 
-  /** Rain leaving through the ground this step: adds it to `precipitation` (mm) and returns it in level-weight units. */
+  /** Rain leaving through the ground this step: adds it to `precipitation` (mm) and returns it in level-weight (mass) units. */
   private rainFallout(dt: number) {
     const { layer, dz } = this.grid, rhoGround = this.env.rho[0]
     let total = 0
-    for (let i = 0; i < layer; i++) { const flux = this.rain[i] * this.fallSpeed[i] * dt; this.precipitation[i] += rhoGround * flux; total += flux / dz }
+    for (let i = 0; i < layer; i++) { const flux = this.rain[i] * this.fallSpeed[i] * dt; this.precipitation[i] += rhoGround * flux; total += rhoGround * flux / dz }
     return total
   }
 
