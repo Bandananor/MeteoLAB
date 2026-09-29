@@ -5,7 +5,8 @@ import { SUMMER_DAY } from './fixtures'
 const config = (values: Partial<SimConfig>): SimConfig => ({ ...SUMMER_DAY, ...values })
 
 describe('scenarios: realistic environments', () => {
-  // The ~1 km model gets close to parcel theory: SB CAPE above ~4 kJ/kg drives updraughts into the 60 m/s limiter.
+  // The ~1 km model gets close to parcel theory (w ~0.7-0.8 sqrt(2 CAPE), real storms ~0.5-0.6): scenarios keep SB CAPE
+  // at most 4 kJ/kg so their updraughts stay near the strongest observed ones.
   for (const s of SCENARIOS.filter(s => !s.values.profile)) it(`${s.name}: SB CAPE at most 4 kJ/kg`, () => {
     const grid = createGrid(), i = parcelIndices(new Environment(config(s.values), grid), grid.height)
     expect(i.sb.cape).toBeLessThan(4000)

@@ -74,7 +74,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
         ${slider('soilMoisture','Влажность почвы',0,100,1,45,' %')}
       </div></details>
       <details><summary>Расчёт</summary><div class="group">
-        <label title="Точный перенос (WENO 5-го порядка) почти не размывает восходящие потоки: суперячейки живут дольше и расщепляются, но расчёт примерно вдвое медленнее">Перенос<select id="transport"><option value="semi-lagrangian">Быстрый (полулагранжев)</option><option value="weno">Точный (WENO5)</option></select></label>
+        <label title="Точный перенос (WENO 5-го порядка, по умолчанию) почти не размывает восходящие потоки и сам сохраняет массу воды. Быстрый (полулагранжев) примерно вдвое дешевле, но размывает потоки: в сильном сдвиге термик не стартует">Перенос<select id="transport"><option value="weno">Точный (WENO5)</option><option value="semi-lagrangian">Быстрый (полулагранжев)</option></select></label>
         ${slider('speed','Ускорение времени',1,30,1,8,'×')}
         ${slider('bubble','Сила начального термика (0 — без термика)',0,2.5,.05,1,'×',2)}
       </div></details>
@@ -127,7 +127,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
       <div class="metric"><span>Макс. облачная вода</span><strong id="cloudWater">—</strong><small>г/кг</small></div>
       <div class="metric"><span>Cold pool Δθ</span><strong id="coldPool">—</strong><small>K</small></div>
       <div class="metric"><span>Микропорыв</span><strong id="microburst">—</strong><small>м/с outflow</small></div>
-      <div class="metric" title="Сколько раз скорость упёрлась в предохранитель (|u|,|v| ≤ 85, |w| ≤ 60 м/с). Не ноль — модель вышла из рабочего диапазона, цифрам доверять нельзя."><span>Срабатывания ограничителей</span><strong id="clipped">—</strong><small>с начала расчёта</small></div>
+      <div class="metric" title="Сколько раз скорость упёрлась в предохранитель (|u|,|v| ≤ 120, |w| ≤ 100 м/с — заметно выше любых реальных гроз). Не ноль — расчёт пошёл вразнос, цифрам доверять нельзя."><span>Срабатывания ограничителей</span><strong id="clipped">—</strong><small>с начала расчёта</small></div>
       <div class="metric" title="Самый сильный дождь у земли сейчас: поток ρ·q_r·V_t"><span>Интенсивность дождя</span><strong id="rain">—</strong><small>мм/ч</small></div>
       <div class="metric" title="Наибольшая сумма дождя на земле с начала расчёта"><span>Сумма осадков, макс.</span><strong id="rainTotal">—</strong><small>мм</small></div>
       <div class="note"><b>Логика</b><p id="logicText">Частица ещё не достигла уровня свободной конвекции.</p></div>
@@ -185,7 +185,7 @@ surfaceSelect.addEventListener('change', () => {
 })
 document.querySelectorAll<HTMLButtonElement>('[data-preset]').forEach(button => button.addEventListener('click', () => {
   const index = Number(button.dataset.preset)
-  Object.assign(config, defaults, { speed: config.speed, wind05: undefined, wind1: undefined, windDir05: undefined, windDir1: undefined, profile: undefined, transport: 'semi-lagrangian' }, presets[index].values)
+  Object.assign(config, defaults, { speed: config.speed, wind05: undefined, wind1: undefined, windDir05: undefined, windDir1: undefined, profile: undefined, transport: 'weno' }, presets[index].values)
   fillLowWind(config)
   syncControls()
   markPreset(index)
@@ -197,7 +197,7 @@ function syncControls() {
     showOutput(input)
   })
   surfaceSelect.value = config.surfaceType
-  transportSelect.value = config.transport ?? 'semi-lagrangian'
+  transportSelect.value = config.transport ?? 'weno'
   markProfileGroups()
 }
 syncControls()

@@ -16,9 +16,8 @@ const SUMMER_AIR: Partial<SimConfig> = {
 }
 
 /**
- * Realistic environments (2026-09-29): moderate CAPE (the ~1 km model gets close to parcel theory, so 4+ kJ/kg drives
- * updraughts into the 60 m/s limiter), a well-mixed moist boundary layer (with humidity falling linearly the updraught
- * ingests dry air and dies by 30-40 min) and a lid where nature has one. Sheared scenarios use the WENO transport: with the
+ * Realistic environments (2026-09-29): moderate CAPE (the ~1 km model gets close to parcel theory, w ~0.7-0.8 sqrt(2 CAPE)), a well-mixed moist boundary layer (with humidity falling linearly the updraught
+ * ingests dry air and dies by 30-40 min) and a lid where nature has one. All use the default WENO transport: with the
  * semi-Lagrangian one the thermal is smeared out in strong wind before it can rise.
  */
 export const SCENARIOS: Scenario[] = [
@@ -38,21 +37,21 @@ export const SCENARIOS: Scenario[] = [
     hint: 'Жара и сухой воздух до 3 км («перевёрнутое V»), влажная середина: облако с базой ~2,8 км, дождь испаряется по пути вниз, охлаждённый воздух ударяет в землю порывом до ~20 м/с',
     values: { surfaceTemp: 34, rhSurface: 25, rhLow: 25, rhMid: 70, rhUpper: 35, lapseLow: 9.7, lapseMid: 7.2, lapseUpper: 6.5, tropopause: 12, ...LIGHT_WIND } },
   { name: 'Суперячейка', mesocyclone: true,
-    hint: 'Термодинамика как у Weisman–Klemp (CAPE ~3 кДж/кг, влажный слой 1 км), годограф закручен у земли (SRH 0–1 км ~200 м²/с²), сдвиг 0–6 км ~29 м/с. Мезоциклон держится больше 30 минут. Точный перенос',
-    values: { surfaceTemp: 26, rhSurface: 65, rhLow: 60, rhMid: 50, rhUpper: 30, lapseLow: 9, lapseMid: 6.3, lapseUpper: 6.5, capStrength: 1, capHeight: 1.2, moistLayer: 1, bubble: 1.5, transport: 'weno',
+    hint: 'Термодинамика как у Weisman–Klemp (CAPE ~3 кДж/кг, влажный слой 1 км), годограф закручен у земли (SRH 0–1 км ~200 м²/с²), сдвиг 0–6 км ~29 м/с. Мезоциклон держится больше 30 минут',
+    values: { surfaceTemp: 26, rhSurface: 65, rhLow: 60, rhMid: 50, rhUpper: 30, lapseLow: 9, lapseMid: 6.3, lapseUpper: 6.5, capStrength: 1, capHeight: 1.2, moistLayer: 1, bubble: 1.5,
       wind0: 7, wind05: 12, wind1: 15, wind3: 18, wind6: 25, wind10: 32, windDir0: 130, windDir05: 165, windDir1: 190, windDir3: 225, windDir6: 245, windDir10: 255 } },
   { name: 'Заряженное ружьё',
-    hint: 'Тёплая сухая «крышка» (инверсия 3 K на 1 км, над ней крутой градиент) над влажным слоем: CIN ~140 Дж/кг. Термика нет — первые 20 минут ничего не происходит, потом нагрев у земли пробивает крышку сразу во многих местах. Точный перенос',
-    values: { surfaceTemp: 30, rhSurface: 50, rhLow: 25, rhMid: 35, rhUpper: 30, lapseLow: 9.6, lapseMid: 6.8, lapseUpper: 6.5, capStrength: 3, capHeight: 1, bubble: 0, transport: 'weno',
+    hint: 'Тёплая сухая «крышка» (инверсия 3 K на 1 км, над ней крутой градиент) над влажным слоем: CIN ~140 Дж/кг. Термика нет — первые 20 минут ничего не происходит, потом нагрев у земли пробивает крышку сразу во многих местах',
+    values: { surfaceTemp: 30, rhSurface: 50, rhLow: 25, rhMid: 35, rhUpper: 30, lapseLow: 9.6, lapseMid: 6.8, lapseUpper: 6.5, capStrength: 3, capHeight: 1, bubble: 0,
       wind0: 6, wind3: 15, wind6: 22, wind10: 28, windDir0: 170, windDir3: 220, windDir6: 245, windDir10: 255 } },
   { name: 'HSLC', mesocyclone: true,
-    hint: 'Сильный сдвиг при малой CAPE (~1 кДж/кг), прохладно и влажно, как осенью или зимой: низкие мини-суперячейки с сильным вращением у земли (SRH 0–1 км ~300 м²/с²). На сетке ~1 км на грани разрешения. Точный перенос',
-    values: { surfaceTemp: 19, rhSurface: 85, rhLow: 80, rhMid: 55, rhUpper: 40, lapseLow: 6.5, lapseMid: 6.8, lapseUpper: 6.5, tropopause: 10, moistLayer: .8, bubble: 1.5, transport: 'weno',
+    hint: 'Сильный сдвиг при малой CAPE (~1 кДж/кг), прохладно и влажно, как осенью или зимой: низкие мини-суперячейки с сильным вращением у земли (SRH 0–1 км ~300 м²/с²). На сетке ~1 км на грани разрешения',
+    values: { surfaceTemp: 19, rhSurface: 85, rhLow: 80, rhMid: 55, rhUpper: 40, lapseLow: 6.5, lapseMid: 6.8, lapseUpper: 6.5, tropopause: 10, moistLayer: .8, bubble: 1.5,
       wind0: 10, wind05: 20, wind1: 25, wind3: 30, wind6: 35, wind10: 45, windDir0: 150, windDir05: 170, windDir1: 185, windDir3: 210, windDir6: 230, windDir10: 240 } },
   { name: 'Жаркий город', mesocyclone: false,
     hint: 'Городская застройка и сухая почва сильно греют воздух у земли; воздух суше, чем за городом',
     values: { ...SUMMER_AIR, ...LIGHT_WIND, surfaceTemp: 29, rhSurface: 45, rhLow: 45, lapseLow: 9.5, surfaceType: 'urban', soilMoisture: 15, solarMax: 1100 } },
   { name: 'Суперячейка WK', mesocyclone: true,
     hint: 'Классический опыт Weisman–Klemp: реалистичная CAPE ~2,3 кДж/кг, годограф «четверть окружности», один термик, точный перенос. Ячейка живёт больше часа и расщепляется на правую (циклоническую) и левую. Профиль задан формулами — ползунки температуры, влажности и ветра не действуют',
-    values: { profile: 'weisman-klemp', transport: 'weno', solarMax: 0, bubble: 1.5 } },
+    values: { profile: 'weisman-klemp', solarMax: 0, bubble: 1.5 } },
 ]

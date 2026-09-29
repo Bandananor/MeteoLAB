@@ -5,7 +5,7 @@ import { levelMean, QUIET, run, SUMMER_DAY, totalWater } from './fixtures'
 // Default vertical grid, smaller periodic box: the invariants do not depend on the domain width and run ~10x faster.
 const smallGrid = (nx: number, ny: number) => createGrid({ nx, ny, nz: 24, width: nx * 1200, depth: ny * 1125, height: 15_000 })
 // Storms for the invariants: the realistic "Летний день" (ML CAPE ~2.7 kJ/kg). The old SUMMER_DAY fixture (CAPE ~6 kJ/kg)
-// drives a WENO-transported updraught into the 60 m/s limiter, which breaks the projection's exactness by design.
+// drove a WENO-transported updraught into the old 60 m/s limiter, which breaks the projection's exactness by design.
 const STORM = { ...SUMMER_DAY, ...SCENARIOS[0].values }
 
 // Known failures are marked it.fails; each comment names the roadmap item that should make it pass.
@@ -28,10 +28,11 @@ describe('background state without a trigger', () => {
     expect(worst(model.v, env.v)).toBeLessThan(.05)
   })
   // Measured against the surface value: near the tropopause q is ~1000x smaller and a relative error there is noise.
-  // Passing since the hidden q *= 0.999999 sink was removed (it destroyed 1 % in 3 h). (With WENO the total is conserved
-  // exactly, but the two lowest levels exchange ~0.5 % of the surface q in 3 h: the upwind-biased scheme, lower order next
-  // to the ground, diffuses the moisture gradient a little under the ~2 cm/s gravity-wave noise.)
-  it('keeps q(z) within 0.2 % of its surface value for 3 hours', () => { expect(worst(model.q, env.q) / env.q[0]).toBeLessThan(.002) })
+  // Passing since the hidden q *= 0.999999 sink was removed (it destroyed 1 % in 3 h). With WENO (default since
+  // 2026-09-29) the total is conserved exactly, but the two lowest levels exchange ~0.5 % of the surface q in 3 h: the
+  // upwind-biased scheme, lower order next to the ground, diffuses the moisture gradient a little under the ~2 cm/s
+  // gravity-wave noise (0.2 % before; the semi-Lagrangian scheme never mixed the ground level with the next one at all).
+  it('keeps q(z) within 1 % of its surface value for 3 hours', () => { expect(worst(model.q, env.q) / env.q[0]).toBeLessThan(.01) })
 })
 
 describe('pressure projection', () => {

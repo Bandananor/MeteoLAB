@@ -16,6 +16,8 @@ import { computeSounding, type Sounding } from './sounding'
 // tilt the environmental vorticity into vortex pairs of both signs with UH up to ~380 cyclonic and ~320 anticyclonic;
 // supercells hold 700-1900 with the anticyclonic maximum several times weaker (3-km NWP uses ~75).
 export const UH_ROTATING = 200, UH_MESOCYCLONE = 400, MESO_PERSISTENCE = 600
+/** Safety limits of the horizontal and vertical velocity, m/s (see AtmosphereModel.clipped). */
+export const U_LIMIT = 120, W_LIMIT = 100
 /** A mesocyclone must also outweigh the strongest anticyclonic rotation by this factor (a vortex pair is not one). */
 export const MESO_DOMINANCE = 1.5
 
@@ -30,7 +32,11 @@ export interface ModelDiagnostics {
   /** Largest rain total on the ground since the start, mm. */ rainTotal: number
   updraft: number; downdraft: number; cloudTop: number; thermalTop: number
   maxCloud: number; coldMax: number; cores: number; shear06: number; microburst: number
-  /** Velocity components clipped by the safety limits (|u|, |v| <= 85, |w| <= 60 m/s) since the start. */
+  /**
+   * Velocity components clipped by the safety limits since the start. The limits (|u|, |v| <= 120, |w| <= 100 m/s,
+   * raised from 85 / 60 on 2026-09-29) lie well above any real storm and well inside the stability of both transports
+   * (Courant number ~0.1-0.15 at dt = 1 s): a non-zero count means a genuine blow-up, not a strong updraught.
+   */
   clipped: number
 }
 
@@ -101,14 +107,18 @@ export class AtmosphereModel {
     else { this.injectBubble(W * .38, D * .45, this.config.bubble); this.injectBubble(W * .61, D * .57, .72 * this.config.bubble) }
   }
 
-  /** Warm, moist thermal centred at (cx, cy) metres from the domain corner, near the ground. */
+  /**
+   * Warm thermal centred at (cx, cy) metres from the domain corner, near the ground: +3.2 K and 1.1 m/s times strength.
+   * No added vapour since 2026-09-29 (as in Weisman-Klemp and other reference cases): +3 g/kg gave the bubble air a far
+   * larger CAPE than the environment it is meant to probe.
+   */
   injectBubble(cx: number, cy: number, strength: number) {
     const { nx, ny, nz, dx, dy, dz, width: W, depth: D } = this.grid
     for (let z = 0; z < Math.min(5, nz); z++) for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++) {
       let ddx = x * dx - cx, ddy = y * dy - cy
       if (ddx > W / 2) ddx -= W; if (ddx < -W / 2) ddx += W; if (ddy > D / 2) ddy -= D; if (ddy < -D / 2) ddy += D
       const d2 = (ddx / 4200) ** 2 + (ddy / 4200) ** 2 + (z * dz / 1800) ** 2, a = Math.exp(-d2) * strength, i = x + nx * (y + ny * z)
-      this.theta[i] += 3.2 * a; this.q[i] += .003 * a; this.w[i] += 1.1 * a
+      this.theta[i] += 3.2 * a; this.w[i] += 1.1 * a
     }
   }
 
@@ -206,10 +216,10 @@ export class AtmosphereModel {
   }
 
   /**
-   * Transport: trilinear semi-Lagrangian (default; fast, diffusive, needs the mass fixer) or flux-form WENO5 + RK3
-   * (about twice as slow, conserves water by itself).
+   * Transport: flux-form WENO5 + RK3 (default since 2026-09-29; conserves water by itself) or the old trilinear
+   * semi-Lagrangian one (about twice as fast, diffusive, needs the mass fixer).
    */
-  transport: 'semi-lagrangian' | 'weno' = 'semi-lagrangian'
+  transport: 'semi-lagrangian' | 'weno' = 'weno'
   private flux: FluxTransport | null = null
   private turbulence: Turbulence | null = null
 
@@ -309,9 +319,9 @@ export class AtmosphereModel {
     this.solver.correct(this.pressure, u, v, w, dt)
     let clipped = 0
     for (let i = 0; i < this.grid.n; i++) {
-      if (u[i] < -85 || u[i] > 85) { u[i] = clamp(u[i], -85, 85); clipped++ }
-      if (v[i] < -85 || v[i] > 85) { v[i] = clamp(v[i], -85, 85); clipped++ }
-      if (w[i] < -60 || w[i] > 60) { w[i] = clamp(w[i], -60, 60); clipped++ }
+      if (u[i] < -U_LIMIT || u[i] > U_LIMIT) { u[i] = clamp(u[i], -U_LIMIT, U_LIMIT); clipped++ }
+      if (v[i] < -U_LIMIT || v[i] > U_LIMIT) { v[i] = clamp(v[i], -U_LIMIT, U_LIMIT); clipped++ }
+      if (w[i] < -W_LIMIT || w[i] > W_LIMIT) { w[i] = clamp(w[i], -W_LIMIT, W_LIMIT); clipped++ }
     }
     this.clipped += clipped
   }
