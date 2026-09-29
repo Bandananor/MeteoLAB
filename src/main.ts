@@ -1,6 +1,6 @@
 import './style.css'
 import { Atmosphere } from './atmosphere'
-import type { SimConfig } from './core'
+import { createGrid, Environment, parcelIndices, SCENARIOS, type SimConfig, stormIndices, weismanKlemp } from './core'
 import { FIELDS, type FieldMode } from './render/fields'
 import type { LayerMode } from './render/view'
 
@@ -17,16 +17,12 @@ const defaults: SimConfig = {
   hour:13.5,solarMax:1000,soilMoisture:45,surfaceType:'grass',
   speed:8,seed:42,bubble:1
 }
-const presets: {name:string;hint:string;values:Partial<SimConfig>}[] = [
-  {name:'Летний день',hint:'Исходные настройки: умеренно неустойчивая атмосфера',values:{}},
-  {name:'Мощная гроза',hint:'Жара, влажный нижний слой и крутой градиент: облако пробивает тропопаузу',values:{surfaceTemp:34,rhSurface:80,rhLow:70,rhMid:55,lapseLow:9}},
-  {name:'Сухой воздух',hint:'Сухой средний слой съедает края облака и душит конвекцию',values:{rhMid:10,rhUpper:10}},
-  {name:'Сдвиг ветра',hint:'Сильный ветер наверху наклоняет облако, дождь выпадает в стороне от восходящего потока',values:{surfaceTemp:32,rhSurface:78,wind3:18,wind6:40,wind10:50}},
-  {name:'Микропорыв',hint:'Сухой подоблачный слой и сильное испарение дождя: холодный поток ударяет в землю',values:{surfaceTemp:33,rhSurface:55,rhLow:35,lapseLow:9.5}},
-  {name:'Суперячейка',hint:'Ветер у земли дует с юго-востока и с высотой поворачивает к западу: восходящий поток закручивается в мезоциклон',values:{surfaceTemp:31,rhSurface:78,rhLow:68,rhMid:45,rhUpper:30,lapseLow:8.4,lapseMid:7.2,lapseUpper:6.5,bubble:1.5,wind0:8,wind3:16,wind6:24,wind10:30,windDir0:140,windDir3:200,windDir6:240,windDir10:255}},
-  {name:'Жаркий город',hint:'Городская застройка и сухая почва сильно греют воздух у земли',values:{surfaceType:'urban',soilMoisture:15,surfaceTemp:33,solarMax:1100}},
-  {name:'Суперячейка WK',hint:'Классический опыт Weisman–Klemp: реалистичная CAPE ~2,3 кДж/кг, годограф «четверть окружности», один термик, точный перенос. Ячейка живёт больше часа и расщепляется на правую (циклоническую) и левую. Профиль задан формулами — ползунки температуры, влажности и ветра не действуют',values:{profile:'weisman-klemp',transport:'weno',solarMax:0,bubble:1.5}},
-]
+// Scenario button tooltips end with the environment's own numbers (standard parcels, MetPy conventions).
+const presets = SCENARIOS.map(s => {
+  const c: SimConfig = { ...defaults, ...s.values }, grid = createGrid()
+  const env = new Environment(c, grid, c.profile === 'weisman-klemp' ? weismanKlemp({ qvMax: .016 }) : undefined), p = parcelIndices(env, grid.height), k = stormIndices(env, p)
+  return { ...s, hint: `${s.hint}.\nML CAPE ${Math.round(p.ml.cape)} Дж/кг, ML CIN ${Math.round(p.ml.cin)} Дж/кг, сдвиг 0–6 км ${Math.round(k.shear06)} м/с, SRH 0–1 км ${Math.round(k.srh01)} м²/с²` }
+})
 
 document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
   <header>
@@ -80,7 +76,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
       <details><summary>Расчёт</summary><div class="group">
         <label title="Точный перенос (WENO 5-го порядка) почти не размывает восходящие потоки: суперячейки живут дольше и расщепляются, но расчёт примерно вдвое медленнее">Перенос<select id="transport"><option value="semi-lagrangian">Быстрый (полулагранжев)</option><option value="weno">Точный (WENO5)</option></select></label>
         ${slider('speed','Ускорение времени',1,30,1,8,'×')}
-        ${slider('bubble','Сила начального термика',.3,2.5,.05,1,'×',2)}
+        ${slider('bubble','Сила начального термика (0 — без термика)',0,2.5,.05,1,'×',2)}
       </div></details>
       <p class="hint">Двойной клик по поверхности создаёт локальный 3D-термик. Изменение профиля перезапускает эксперимент.</p>
       <div class="actions"><button id="restart">Перезапустить</button><button id="pause" class="secondary">Пауза</button></div>
@@ -138,7 +134,8 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
     </aside>
   </main>`
 
-const config: SimConfig = { ...defaults }
+// The page opens on the first scenario ("Летний день"); the controls are synced to it below.
+const config: SimConfig = { ...defaults, ...SCENARIOS[0].values }
 // Scenarios without the 0.5 and 1 km wind nodes get them on the straight 0-3 km line, so their hodograph is unchanged
 // and the sliders show where the nodes are.
 const fillLowWind = (c: SimConfig) => {
@@ -190,6 +187,11 @@ document.querySelectorAll<HTMLButtonElement>('[data-preset]').forEach(button => 
   const index = Number(button.dataset.preset)
   Object.assign(config, defaults, { speed: config.speed, wind05: undefined, wind1: undefined, windDir05: undefined, windDir1: undefined, profile: undefined, transport: 'semi-lagrangian' }, presets[index].values)
   fillLowWind(config)
+  syncControls()
+  markPreset(index)
+  recreate(); running = true; updatePause()
+}))
+function syncControls() {
   document.querySelectorAll<HTMLInputElement>('input[data-key]').forEach(input => {
     input.value = String(config[input.dataset.key as keyof SimConfig])
     showOutput(input)
@@ -197,9 +199,8 @@ document.querySelectorAll<HTMLButtonElement>('[data-preset]').forEach(button => 
   surfaceSelect.value = config.surfaceType
   transportSelect.value = config.transport ?? 'semi-lagrangian'
   markProfileGroups()
-  markPreset(index)
-  recreate(); running = true; updatePause()
-}))
+}
+syncControls()
 markPreset(0)
 document.querySelector('#restart')!.addEventListener('click', () => { recreate(); running = true; updatePause() })
 document.querySelector('#pause')!.addEventListener('click', () => { running = !running; updatePause() })

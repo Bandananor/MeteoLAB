@@ -12,8 +12,12 @@ import { dragCoefficient, surfaceFluxes } from './surface'
 import { computeSounding, type Sounding } from './sounding'
 
 // Updraft helicity (integral of w*zeta over 2-5 km, m2/s2) thresholds and the persistence that makes rotation a mesocyclone.
-// Calibrated for the ~1 km, diffusive default grid: sustained rotating updrafts sit at 150-250 m2/s2 (3-km NWP uses ~75).
-export const UH_ROTATING = 100, UH_MESOCYCLONE = 150, MESO_PERSISTENCE = 600
+// Recalibrated 2026-09-29 on the realistic scenarios (~1 km grid, honest microphysics): strong updraughts in weak shear
+// tilt the environmental vorticity into vortex pairs of both signs with UH up to ~380 cyclonic and ~320 anticyclonic;
+// supercells hold 700-1900 with the anticyclonic maximum several times weaker (3-km NWP uses ~75).
+export const UH_ROTATING = 200, UH_MESOCYCLONE = 400, MESO_PERSISTENCE = 600
+/** A mesocyclone must also outweigh the strongest anticyclonic rotation by this factor (a vortex pair is not one). */
+export const MESO_DOMINANCE = 1.5
 
 export interface RotationState {
   uh: number; x: number; y: number; anticyclonic: number; persisted: number
@@ -291,7 +295,7 @@ export class AtmosphereModel {
       if (uh > max) { max = uh; bx = x; by = y }
       min = Math.min(min, uh)
     }
-    r.uh = max; r.anticyclonic = -min; r.uh01 = max01; r.uh03 = max03; r.x = bx; r.y = by; r.persisted = max >= UH_MESOCYCLONE ? r.persisted + dt : 0
+    r.uh = max; r.anticyclonic = -min; r.uh01 = max01; r.uh03 = max03; r.x = bx; r.y = by; r.persisted = max >= UH_MESOCYCLONE && max >= MESO_DOMINANCE * -min ? r.persisted + dt : 0
   }
 
   private countCores() {
