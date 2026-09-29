@@ -3,6 +3,7 @@ import { CP, DT, G, LV, OMEGA } from './constants'
 import { Environment, type EnvironmentProfile } from './environment'
 import { createGrid, type Grid } from './grid'
 import { clamp, lerp, mod, mulberry32 } from './math'
+import { FluxTransport } from './advection'
 import { fallSpeed, rainProcesses, saturationAdjust } from './microphysics'
 import { PressureSolver } from './pressure'
 import { dragCoefficient, surfaceFluxes } from './surface'
@@ -171,6 +172,9 @@ export class AtmosphereModel {
    * 8 surrounding nodes (quasi-monotone, Bermejo & Staniforth 1992). Less diffusive than trilinear, ~5x more work.
    */
   cubicTransport: false | 'all' | 'scalars' = false
+  /** Transport of u, v, w, theta, q, cloud and the cold-pool indicator: trilinear semi-Lagrangian or flux-form WENO5 + RK3. */
+  transport: 'semi-lagrangian' | 'weno' = 'semi-lagrangian'
+  private flux: FluxTransport | null = null
   private advectCubic(a: Float32Array) {
     const { n, nx, ny, nz, layer } = this.grid, s = this.scratch, c = this.backtraceCorner, wt = this.backtraceWeight
     const cr = (p0: number, p1: number, p2: number, p3: number, t: number) => p1 + .5 * t * (p2 - p0 + t * (2 * p0 - 5 * p1 + 4 * p2 - p3 + t * (3 * (p1 - p2) + p3 - p0)))
@@ -213,8 +217,17 @@ export class AtmosphereModel {
     const fs = this.fallSpeed
     for (let i = 0; i < fs.length - layer; i++) if (fs[i + layer] > fs[i]) fs[i] = fs[i + layer]
     this.advectFalling(this.rain, dt, fs); this.commit(this.rain, 1, true, fallout)
-    this.computeBacktrace(dt)
-    const carry = (a: Float32Array, decay: number, conserve = false) => { this.advectBacktrace(a); this.commit(a, decay, conserve) }
+    let carry: (a: Float32Array, decay: number, conserve?: boolean) => void
+    if (this.transport === 'weno') {
+      // Flux-form WENO5 + RK3 with the velocity frozen at the start of the step; the mass fixer still runs on water.
+      const flux = this.flux ??= new FluxTransport(this.grid, this.env.rho)
+      flux.setVelocity(this.u, this.v, this.w)
+      // WENO for water and the cold-pool indicator (no overshoots); linear 5th-order upwind for the smooth u, v, w, theta.
+      carry = (a, decay, conserve = false) => { this.scratch.set(a); flux.advect(this.scratch, dt, a === this.q || a === this.cloud || a === this.cold); this.commit(a, decay, conserve) }
+    } else {
+      this.computeBacktrace(dt)
+      carry = (a, decay, conserve = false) => { this.advectBacktrace(a); this.commit(a, decay, conserve) }
+    }
     carry(this.u, 1); carry(this.v, 1); carry(this.w, 1); carry(this.theta, 1); carry(this.q, 1, true); carry(this.cloud, 1, true); carry(this.cold, .9992)
     const cfg = this.config, e = this.env, u = this.u, v = this.v, w = this.w, theta = this.theta, q = this.q, cloud = this.cloud, rain = this.rain, cold = this.cold
     const flux = surfaceFluxes(cfg, this.time), lfcZ = (this.sounding.lfc ?? 1.5) * 1000, f = 2 * OMEGA * Math.sin(cfg.latitude * Math.PI / 180)

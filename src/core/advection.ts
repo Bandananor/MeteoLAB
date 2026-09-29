@@ -1,0 +1,106 @@
+import type { Grid } from './grid'
+
+/**
+ * Flux-form transport with fifth-order WENO reconstruction (Jiang & Shu 1996) and the three-stage Runge-Kutta scheme
+ * of Wicker & Skamarock (2002), as in research cloud models.
+ *
+ * Each node owns a control volume (the ground and top nodes half a layer); the mass flux through a face between two
+ * nodes is rho0 times the mean of their velocities. The tendency is -(1/rho0) [div(rho0 u q) - q div(rho0 u)]: the
+ * second term keeps a uniform field uniform even though the face divergence differs slightly from the projection's
+ * dual-cell divergence, at the cost of exact conservation (the model's mass fixer takes care of water).
+ * Periodic in x and y; no flux through the ground and top (stencils there are clamped to the domain).
+ */
+export class FluxTransport {
+  private readonly grid: Grid; private readonly rho: Float64Array
+  private readonly mx: Float64Array; private readonly my: Float64Array; private readonly mz: Float64Array; private readonly div: Float64Array
+  private readonly fx: Float64Array; private readonly fy: Float64Array; private readonly fz: Float64Array
+  private readonly start: Float32Array; private readonly tend: Float64Array
+  /** Periodic neighbour x indices and y row offsets at offsets -2..3 (index o + 2). */
+  private readonly xo: Int32Array[]; private readonly yo: Int32Array[]
+  /** Control-volume height of each level. */
+  private readonly h: Float64Array
+
+  constructor(grid: Grid, rho: ArrayLike<number>) {
+    const { n, nx, ny, nz, dz } = grid
+    this.grid = grid; this.rho = Float64Array.from(rho)
+    const f = () => new Float64Array(n)
+    this.mx = f(); this.my = f(); this.mz = f(); this.div = f(); this.fx = f(); this.fy = f(); this.fz = f(); this.tend = f()
+    this.start = new Float32Array(n)
+    this.xo = [-2, -1, 0, 1, 2, 3].map(o => Int32Array.from({ length: nx }, (_, x) => (x + o + 2 * nx) % nx))
+    this.yo = [-2, -1, 0, 1, 2, 3].map(o => Int32Array.from({ length: ny }, (_, y) => ((y + o + 2 * ny) % ny) * nx))
+    this.h = Float64Array.from({ length: nz }, (_, z) => z === 0 || z === nz - 1 ? dz / 2 : dz)
+  }
+
+  /** Face mass fluxes of the (frozen) transport velocity and their divergence per unit volume. */
+  setVelocity(u: Float32Array, v: Float32Array, w: Float32Array) {
+    const { nx, ny, nz, dx, dy, layer } = this.grid, rho = this.rho, { mx, my, mz, div, xo, yo, h } = this
+    for (let z = 0, i = 0; z < nz; z++) {
+      const l = z * layer, r = rho[z], rUp = z < nz - 1 ? (rho[z] + rho[z + 1]) / 2 : 0
+      for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++, i++) {
+        mx[i] = r * (u[i] + u[xo[3][x] + y * nx + l]) / 2
+        my[i] = r * (v[i] + v[x + yo[3][y] + l]) / 2
+        mz[i] = z < nz - 1 ? rUp * (w[i] + w[i + layer]) / 2 : 0
+      }
+    }
+    for (let z = 0, i = 0; z < nz; z++) {
+      const l = z * layer
+      for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++, i++) {
+        div[i] = (mx[i] - mx[xo[1][x] + y * nx + l]) / dx + (my[i] - my[x + yo[1][y] + l]) / dy + (mz[i] - (z > 0 ? mz[i - layer] : 0)) / h[z]
+      }
+    }
+  }
+
+  /**
+   * Advances `a` by dt with RK3 using the velocity given to setVelocity. `monotone` selects WENO5 (for fields that must
+   * not overshoot, such as water); otherwise the linear fifth-order upwind flux, ~3x cheaper, for smooth fields.
+   */
+  advect(a: Float32Array, dt: number, monotone = true) {
+    this.start.set(a)
+    const start = this.start, tend = this.tend, n = a.length
+    for (const fraction of [1 / 3, 1 / 2, 1]) {
+      this.tendency(a, monotone ? weno : upwind5)
+      for (let i = 0; i < n; i++) a[i] = start[i] + fraction * dt * tend[i]
+    }
+  }
+
+  private tendency(q: Float32Array, weno: (a: number, b: number, c: number, d: number, e: number) => number) {
+    const { nx, ny, nz, dx, dy, layer } = this.grid, { mx, my, mz, div, fx, fy, fz, tend, xo, yo, h, rho } = this
+    const [xm2, xm1, , xp1, xp2, xp3] = xo, [ym2, ym1, , yp1, yp2, yp3] = yo
+    for (let z = 0, i = 0; z < nz; z++) {
+      const l = z * layer, top = z === nz - 1
+      const zm2 = Math.max(0, z - 2) * layer, zm1 = Math.max(0, z - 1) * layer, zp1 = Math.min(nz - 1, z + 1) * layer, zp2 = Math.min(nz - 1, z + 2) * layer, zp3 = Math.min(nz - 1, z + 3) * layer
+      for (let y = 0; y < ny; y++) {
+        const row = y * nx + l, c0 = y * nx
+        for (let x = 0; x < nx; x++, i++) {
+          // Face between this node and the next one in each direction; the upwind side picks the stencil.
+          const m1 = mx[i]
+          fx[i] = m1 >= 0 ? m1 * weno(q[xm2[x] + row], q[xm1[x] + row], q[i], q[xp1[x] + row], q[xp2[x] + row]) : m1 * weno(q[xp3[x] + row], q[xp2[x] + row], q[xp1[x] + row], q[i], q[xm1[x] + row])
+          const m2 = my[i]
+          fy[i] = m2 >= 0 ? m2 * weno(q[x + ym2[y] + l], q[x + ym1[y] + l], q[i], q[x + yp1[y] + l], q[x + yp2[y] + l]) : m2 * weno(q[x + yp3[y] + l], q[x + yp2[y] + l], q[x + yp1[y] + l], q[i], q[x + ym1[y] + l])
+          const m3 = mz[i], c = x + c0
+          fz[i] = top ? 0 : m3 >= 0 ? m3 * weno(q[c + zm2], q[c + zm1], q[i], q[c + zp1], q[c + zp2]) : m3 * weno(q[c + zp3], q[c + zp2], q[c + zp1], q[i], q[c + zm1])
+        }
+      }
+    }
+    for (let z = 0, i = 0; z < nz; z++) {
+      const l = z * layer, r = rho[z], hz = h[z]
+      for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++, i++) {
+        const flux = (fx[i] - fx[xm1[x] + y * nx + l]) / dx + (fy[i] - fy[x + ym1[y] + l]) / dy + (fz[i] - (z > 0 ? fz[i - layer] : 0)) / hz
+        tend[i] = -(flux - q[i] * div[i]) / r
+      }
+    }
+  }
+}
+
+/** Linear fifth-order upwind value at the face between c and d for flow from a towards e (Wicker & Skamarock 2002). */
+export function upwind5(a: number, b: number, c: number, d: number, e: number) { return (2 * a - 13 * b + 47 * c + 27 * d - 3 * e) / 60 }
+
+/** WENO5 value at the face between c and d for flow from a towards e (Jiang & Shu weights, scale-aware epsilon). */
+export function weno(a: number, b: number, c: number, d: number, e: number) {
+  const p0 = (2 * a - 7 * b + 11 * c) / 6, p1 = (-b + 5 * c + 2 * d) / 6, p2 = (2 * c + 5 * d - e) / 6
+  const s0 = a - 2 * b + c, t0 = a - 4 * b + 3 * c, s1 = b - 2 * c + d, t1 = b - d, s2 = c - 2 * d + e, t2 = 3 * c - 4 * d + e
+  const eps = 2e-7 * (a * a + b * b + c * c + d * d + e * e) + 1e-40
+  const b0 = eps + 13 / 12 * s0 * s0 + .25 * t0 * t0, b1 = eps + 13 / 12 * s1 * s1 + .25 * t1 * t1, b2 = eps + 13 / 12 * s2 * s2 + .25 * t2 * t2
+  const w0 = .1 / (b0 * b0), w1 = .6 / (b1 * b1), w2 = .3 / (b2 * b2)
+  return (w0 * p0 + w1 * p1 + w2 * p2) / (w0 + w1 + w2)
+}
