@@ -22,7 +22,7 @@ const presets: {name:string;hint:string;values:Partial<SimConfig>}[] = [
   {name:'Сухой воздух',hint:'Сухой средний слой съедает края облака и душит конвекцию',values:{rhMid:10,rhUpper:10}},
   {name:'Сдвиг ветра',hint:'Сильный ветер наверху наклоняет облако, дождь выпадает в стороне от восходящего потока',values:{surfaceTemp:32,rhSurface:78,wind3:18,wind6:40,wind10:50}},
   {name:'Микропорыв',hint:'Сухой подоблачный слой и сильное испарение дождя: холодный поток ударяет в землю',values:{surfaceTemp:33,rhSurface:55,rhLow:35,lapseLow:9.5}},
-  {name:'Суперячейка',hint:'Ветер у земли дует с юго-востока и с высотой поворачивает к западу: восходящий поток закручивается в мезоциклон',values:{surfaceTemp:29,rhSurface:72,rhLow:60,rhMid:38,rhUpper:30,lapseLow:7.2,lapseMid:6.8,lapseUpper:6.5,bubble:1.8,wind0:6,wind3:12,wind6:20,wind10:28,windDir0:140,windDir3:200,windDir6:240,windDir10:255}},
+  {name:'Суперячейка',hint:'Ветер у земли дует с юго-востока и с высотой поворачивает к западу: восходящий поток закручивается в мезоциклон',values:{surfaceTemp:31,rhSurface:78,rhLow:68,rhMid:45,rhUpper:30,lapseLow:8.4,lapseMid:7.2,lapseUpper:6.5,bubble:1.5,wind0:8,wind3:16,wind6:24,wind10:30,windDir0:140,windDir3:200,windDir6:240,windDir10:255}},
   {name:'Жаркий город',hint:'Городская застройка и сухая почва сильно греют воздух у земли',values:{surfaceType:'urban',soilMoisture:15,surfaceTemp:33,solarMax:1000}},
 ]
 
