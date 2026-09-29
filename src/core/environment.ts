@@ -106,7 +106,13 @@ export class Environment {
   qEnv(z: number) { return this.mixingRatio(z, this.temperatureEnv(z), this.pressureAt(z)) }
 
   /** Vapour mixing ratio of air at height z with temperature t (°C) and pressure p: RH r_s, capped by the profile. */
-  mixingRatio(z: number, t: number, p: number) { return Math.min(this.rhEnv(z) * this.qsatP(t, p), this.profile?.qvMax ?? Infinity) }
+  mixingRatio(z: number, t: number, p: number) {
+    const r = Math.min(this.rhEnv(z) * this.qsatP(t, p), this.profile?.qvMax ?? Infinity), top = (this.config.moistLayer ?? 0) * 1000
+    if (this.profile || z >= top) return r
+    // Well-mixed boundary layer: the surface mixing ratio holds up to its top (never supersaturated).
+    const surface = this.config.rhSurface / 100 * this.qsatP(this.config.surfaceTemp, SURFACE_PRESSURE)
+    return Math.min(Math.max(r, surface), this.qsatP(t, p))
+  }
 
   /** Wind nodes (height m, speed m/s, direction °) of the slider profile; the 0.5 and 1 km nodes are optional. */
   private windNodes(): [number, number, number][] {

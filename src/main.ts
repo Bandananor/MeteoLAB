@@ -10,7 +10,7 @@ const slider = (key: keyof SimConfig, label: string, min: number, max: number, s
   </label>`
 
 const defaults: SimConfig = {
-  surfaceTemp:30,lapseLow:8.4,lapseMid:7.2,lapseUpper:6.5,tropopause:11,stratoWarming:1.2,capHeight:1.5,capStrength:0,
+  surfaceTemp:30,lapseLow:8.4,lapseMid:7.2,lapseUpper:6.5,tropopause:11,stratoWarming:1.2,capHeight:1.5,capStrength:0,moistLayer:0,
   rhSurface:72,rhLow:60,rhMid:42,rhUpper:28,
   wind0:2,wind3:10,wind6:20,wind10:28,windDir0:160,windDir3:185,windDir6:215,windDir10:235,
   latitude:45,turbulence:.55,
@@ -51,6 +51,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
         ${slider('rhLow','1–3 км',10,100,1,60,' %')}
         ${slider('rhMid','3–7 км',5,100,1,42,' %')}
         ${slider('rhUpper','7 км–TP',5,100,1,28,' %')}
+        ${slider('moistLayer','Влажный перемешанный слой',0,2.5,.1,0,' км',1)}
       </div></details>
       <details><summary>Профиль ветра</summary><div class="group">
         ${slider('wind0','Ветер у земли',-20,30,1,2,' м/с')}
@@ -159,7 +160,7 @@ let running = true
 let last = performance.now(), frameCount = 0
 const recreate = () => { useSeed(nextSeed()); sim.dispose(); sim = Object.assign(new Atmosphere(canvas, config), view) }
 
-const resetKeys = new Set<keyof SimConfig>(['surfaceTemp','lapseLow','lapseMid','lapseUpper','tropopause','stratoWarming','capStrength','capHeight','rhSurface','rhLow','rhMid','rhUpper','wind0','wind05','wind1','wind3','wind6','wind10','windDir0','windDir05','windDir1','windDir3','windDir6','windDir10','latitude','bubble','surfaceType'])
+const resetKeys = new Set<keyof SimConfig>(['surfaceTemp','lapseLow','lapseMid','lapseUpper','tropopause','stratoWarming','capStrength','capHeight','rhSurface','rhLow','rhMid','rhUpper','moistLayer','wind0','wind05','wind1','wind3','wind6','wind10','windDir0','windDir05','windDir1','windDir3','windDir6','windDir10','latitude','bubble','surfaceType'])
 const surfaceSelect = document.querySelector<HTMLSelectElement>('#surfaceType')!
 const transportSelect = document.querySelector<HTMLSelectElement>('#transport')!
 transportSelect.addEventListener('change', () => { config.transport = transportSelect.value as SimConfig['transport'] })

@@ -25,6 +25,9 @@ PROFILES = {
     # Capping inversion above the first buoyant layer: MetPy subtracts it from CAPE (lowest LFC to highest EL).
     'lid': dict(capHeight=2.0, capStrength=2.0),
     # "Loaded gun": deep mixed layer under a 3 K inversion at 1.5 km and a steep elevated mixed layer.
+    # Well-mixed moist boundary layer 1 km deep (surface mixing ratio held), a Weisman-Klemp-like supercell thermodynamics.
+    'mixed': dict(surfaceTemp=26, rhSurface=65, rhLow=60, rhMid=50, rhUpper=30, lapseLow=9, lapseMid=6.3, capHeight=1.2,
+                  capStrength=1.0, moistLayer=1.0),
     'loaded': dict(surfaceTemp=32, rhSurface=50, rhLow=35, rhMid=40, lapseLow=9.5, lapseMid=8.0, capHeight=1.5, capStrength=3.0),
 }
 CAP_DEPTH, CAP_FADE = 300, 2000
@@ -88,10 +91,20 @@ def reference(c):
     p = np.empty_like(z)
     p[0] = 101325.0
     r = np.empty_like(z)
+    # Well-mixed moist layer (Environment.mixingRatio): the surface mixing ratio holds up to moistLayer, capped at saturation.
+    top = c.get('moistLayer', 0) * 1000
+    es0 = es[0]
+    r_surface = c['rhSurface'] / 100 * 0.622 * es0 / (101325.0 - es0)
+
+    def mixing(k, pk):
+        rs = 0.622 * es[k] / (pk - es[k])
+        rr = rh[k] * rs
+        return min(max(rr, r_surface), rs) if z[k] < top else rr
+
     for k in range(len(z)):
-        r[k] = rh[k] * 0.622 * es[k] / (p[k] - es[k])
+        r[k] = mixing(k, p[k])
         if k + 1 < len(z):
-            r_next = rh[k + 1] * 0.622 * es[k + 1] / (p[k] - es[k + 1])
+            r_next = mixing(k + 1, p[k])
             tv = [(t[k] + 273.15) * (1 + 0.61 * r[k]), (t[k + 1] + 273.15) * (1 + 0.61 * r_next)]
             p[k + 1] = p[k] * np.exp(-9.80665 * dz / (287.05 * 0.5 * (tv[0] + tv[1])))
     P = p * units.Pa
