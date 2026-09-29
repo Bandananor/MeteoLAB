@@ -11,6 +11,7 @@ export type LayerMode = 'both' | 'slices' | 'volume'
 export interface ViewSettings {
   field: FieldMode; showVectors: boolean; showPrecip: boolean; layerMode: LayerMode
   /** Rain total on the ground since the start (swath), drawn over the ground. */ showRainTotal: boolean
+  /** Mark the rotating updraft (UH above the rotation threshold). */ showMesocyclone: boolean
   /** 'volume' mode: fraction of the colour range below which the field is transparent (0 shows everything). */ volumeThreshold: number
   /** 'volume' mode: opacity multiplier of the field volume. */ volumeDensity: number
   /** Horizontal slice height, km. */ sliceHeight: number
@@ -289,7 +290,7 @@ export class StormView {
     this.flowPoints.visible = s.showVectors; this.vectorLines.visible = s.showVectors
     this.swath.visible = s.showRainTotal; if (s.showRainTotal) this.updateSwath()
     const r = m.rotation
-    this.mesoMarker.visible = r.uh >= UH_ROTATING
+    this.mesoMarker.visible = s.showMesocyclone && r.uh >= UH_ROTATING
     if (this.mesoMarker.visible) {
       const [wx, , wz] = this.toWorld(r.x * dx, r.y * dy, 0)
       this.mesoMarker.position.x = wx; this.mesoMarker.position.z = wz

@@ -83,7 +83,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
 
     <section class="workspace">
       <nav class="tabs" aria-label="Отображаемое поле">
-        <button class="active" data-field="composite">Облака</button><button data-field="updraft">Вертикальные потоки</button><button data-field="theta">Температура</button><button data-field="moisture">Влажность</button><button data-field="vorticity">Завихренность</button><button data-field="helicity" title="Спиральность восходящего потока: где поднимающийся воздух вращается (слой 2–5 км)">Вращение (UH)</button><button data-field="coldpool">Cold pool</button><button id="flowToggle" class="flow-toggle" aria-pressed="false">Потоки →</button><button id="precipToggle" class="flow-toggle" aria-pressed="false" title="Снежинки выше уровня 0 °C тают в капли по пути вниз">Снег и дождь</button><button id="swathToggle" class="flow-toggle" aria-pressed="false" title="Сколько дождя выпало на землю с начала расчёта: голубой до 5 мм, зелёный до 10, жёлтый до 25, оранжевый до 50, красный больше">Сумма осадков</button>
+        <button class="active" data-field="composite">Облака</button><button data-field="updraft">Вертикальные потоки</button><button data-field="theta">Температура</button><button data-field="moisture">Влажность</button><button data-field="vorticity">Завихренность</button><button data-field="helicity" title="Спиральность восходящего потока: где поднимающийся воздух вращается (слой 2–5 км)">Вращение (UH)</button><button data-field="coldpool">Cold pool</button><button id="flowToggle" class="flow-toggle" aria-pressed="false">Потоки →</button><button id="precipToggle" class="flow-toggle" aria-pressed="false" title="Снежинки выше уровня 0 °C тают в капли по пути вниз">Снег и дождь</button><button id="mesoToggle" class="flow-toggle active" aria-pressed="true" title="Кольцо над вращающимся восходящим потоком (UH 2–5 км выше порога вращения)">Мезоциклон</button><button id="swathToggle" class="flow-toggle" aria-pressed="false" title="Сколько дождя выпало на землю с начала расчёта: голубой до 5 мм, зелёный до 10, жёлтый до 25, оранжевый до 50, красный больше">Сумма осадков</button>
       </nav>
       <div class="viewport">
         <canvas id="sim" width="960" height="600"></canvas>
@@ -148,7 +148,7 @@ const nextSeed = () => { const [x] = crypto.getRandomValues(new Uint32Array(1));
 const useSeed = (seed: number) => { config.seed = seed; const url = new URL(location.href); url.searchParams.set('seed', String(seed)); history.replaceState(null, '', url) }
 useSeed(Number.isInteger(urlSeed) && urlSeed > 0 ? urlSeed : nextSeed())
 const canvas = document.querySelector<HTMLCanvasElement>('#sim')!
-const view = { field: 'composite' as FieldMode, showVectors: false, showPrecip: false, showRainTotal: false, layerMode: 'both' as LayerMode, volumeThreshold: .1, volumeDensity: 1, sliceHeight: 2, sliceNorth: 0 }
+const view = { field: 'composite' as FieldMode, showVectors: false, showPrecip: false, showRainTotal: false, showMesocyclone: true, layerMode: 'both' as LayerMode, volumeThreshold: .1, volumeDensity: 1, sliceHeight: 2, sliceNorth: 0 }
 let sim = new Atmosphere(canvas, config)
 let running = true
 let last = performance.now(), frameCount = 0
@@ -215,6 +215,9 @@ document.querySelectorAll<HTMLButtonElement>('[data-field]').forEach(button => b
 }))
 document.querySelector<HTMLButtonElement>('#flowToggle')!.addEventListener('click', event => {
   const button=event.currentTarget as HTMLButtonElement;setView({ showVectors: !view.showVectors });button.classList.toggle('active',view.showVectors);button.setAttribute('aria-pressed',String(view.showVectors))
+})
+document.querySelector<HTMLButtonElement>('#mesoToggle')!.addEventListener('click', event => {
+  const button=event.currentTarget as HTMLButtonElement;setView({ showMesocyclone: !view.showMesocyclone });button.classList.toggle('active',view.showMesocyclone);button.setAttribute('aria-pressed',String(view.showMesocyclone))
 })
 document.querySelector<HTMLButtonElement>('#swathToggle')!.addEventListener('click', event => {
   const button=event.currentTarget as HTMLButtonElement;setView({ showRainTotal: !view.showRainTotal });button.classList.toggle('active',view.showRainTotal);button.setAttribute('aria-pressed',String(view.showRainTotal))
