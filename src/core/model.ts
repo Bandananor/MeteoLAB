@@ -12,7 +12,11 @@ import { computeSounding, type Sounding } from './sounding'
 // Calibrated for the ~1 km, diffusive default grid: sustained rotating updrafts sit at 150-250 m2/s2 (3-km NWP uses ~75).
 export const UH_ROTATING = 100, UH_MESOCYCLONE = 150, MESO_PERSISTENCE = 600
 
-export interface RotationState { uh: number; x: number; y: number; anticyclonic: number; persisted: number }
+export interface RotationState {
+  uh: number; x: number; y: number; anticyclonic: number; persisted: number
+  /** Largest cyclonic updraft helicity of the 0-1 and 0-3 km layers (low-level mesocyclone), m2/s2. */
+  uh01: number; uh03: number
+}
 
 export interface ModelDiagnostics {
   /** Heaviest rain reaching the ground now, mm/h: rho0 q_r V_t at the surface. */ rainRate: number
@@ -36,7 +40,7 @@ export class AtmosphereModel {
   readonly precipitation: Float32Array
   /** Fall speed of rain at every node (Kessler), m/s, raised to that of the rain just above (sedimentation), updated each step. */
   readonly fallSpeed: Float32Array
-  readonly rotation: RotationState = { uh: 0, x: 0, y: 0, anticyclonic: 0, persisted: 0 }
+  readonly rotation: RotationState = { uh: 0, x: 0, y: 0, anticyclonic: 0, persisted: 0, uh01: 0, uh03: 0 }
   readonly sounding: Sounding
   /** Lowest and highest level of the 2-5 km updraft-helicity layer. */
   readonly uhLevels: readonly [number, number]
@@ -278,15 +282,19 @@ export class AtmosphereModel {
 
   private updateRotation(dt: number) {
     const { nx, ny, dz, layer } = this.grid, [z0, z1] = this.uhLevels, r = this.rotation, col = this.uhColumn
-    let max = 0, min = 0, bx = 0, by = 0
+    // Low layers on the coarse grid: 0-1 km is the single level at ~650 m (w = 0 on the ground), 0-3 km four levels.
+    const top1 = Math.floor(1000 / dz), top3 = Math.floor(3000 / dz)
+    let max = 0, min = 0, bx = 0, by = 0, max01 = 0, max03 = 0
     for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++) {
-      let uh = 0
+      let uh = 0, low = 0
+      for (let z = 1; z <= top3; z++) { low += this.w[x + nx * y + z * layer] * this.zeta(x, y, z) * dz; if (z === top1) max01 = Math.max(max01, low) }
+      max03 = Math.max(max03, low)
       for (let z = z0; z <= z1; z++) uh += this.w[x + nx * y + z * layer] * this.zeta(x, y, z) * dz
       col[x + nx * y] = uh
       if (uh > max) { max = uh; bx = x; by = y }
       min = Math.min(min, uh)
     }
-    r.uh = max; r.anticyclonic = -min; r.x = bx; r.y = by; r.persisted = max >= UH_MESOCYCLONE ? r.persisted + dt : 0
+    r.uh = max; r.anticyclonic = -min; r.uh01 = max01; r.uh03 = max03; r.x = bx; r.y = by; r.persisted = max >= UH_MESOCYCLONE ? r.persisted + dt : 0
   }
 
   private countCores() {
