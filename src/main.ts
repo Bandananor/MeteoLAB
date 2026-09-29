@@ -74,6 +74,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
         ${slider('soilMoisture','Влажность почвы',0,100,1,45,' %')}
       </div></details>
       <details><summary>Расчёт</summary><div class="group">
+        <label title="Точный перенос (WENO 5-го порядка) почти не размывает восходящие потоки: суперячейки живут дольше и расщепляются, но расчёт примерно в 2,5 раза медленнее">Перенос<select id="transport"><option value="semi-lagrangian">Быстрый (полулагранжев)</option><option value="weno">Точный (WENO5)</option></select></label>
         ${slider('speed','Ускорение времени',1,30,1,8,'×')}
         ${slider('bubble','Сила начального термика',.3,2.5,.05,1,'×',2)}
       </div></details>
@@ -157,6 +158,8 @@ const recreate = () => { useSeed(nextSeed()); sim.dispose(); sim = Object.assign
 
 const resetKeys = new Set<keyof SimConfig>(['surfaceTemp','lapseLow','lapseMid','lapseUpper','tropopause','stratoWarming','rhSurface','rhLow','rhMid','rhUpper','wind0','wind05','wind1','wind3','wind6','wind10','windDir0','windDir05','windDir1','windDir3','windDir6','windDir10','latitude','bubble','surfaceType'])
 const surfaceSelect = document.querySelector<HTMLSelectElement>('#surfaceType')!
+const transportSelect = document.querySelector<HTMLSelectElement>('#transport')!
+transportSelect.addEventListener('change', () => { config.transport = transportSelect.value as SimConfig['transport'] })
 const showOutput = (input: HTMLInputElement) => {
   document.querySelector<HTMLOutputElement>(`[data-output="${input.dataset.key}"]`)!.textContent = `${Number(input.value).toFixed(Number(input.dataset.digits))}${input.dataset.suffix}`
 }

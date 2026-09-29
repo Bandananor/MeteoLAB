@@ -218,7 +218,7 @@ export class AtmosphereModel {
     for (let i = 0; i < fs.length - layer; i++) if (fs[i + layer] > fs[i]) fs[i] = fs[i + layer]
     this.advectFalling(this.rain, dt, fs); this.commit(this.rain, 1, true, fallout)
     let carry: (a: Float32Array, decay: number, conserve?: boolean) => void
-    if (this.transport === 'weno') {
+    if ((this.config.transport ?? this.transport) === 'weno') {
       // Flux-form WENO5 + RK3 with the velocity frozen at the start of the step; the mass fixer still runs on water.
       const flux = this.flux ??= new FluxTransport(this.grid, this.env.rho)
       flux.setVelocity(this.u, this.v, this.w)

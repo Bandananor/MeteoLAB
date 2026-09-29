@@ -6,6 +6,8 @@ export interface SimConfig {
   wind0: number; wind3: number; wind6: number; wind10: number; windDir0: number; windDir3: number; windDir6: number; windDir10: number
   /** Optional wind nodes at 0.5 and 1 km (speed, direction) for a curved low-level hodograph; absent nodes are skipped. */
   wind05?: number; wind1?: number; windDir05?: number; windDir1?: number
+  /** Transport scheme; overrides AtmosphereModel.transport when set (the UI switch). */
+  transport?: 'semi-lagrangian' | 'weno'
   latitude: number; turbulence: number; hour: number; solarMax: number; soilMoisture: number; surfaceType: SurfaceType
   speed: number; seed: number; bubble: number
 }
