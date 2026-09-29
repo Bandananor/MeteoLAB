@@ -6,6 +6,12 @@ export interface SimConfig {
   wind0: number; wind3: number; wind6: number; wind10: number; windDir0: number; windDir3: number; windDir6: number; windDir10: number
   /** Optional wind nodes at 0.5 and 1 km (speed, direction) for a curved low-level hodograph; absent nodes are skipped. */
   wind05?: number; wind1?: number; windDir05?: number; windDir1?: number
+  /**
+   * Optional capping inversion (the lid over a "loaded gun" boundary layer): base height, km, and the temperature rise
+   * across it, K (0 or absent = no cap). Above the inversion the extra warmth fades out over 2 km, giving the steep
+   * lapse rate of an elevated mixed layer.
+   */
+  capHeight?: number; capStrength?: number
   /** Transport scheme; overrides AtmosphereModel.transport when set (the UI switch). */
   transport?: 'semi-lagrangian' | 'weno'
   /** An analytic environment instead of the slider profile: 'weisman-klemp' (WK82 sounding, 16 g/kg, quarter-circle hodograph, one thermal). */

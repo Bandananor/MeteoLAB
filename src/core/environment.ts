@@ -5,6 +5,8 @@ import { lerp, lerpAngle, mod } from './math'
 import { qsatP } from './microphysics'
 
 const SURFACE_PRESSURE = 101325, PRESSURE_STEP = 10
+/** The inversion of the capping layer is CAP_DEPTH thick; above it the extra warmth fades out over CAP_FADE (an elevated mixed layer). */
+const CAP_DEPTH = 300, CAP_FADE = 2000
 
 /**
  * An analytic environment (for idealised test cases such as Weisman-Klemp) that replaces the slider profile:
@@ -68,7 +70,17 @@ export class Environment {
   /** Temperature at height z and pressure p, °C (the pressure matters only for a profile given in theta). */
   private temperatureAt(z: number, p: number) { return this.profile ? this.profile.theta(z) * (p / 100000) ** KAPPA - 273.15 : this.sliderTemperature(z) }
 
+  /** Lapse-rate profile plus the capping inversion (if any): the air warms by capStrength across CAP_DEPTH at capHeight. */
   private sliderTemperature(z: number) {
+    const c = this.config, strength = c.capStrength ?? 0
+    if (!(strength > 0)) return this.lapseTemperature(z)
+    const base = (c.capHeight ?? 1.5) * 1000, top = base + CAP_DEPTH
+    const bump = strength + this.lapseTemperature(base) - this.lapseTemperature(top)
+    const f = z <= base ? 0 : z < top ? (z - base) / CAP_DEPTH : Math.max(0, 1 - (z - top) / CAP_FADE)
+    return this.lapseTemperature(z) + bump * f
+  }
+
+  private lapseTemperature(z: number) {
     const c = this.config, tp = c.tropopause * 1000, t3 = c.surfaceTemp - c.lapseLow * 3, t8 = t3 - c.lapseMid * 5
     if (z <= 3000) return c.surfaceTemp - c.lapseLow * z / 1000
     if (z <= 8000) return t3 - c.lapseMid * (z - 3000) / 1000

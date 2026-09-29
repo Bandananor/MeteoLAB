@@ -27,6 +27,9 @@ function ascend(env: Environment, height: number, z0: number, temp: number, q: n
   // 25 m: the switch to the moist adiabat happens at the first saturated level, so a coarse step shifts the LCL.
   const profile: ParcelPoint[] = [], dz = 25
   let saturated = false, lcl: number | null = null, lfc: number | null = null, el: number | null = null, cape = 0, cin = 0
+  // As in MetPy: the lowest LFC and the highest EL; CAPE is the net area between them, so a capping inversion above the
+  // first positive layer is subtracted from CAPE (and does not count as CIN). `area` is the running net area above the LFC.
+  let area = 0, rising = false
   for (let z = z0; z <= height; z += dz) {
     const sat = env.qsat(temp, z)
     if (q >= sat) { saturated = true; q = sat; if (lcl === null) lcl = z / 1000 }
@@ -35,10 +38,13 @@ function ascend(env: Environment, height: number, z0: number, temp: number, q: n
       // MetPy joins the mixed-layer parcel at the ground (buoyancy 0 by construction) straight to the layer top:
       // the skipped layer contributes a trapezoid.
       if (z - dz < countFrom && countFrom > z0) { if (b < 0) cin += -b * (z - z0) / 2; else if (lcl !== null) cape += b * (z - z0) / 2 }
-      if (lcl !== null && lfc === null && b > 0) lfc = z / 1000
-      if (lfc !== null && el === null && b <= 0 && z / 1000 > lfc + .2) el = z / 1000
-      if (lfc === null && b < 0) cin += -b * dz
-      if (lfc !== null && el === null && b > 0) cape += b * dz
+      if (lcl !== null && lfc === null && b > 0) { lfc = z / 1000; rising = true }
+      if (lfc === null) cin -= b * dz
+      if (lfc !== null) {
+        area += b * dz
+        if (b > 0) rising = true
+        else if (rising && z / 1000 > lfc + .2) { rising = false; el = z / 1000; cape = area - b * dz }
+      }
     }
     profile.push({ z: z / 1000, env: envT, dew: env.dewpoint(env.qEnv(z), z), parcel: temp, buoyancy: b })
     // The parcel follows the environment's pressure: dry adiabat (theta conserved) below the LCL, pseudo-adiabat
@@ -47,7 +53,9 @@ function ascend(env: Environment, height: number, z0: number, temp: number, q: n
     temp = saturated ? moistStep(env, temp, p0, p1) : (temp + 273.15) * (p1 / p0) ** KAPPA - 273.15
     temp = lerp(temp, env.temperatureEnv(z + dz), mix); q = lerp(q, env.qEnv(z + dz), mix)
   }
-  return { profile, cape, cin, lcl, lfc, el }
+  // Still buoyant at the top of the column: no EL, the whole net area counts.
+  if (rising) { el = null; cape = area }
+  return { profile, cape: Math.max(0, cape), cin: Math.max(0, cin), lcl, lfc, el }
 }
 
 /** One pseudo-adiabatic step of a saturated parcel from pressure p0 to p1 (either direction), midpoint rule. */

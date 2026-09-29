@@ -22,7 +22,12 @@ PROFILES = {
     'supercell': dict(surfaceTemp=29, rhSurface=72, rhLow=60, rhMid=38, rhUpper=30, lapseLow=7.2, lapseMid=6.8, lapseUpper=6.5,
                       wind=[(0, 6, 140), (3000, 12, 200), (6000, 20, 240), (10000, 28, 255)]),
     'capped': dict(surfaceTemp=28, rhSurface=62, rhLow=50, rhMid=40, rhUpper=30, lapseLow=6.0, lapseMid=7.5, lapseUpper=6.5),
+    # Capping inversion above the first buoyant layer: MetPy subtracts it from CAPE (lowest LFC to highest EL).
+    'lid': dict(capHeight=2.0, capStrength=2.0),
+    # "Loaded gun": deep mixed layer under a 3 K inversion at 1.5 km and a steep elevated mixed layer.
+    'loaded': dict(surfaceTemp=32, rhSurface=50, rhLow=35, rhMid=40, lapseLow=9.5, lapseMid=8.0, capHeight=1.5, capStrength=3.0),
 }
+CAP_DEPTH, CAP_FADE = 300, 2000
 
 
 def lerp(a, b, t):
@@ -30,6 +35,17 @@ def lerp(a, b, t):
 
 
 def temperature(z, c):
+    """Lapse-rate profile plus the optional capping inversion (Environment.sliderTemperature)."""
+    strength = c.get('capStrength', 0)
+    if strength <= 0: return lapse_temperature(z, c)
+    base = c.get('capHeight', 1.5) * 1000
+    top = base + CAP_DEPTH
+    bump = strength + lapse_temperature(base, c) - lapse_temperature(top, c)
+    f = 0 if z <= base else (z - base) / CAP_DEPTH if z < top else max(0, 1 - (z - top) / CAP_FADE)
+    return lapse_temperature(z, c) + bump * f
+
+
+def lapse_temperature(z, c):
     tp = c['tropopause'] * 1000
     t3 = c['surfaceTemp'] - c['lapseLow'] * 3
     t8 = t3 - c['lapseMid'] * 5
