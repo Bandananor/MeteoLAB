@@ -13,7 +13,7 @@ const defaults: SimConfig = {
   rhSurface:72,rhLow:60,rhMid:42,rhUpper:28,
   wind0:2,wind3:10,wind6:20,wind10:28,windDir0:160,windDir3:185,windDir6:215,windDir10:235,
   latitude:45,turbulence:.55,
-  hour:13.5,solarMax:900,soilMoisture:45,surfaceType:'grass',
+  hour:13.5,solarMax:1000,soilMoisture:45,surfaceType:'grass',
   speed:8,seed:42,bubble:1
 }
 const presets: {name:string;hint:string;values:Partial<SimConfig>}[] = [
@@ -23,7 +23,7 @@ const presets: {name:string;hint:string;values:Partial<SimConfig>}[] = [
   {name:'Сдвиг ветра',hint:'Сильный ветер наверху наклоняет облако, дождь выпадает в стороне от восходящего потока',values:{surfaceTemp:32,rhSurface:78,wind3:18,wind6:40,wind10:50}},
   {name:'Микропорыв',hint:'Сухой подоблачный слой и сильное испарение дождя: холодный поток ударяет в землю',values:{surfaceTemp:33,rhSurface:55,rhLow:35,lapseLow:9.5}},
   {name:'Суперячейка',hint:'Ветер у земли дует с юго-востока и с высотой поворачивает к западу: восходящий поток закручивается в мезоциклон',values:{surfaceTemp:31,rhSurface:78,rhLow:68,rhMid:45,rhUpper:30,lapseLow:8.4,lapseMid:7.2,lapseUpper:6.5,bubble:1.5,wind0:8,wind3:16,wind6:24,wind10:30,windDir0:140,windDir3:200,windDir6:240,windDir10:255}},
-  {name:'Жаркий город',hint:'Городская застройка и сухая почва сильно греют воздух у земли',values:{surfaceType:'urban',soilMoisture:15,surfaceTemp:33,solarMax:1000}},
+  {name:'Жаркий город',hint:'Городская застройка и сухая почва сильно греют воздух у земли',values:{surfaceType:'urban',soilMoisture:15,surfaceTemp:33,solarMax:1100}},
 ]
 
 document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
@@ -65,7 +65,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
       <details><summary>Поверхность и радиация</summary><div class="group">
         <label>Тип поверхности<select id="surfaceType"><option value="grass">Трава</option><option value="dry">Сухая почва</option><option value="water">Вода</option><option value="urban">Город</option></select></label>
         ${slider('hour','Местное солнечное время',5,21,.25,13.5,' ч',2)}
-        ${slider('solarMax','Максимальная инсоляция',300,1100,25,900,' Вт/м²')}
+        ${slider('solarMax','Солнце в зените',300,1200,25,1000,' Вт/м²')}
         ${slider('soilMoisture','Влажность почвы',0,100,1,45,' %')}
       </div></details>
       <details><summary>Расчёт</summary><div class="group">

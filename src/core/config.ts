@@ -8,9 +8,14 @@ export interface SimConfig {
   speed: number; seed: number; bubble: number
 }
 
-export const SURFACES: Record<SurfaceType, { albedo: number; sensible: number; evap: number; inertia: number }> = {
-  grass: { albedo: .2, sensible: .42, evap: .75, inertia: .65 },
-  dry: { albedo: .3, sensible: .72, evap: .15, inertia: .45 },
-  water: { albedo: .08, sensible: .18, evap: 1.25, inertia: 1.8 },
-  urban: { albedo: .16, sensible: .78, evap: .08, inertia: .8 },
+/**
+ * Surface properties: shortwave albedo; share of the available energy that goes into sensible heat when the surface is
+ * fully wet (`sensible`); moisture availability at 45 % soil moisture (`evap`, water is always fully wet); share of the
+ * net radiation stored in the ground or water (`storage`).
+ */
+export const SURFACES: Record<SurfaceType, { albedo: number; sensible: number; evap: number; storage: number }> = {
+  grass: { albedo: .2, sensible: .42, evap: .75, storage: .1 },
+  dry: { albedo: .3, sensible: .72, evap: .15, storage: .15 },
+  water: { albedo: .08, sensible: .18, evap: 1, storage: .5 },
+  urban: { albedo: .16, sensible: .78, evap: .08, storage: .3 },
 }

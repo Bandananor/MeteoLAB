@@ -1,11 +1,11 @@
-import { SURFACES, type SimConfig } from './config'
+import type { SimConfig } from './config'
 import { CP, DT, G, LV, OMEGA } from './constants'
 import { Environment, type EnvironmentProfile } from './environment'
 import { createGrid, type Grid } from './grid'
 import { clamp, lerp, mod, mulberry32 } from './math'
 import { fallSpeed, rainProcesses, saturationAdjust } from './microphysics'
 import { PressureSolver } from './pressure'
-import { insolation } from './solar'
+import { surfaceFluxes } from './surface'
 import { computeSounding, type Sounding } from './sounding'
 
 // Updraft helicity (integral of w*zeta over 2-5 km, m2/s2) thresholds and the persistence that makes rotation a mesocyclone.
@@ -42,6 +42,8 @@ export class AtmosphereModel {
   private backtraceCorner: Int32Array; private backtraceWeight: Float64Array
   /** Volume weight of each level: nodes on the ground and top walls own half a layer. */
   private levelWeight: Float64Array
+  /** Share of the surface fluxes deposited at each of the lowest levels, per metre of that level's thickness. */
+  private surfaceShare: Float64Array
   private rng: () => number; private accumulator = 0
 
   /** `profile` replaces the slider environment with an analytic one (idealised test cases). */
@@ -55,6 +57,9 @@ export class AtmosphereModel {
     this.levelWeight = Float64Array.from({ length: grid.nz }, (_, z) => z === 0 || z === grid.nz - 1 ? .5 : 1)
     this.backtraceCorner = new Int32Array(grid.n * 8); this.backtraceWeight = new Float64Array(grid.n * 3)
     this.uhLevels = [Math.ceil(2000 / grid.dz), Math.floor(5000 / grid.dz)]
+    // exp(-z / 300 m) per unit volume over the two lowest levels (the ground node owns half a layer), normalised.
+    const shape = [0, 1].map(z => Math.exp(-z * grid.dz / 300)), thick = [grid.dz / 2, grid.dz], total = shape[0] * thick[0] + shape[1] * thick[1]
+    this.surfaceShare = Float64Array.from(shape, s => s / total)
     this.rng = mulberry32(config.seed)
     this.env = new Environment(config, grid, profile)
     this.initialize()
@@ -170,7 +175,7 @@ export class AtmosphereModel {
     const carry = (a: Float32Array, decay: number, conserve = false) => { this.advectBacktrace(a); this.commit(a, decay, conserve) }
     carry(this.u, 1); carry(this.v, 1); carry(this.w, 1); carry(this.theta, 1); carry(this.q, 1, true); carry(this.cloud, 1, true); carry(this.cold, .9992)
     const cfg = this.config, e = this.env, u = this.u, v = this.v, w = this.w, theta = this.theta, q = this.q, cloud = this.cloud, rain = this.rain, cold = this.cold
-    const surf = SURFACES[cfg.surfaceType], solar = insolation(cfg, this.time), absorbed = solar * (1 - surf.albedo), heatFlux = absorbed * surf.sensible / surf.inertia, moistFlux = absorbed * (1 - surf.sensible) * surf.evap * cfg.soilMoisture / 100, lfcZ = (this.sounding.lfc ?? 1.5) * 1000, f = 2 * OMEGA * Math.sin(cfg.latitude * Math.PI / 180)
+    const flux = surfaceFluxes(cfg, this.time), lfcZ = (this.sounding.lfc ?? 1.5) * 1000, f = 2 * OMEGA * Math.sin(cfg.latitude * Math.PI / 180)
     const mix = clamp(cfg.turbulence * .0015 * dt, 0, .01), spongeStart = Math.max(cfg.tropopause * 1000 + 1600, 13_000), liftTop = Math.min(3200, lfcZ)
     for (let z = 0, i = 0; z < nz; z++) {
       const alt = z * dz, p = e.p[z], rhoZ = e.rho[z], exner = e.exner[z], thEnv = e.theta[z], qEnv = e.q[z], thvEnv = thEnv * (1 + .61 * qEnv), ue = e.u[z], ve = e.v[z], l = z * layer
@@ -189,7 +194,8 @@ export class AtmosphereModel {
           const buoy = (theta[i] * (1 + .61 * q[i]) - thvEnv) / thvEnv - cloud[i] - rain[i]; w[i] += G * buoy * dt
           // Damp and rotate only the departure from the environmental wind, so the imposed shear profile is not eroded.
           const du = (u[i] - ue) * .9999, dv = (v[i] - ve) * .9999; u[i] = ue + du + f * dv * dt; v[i] = ve + dv - f * du * dt
-          if (z <= 1) { const weight = Math.exp(-alt / 300), pattern = 1 + this.surfacePattern[x + row] * .32, rho = 1.18 * Math.exp(-alt / 9000); theta[i] += heatFlux * pattern / (rho * CP * 300) * weight * dt; q[i] += moistFlux * 1.3e-10 * weight * dt }
+          // Surface fluxes enter the lowest levels with the shares in surfaceShare, so the column receives exactly H and LE.
+          if (z < this.surfaceShare.length) { const pattern = 1 + this.surfacePattern[x + row] * .32, per = pattern * this.surfaceShare[z] * dt / rhoZ; theta[i] += flux.sensible * per / (CP * exner); q[i] += flux.latent * per / LV }
           if (alt < liftTop) { const gx = cold[xp + row] - cold[xm + row], gy = cold[x + yp] - cold[x + ym], edge = Math.hypot(gx, gy), core = cold[x + row]; w[i] += G * edge / 300 * .45 * Math.max(.12, 1 - alt / Math.max(300, lfcZ)) * dt; if (alt < 1300 && core > 1) w[i] -= G * core / 300 * .52 * Math.exp(-alt / 520) * dt }
           if (z <= 1 && w[i] < -5 && rain[i] > .0001) { const impact = Math.min(38, -w[i] * Math.sqrt(rain[i] / .00055)), dpx = (-w[xp + row + l] + w[xm + row + l]) * .5, dpy = (-w[x + yp + l] + w[x + ym + l]) * .5; u[i] -= dpx * .12 * dt; v[i] -= dpy * .12 * dt; cold[i] += impact * .0012 * dt; this.microburstOutflow = Math.max(this.microburstOutflow, impact) }
           const thAvg = (theta[xp + row + l] + theta[xm + row + l] + theta[x + yp + l] + theta[x + ym + l]) / 4; theta[i] = lerp(theta[i], thAvg, mix); const qAvg = (q[xp + row + l] + q[xm + row + l] + q[x + yp + l] + q[x + ym + l]) / 4; q[i] = lerp(q[i], qAvg, mix); cold[i] = clamp(cold[i], 0, 15)
