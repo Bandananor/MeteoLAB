@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { computeSounding, createGrid, Environment, type SimConfig } from '.'
+import { computeSounding, createGrid, Environment, parcelIndices, type SimConfig } from '.'
 import { CAPPED, SUMMER_DAY, SUPERCELL } from './fixtures'
 
 // Surface-based parcel from MetPy 1.7.1 on the same hydrostatic profiles and the same humidity convention
@@ -22,6 +22,22 @@ describe('surface-based parcel against MetPy', () => {
       // Between the LCL and the LFC of a weakly capped profile the parcel is neutral to ~1e-4 m/s2, so the LFC
       // height is ill-conditioned (MetPy's CIN there rounds to 0 over 400 m). Check it only where the cap is real.
       if (Math.abs(ref.cin) > 25) expect(Math.abs(s.lfc! - ref.lfc)).toBeLessThan(.1)
+    })
+  }
+
+  // mixed_layer_cape_cin (100 hPa), most_unstable_cape_cin (300 hPa), downdraft_cape from the same script.
+  const INDICES: Record<string, { mlcape: number; mlcin: number; mucape: number; dcape: number }> = {
+    summer: { mlcape: 4083.7, mlcin: 0, mucape: 6144.9, dcape: 1224.2 },
+    supercell: { mlcape: 2422.5, mlcin: -24.9, mucape: 3860.9, dcape: 1168.2 },
+    capped: { mlcape: 1047.8, mlcin: -176.5, mucape: 1817.4, dcape: 1285.2 },
+  }
+  for (const [name, ref] of Object.entries(INDICES)) {
+    it(`${name}: ML CAPE within 4 %, ML CIN within 5 J/kg, MU CAPE within 2 %, DCAPE within 2 %`, () => {
+      const grid = createGrid(), i = parcelIndices(new Environment(METPY[name].config, grid), grid.height)
+      expect(Math.abs(i.ml.cape / ref.mlcape - 1)).toBeLessThan(.04)
+      expect(Math.abs(i.ml.cin - Math.abs(ref.mlcin))).toBeLessThan(5)
+      expect(Math.abs(i.mu.cape / ref.mucape - 1)).toBeLessThan(.02)
+      expect(Math.abs(i.dcape / ref.dcape - 1)).toBeLessThan(.02)
     })
   }
 

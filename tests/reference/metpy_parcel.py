@@ -76,10 +76,16 @@ def reference(c):
     lfc_p, _ = mpcalc.lfc(P, env_tv, Td, parcel_tv)
     el_p, _ = mpcalc.el(P, env_tv, Td, parcel_tv)
     to_km = lambda pp: None if np.isnan(pp.magnitude) else float(np.interp(-pp.to('Pa').magnitude, -p, z) / 1000)
+    ml_cape, ml_cin = mpcalc.mixed_layer_cape_cin(P, T, Td, depth=100 * units.hPa)
+    mu_cape, mu_cin = mpcalc.most_unstable_cape_cin(P, T, Td, depth=300 * units.hPa)
+    # downdraft_cape selects its 700-500 hPa layer correctly only with pressure in hPa (NaN with Pa in MetPy 1.7.1).
+    dcape, _, _ = mpcalc.downdraft_cape(P.to('hPa'), T, Td)
+    r1 = lambda q: round(float(np.ravel(q.magnitude)[0]), 1)
     return dict(cape=round(float(cape.magnitude), 1), cin=round(float(cin.magnitude), 1),
                 lcl=round(to_km(lcl_p), 3), lfc=None if to_km(lfc_p) is None else round(to_km(lfc_p), 3),
                 el=None if to_km(el_p) is None else round(to_km(el_p), 3),
-                pressureAt10km=round(float(np.interp(10000, z, p)), 1))
+                pressureAt10km=round(float(np.interp(10000, z, p)), 1),
+                mlcape=r1(ml_cape), mlcin=r1(ml_cin), mucape=r1(mu_cape), mucin=r1(mu_cin), dcape=r1(dcape))
 
 
 out = {name: reference({**BASE, **over}) for name, over in PROFILES.items()}
