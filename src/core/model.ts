@@ -5,7 +5,7 @@ import { createGrid, type Grid } from './grid'
 import { clamp, lerp, mod, mulberry32 } from './math'
 import { fallSpeed, rainProcesses, saturationAdjust } from './microphysics'
 import { PressureSolver } from './pressure'
-import { surfaceFluxes } from './surface'
+import { dragCoefficient, surfaceFluxes } from './surface'
 import { computeSounding, type Sounding } from './sounding'
 
 // Updraft helicity (integral of w*zeta over 2-5 km, m2/s2) thresholds and the persistence that makes rotation a mesocyclone.
@@ -214,8 +214,16 @@ export class AtmosphereModel {
         }
       }
     }
-    // Ground drag and the rigid ground/top are applied before the projection, so the transport velocity is D-free.
-    for (let b = 0; b < layer; b++) { u[b] *= .94; v[b] *= .94; w[b] = 0; w[b + (nz - 1) * layer] = 0 }
+    // Surface drag on the ground node, which owns half a layer: dV/dt = -C_D (|V| V - |V_env| V_env) / (dz / 2). The
+    // environment's own drag is taken as balanced by the large-scale flow that maintains the profile, so the background
+    // stays steady (was: u, v *= 0.94 every step, which stopped the ground wind in ~16 s). Applied with the rigid
+    // ground/top before the projection, so the transport velocity is D-free.
+    const drag = dragCoefficient(cfg, dz) * dt / (dz / 2), ue0 = e.u[0], ve0 = e.v[0], envSpeed = Math.hypot(ue0, ve0)
+    for (let b = 0; b < layer; b++) {
+      const speed = Math.hypot(u[b], v[b])
+      u[b] -= drag * (speed * u[b] - envSpeed * ue0); v[b] -= drag * (speed * v[b] - envSpeed * ve0)
+      w[b] = 0; w[b + (nz - 1) * layer] = 0
+    }
     this.project(dt)
     this.updateRotation(dt)
   }

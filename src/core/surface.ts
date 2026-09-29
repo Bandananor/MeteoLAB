@@ -2,6 +2,12 @@ import { SURFACES, type SimConfig } from './config'
 import { clamp } from './math'
 import { insolation } from './solar'
 
+/**
+ * Neutral drag coefficient (kappa / ln(z_ref / z0))^2 of the ground node: z_ref is the middle of the half layer the
+ * ground node owns (dz / 4, ~160 m on the default grid), z0 the surface roughness.
+ */
+export function dragCoefficient(config: SimConfig, dz: number) { return (.4 / Math.log(dz / 4 / SURFACES[config.surfaceType].roughness)) ** 2 }
+
 /** Net longwave loss of a sunlit surface, W/m2 (fixed; night-time cooling is not modelled). */
 export const LONGWAVE_LOSS = 90
 

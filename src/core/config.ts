@@ -13,11 +13,11 @@ export interface SimConfig {
 /**
  * Surface properties: shortwave albedo; share of the available energy that goes into sensible heat when the surface is
  * fully wet (`sensible`); moisture availability at 45 % soil moisture (`evap`, water is always fully wet); share of the
- * net radiation stored in the ground or water (`storage`).
+ * net radiation stored in the ground or water (`storage`); aerodynamic roughness length (`roughness`, m).
  */
-export const SURFACES: Record<SurfaceType, { albedo: number; sensible: number; evap: number; storage: number }> = {
-  grass: { albedo: .2, sensible: .42, evap: .75, storage: .1 },
-  dry: { albedo: .3, sensible: .72, evap: .15, storage: .15 },
-  water: { albedo: .08, sensible: .18, evap: 1, storage: .5 },
-  urban: { albedo: .16, sensible: .78, evap: .08, storage: .3 },
+export const SURFACES: Record<SurfaceType, { albedo: number; sensible: number; evap: number; storage: number; roughness: number }> = {
+  grass: { albedo: .2, sensible: .42, evap: .75, storage: .1, roughness: .03 },
+  dry: { albedo: .3, sensible: .72, evap: .15, storage: .15, roughness: .01 },
+  water: { albedo: .08, sensible: .18, evap: 1, storage: .5, roughness: .0002 },
+  urban: { albedo: .16, sensible: .78, evap: .08, storage: .3, roughness: 1 },
 }

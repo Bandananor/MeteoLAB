@@ -13,8 +13,8 @@ describe('background state without a trigger', () => {
   const model = new AtmosphereModel({ ...QUIET }, smallGrid(12, 10))
   run(model, 3 * 3600)
   const { nz } = model.grid, env = model.env
-  // Level 0 is excluded until the surface layer replaces the x0.94 drag at the ground.
-  const levels = Array.from({ length: nz - 1 }, (_, k) => k + 1)
+  // All levels, the ground included (since the surface drag replaced the x0.94 damping there).
+  const levels = Array.from({ length: nz }, (_, k) => k)
   const worst = (field: Float32Array, reference: Float64Array, relative = false) =>
     Math.max(...levels.map(z => Math.abs(levelMean(model, field, z) - reference[z]) / (relative ? reference[z] : 1)))
 
