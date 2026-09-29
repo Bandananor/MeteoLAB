@@ -58,12 +58,14 @@ export class FluxTransport {
     this.start.set(a)
     const start = this.start, tend = this.tend, n = a.length
     for (const fraction of [1 / 3, 1 / 2, 1]) {
-      this.tendency(a, monotone ? weno : upwind5)
+      if (monotone) this.tendency(a, true); else this.tendency(a, false)
       for (let i = 0; i < n; i++) a[i] = start[i] + fraction * dt * tend[i]
     }
   }
 
-  private tendency(q: Float32Array, weno: (a: number, b: number, c: number, d: number, e: number) => number) {
+  private tendency(q: Float32Array, monotone: boolean) {
+    // Direct calls (not a function parameter) so the engine inlines the reconstruction.
+    const face = (a: number, b: number, c: number, d: number, e: number) => monotone ? weno(a, b, c, d, e) : upwind5(a, b, c, d, e)
     const { nx, ny, nz, dx, dy, layer } = this.grid, { mx, my, mz, div, fx, fy, fz, tend, xo, yo, h, rho } = this
     const [xm2, xm1, , xp1, xp2, xp3] = xo, [ym2, ym1, , yp1, yp2, yp3] = yo
     for (let z = 0, i = 0; z < nz; z++) {
@@ -74,11 +76,11 @@ export class FluxTransport {
         for (let x = 0; x < nx; x++, i++) {
           // Face between this node and the next one in each direction; the upwind side picks the stencil.
           const m1 = mx[i]
-          fx[i] = m1 >= 0 ? m1 * weno(q[xm2[x] + row], q[xm1[x] + row], q[i], q[xp1[x] + row], q[xp2[x] + row]) : m1 * weno(q[xp3[x] + row], q[xp2[x] + row], q[xp1[x] + row], q[i], q[xm1[x] + row])
+          fx[i] = m1 >= 0 ? m1 * face(q[xm2[x] + row], q[xm1[x] + row], q[i], q[xp1[x] + row], q[xp2[x] + row]) : m1 * face(q[xp3[x] + row], q[xp2[x] + row], q[xp1[x] + row], q[i], q[xm1[x] + row])
           const m2 = my[i]
-          fy[i] = m2 >= 0 ? m2 * weno(q[x + ym2[y] + l], q[x + ym1[y] + l], q[i], q[x + yp1[y] + l], q[x + yp2[y] + l]) : m2 * weno(q[x + yp3[y] + l], q[x + yp2[y] + l], q[x + yp1[y] + l], q[i], q[x + ym1[y] + l])
+          fy[i] = m2 >= 0 ? m2 * face(q[x + ym2[y] + l], q[x + ym1[y] + l], q[i], q[x + yp1[y] + l], q[x + yp2[y] + l]) : m2 * face(q[x + yp3[y] + l], q[x + yp2[y] + l], q[x + yp1[y] + l], q[i], q[x + ym1[y] + l])
           const m3 = mz[i], c = x + c0
-          fz[i] = top ? 0 : m3 >= 0 ? m3 * weno(q[c + zm2], q[c + zm1], q[i], q[c + zp1], q[c + zp2]) : m3 * weno(q[c + zp3], q[c + zp2], q[c + zp1], q[i], q[c + zm1])
+          fz[i] = top ? 0 : m3 >= 0 ? m3 * face(q[c + zm2], q[c + zm1], q[i], q[c + zp1], q[c + zp2]) : m3 * face(q[c + zp3], q[c + zp2], q[c + zp1], q[i], q[c + zm1])
         }
       }
     }
