@@ -1,7 +1,7 @@
 // Runs the physics off the main thread. The main thread sends real elapsed time, config changes and thermals; the worker
 // answers each batch of steps with a snapshot of the fields the view draws (see Atmosphere), in recycled buffers.
 import { AtmosphereModel, DT } from './core'
-import { MAX_STEPS_PER_BATCH, SNAPSHOT_COLUMNS, SNAPSHOT_FIELDS, type Snapshot, type WorkerRequest } from './simulation'
+import { BATCH_BUDGET_MS, MAX_STEPS_PER_BATCH, SNAPSHOT_COLUMNS, SNAPSHOT_FIELDS, type Snapshot, type WorkerRequest } from './simulation'
 
 const scope = self as unknown as { postMessage(message: unknown, transfer: Transferable[]): void; addEventListener(type: 'message', listener: (event: MessageEvent<WorkerRequest>) => void): void }
 let model: AtmosphereModel | null = null, accumulator = 0, pendingSteps = 0
@@ -33,9 +33,13 @@ scope.addEventListener('message', ({ data }) => {
       if (!model) break
       accumulator = Math.min(accumulator + data.seconds * model.config.speed, MAX_STEPS_PER_BATCH * DT)
       let steps = 0
-      while (accumulator >= DT && steps < MAX_STEPS_PER_BATCH) { model.step(DT); model.time += DT; accumulator -= DT; steps++ }
+      const start = performance.now()
+      while (accumulator >= DT && steps < MAX_STEPS_PER_BATCH && performance.now() - start < BATCH_BUDGET_MS) { model.step(DT); model.time += DT; accumulator -= DT; steps++ }
+      // Time the budget cut off is dropped (the model falls behind the speed setting instead of catching up in a burst).
+      if (steps > 0 && accumulator >= DT) accumulator = 0
       pendingSteps += steps
-      if (steps > 0) send()
+      // Always answer: the main thread sends the next request only after this snapshot.
+      send()
       break
     }
   }
