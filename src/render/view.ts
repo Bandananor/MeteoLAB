@@ -10,11 +10,15 @@ export type LayerMode = 'both' | 'slices' | 'volume'
 
 export interface ViewSettings {
   field: FieldMode; showVectors: boolean; showPrecip: boolean; layerMode: LayerMode
+  /** Rain total on the ground since the start (swath), drawn over the ground. */ showRainTotal: boolean
   /** 'volume' mode: fraction of the colour range below which the field is transparent (0 shows everything). */ volumeThreshold: number
   /** 'volume' mode: opacity multiplier of the field volume. */ volumeDensity: number
   /** Horizontal slice height, km. */ sliceHeight: number
   /** Vertical north-south slice position, km north of the domain centre. */ sliceNorth: number
 }
+
+/** Rain-total colour steps: [upper limit mm, rgb]. */
+const SWATH_COLORS: [number, [number, number, number]][] = [[1, [150, 200, 240]], [5, [60, 150, 225]], [10, [60, 185, 90]], [25, [240, 215, 60]], [50, [240, 130, 40]], [Infinity, [210, 45, 45]]]
 
 const FLOW_PARTICLES = 10_000, PRECIP_PARTICLES = 8000, MELT_DEPTH = 600, SNOW_FALL = 2
 
@@ -42,6 +46,7 @@ export class StormView {
   private readonly model: AtmosphereModel; private readonly settings: ViewSettings
   private readonly canvas: HTMLCanvasElement; private readonly renderer: THREE.WebGLRenderer; private readonly scene: THREE.Scene
   private readonly camera: THREE.PerspectiveCamera; private readonly controls: OrbitControls
+  private readonly swathData: Uint8Array; private readonly swathTexture: THREE.DataTexture; private readonly swath: THREE.Mesh
   private readonly ground: THREE.Mesh; private readonly raycaster = new THREE.Raycaster(); private readonly pointer = new THREE.Vector2()
   private readonly sunLight: THREE.DirectionalLight; private readonly hemiLight: THREE.HemisphereLight
   private readonly shared: Record<string, THREE.IUniform>
@@ -73,6 +78,11 @@ export class StormView {
 
     const groundMat = new THREE.MeshStandardMaterial({ color: ({ grass: 0x596d45, dry: 0x776a51, water: 0x315d70, urban: 0x606469 })[model.config.surfaceType], roughness: .96, metalness: 0 })
     this.ground = new THREE.Mesh(new THREE.PlaneGeometry(W, D), groundMat); this.ground.rotation.x = -Math.PI / 2; this.scene.add(this.ground)
+    // Rain swath: one texel per ground column (row 0 is the southern edge, as the plane's v runs north).
+    this.swathData = new Uint8Array(nx * ny * 4); this.swathTexture = new THREE.DataTexture(this.swathData, nx, ny, THREE.RGBAFormat)
+    this.swathTexture.magFilter = this.swathTexture.minFilter = THREE.LinearFilter; this.swathTexture.needsUpdate = true
+    this.swath = new THREE.Mesh(new THREE.PlaneGeometry(W, D), new THREE.MeshBasicMaterial({ map: this.swathTexture, transparent: true, depthWrite: false, toneMapped: false }))
+    this.swath.rotation.x = -Math.PI / 2; this.swath.position.y = .02; this.swath.visible = false; this.scene.add(this.swath)
     const grid = new THREE.GridHelper(W, 16, 0x71838a, 0x485d66); grid.material.transparent = true; grid.material.opacity = .32; this.scene.add(grid)
     const box = new THREE.BoxGeometry(W, H, D); box.translate(0, H / 2, 0)
     this.scene.add(new THREE.LineSegments(new THREE.EdgesGeometry(box), new THREE.LineBasicMaterial({ color: 0x75909c, transparent: true, opacity: .4 })))
@@ -125,8 +135,18 @@ export class StormView {
 
   dispose() {
     this.controls.dispose()
-    ;[this.volumeTexture, this.fieldTexture, this.colormap, this.volumeMaterial, this.fieldMaterial, this.sliceMaterial, this.volumeMesh.geometry, this.sliceH.geometry, this.sliceV.geometry, this.precipGeometry, this.precipMaterial, this.mesoMarker.geometry, this.mesoMarker.material as THREE.Material].forEach(r => r?.dispose())
+    ;[this.volumeTexture, this.fieldTexture, this.colormap, this.volumeMaterial, this.fieldMaterial, this.sliceMaterial, this.volumeMesh.geometry, this.sliceH.geometry, this.sliceV.geometry, this.precipGeometry, this.precipMaterial, this.swathTexture, this.swath.geometry, this.swath.material as THREE.Material, this.mesoMarker.geometry, this.mesoMarker.material as THREE.Material].forEach(r => r?.dispose())
     this.renderer.dispose()
+  }
+
+  // Rain totals, mm: transparent below 0.5 mm, then the usual radar-like ramp 1 / 5 / 10 / 25 / 50+ mm.
+  private updateSwath() {
+    const total = this.model.precipitation, d = this.swathData
+    for (let i = 0; i < total.length; i++) {
+      const mm = total[i], [r, g, b] = SWATH_COLORS.find(([limit]) => mm < limit)?.[1] ?? SWATH_COLORS[SWATH_COLORS.length - 1][1]
+      d[i * 4] = r; d[i * 4 + 1] = g; d[i * 4 + 2] = b; d[i * 4 + 3] = mm < .5 ? 0 : Math.min(230, 120 + mm * 10)
+    }
+    this.swathTexture.needsUpdate = true
   }
 
   /** Model-space position (m from the domain corner) of the ground point under normalised screen coordinates. */
@@ -267,6 +287,7 @@ export class StormView {
     this.fieldUniforms.uDensity.value = wholeVolume ? s.volumeDensity : 1
     this.shared.uSliceOn.value = slices ? 1 : 0; this.shared.uSliceH.value = this.sliceH.position.y = s.sliceHeight; this.shared.uSliceZ.value = this.sliceV.position.z = -s.sliceNorth
     this.flowPoints.visible = s.showVectors; this.vectorLines.visible = s.showVectors
+    this.swath.visible = s.showRainTotal; if (s.showRainTotal) this.updateSwath()
     const r = m.rotation
     this.mesoMarker.visible = r.uh >= UH_ROTATING
     if (this.mesoMarker.visible) {

@@ -60,6 +60,8 @@ describe('water budget', () => {
     const model = new AtmosphereModel({ ...SUMMER_DAY, solarMax: 0 }, smallGrid(20, 16))
     const before = totalWater(model)
     run(model, 3600)
+    // Rain reaches the ground (sedimentation into rain-free air under the shaft once failed silently: water was conserved).
+    expect(Math.max(...model.precipitation)).toBeGreaterThan(1)
     expect(Math.abs(totalWater(model) / before - 1)).toBeLessThan(.001)
   })
 })

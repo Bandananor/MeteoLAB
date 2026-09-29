@@ -15,7 +15,9 @@ export const UH_ROTATING = 100, UH_MESOCYCLONE = 150, MESO_PERSISTENCE = 600
 export interface RotationState { uh: number; x: number; y: number; anticyclonic: number; persisted: number }
 
 export interface ModelDiagnostics {
-  updraft: number; downdraft: number; rainRate: number; cloudTop: number; thermalTop: number
+  /** Heaviest rain reaching the ground now, mm/h: rho0 q_r V_t at the surface. */ rainRate: number
+  /** Largest rain total on the ground since the start, mm. */ rainTotal: number
+  updraft: number; downdraft: number; cloudTop: number; thermalTop: number
   maxCloud: number; coldMax: number; cores: number; shear06: number; microburst: number
   /** Velocity components clipped by the safety limits (|u|, |v| <= 85, |w| <= 60 m/s) since the start. */
   clipped: number
@@ -32,7 +34,7 @@ export class AtmosphereModel {
   readonly uhColumn: Float32Array
   /** Rain that has reached the ground in each column since the start, mm (kg/m2). */
   readonly precipitation: Float32Array
-  /** Terminal fall speed of rain at every node (Kessler), m/s; updated at the start of each step. */
+  /** Fall speed of rain at every node (Kessler), m/s, raised to that of the rain just above (sedimentation), updated each step. */
   readonly fallSpeed: Float32Array
   readonly rotation: RotationState = { uh: 0, x: 0, y: 0, anticyclonic: 0, persisted: 0 }
   readonly sounding: Sounding
@@ -175,7 +177,11 @@ export class AtmosphereModel {
     const { rho } = this.env
     for (let z = 0, i = 0; z < nz; z++) for (let end = i + layer; i < end; i++) this.fallSpeed[i] = fallSpeed(this.rain[i], rho[z], rho[0])
     const fallout = this.rainFallout(dt)
-    this.advectFalling(this.rain, dt, this.fallSpeed); this.commit(this.rain, 1, true, fallout)
+    // Semi-Lagrangian sedimentation looks up from the arrival node, so the rain-free air under a rain shaft must fall at
+    // the speed of the rain above it: with its own (zero) speed rain only ever came down in downdrafts.
+    const fs = this.fallSpeed
+    for (let i = 0; i < fs.length - layer; i++) if (fs[i + layer] > fs[i]) fs[i] = fs[i + layer]
+    this.advectFalling(this.rain, dt, fs); this.commit(this.rain, 1, true, fallout)
     this.computeBacktrace(dt)
     const carry = (a: Float32Array, decay: number, conserve = false) => { this.advectBacktrace(a); this.commit(a, decay, conserve) }
     carry(this.u, 1); carry(this.v, 1); carry(this.w, 1); carry(this.theta, 1); carry(this.q, 1, true); carry(this.cloud, 1, true); carry(this.cold, .9992)
@@ -272,12 +278,16 @@ export class AtmosphereModel {
     let up = 0, down = 0, rainRate = 0, top = 0, coldMax = 0, thermalTop = 0, maxCloud = 0
     for (let z = 0, i = 0; z < nz; z++) for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++, i++) {
       const alt = z * dz
-      up = Math.max(up, this.w[i]); down = Math.max(down, -this.w[i]); rainRate = Math.max(rainRate, this.rain[i] * 12000); maxCloud = Math.max(maxCloud, this.cloud[i])
+      up = Math.max(up, this.w[i]); down = Math.max(down, -this.w[i]); maxCloud = Math.max(maxCloud, this.cloud[i])
       if (this.cloud[i] > .00007) top = Math.max(top, alt / 1000)
       if (this.w[i] > .6) thermalTop = Math.max(thermalTop, alt / 1000)
       if (alt < 1500) coldMax = Math.max(coldMax, this.cold[i])
     }
     const [u0, v0] = this.env.windUV(0), [u6, v6] = this.env.windUV(6000)
-    return { updraft: up, downdraft: down, rainRate, cloudTop: top, thermalTop, maxCloud, coldMax, cores: this.countCores(), shear06: Math.hypot(u6 - u0, v6 - v0), microburst: this.microburstOutflow, clipped: this.clipped }
+    // Surface rain flux (was the largest q_r anywhere times 12000, 2-2.5x too low).
+    const rho0 = this.env.rho[0]
+    let rainTotal = 0
+    for (let i = 0; i < this.grid.layer; i++) { rainRate = Math.max(rainRate, rho0 * this.rain[i] * fallSpeed(this.rain[i], rho0, rho0) * 3600); rainTotal = Math.max(rainTotal, this.precipitation[i]) }
+    return { updraft: up, downdraft: down, rainRate, rainTotal, cloudTop: top, thermalTop, maxCloud, coldMax, cores: this.countCores(), shear06: Math.hypot(u6 - u0, v6 - v0), microburst: this.microburstOutflow, clipped: this.clipped }
   }
 }

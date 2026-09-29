@@ -83,7 +83,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
 
     <section class="workspace">
       <nav class="tabs" aria-label="Отображаемое поле">
-        <button class="active" data-field="composite">Облака</button><button data-field="updraft">Вертикальные потоки</button><button data-field="theta">Температура</button><button data-field="moisture">Влажность</button><button data-field="vorticity">Завихренность</button><button data-field="helicity" title="Спиральность восходящего потока: где поднимающийся воздух вращается (слой 2–5 км)">Вращение (UH)</button><button data-field="coldpool">Cold pool</button><button id="flowToggle" class="flow-toggle" aria-pressed="false">Потоки →</button><button id="precipToggle" class="flow-toggle" aria-pressed="false" title="Снежинки выше уровня 0 °C тают в капли по пути вниз">Снег и дождь</button>
+        <button class="active" data-field="composite">Облака</button><button data-field="updraft">Вертикальные потоки</button><button data-field="theta">Температура</button><button data-field="moisture">Влажность</button><button data-field="vorticity">Завихренность</button><button data-field="helicity" title="Спиральность восходящего потока: где поднимающийся воздух вращается (слой 2–5 км)">Вращение (UH)</button><button data-field="coldpool">Cold pool</button><button id="flowToggle" class="flow-toggle" aria-pressed="false">Потоки →</button><button id="precipToggle" class="flow-toggle" aria-pressed="false" title="Снежинки выше уровня 0 °C тают в капли по пути вниз">Снег и дождь</button><button id="swathToggle" class="flow-toggle" aria-pressed="false" title="Сколько дождя выпало на землю с начала расчёта: голубой до 5 мм, зелёный до 10, жёлтый до 25, оранжевый до 50, красный больше">Сумма осадков</button>
       </nav>
       <div class="viewport">
         <canvas id="sim" width="960" height="600"></canvas>
@@ -126,7 +126,8 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
       <div class="metric"><span>Cold pool Δθ</span><strong id="coldPool">—</strong><small>K</small></div>
       <div class="metric"><span>Микропорыв</span><strong id="microburst">—</strong><small>м/с outflow</small></div>
       <div class="metric" title="Сколько раз скорость упёрлась в предохранитель (|u|,|v| ≤ 85, |w| ≤ 60 м/с). Не ноль — модель вышла из рабочего диапазона, цифрам доверять нельзя."><span>Срабатывания ограничителей</span><strong id="clipped">—</strong><small>с начала расчёта</small></div>
-      <div class="metric"><span>Осадки</span><strong id="rain">—</strong><small>мм/ч proxy</small></div>
+      <div class="metric" title="Самый сильный дождь у земли сейчас: поток ρ·q_r·V_t"><span>Интенсивность дождя</span><strong id="rain">—</strong><small>мм/ч</small></div>
+      <div class="metric" title="Наибольшая сумма дождя на земле с начала расчёта"><span>Сумма осадков, макс.</span><strong id="rainTotal">—</strong><small>мм</small></div>
       <div class="note"><b>Логика</b><p id="logicText">Частица ещё не достигла уровня свободной конвекции.</p></div>
     </aside>
   </main>`
@@ -147,7 +148,7 @@ const nextSeed = () => { const [x] = crypto.getRandomValues(new Uint32Array(1));
 const useSeed = (seed: number) => { config.seed = seed; const url = new URL(location.href); url.searchParams.set('seed', String(seed)); history.replaceState(null, '', url) }
 useSeed(Number.isInteger(urlSeed) && urlSeed > 0 ? urlSeed : nextSeed())
 const canvas = document.querySelector<HTMLCanvasElement>('#sim')!
-const view = { field: 'composite' as FieldMode, showVectors: false, showPrecip: false, layerMode: 'both' as LayerMode, volumeThreshold: .1, volumeDensity: 1, sliceHeight: 2, sliceNorth: 0 }
+const view = { field: 'composite' as FieldMode, showVectors: false, showPrecip: false, showRainTotal: false, layerMode: 'both' as LayerMode, volumeThreshold: .1, volumeDensity: 1, sliceHeight: 2, sliceNorth: 0 }
 let sim = new Atmosphere(canvas, config)
 let running = true
 let last = performance.now(), frameCount = 0
@@ -214,6 +215,9 @@ document.querySelectorAll<HTMLButtonElement>('[data-field]').forEach(button => b
 }))
 document.querySelector<HTMLButtonElement>('#flowToggle')!.addEventListener('click', event => {
   const button=event.currentTarget as HTMLButtonElement;setView({ showVectors: !view.showVectors });button.classList.toggle('active',view.showVectors);button.setAttribute('aria-pressed',String(view.showVectors))
+})
+document.querySelector<HTMLButtonElement>('#swathToggle')!.addEventListener('click', event => {
+  const button=event.currentTarget as HTMLButtonElement;setView({ showRainTotal: !view.showRainTotal });button.classList.toggle('active',view.showRainTotal);button.setAttribute('aria-pressed',String(view.showRainTotal))
 })
 document.querySelector<HTMLButtonElement>('#precipToggle')!.addEventListener('click', event => {
   const button=event.currentTarget as HTMLButtonElement;setView({ showPrecip: !view.showPrecip });button.classList.toggle('active',view.showPrecip);button.setAttribute('aria-pressed',String(view.showPrecip))
@@ -295,7 +299,7 @@ function drawHodograph(){
 }
 function frame(now:number){
   const elapsed=Math.min(.2,(now-last)/1000);last=now;if(running)sim.advance(elapsed);sim.render();const d=sim.diagnostics()
-  text('cape',d.cape.toFixed(0));text('mlcape',d.indices.ml.cape.toFixed(0));text('mlcin',d.indices.ml.cin.toFixed(0));text('mucape',d.indices.mu.cape.toFixed(0));text('dcape',d.indices.dcape.toFixed(0));text('srh01',d.storm.srh01.toFixed(0));text('srh03',d.storm.srh03.toFixed(0));text('scp',d.storm.scp.toFixed(1));text('stp',d.storm.stp.toFixed(1));text('cin',d.cin.toFixed(0));text('updraft',d.updraft.toFixed(1));text('downdraft',d.downdraft.toFixed(1));text('uh',d.updraftHelicity.toFixed(0));text('cloudTop',d.cloudTop.toFixed(1));text('thermalTop',d.thermalTop.toFixed(1));text('cloudWater',d.cloudWater.toFixed(2));text('coldPool',d.coldPool.toFixed(1));text('microburst',d.microburst.toFixed(1));text('clipped',String(d.clipped));text('rain',d.rain.toFixed(1));text('lcl',d.lcl===null?'—':`${d.lcl.toFixed(1)} км`);text('lfc',d.lfc===null?'—':`${d.lfc.toFixed(1)} км`);text('el',d.el===null?'—':`${d.el.toFixed(1)} км`);text('cellType',d.cellType);text('cellReason',d.cellReason);text('logicText',d.logic);text('sun',`${d.insolation.toFixed(0)} Вт/м²`);text('sunElevation',d.sunElevation>0?`${d.sunElevation.toFixed(0)}° над горизонтом`:'ночь')
+  text('cape',d.cape.toFixed(0));text('mlcape',d.indices.ml.cape.toFixed(0));text('mlcin',d.indices.ml.cin.toFixed(0));text('mucape',d.indices.mu.cape.toFixed(0));text('dcape',d.indices.dcape.toFixed(0));text('srh01',d.storm.srh01.toFixed(0));text('srh03',d.storm.srh03.toFixed(0));text('scp',d.storm.scp.toFixed(1));text('stp',d.storm.stp.toFixed(1));text('cin',d.cin.toFixed(0));text('updraft',d.updraft.toFixed(1));text('downdraft',d.downdraft.toFixed(1));text('uh',d.updraftHelicity.toFixed(0));text('cloudTop',d.cloudTop.toFixed(1));text('thermalTop',d.thermalTop.toFixed(1));text('cloudWater',d.cloudWater.toFixed(2));text('coldPool',d.coldPool.toFixed(1));text('microburst',d.microburst.toFixed(1));text('clipped',String(d.clipped));text('rain',d.rain.toFixed(1));text('rainTotal',d.rainTotal.toFixed(1));text('lcl',d.lcl===null?'—':`${d.lcl.toFixed(1)} км`);text('lfc',d.lfc===null?'—':`${d.lfc.toFixed(1)} км`);text('el',d.el===null?'—':`${d.el.toFixed(1)} км`);text('cellType',d.cellType);text('cellReason',d.cellReason);text('logicText',d.logic);text('sun',`${d.insolation.toFixed(0)} Вт/м²`);text('sunElevation',d.sunElevation>0?`${d.sunElevation.toFixed(0)}° над горизонтом`:'ночь')
   text('surfaceReadout',({grass:'ТРАВА',dry:'СУХАЯ ПОЧВА',water:'ВОДА',urban:'ГОРОД'} as const)[config.surfaceType])
   const sec=Math.floor(sim.time);text('time',`${String(Math.floor(sec/60)).padStart(2,'0')}:${String(sec%60).padStart(2,'0')}`);text('freezing',d.freezing===null?'—':`${d.freezing.toFixed(1)} км`);if(frameCount++%20===0){drawSounding();drawHodograph()}requestAnimationFrame(frame)
 }

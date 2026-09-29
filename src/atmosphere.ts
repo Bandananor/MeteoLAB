@@ -10,7 +10,7 @@ import { SNAPSHOT_COLUMNS, SNAPSHOT_FIELDS, type Snapshot, type WorkerRequest } 
  * of every snapshot, so the view and the field slices read it exactly as they would read the live model.
  */
 export class Atmosphere implements ViewSettings {
-  field: FieldMode = 'composite'; showVectors = false; showPrecip = false; layerMode: LayerMode = 'both'; volumeThreshold = .1; volumeDensity = 1; sliceHeight = 2; sliceNorth = 0
+  field: FieldMode = 'composite'; showVectors = false; showPrecip = false; layerMode: LayerMode = 'both'; showRainTotal = false; volumeThreshold = .1; volumeDensity = 1; sliceHeight = 2; sliceNorth = 0
   private readonly mirror: AtmosphereModel; private readonly view: StormView; private readonly worker: Worker
   private readonly config: SimConfig; private sentConfig: string
   private latest: ModelDiagnostics
@@ -50,7 +50,7 @@ export class Atmosphere implements ViewSettings {
     const m = this.mirror, d = this.latest, text = describeConvection(d, m.sounding, m.rotation)
     return {
       ...m.sounding, ...text, indices: this.indices, storm: this.storm,
-      updraft: d.updraft, downdraft: d.downdraft, rain: d.rainRate, cloudTop: d.cloudTop, thermalTop: d.thermalTop,
+      updraft: d.updraft, downdraft: d.downdraft, rain: d.rainRate, rainTotal: d.rainTotal, cloudTop: d.cloudTop, thermalTop: d.thermalTop,
       cloudWater: d.maxCloud * 1000, coldPool: d.coldMax, microburst: d.microburst, clipped: d.clipped, updraftHelicity: m.rotation.uh,
       insolation: insolation(m.config, m.time), sunElevation: Math.asin(Math.max(-1, Math.min(1, sunDirection(m.config, m.time).y))) * 180 / Math.PI,
     }
