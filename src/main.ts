@@ -51,10 +51,14 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
       </div></details>
       <details><summary>Профиль ветра</summary><div class="group">
         ${slider('wind0','Ветер у земли',-20,30,1,2,' м/с')}
+        ${slider('wind05','Ветер на 0,5 км',-20,35,1,3,' м/с')}
+        ${slider('wind1','Ветер на 1 км',-20,40,1,5,' м/с')}
         ${slider('wind3','Ветер на 3 км',-10,45,1,10,' м/с')}
         ${slider('wind6','Ветер на 6 км',-10,60,1,20,' м/с')}
         ${slider('wind10','Ветер на 10 км',-10,75,1,28,' м/с')}
         ${slider('windDir0','Направление у земли',0,360,5,160,'°')}
+        ${slider('windDir05','Направление на 0,5 км',0,360,5,165,'°')}
+        ${slider('windDir1','Направление на 1 км',0,360,5,170,'°')}
         ${slider('windDir3','Направление на 3 км',0,360,5,185,'°')}
         ${slider('windDir6','Направление на 6 км',0,360,5,215,'°')}
         ${slider('windDir10','Направление на 10 км',0,360,5,235,'°')}
@@ -126,6 +130,14 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
   </main>`
 
 const config: SimConfig = { ...defaults }
+// Scenarios without the 0.5 and 1 km wind nodes get them on the straight 0-3 km line, so their hodograph is unchanged
+// and the sliders show where the nodes are.
+const fillLowWind = (c: SimConfig) => {
+  const along = (a: number, b: number, t: number) => a + (b - a) * t, turn = (a: number, b: number, t: number) => ((a + (((b - a + 540) % 360) - 180) * t) % 360 + 360) % 360
+  c.wind05 ??= along(c.wind0, c.wind3, 1 / 6); c.wind1 ??= along(c.wind0, c.wind3, 1 / 3)
+  c.windDir05 ??= turn(c.windDir0, c.windDir3, 1 / 6); c.windDir1 ??= turn(c.windDir0, c.windDir3, 1 / 3)
+}
+fillLowWind(config)
 // Every start, restart and scenario gets a fresh random seed, so no two runs give the same storm. The seed is not shown,
 // only kept in the address (?seed=...), so opening that link repeats the first run of the page.
 const urlSeed = Number(new URLSearchParams(location.search).get('seed'))
@@ -139,7 +151,7 @@ let running = true
 let last = performance.now(), frameCount = 0
 const recreate = () => { useSeed(nextSeed()); sim.dispose(); sim = Object.assign(new Atmosphere(canvas, config), view) }
 
-const resetKeys = new Set<keyof SimConfig>(['surfaceTemp','lapseLow','lapseMid','lapseUpper','tropopause','stratoWarming','rhSurface','rhLow','rhMid','rhUpper','wind0','wind3','wind6','wind10','windDir0','windDir3','windDir6','windDir10','latitude','bubble','surfaceType'])
+const resetKeys = new Set<keyof SimConfig>(['surfaceTemp','lapseLow','lapseMid','lapseUpper','tropopause','stratoWarming','rhSurface','rhLow','rhMid','rhUpper','wind0','wind05','wind1','wind3','wind6','wind10','windDir0','windDir05','windDir1','windDir3','windDir6','windDir10','latitude','bubble','surfaceType'])
 const surfaceSelect = document.querySelector<HTMLSelectElement>('#surfaceType')!
 const showOutput = (input: HTMLInputElement) => {
   document.querySelector<HTMLOutputElement>(`[data-output="${input.dataset.key}"]`)!.textContent = `${Number(input.value).toFixed(Number(input.dataset.digits))}${input.dataset.suffix}`
@@ -160,7 +172,8 @@ surfaceSelect.addEventListener('change', () => {
 })
 document.querySelectorAll<HTMLButtonElement>('[data-preset]').forEach(button => button.addEventListener('click', () => {
   const index = Number(button.dataset.preset)
-  Object.assign(config, defaults, { speed: config.speed }, presets[index].values)
+  Object.assign(config, defaults, { speed: config.speed, wind05: undefined, wind1: undefined, windDir05: undefined, windDir1: undefined }, presets[index].values)
+  fillLowWind(config)
   document.querySelectorAll<HTMLInputElement>('input[data-key]').forEach(input => {
     input.value = String(config[input.dataset.key as keyof SimConfig])
     showOutput(input)

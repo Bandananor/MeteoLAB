@@ -96,22 +96,27 @@ export class Environment {
   /** Vapour mixing ratio of air at height z with temperature t (°C) and pressure p: RH r_s, capped by the profile. */
   mixingRatio(z: number, t: number, p: number) { return Math.min(this.rhEnv(z) * this.qsatP(t, p), this.profile?.qvMax ?? Infinity) }
 
-  windScalar(z: number) {
-    const c = this.config
-    if (z < 3000) return lerp(c.wind0, c.wind3, z / 3000)
-    if (z < 6000) return lerp(c.wind3, c.wind6, (z - 3000) / 3000)
-    if (z < 10000) return lerp(c.wind6, c.wind10, (z - 6000) / 4000)
-    return c.wind10
+  /** Wind nodes (height m, speed m/s, direction °) of the slider profile; the 0.5 and 1 km nodes are optional. */
+  private windNodes(): [number, number, number][] {
+    const c = this.config, nodes: [number, number, number][] = [[0, c.wind0, c.windDir0]]
+    if (c.wind05 !== undefined && c.windDir05 !== undefined) nodes.push([500, c.wind05, c.windDir05])
+    if (c.wind1 !== undefined && c.windDir1 !== undefined) nodes.push([1000, c.wind1, c.windDir1])
+    nodes.push([3000, c.wind3, c.windDir3], [6000, c.wind6, c.windDir6], [10000, c.wind10, c.windDir10])
+    return nodes
   }
 
-  /** Direction the wind blows from, turning along the shorter arc between the nodes (350° to 10° passes north). */
-  windDirection(z: number) {
-    const c = this.config
-    if (z < 3000) return lerpAngle(c.windDir0, c.windDir3, z / 3000)
-    if (z < 6000) return lerpAngle(c.windDir3, c.windDir6, (z - 3000) / 3000)
-    if (z < 10000) return lerpAngle(c.windDir6, c.windDir10, (z - 6000) / 4000)
-    return mod(c.windDir10, 360)
+  // Linear in speed, shorter arc in direction, between consecutive nodes; constant above the top node.
+  private windAt(z: number, component: 1 | 2) {
+    const nodes = this.windNodes(), interpolate = component === 1 ? lerp : lerpAngle
+    for (let k = 1; k < nodes.length; k++) if (z < nodes[k][0]) { const a = nodes[k - 1], b = nodes[k]; return interpolate(a[component], b[component], (z - a[0]) / (b[0] - a[0])) }
+    const top = nodes[nodes.length - 1][component]
+    return component === 1 ? top : mod(top, 360)
   }
+
+  windScalar(z: number) { return this.windAt(z, 1) }
+
+  /** Direction the wind blows from, turning along the shorter arc between the nodes (350° to 10° passes north). */
+  windDirection(z: number) { return this.windAt(z, 2) }
 
   /** Wind components (u eastward, v northward) from the meteorological speed/direction profile. */
   windUV(z: number) {
