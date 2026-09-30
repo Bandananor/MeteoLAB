@@ -26,7 +26,7 @@ export const SCENARIOS: Scenario[] = [
     values: { ...SUMMER_AIR, ...LIGHT_WIND } },
   { name: 'Мощная гроза', mesocyclone: false,
     hint: 'Жарко и влажно, ветра почти нет: большая CAPE при слабом сдвиге. Пульсирующая гроза — мощный поток, ливень и сильный отток, но без вращения',
-    values: { ...SUMMER_AIR, surfaceTemp: 29, rhSurface: 58, rhLow: 55, rhMid: 55, rhUpper: 35, capStrength: .5, wind0: 2, wind3: 4, wind6: 6, wind10: 10, windDir0: 200, windDir3: 230, windDir6: 250, windDir10: 260 } },
+    values: { ...SUMMER_AIR, surfaceTemp: 28.5, rhSurface: 58, rhLow: 55, rhMid: 55, rhUpper: 35, capStrength: .5, wind0: 2, wind3: 4, wind6: 6, wind10: 10, windDir0: 200, windDir3: 230, windDir6: 250, windDir10: 260 } },
   { name: 'Сухой воздух', mesocyclone: false,
     hint: 'Умеренная CAPE и очень сухой средний слой (15 %). Сухой воздух, вовлекаясь в облако, испаряет капли: дождя на треть меньше, чем при влажной середине. Сам поток почти не слабеет — широкий термик (~8 км) на сетке ~1 км вовлекает мало; тонкие струи, которые в природе душит сухой воздух, сетка не разрешает',
     values: { ...SUMMER_AIR, ...LIGHT_WIND, surfaceTemp: 25.5, rhLow: 35, rhMid: 15, rhUpper: 10 } },

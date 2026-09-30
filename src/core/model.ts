@@ -228,10 +228,10 @@ export class AtmosphereModel {
    */
   transport: 'semi-lagrangian' | 'weno' = 'weno'
   /**
-   * Microphysics: Kessler warm rain (default) or with ice: cloud ice and snow (src/core/ice.ts) and graupel
-   * (src/core/graupel.ts), Lin et al. (1983). Optional until the scenarios are re-checked with it.
+   * Microphysics: with ice (default since 2026-09-29): cloud ice and snow (src/core/ice.ts) and graupel
+   * (src/core/graupel.ts), Lin et al. (1983); or Kessler warm rain only (cheaper, no anvil, no heat of fusion).
    */
-  microphysics: 'warm' | 'ice' = 'warm'
+  microphysics: 'warm' | 'ice' = 'ice'
   private flux: FluxTransport | null = null
   private turbulence: Turbulence | null = null
 
@@ -322,7 +322,10 @@ export class AtmosphereModel {
     }
     // Smagorinsky-Lilly subgrid mixing of momentum, heat and water (replaces the old horizontal smoothing of theta and q).
     const turb = this.turbulence ??= new Turbulence(this.grid, e.rho)
-    turb.viscosity(u, v, w, theta, e.theta, SMAGORINSKY * cfg.turbulence / .55, dt)
+    // Saturated stability inside clouds (cloud water plus ice): see Turbulence.viscosity.
+    if (withIce) for (let k = 0; k < ice.length; k++) this.scratch[k] = cloud[k] + ice[k]
+    const moist = { q, condensate: withIce ? this.scratch : cloud, exner: e.exner }
+    turb.viscosity(u, v, w, theta, e.theta, SMAGORINSKY * cfg.turbulence / .55, dt, moist)
     turb.mix(u, e.u, 1, dt); turb.mix(v, e.v, 1, dt); turb.mix(w, null, 1, dt)
     turb.mix(theta, e.theta, 3, dt); turb.mix(q, e.q, 3, dt); turb.mix(cloud, null, 3, dt); if (withIce) turb.mix(ice, null, 3, dt)
     // Surface drag on the ground node, which owns half a layer: dV/dt = -C_D (|V| V - |V_env| V_env) / (dz / 2). The

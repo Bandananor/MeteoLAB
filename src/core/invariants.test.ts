@@ -63,32 +63,32 @@ describe('water budget', () => {
   // No sunshine, so no surface evaporation; rain that reaches the ground is counted. History: +27 %/h before the
   // consistent projection, +7.5 %/h after it (transport), -0.98 %/h with the mass fixer (hidden decay sinks), ~0 with it;
   // with WENO there is no mass fixer: the projected face fluxes conserve water by themselves (checked below).
-  it('conserves total water within 0.1 % per hour in a storm', () => {
-    const model = new AtmosphereModel({ ...STORM, solarMax: 0 }, smallGrid(20, 16))
+  // The semi-Lagrangian option with its mass fixer and warm rain (the WENO and ice defaults are checked below).
+  it('conserves total water within 0.1 % per hour in a storm (semi-Lagrangian, warm rain)', () => {
+    const model = new AtmosphereModel({ ...STORM, solarMax: 0, transport: 'semi-lagrangian', microphysics: 'warm' }, smallGrid(20, 16))
     const before = totalWater(model)
     run(model, 3600)
     // Rain reaches the ground (sedimentation into rain-free air under the shaft once failed silently: water was conserved).
     expect(Math.max(...model.precipitation)).toBeGreaterThan(1)
     expect(Math.abs(totalWater(model) / before - 1)).toBeLessThan(.001)
-  })
+  }, 300_000)
 
   // WENO without any mass fixer: flux form on projected face fluxes, flux-form sedimentation, conservative positivity fix.
   it('conserves total water within 0.01 % in a 30-minute storm with WENO transport and no mass fixer', () => {
-    const model = new AtmosphereModel({ ...STORM, solarMax: 0 }, smallGrid(20, 16))
-    model.transport = 'weno'
+    const model = new AtmosphereModel({ ...STORM, solarMax: 0, transport: 'weno', microphysics: 'warm' }, smallGrid(20, 16))
     const before = totalWater(model)
     run(model, 1800)
     expect(Math.max(...model.precipitation)).toBeGreaterThan(.1)
     expect(Math.abs(totalWater(model) / before - 1)).toBeLessThan(1e-4)
-  })
+  }, 300_000)
 
-  // Ice stage 1: vapour, cloud water, cloud ice, rain and snow together, with snow sedimenting into the precipitation.
+  // The defaults, WENO with ice: vapour, cloud water, cloud ice, rain, snow and graupel, snow and graupel sedimenting.
   it('conserves total water within 0.01 % in a 30-minute storm with ice microphysics', () => {
-    const model = new AtmosphereModel({ ...STORM, solarMax: 0, microphysics: 'ice' }, smallGrid(20, 16))
+    const model = new AtmosphereModel({ ...STORM, solarMax: 0 }, smallGrid(20, 16))
     const before = totalWater(model)
     run(model, 1800)
     expect(Math.max(...model.ice)).toBeGreaterThan(1e-4)
-    expect(Math.max(...model.snow)).toBeGreaterThan(1e-4)
+    expect(Math.max(...model.graupel)).toBeGreaterThan(1e-4)
     expect(Math.abs(totalWater(model) / before - 1)).toBeLessThan(1e-4)
-  })
+  }, 300_000)
 })

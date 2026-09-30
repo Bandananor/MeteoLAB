@@ -75,7 +75,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
       </div></details>
       <details><summary>Расчёт</summary><div class="group">
         <label title="Точный перенос (WENO 5-го порядка, по умолчанию) почти не размывает восходящие потоки и сам сохраняет массу воды. Быстрый (полулагранжев) примерно вдвое дешевле, но размывает потоки: в сильном сдвиге термик не стартует">Перенос<select id="transport"><option value="weno">Точный (WENO5)</option><option value="semi-lagrangian">Быстрый (полулагранжев)</option></select></label>
-        <label title="Со льдом: облачный лёд, снег и крупа (Lin et al. 1983) — наковальня из кристаллов, теплота замерзания, таяние. Пока экспериментально: сценарии откалиброваны на тёплом дожде">Микрофизика<select id="microphysics"><option value="warm">Тёплый дождь (Кесслер)</option><option value="ice">Со льдом — лёд, снег, крупа (эксперимент)</option></select></label>
+        <label title="Со льдом (по умолчанию): облачный лёд, снег и крупа (Lin et al. 1983) — наковальня из кристаллов, теплота замерзания, таяние крупы в дождь. Тёплый дождь (Кесслер) — только капли: дешевле, но без наковальни и теплоты замерзания">Микрофизика<select id="microphysics"><option value="ice">Со льдом — лёд, снег, крупа</option><option value="warm">Тёплый дождь (Кесслер)</option></select></label>
         ${slider('speed','Ускорение времени',1,30,1,8,'×')}
         ${slider('bubble','Сила начального термика (0 — без термика)',0,2.5,.05,1,'×',2)}
       </div></details>
@@ -201,7 +201,7 @@ function syncControls() {
   })
   surfaceSelect.value = config.surfaceType
   transportSelect.value = config.transport ?? 'weno'
-  microSelect.value = config.microphysics ?? 'warm'
+  microSelect.value = config.microphysics ?? 'ice'
   markProfileGroups()
 }
 syncControls()
