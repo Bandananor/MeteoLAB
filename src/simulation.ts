@@ -6,6 +6,11 @@ export const SNAPSHOT_FIELDS = ['u', 'v', 'w', 'theta', 'q', 'cloud', 'rain', 'c
 export const SNAPSHOT_COLUMNS = ['uhColumn', 'precipitation'] as const
 /** Most model steps run for one batch; time beyond that is dropped instead of piling up after slow frames. */
 export const MAX_STEPS_PER_BATCH = 12
+/**
+ * A batch also stops once it has computed this long (ms), so a snapshot goes out ~15 times a second even when a step
+ * is slow: the model then runs slower than the speed setting instead of freezing between large jumps.
+ */
+export const BATCH_BUDGET_MS = 60
 
 export type WorkerRequest =
   | { type: 'init'; config: SimConfig }

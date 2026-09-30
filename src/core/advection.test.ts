@@ -45,6 +45,25 @@ describe('WENO5 flux-form transport', () => {
     expect(Math.abs(mass(blob) / before - 1)).toBeLessThan(1e-6)
   })
 
+  it('skips the empty rows without changing the result', () => {
+    // A compact blob with exact zeros around it (the empty rows are skipped) against the same blob on a 1e-30 floor
+    // (every row is computed): the results must agree.
+    const grid = createGrid({ nx: 16, ny: 12, nz: 10, width: 16000, depth: 12000, height: 9000 }), rho = Array.from({ length: 10 }, (_, z) => 1.2 - .07 * z)
+    const t = new FluxTransport(grid, rho), random = () => new Float32Array(grid.n).map(() => 20 * (Math.random() - .5))
+    const w = random(); for (let i = 0; i < grid.layer; i++) w[i] = w[grid.n - 1 - i] = 0
+    t.setVelocity(random(), random(), w)
+    const blob = (floor: number) => new Float32Array(grid.n).map((_, i) => {
+      const x = i % 16, y = Math.floor(i / 16) % 12, z = Math.floor(i / 192)
+      return Math.abs(x - 4) <= 1 && Math.abs(y - 3) <= 1 && Math.abs(z - 4) <= 1 ? 1e-3 : floor
+    })
+    const sparse = blob(0), dense = blob(1e-30)
+    for (let s = 0; s < 3; s++) { t.advect(sparse, 5); t.advect(dense, 5) }
+    let worst = 0
+    for (let i = 0; i < grid.n; i++) worst = Math.max(worst, Math.abs(sparse[i] - dense[i]))
+    // (WENO's tiny tails fill the small box within these steps; in the model the positivity fix clears them each step.)
+    expect(worst).toBeLessThan(1e-12)
+  })
+
   it('carries a 3-node blob once around the domain keeping most of its peak', () => {
     const { grid, t } = setup(40), q = new Float32Array(grid.n).map((_, i) => Math.exp(-((((i % 40) - 20) / 3) ** 2)))
     // 40 km at 10 m/s = 4000 steps of the model's 1 s: WENO keeps 0.91 of the peak, trilinear semi-Lagrangian 0.32.

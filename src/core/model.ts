@@ -18,6 +18,8 @@ import { computeSounding, type Sounding } from './sounding'
 // tilt the environmental vorticity into vortex pairs of both signs with UH up to ~380 cyclonic and ~320 anticyclonic;
 // supercells hold 700-1900 with the anticyclonic maximum several times weaker (3-km NWP uses ~75).
 export const UH_ROTATING = 200, UH_MESOCYCLONE = 400, MESO_PERSISTENCE = 600
+/** Condensate below this mixing ratio (kg/kg, 1e-7 g/kg) is set to zero by the WENO positivity fix, conservatively. */
+const TINY_WATER = 1e-10
 /** Safety limits of the horizontal and vertical velocity, m/s (see AtmosphereModel.clipped). */
 export const U_LIMIT = 120, W_LIMIT = 100
 /** A mesocyclone must also outweigh the strongest anticyclonic rotation by this factor (a vortex pair is not one). */
@@ -88,11 +90,15 @@ export class AtmosphereModel {
     this.solver = new PressureSolver(grid, this.env.rho)
     this.pressure = new Float64Array(this.solver.cells); this.divergence = new Float64Array(this.solver.cells); this.scratch = f()
     this.surfacePattern = new Float32Array(grid.layer); this.uhColumn = new Float32Array(grid.layer); this.precipitation = new Float32Array(grid.layer); this.fallSpeed = f()
-    this.levelWeight = Float64Array.from({ length: grid.nz }, (_, z) => (z === 0 || z === grid.nz - 1 ? .5 : 1) * this.env.rho[z])
+    // Mass of each level per unit area and per metre of mean spacing: rho0 times the control-volume height over dz.
+    this.levelWeight = Float64Array.from({ length: grid.nz }, (_, z) => grid.hz[z] / grid.dz * this.env.rho[z])
     this.backtraceCorner = new Int32Array(grid.n * 8); this.backtraceWeight = new Float64Array(grid.n * 3)
-    this.uhLevels = [Math.ceil(2000 / grid.dz), Math.floor(5000 / grid.dz)]
-    // exp(-z / 300 m) per unit volume over the two lowest levels (the ground node owns half a layer), normalised.
-    const shape = [0, 1].map(z => Math.exp(-z * grid.dz / 300)), thick = [grid.dz / 2, grid.dz], total = shape[0] * thick[0] + shape[1] * thick[1]
+    // UH over 2-5 km: the first level at or above 2 km to the last at or below 5 km.
+    this.uhLevels = [grid.zs.findIndex(z => z >= 2000), grid.zs.findLastIndex(z => z <= 5000)]
+    // exp(-z / 300 m) per unit volume over the levels below 1 km (the two lowest on the uniform grid), each weighted by
+    // the height of its control volume, normalised.
+    const low = Math.max(2, grid.zs.findIndex(z => z >= 1000)), shape = Array.from({ length: low }, (_, z) => Math.exp(-grid.zs[z] / 300))
+    const total = shape.reduce((sum, s, z) => sum + s * grid.hz[z], 0)
     this.surfaceShare = Float64Array.from(shape, s => s / total)
     this.rng = mulberry32(config.seed)
     this.initialize()
@@ -100,11 +106,11 @@ export class AtmosphereModel {
   }
 
   private initialize() {
-    const { nx, ny, nz, dz, width: W, depth: D } = this.grid
+    const { nx, ny, nz, zs, width: W, depth: D } = this.grid
     let walk = 0
     for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++) { walk = walk * .82 + (this.rng() - .5) * .34; this.surfacePattern[x + nx * y] = walk }
     for (let z = 0, i = 0; z < nz; z++) for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++, i++) {
-      const alt = z * dz, [ue, ve] = this.env.windUV(alt)
+      const alt = zs[z], [ue, ve] = this.env.windUV(alt)
       this.u[i] = ue; this.v[i] = ve; this.w[i] = 0
       this.theta[i] = this.env.thetaEnv(alt) + (this.rng() - .5) * .018; this.q[i] = this.env.qEnv(alt)
       this.cloud[i] = this.rain[i] = this.cold[i] = this.ice[i] = this.snow[i] = this.graupel[i] = 0
@@ -120,11 +126,11 @@ export class AtmosphereModel {
    * larger CAPE than the environment it is meant to probe.
    */
   injectBubble(cx: number, cy: number, strength: number) {
-    const { nx, ny, nz, dx, dy, dz, width: W, depth: D } = this.grid
+    const { nx, ny, nz, dx, dy, zs, width: W, depth: D } = this.grid
     for (let z = 0; z < Math.min(5, nz); z++) for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++) {
       let ddx = x * dx - cx, ddy = y * dy - cy
       if (ddx > W / 2) ddx -= W; if (ddx < -W / 2) ddx += W; if (ddy > D / 2) ddy -= D; if (ddy < -D / 2) ddy += D
-      const d2 = (ddx / 4200) ** 2 + (ddy / 4200) ** 2 + (z * dz / 1800) ** 2, a = Math.exp(-d2) * strength, i = x + nx * (y + ny * z)
+      const d2 = (ddx / 4200) ** 2 + (ddy / 4200) ** 2 + (zs[z] / 1800) ** 2, a = Math.exp(-d2) * strength, i = x + nx * (y + ny * z)
       this.theta[i] += 3.2 * a; this.w[i] += 1.1 * a
     }
   }
@@ -179,16 +185,20 @@ export class AtmosphereModel {
   }
 
   /**
-   * Removes the small negative values WENO leaves behind (it is not positivity-preserving) without changing the total:
-   * negatives are set to zero and the same mass is taken from the positive values in proportion to them.
+   * Removes the small negative values WENO leaves behind (it is not positivity-preserving) and the tiny tails it spreads
+   * (below TINY_WATER), without changing the total: they are set to zero and their net mass is given to or taken from
+   * the remaining values in proportion to them. Exact zeros let the transport skip the empty air (see weno).
    */
   private fillNegative(a: Float32Array) {
     const { nz, layer } = this.grid, lw = this.levelWeight
-    let negative = 0, positive = 0
-    for (let z = 0, i = 0; z < nz; z++) { const wz = lw[z]; for (let e = i + layer; i < e; i++) { if (a[i] < 0) negative -= wz * a[i]; else positive += wz * a[i] } }
-    if (negative === 0) return
-    const keep = positive > negative ? 1 - negative / positive : 0
-    for (let i = 0; i < a.length; i++) a[i] = a[i] < 0 ? 0 : a[i] * keep
+    let removed = 0, kept = 0, negative = 0
+    for (let z = 0, i = 0; z < nz; z++) {
+      const wz = lw[z]
+      for (let e = i + layer; i < e; i++) { const x = a[i]; if (x < TINY_WATER) { if (x !== 0) { removed += wz * x; if (x < 0) negative -= wz * x } } else kept += wz * x }
+    }
+    if (removed === 0 && negative === 0) return
+    const scale = kept > 0 ? Math.max(0, 1 + removed / kept) : 0
+    for (let i = 0; i < a.length; i++) a[i] = a[i] < TINY_WATER ? 0 : a[i] * scale
     this.negativeFilled += negative
   }
 
@@ -228,10 +238,10 @@ export class AtmosphereModel {
    */
   transport: 'semi-lagrangian' | 'weno' = 'weno'
   /**
-   * Microphysics: Kessler warm rain (default) or with ice: cloud ice and snow (src/core/ice.ts) and graupel
-   * (src/core/graupel.ts), Lin et al. (1983). Optional until the scenarios are re-checked with it.
+   * Microphysics: with ice (default since 2026-09-29): cloud ice and snow (src/core/ice.ts) and graupel
+   * (src/core/graupel.ts), Lin et al. (1983); or Kessler warm rain only (cheaper, no anvil, no heat of fusion).
    */
-  microphysics: 'warm' | 'ice' = 'warm'
+  microphysics: 'warm' | 'ice' = 'ice'
   private flux: FluxTransport | null = null
   private turbulence: Turbulence | null = null
 
@@ -244,7 +254,7 @@ export class AtmosphereModel {
   }
 
   step(dt: number) {
-    const { nx, ny, nz, dz, height: H, layer, xp: XP, xm: XM, yp: YP, ym: YM } = this.grid
+    const { nx, ny, nz, zs, hz, height: H, layer, xp: XP, xm: XM, yp: YP, ym: YM } = this.grid
     this.microburstOutflow *= .993
     // Water is transported conservatively (WENO: by the flux form; semi-Lagrangian: by the mass fixer). Only the
     // cold-pool indicator decays: it belongs to the cold-pool parameterisation and goes away with it.
@@ -285,7 +295,7 @@ export class AtmosphereModel {
     const flux = surfaceFluxes(cfg, this.time), lfcZ = (this.sounding.lfc ?? 1.5) * 1000, f = 2 * OMEGA * Math.sin(cfg.latitude * Math.PI / 180)
     const spongeStart = Math.max(cfg.tropopause * 1000 + 2500, 14_000), liftTop = Math.min(3200, lfcZ)
     for (let z = 0, i = 0; z < nz; z++) {
-      const alt = z * dz, p = e.p[z], rhoZ = e.rho[z], exner = e.exner[z], thEnv = e.theta[z], qEnv = e.q[z], thvEnv = thEnv * (1 + .61 * qEnv), ue = e.u[z], ve = e.v[z], l = z * layer
+      const alt = zs[z], p = e.p[z], rhoZ = e.rho[z], exner = e.exner[z], thEnv = e.theta[z], qEnv = e.q[z], thvEnv = thEnv * (1 + .61 * qEnv), ue = e.u[z], ve = e.v[z], l = z * layer
       for (let y = 0; y < ny; y++) {
         const row = y * nx, yp = YP[y], ym = YM[y]
         for (let x = 0; x < nx; x++, i++) {
@@ -315,21 +325,25 @@ export class AtmosphereModel {
           if (z < this.surfaceShare.length) { const pattern = 1 + this.surfacePattern[x + row] * .32, per = pattern * this.surfaceShare[z] * dt / rhoZ; theta[i] += flux.sensible * per / (CP * exner); q[i] += flux.latent * per / LV }
           if (alt < liftTop) { const gx = cold[xp + row] - cold[xm + row], gy = cold[x + yp] - cold[x + ym], edge = Math.hypot(gx, gy), core = cold[x + row]; w[i] += G * edge / 300 * .45 * Math.max(.12, 1 - alt / Math.max(300, lfcZ)) * dt; if (alt < 1300 && core > 1) w[i] -= G * core / 300 * .52 * Math.exp(-alt / 520) * dt }
           if (z <= 1 && w[i] < -5 && rain[i] > .0001) { const impact = Math.min(38, -w[i] * Math.sqrt(rain[i] / .00055)), dpx = (-w[xp + row + l] + w[xm + row + l]) * .5, dpy = (-w[x + yp + l] + w[x + ym + l]) * .5; u[i] -= dpx * .12 * dt; v[i] -= dpy * .12 * dt; cold[i] += impact * .0012 * dt; this.microburstOutflow = Math.max(this.microburstOutflow, impact) }
-          cold[i] = clamp(cold[i], 0, 15)
+          // Below 0.001 K the indicator is noise from the transport tails: zero, so the transport can skip it.
+          cold[i] = cold[i] < 1e-3 ? 0 : Math.min(cold[i], 15)
           if (alt > spongeStart) { const s = clamp((alt - spongeStart) / (H - spongeStart)) * .06 * dt; w[i] *= 1 - s; u[i] = lerp(u[i], ue, s); v[i] = lerp(v[i], ve, s); theta[i] = lerp(theta[i], thEnv, s) }
         }
       }
     }
     // Smagorinsky-Lilly subgrid mixing of momentum, heat and water (replaces the old horizontal smoothing of theta and q).
     const turb = this.turbulence ??= new Turbulence(this.grid, e.rho)
-    turb.viscosity(u, v, w, theta, e.theta, SMAGORINSKY * cfg.turbulence / .55, dt)
+    // Saturated stability inside clouds (cloud water plus ice): see Turbulence.viscosity.
+    if (withIce) for (let k = 0; k < ice.length; k++) this.scratch[k] = cloud[k] + ice[k]
+    const moist = { q, condensate: withIce ? this.scratch : cloud, exner: e.exner }
+    turb.viscosity(u, v, w, theta, e.theta, SMAGORINSKY * cfg.turbulence / .55, dt, moist)
     turb.mix(u, e.u, 1, dt); turb.mix(v, e.v, 1, dt); turb.mix(w, null, 1, dt)
     turb.mix(theta, e.theta, 3, dt); turb.mix(q, e.q, 3, dt); turb.mix(cloud, null, 3, dt); if (withIce) turb.mix(ice, null, 3, dt)
-    // Surface drag on the ground node, which owns half a layer: dV/dt = -C_D (|V| V - |V_env| V_env) / (dz / 2). The
+    // Surface drag on the ground node, which owns half a layer: dV/dt = -C_D (|V| V - |V_env| V_env) / h_0. The
     // environment's own drag is taken as balanced by the large-scale flow that maintains the profile, so the background
     // stays steady (was: u, v *= 0.94 every step, which stopped the ground wind in ~16 s). Applied with the rigid
     // ground/top before the projection, so the transport velocity is D-free.
-    const drag = dragCoefficient(cfg, dz) * dt / (dz / 2), ue0 = e.u[0], ve0 = e.v[0], envSpeed = Math.hypot(ue0, ve0)
+    const drag = dragCoefficient(cfg, 2 * hz[0]) * dt / hz[0], ue0 = e.u[0], ve0 = e.v[0], envSpeed = Math.hypot(ue0, ve0)
     for (let b = 0; b < layer; b++) {
       const speed = Math.hypot(u[b], v[b])
       u[b] -= drag * (speed * u[b] - envSpeed * ue0); v[b] -= drag * (speed * v[b] - envSpeed * ve0)
@@ -361,15 +375,15 @@ export class AtmosphereModel {
   }
 
   private updateRotation(dt: number) {
-    const { nx, ny, dz, layer } = this.grid, [z0, z1] = this.uhLevels, r = this.rotation, col = this.uhColumn
-    // Low layers on the coarse grid: 0-1 km is the single level at ~650 m (w = 0 on the ground), 0-3 km four levels.
-    const top1 = Math.floor(1000 / dz), top3 = Math.floor(3000 / dz)
+    const { nx, ny, hz, zs, layer } = this.grid, [z0, z1] = this.uhLevels, r = this.rotation, col = this.uhColumn
+    // Low layers: the levels up to 1 and 3 km (on the uniform ~650 m grid: one level at ~650 m, w = 0 on the ground; four).
+    const top1 = zs.findLastIndex(z => z <= 1000), top3 = zs.findLastIndex(z => z <= 3000)
     let max = 0, min = 0, bx = 0, by = 0, max01 = 0, max03 = 0
     for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++) {
       let uh = 0, low = 0
-      for (let z = 1; z <= top3; z++) { low += this.w[x + nx * y + z * layer] * this.zeta(x, y, z) * dz; if (z === top1) max01 = Math.max(max01, low) }
+      for (let z = 1; z <= top3; z++) { low += this.w[x + nx * y + z * layer] * this.zeta(x, y, z) * hz[z]; if (z === top1) max01 = Math.max(max01, low) }
       max03 = Math.max(max03, low)
-      for (let z = z0; z <= z1; z++) uh += this.w[x + nx * y + z * layer] * this.zeta(x, y, z) * dz
+      for (let z = z0; z <= z1; z++) uh += this.w[x + nx * y + z * layer] * this.zeta(x, y, z) * hz[z]
       col[x + nx * y] = uh
       if (uh > max) { max = uh; bx = x; by = y }
       min = Math.min(min, uh)
@@ -397,10 +411,10 @@ export class AtmosphereModel {
   }
 
   diagnostics(): ModelDiagnostics {
-    const { nx, ny, nz, dz } = this.grid
+    const { nx, ny, nz, zs } = this.grid
     let up = 0, down = 0, rainRate = 0, top = 0, coldMax = 0, thermalTop = 0, maxCloud = 0
     for (let z = 0, i = 0; z < nz; z++) for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++, i++) {
-      const alt = z * dz
+      const alt = zs[z]
       up = Math.max(up, this.w[i]); down = Math.max(down, -this.w[i]); maxCloud = Math.max(maxCloud, this.cloud[i] + this.ice[i])
       if (this.cloud[i] + this.ice[i] > .00007) top = Math.max(top, alt / 1000)
       if (this.w[i] > .6) thermalTop = Math.max(thermalTop, alt / 1000)

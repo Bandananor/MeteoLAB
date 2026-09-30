@@ -52,7 +52,8 @@ export function saturationAdjustMixed(theta: Float32Array, q: Float32Array, clou
     let d = (q[i] - qs) / (1 + l * l * qs / (CP * RV * tk * tk))
     const condensate = cloud[i] + ice[i]
     if (d < 0) d = Math.max(d, -condensate)
-    if (d === 0) continue
+    // Nothing to condense or evaporate (clear, subsaturated air): the partition above already settled the condensate.
+    if (d === 0) break
     if (d > 0) { cloud[i] += d; theta[i] += LV / (CP * exner) * d }
     else {
       const fromIce = condensate > 0 ? d * ice[i] / condensate : 0, fromCloud = d - fromIce

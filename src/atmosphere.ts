@@ -14,6 +14,12 @@ export class Atmosphere implements ViewSettings {
   private readonly mirror: AtmosphereModel; private readonly view: StormView; private readonly worker: Worker
   private readonly config: SimConfig; private sentConfig: string
   private latest: ModelDiagnostics
+  /**
+   * One advance request in flight at a time: while the worker computes a batch, the elapsed real time only accumulates
+   * here. Before this, a request went out every frame and queued up behind a slow batch; the view froze, then the
+   * worker ran the whole queue and the model time jumped minutes ahead (seen with ice, as the anvil grew).
+   */
+  private inFlight = false; private waiting = 0
   /** Standard parcel indices of the environment (it does not change during a run). */
   private readonly indices: ParcelIndices
   /** Bunkers motion, SRH, SCP and STP of the environment. */
@@ -37,7 +43,11 @@ export class Atmosphere implements ViewSettings {
   advance(realDt: number) {
     const current = JSON.stringify(this.config)
     if (current !== this.sentConfig) { this.sentConfig = current; Object.assign(this.mirror.config, this.config); this.post({ type: 'config', config: { ...this.config } }) }
-    this.post({ type: 'advance', seconds: realDt })
+    this.waiting += realDt
+    if (this.inFlight) return
+    this.inFlight = true
+    this.post({ type: 'advance', seconds: this.waiting })
+    this.waiting = 0
   }
   render() { this.view.render() }
   dispose() { this.worker.terminate(); this.view.dispose() }
@@ -65,6 +75,7 @@ export class Atmosphere implements ViewSettings {
     for (const key of SNAPSHOT_COLUMNS) { m[key].set(data.subarray(offset, offset + layer)); offset += layer }
     m.time = s.time; m.microburstOutflow = s.microburstOutflow; Object.assign(m.rotation, s.rotation); this.latest = s.diagnostics
     this.post({ type: 'release', buffer: s.buffer }, [s.buffer])
+    this.inFlight = false
     this.view.afterAdvance(s.steps)
   }
 }

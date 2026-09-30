@@ -41,10 +41,10 @@ export function levelMean(model: AtmosphereModel, field: Float32Array, z: number
  * mixing ratios weighted by the base-state density, which the anelastic flow conserves.
  */
 export function totalWater(model: AtmosphereModel) {
-  const { nz, dz, layer } = model.grid, rho = model.env.rho
+  const { nz, layer } = model.grid, rho = model.env.rho
   let total = 0
   for (let z = 0; z < nz; z++) {
-    const weight = (z === 0 || z === nz - 1 ? dz / 2 : dz) * rho[z]
+    const weight = model.grid.hz[z] * rho[z]
     let level = 0
     for (let i = z * layer; i < (z + 1) * layer; i++) level += model.q[i] + model.cloud[i] + model.ice[i] + model.rain[i] + model.snow[i] + model.graupel[i]
     total += weight * level / layer

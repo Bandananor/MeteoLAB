@@ -27,6 +27,8 @@ export class PressureSolver {
 
   constructor(grid: Grid, density?: ArrayLike<number>) {
     const { nx, ny, nz, dx, dy, dz } = grid
+    // The stretched vertical grid is being built in stages; this operator is still derived for equal spacings.
+    if (!grid.uniform) throw new Error('PressureSolver: stretched vertical grids are not supported yet')
     this.grid = grid
     this.rho = density ? Float64Array.from(density) : new Float64Array(nz).fill(1)
     if (this.rho.length !== nz) throw new Error(`density needs ${nz} levels, got ${this.rho.length}`)

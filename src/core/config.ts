@@ -14,7 +14,7 @@ export interface SimConfig {
   capHeight?: number; capStrength?: number
   /** Optional depth of a well-mixed moist boundary layer, km: the surface mixing ratio holds up to it (0 or absent = off). */
   moistLayer?: number
-  /** Microphysics; overrides AtmosphereModel.microphysics (default warm rain) when set (the UI switch). */
+  /** Microphysics; overrides AtmosphereModel.microphysics (default with ice) when set (the UI switch). */
   microphysics?: 'warm' | 'ice'
   /** Transport scheme; overrides AtmosphereModel.transport (default WENO) when set (the UI switch). */
   transport?: 'semi-lagrangian' | 'weno'

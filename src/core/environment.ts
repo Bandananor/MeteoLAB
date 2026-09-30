@@ -38,7 +38,7 @@ export class Environment {
     const f = () => new Float64Array(grid.nz)
     this.p = f(); this.exner = f(); this.theta = f(); this.q = f(); this.u = f(); this.v = f(); this.rho = f()
     for (let z = 0; z < grid.nz; z++) {
-      const alt = z * grid.dz, [u, v] = this.windUV(alt)
+      const alt = grid.zs[z], [u, v] = this.windUV(alt)
       this.p[z] = this.pressureAt(alt); this.exner[z] = (this.p[z] / 100000) ** KAPPA
       this.theta[z] = this.thetaEnv(alt); this.q[z] = this.qEnv(alt); this.u[z] = u; this.v[z] = v
       this.rho[z] = this.p[z] / (RD * this.theta[z] * this.exner[z] * (1 + .61 * this.q[z]))
