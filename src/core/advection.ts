@@ -30,14 +30,14 @@ export class FluxTransport {
   private readonly rowNonzero: Uint8Array; private readonly rowActive: Uint8Array
 
   constructor(grid: Grid, rho: ArrayLike<number>) {
-    const { n, nx, ny, nz, dz } = grid
+    const { n, nx, ny, nz } = grid
     this.grid = grid; this.rho = Float64Array.from(rho)
     const f = () => new Float64Array(n)
     this.mx = f(); this.my = f(); this.mz = f(); this.div = f(); this.fx = f(); this.fy = f(); this.fz = f(); this.tend = f()
     this.start = new Float32Array(n)
     this.xo = [-2, -1, 0, 1, 2, 3].map(o => Int32Array.from({ length: nx }, (_, x) => (x + o + 2 * nx) % nx))
     this.yo = [-2, -1, 0, 1, 2, 3].map(o => Int32Array.from({ length: ny }, (_, y) => ((y + o + 2 * ny) % ny) * nx))
-    this.h = Float64Array.from({ length: nz }, (_, z) => z === 0 || z === nz - 1 ? dz / 2 : dz)
+    this.h = grid.hz
     this.dft = new HorizontalDFT(nx, ny, nz); this.phi = f()
     this.cp = new Float64Array(nz); this.dRe = new Float64Array(nz); this.dIm = new Float64Array(nz)
     // -lambda is the symbol of the periodic second difference in x plus y (exactly 0 for the uniform mode).
@@ -77,16 +77,17 @@ export class FluxTransport {
   /**
    * Solves L phi = div on the node control volumes and subtracts rho0 grad(phi) from the face fluxes (none through the
    * ground and top). Per horizontal mode, multiplied by h_k: -rho_k h_k lambda phi_k + [rho_(k+1/2) (phi_(k+1) - phi_k)
-   * - rho_(k-1/2) (phi_k - phi_(k-1))] / dz = h_k div_k, a tridiagonal system; the uniform mode is pinned at the ground.
+   * - rho_(k-1/2) (phi_k - phi_(k-1))] / dz_(k-1/2)] = h_k div_k (spacings between the levels, stretched or not), a
+   * tridiagonal system; the uniform mode is pinned at the ground.
    */
   private projectFaces() {
-    const { nx, ny, nz, dx, dy, dz, layer } = this.grid, { mx, my, mz, div, xo, yo, h, rho, phi, dft, cp, dRe, dIm, lambda } = this
+    const { nx, ny, nz, dx, dy, dzs, layer } = this.grid, { mx, my, mz, div, xo, yo, h, rho, phi, dft, cp, dRe, dIm, lambda } = this
     const re = dft.re, im = dft.im, face = (k: number) => k < 0 || k >= nz - 1 ? 0 : (rho[k] + rho[k + 1]) / 2
     dft.forward(div, nz)
     for (let n = 0; n < ny; n++) for (let m = 0; m <= dft.mh; m++) {
       const mode = m + nx * n, lam = lambda[mode], pinned = lam === 0
       for (let k = 0; k < nz; k++) {
-        let lo = face(k - 1) / dz, up = face(k) / dz, di = -rho[k] * h[k] * lam - lo - up, rr = h[k] * re[mode + k * layer], ri = h[k] * im[mode + k * layer]
+        let lo = k > 0 ? face(k - 1) / dzs[k - 1] : 0, up = k < nz - 1 ? face(k) / dzs[k] : 0, di = -rho[k] * h[k] * lam - lo - up, rr = h[k] * re[mode + k * layer], ri = h[k] * im[mode + k * layer]
         if (pinned && k === 0) { lo = 0; di = 1; up = 0; rr = 0; ri = 0 }
         if (pinned && k === 1) lo = 0
         const piv = k === 0 ? di : di - lo * cp[k - 1]
@@ -105,7 +106,7 @@ export class FluxTransport {
       for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++, i++) {
         mx[i] -= r * (phi[xo[3][x] + y * nx + l] - phi[i]) / dx
         my[i] -= r * (phi[x + yo[3][y] + l] - phi[i]) / dy
-        if (z < nz - 1) mz[i] -= rUp * (phi[i + layer] - phi[i]) / dz
+        if (z < nz - 1) mz[i] -= rUp * (phi[i + layer] - phi[i]) / dzs[z]
       }
     }
   }

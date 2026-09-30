@@ -28,7 +28,7 @@ export class Turbulence {
   constructor(grid: Grid, rho: ArrayLike<number>) {
     this.grid = grid; this.rho = Float64Array.from(rho)
     this.km = new Float64Array(grid.n); this.tmp = new Float32Array(grid.n)
-    this.h = Float64Array.from({ length: grid.nz }, (_, z) => z === 0 || z === grid.nz - 1 ? grid.dz / 2 : grid.dz)
+    this.h = grid.hz
   }
 
   /**
@@ -39,10 +39,12 @@ export class Turbulence {
    */
   viscosity(u: Float32Array, v: Float32Array, w: Float32Array, theta: Float32Array, thetaEnv: ArrayLike<number>, cs: number, dt: number,
     moist?: { q: Float32Array; condensate: Float32Array; exner: ArrayLike<number> }) {
-    const { nx, ny, nz, dx, dy, dz, layer, xp, xm, yp, ym } = this.grid, km = this.km
-    const len2 = (cs * Math.cbrt(dx * dy * dz)) ** 2, cap = .05 * Math.min(dx, dy, dz) ** 2 / dt
+    const { nx, ny, nz, dx, dy, zs, dzs, hz, layer, xp, xm, yp, ym } = this.grid, km = this.km
+    const cap = .05 * Math.min(dx, dy, ...dzs) ** 2 / dt
     for (let z = 0, i = 0; z < nz; z++) {
-      const up = z < nz - 1 ? layer : 0, down = z > 0 ? -layer : 0, span = (up - down) / layer * dz
+      // Filter width from the local vertical spacing (the spacing next to the ground and top nodes, which own half a layer).
+      const local = z === 0 ? dzs[0] : z === nz - 1 ? dzs[nz - 2] : hz[z], len2 = (cs * Math.cbrt(dx * dy * local)) ** 2
+      const up = z < nz - 1 ? layer : 0, down = z > 0 ? -layer : 0, span = zs[z + (up ? 1 : 0)] - zs[z - (down ? 1 : 0)]
       for (let y = 0; y < ny; y++) {
         const row = y * nx + z * layer
         for (let x = 0; x < nx; x++, i++) {
@@ -85,7 +87,7 @@ export class Turbulence {
           const fy = factor * (km[i] + km[n]) / 2 * (dev(n, z) - here) / dy
           t[i] += fy / dy; t[n] -= fy / dy
           if (z < nz - 1) {
-            const fz = factor * rUp * (km[i] + km[i + layer]) / 2 * (dev(i + layer, z + 1) - here) / this.grid.dz
+            const fz = factor * rUp * (km[i] + km[i + layer]) / 2 * (dev(i + layer, z + 1) - here) / this.grid.dzs[z]
             t[i] += fz / (rho[z] * h[z]); t[i + layer] -= fz / (rho[z + 1] * h[z + 1])
           }
         }

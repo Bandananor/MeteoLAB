@@ -8,9 +8,9 @@ export type ScalarField = 'updraft' | 'theta' | 'moisture' | 'vorticity' | 'heli
  * vorticity 1e-3 s-1, helicity = column UH m2/s2 drawn only in its 2-5 km layer, coldpool K.
  */
 export function computeScalarField(model: AtmosphereModel, field: ScalarField, out: Float32Array) {
-  const { nx, ny, nz, dz } = model.grid, env = model.env, [uh0, uh1] = model.uhLevels
+  const { nx, ny, nz } = model.grid, env = model.env, [uh0, uh1] = model.uhLevels
   for (let z = 0, i = 0; z < nz; z++) {
-    const alt = z * dz, exner = env.exner[z], thEnv = env.theta[z]
+    const alt = model.grid.zs[z], exner = env.exner[z], thEnv = env.theta[z]
     for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++, i++) {
       switch (field) {
         case 'updraft': out[i] = model.w[i]; break
