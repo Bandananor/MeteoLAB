@@ -26,6 +26,8 @@ export class FluxTransport {
   private readonly dft: HorizontalDFT; private readonly phi: Float64Array
   private readonly cp: Float64Array; private readonly dRe: Float64Array; private readonly dIm: Float64Array
   private readonly lambda: Float64Array
+  /** Per grid row (z * ny + y): the field has a non-zero value in the row; a non-zero value within the stencil reach. */
+  private readonly rowNonzero: Uint8Array; private readonly rowActive: Uint8Array
 
   constructor(grid: Grid, rho: ArrayLike<number>) {
     const { n, nx, ny, nz, dz } = grid
@@ -39,6 +41,7 @@ export class FluxTransport {
     this.dft = new HorizontalDFT(nx, ny, nz); this.phi = f()
     this.cp = new Float64Array(nz); this.dRe = new Float64Array(nz); this.dIm = new Float64Array(nz)
     // -lambda is the symbol of the periodic second difference in x plus y (exactly 0 for the uniform mode).
+    this.rowNonzero = new Uint8Array(nz * ny); this.rowActive = new Uint8Array(nz * ny)
     this.lambda = Float64Array.from({ length: nx * ny }, (_, mode) => {
       const m = mode % nx, n = Math.floor(mode / nx)
       return m === 0 && n === 0 ? 0 : 4 * Math.sin(Math.PI * m / nx) ** 2 / (grid.dx * grid.dx) + 4 * Math.sin(Math.PI * n / ny) ** 2 / (grid.dy * grid.dy)
@@ -120,14 +123,34 @@ export class FluxTransport {
     }
   }
 
+  /**
+   * Marks the grid rows whose stencil (3 nodes in y and z) reaches a non-zero value. Water species other than vapour
+   * are exactly zero in most of the domain (the positivity fix removes WENO's tiny tails): their rows are skipped.
+   */
+  private markActiveRows(q: Float32Array) {
+    const { nx, ny, nz } = this.grid, rows = this.rowNonzero, active = this.rowActive
+    for (let r = 0; r < nz * ny; r++) { const b = r * nx; let any = 0; for (let x = 0; x < nx; x++) if (q[b + x] !== 0) { any = 1; break } rows[r] = any }
+    let count = 0
+    for (let z = 0; z < nz; z++) for (let y = 0; y < ny; y++) {
+      let any = 0
+      for (let dz = -3; dz <= 3 && !any; dz++) { const zz = z + dz; if (zz < 0 || zz >= nz) continue; for (let dy = -3; dy <= 3; dy++) if (rows[zz * ny + (y + dy + ny) % ny]) { any = 1; break } }
+      active[z * ny + y] = any; count += any
+    }
+    return count
+  }
+
   private tendency(q: Float32Array) {
     const { nx, ny, nz, dx, dy, layer } = this.grid, { mx, my, mz, div, fx, fy, fz, tend, xo, yo, h, rho } = this
     const [xm2, xm1, , xp1, xp2, xp3] = xo, [ym2, ym1, , yp1, yp2, yp3] = yo
+    const active = this.rowActive
+    if (this.markActiveRows(q) === 0) { tend.fill(0); return }
     for (let z = 0, i = 0; z < nz; z++) {
       const l = z * layer, top = z === nz - 1
       const zm2 = Math.max(0, z - 2) * layer, zm1 = Math.max(0, z - 1) * layer, zp1 = Math.min(nz - 1, z + 1) * layer, zp2 = Math.min(nz - 1, z + 2) * layer, zp3 = Math.min(nz - 1, z + 3) * layer
       for (let y = 0; y < ny; y++) {
         const row = y * nx + l, c0 = y * nx
+        // Nothing within reach: the fluxes are exactly zero (and are read as such by the neighbouring rows).
+        if (!active[z * ny + y]) { fx.fill(0, i, i + nx); fy.fill(0, i, i + nx); fz.fill(0, i, i + nx); i += nx; continue }
         for (let x = 0; x < nx; x++, i++) {
           // Face between this node and the next one in each direction; the upwind side picks the stencil.
           const m1 = mx[i]
@@ -141,9 +164,12 @@ export class FluxTransport {
     }
     for (let z = 0, i = 0; z < nz; z++) {
       const l = z * layer, r = rho[z], hz = h[z]
-      for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++, i++) {
-        const flux = (fx[i] - fx[xm1[x] + y * nx + l]) / dx + (fy[i] - fy[x + ym1[y] + l]) / dy + (fz[i] - (z > 0 ? fz[i - layer] : 0)) / hz
-        tend[i] = -(flux - q[i] * div[i]) / r
+      for (let y = 0; y < ny; y++) {
+        if (!active[z * ny + y]) { tend.fill(0, i, i + nx); i += nx; continue }
+        for (let x = 0; x < nx; x++, i++) {
+          const flux = (fx[i] - fx[xm1[x] + y * nx + l]) / dx + (fy[i] - fy[x + ym1[y] + l]) / dy + (fz[i] - (z > 0 ? fz[i - layer] : 0)) / hz
+          tend[i] = -(flux - q[i] * div[i]) / r
+        }
       }
     }
   }
@@ -183,6 +209,8 @@ export function upwind5(a: number, b: number, c: number, d: number, e: number) {
 
 /** WENO5 value at the face between c and d for flow from a towards e (Jiang & Shu weights, scale-aware epsilon). */
 export function weno(a: number, b: number, c: number, d: number, e: number) {
+  // Most of the domain has no ice, snow, graupel or rain: skip the weights there (the result would be 0 anyway).
+  if (a === 0 && b === 0 && c === 0 && d === 0 && e === 0) return 0
   const p0 = (2 * a - 7 * b + 11 * c) / 6, p1 = (-b + 5 * c + 2 * d) / 6, p2 = (2 * c + 5 * d - e) / 6
   const s0 = a - 2 * b + c, t0 = a - 4 * b + 3 * c, s1 = b - 2 * c + d, t1 = b - d, s2 = c - 2 * d + e, t2 = 3 * c - 4 * d + e
   const eps = 2e-7 * (a * a + b * b + c * c + d * d + e * e) + 1e-40

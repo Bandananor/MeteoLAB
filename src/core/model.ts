@@ -18,6 +18,8 @@ import { computeSounding, type Sounding } from './sounding'
 // tilt the environmental vorticity into vortex pairs of both signs with UH up to ~380 cyclonic and ~320 anticyclonic;
 // supercells hold 700-1900 with the anticyclonic maximum several times weaker (3-km NWP uses ~75).
 export const UH_ROTATING = 200, UH_MESOCYCLONE = 400, MESO_PERSISTENCE = 600
+/** Condensate below this mixing ratio (kg/kg, 1e-7 g/kg) is set to zero by the WENO positivity fix, conservatively. */
+const TINY_WATER = 1e-10
 /** Safety limits of the horizontal and vertical velocity, m/s (see AtmosphereModel.clipped). */
 export const U_LIMIT = 120, W_LIMIT = 100
 /** A mesocyclone must also outweigh the strongest anticyclonic rotation by this factor (a vortex pair is not one). */
@@ -179,16 +181,20 @@ export class AtmosphereModel {
   }
 
   /**
-   * Removes the small negative values WENO leaves behind (it is not positivity-preserving) without changing the total:
-   * negatives are set to zero and the same mass is taken from the positive values in proportion to them.
+   * Removes the small negative values WENO leaves behind (it is not positivity-preserving) and the tiny tails it spreads
+   * (below TINY_WATER), without changing the total: they are set to zero and their net mass is given to or taken from
+   * the remaining values in proportion to them. Exact zeros let the transport skip the empty air (see weno).
    */
   private fillNegative(a: Float32Array) {
     const { nz, layer } = this.grid, lw = this.levelWeight
-    let negative = 0, positive = 0
-    for (let z = 0, i = 0; z < nz; z++) { const wz = lw[z]; for (let e = i + layer; i < e; i++) { if (a[i] < 0) negative -= wz * a[i]; else positive += wz * a[i] } }
-    if (negative === 0) return
-    const keep = positive > negative ? 1 - negative / positive : 0
-    for (let i = 0; i < a.length; i++) a[i] = a[i] < 0 ? 0 : a[i] * keep
+    let removed = 0, kept = 0, negative = 0
+    for (let z = 0, i = 0; z < nz; z++) {
+      const wz = lw[z]
+      for (let e = i + layer; i < e; i++) { const x = a[i]; if (x < TINY_WATER) { if (x !== 0) { removed += wz * x; if (x < 0) negative -= wz * x } } else kept += wz * x }
+    }
+    if (removed === 0 && negative === 0) return
+    const scale = kept > 0 ? Math.max(0, 1 + removed / kept) : 0
+    for (let i = 0; i < a.length; i++) a[i] = a[i] < TINY_WATER ? 0 : a[i] * scale
     this.negativeFilled += negative
   }
 
@@ -315,7 +321,8 @@ export class AtmosphereModel {
           if (z < this.surfaceShare.length) { const pattern = 1 + this.surfacePattern[x + row] * .32, per = pattern * this.surfaceShare[z] * dt / rhoZ; theta[i] += flux.sensible * per / (CP * exner); q[i] += flux.latent * per / LV }
           if (alt < liftTop) { const gx = cold[xp + row] - cold[xm + row], gy = cold[x + yp] - cold[x + ym], edge = Math.hypot(gx, gy), core = cold[x + row]; w[i] += G * edge / 300 * .45 * Math.max(.12, 1 - alt / Math.max(300, lfcZ)) * dt; if (alt < 1300 && core > 1) w[i] -= G * core / 300 * .52 * Math.exp(-alt / 520) * dt }
           if (z <= 1 && w[i] < -5 && rain[i] > .0001) { const impact = Math.min(38, -w[i] * Math.sqrt(rain[i] / .00055)), dpx = (-w[xp + row + l] + w[xm + row + l]) * .5, dpy = (-w[x + yp + l] + w[x + ym + l]) * .5; u[i] -= dpx * .12 * dt; v[i] -= dpy * .12 * dt; cold[i] += impact * .0012 * dt; this.microburstOutflow = Math.max(this.microburstOutflow, impact) }
-          cold[i] = clamp(cold[i], 0, 15)
+          // Below 0.001 K the indicator is noise from the transport tails: zero, so the transport can skip it.
+          cold[i] = cold[i] < 1e-3 ? 0 : Math.min(cold[i], 15)
           if (alt > spongeStart) { const s = clamp((alt - spongeStart) / (H - spongeStart)) * .06 * dt; w[i] *= 1 - s; u[i] = lerp(u[i], ue, s); v[i] = lerp(v[i], ve, s); theta[i] = lerp(theta[i], thEnv, s) }
         }
       }
