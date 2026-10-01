@@ -14,6 +14,8 @@ export const FIELDS: Record<ScalarField, FieldInfo> = {
   vorticity: { title: 'Вертикальная завихренность', units: '10⁻³ с⁻¹', min: -4, max: 4, diverging: true, threshold: .3, stops: DIVERGING },
   helicity: { title: 'Вращение восходящего потока UH (слой 2–5 км)', units: 'м²/с²', min: -300, max: 300, diverging: true, threshold: .3, stops: DIVERGING },
   coldpool: { title: 'Охлаждение от испарения осадков', units: 'K', min: 0, max: 8, diverging: false, threshold: .15, stops: ['#f1efe9', '#b9d7e6', '#6ea6cc', '#3769a0', '#1d3565'] },
+  // Radar palette, 0-70 dBZ in 10 dBZ steps: light echo blue, moderate rain green, heavy yellow-red, hail/graupel cores magenta.
+  reflectivity: { title: 'Отражаемость радара', units: 'dBZ', min: 0, max: 70, diverging: false, threshold: .25, stops: ['#eef3f5', '#8fd3ea', '#2e8bd6', '#1fa64a', '#f2d50f', '#ef8a14', '#d7261e', '#a3157f'] },
 }
 
 export function colormapTexture(stops: string[]) {

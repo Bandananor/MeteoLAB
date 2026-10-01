@@ -85,7 +85,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
 
     <section class="workspace">
       <nav class="tabs" aria-label="Отображаемое поле">
-        <button class="active" data-field="composite">Облака</button><button data-field="updraft">Вертикальные потоки</button><button data-field="theta">Температура</button><button data-field="moisture">Влажность</button><button data-field="vorticity">Завихренность</button><button data-field="helicity" title="Спиральность восходящего потока: где поднимающийся воздух вращается (слой 2–5 км)">Вращение (UH)</button><button data-field="coldpool">Cold pool</button><button id="flowToggle" class="flow-toggle" aria-pressed="false">Потоки →</button><button id="precipToggle" class="flow-toggle" aria-pressed="false" title="Снежинки выше уровня 0 °C тают в капли по пути вниз">Снег и дождь</button><button id="mesoToggle" class="flow-toggle active" aria-pressed="true" title="Кольцо над вращающимся восходящим потоком (UH 2–5 км выше порога вращения)">Мезоциклон</button><button id="swathToggle" class="flow-toggle" aria-pressed="false" title="Сколько дождя выпало на землю с начала расчёта: голубой до 5 мм, зелёный до 10, жёлтый до 25, оранжевый до 50, красный больше">Сумма осадков</button>
+        <button class="active" data-field="composite">Облака</button><button data-field="updraft">Вертикальные потоки</button><button data-field="theta">Температура</button><button data-field="moisture">Влажность</button><button data-field="vorticity">Завихренность</button><button data-field="helicity" title="Спиральность восходящего потока: где поднимающийся воздух вращается (слой 2–5 км)">Вращение (UH)</button><button data-field="coldpool">Cold pool</button><button data-field="reflectivity" title="Отражаемость радара, dBZ: дождь, снег и крупа так, как их видит метеорадар. Горизонтальный срез — как радарная карта на выбранной высоте">Радар</button><button id="flowToggle" class="flow-toggle" aria-pressed="false">Потоки →</button><button id="precipToggle" class="flow-toggle" aria-pressed="false" title="Снежинки выше уровня 0 °C тают в капли по пути вниз">Снег и дождь</button><button id="mesoToggle" class="flow-toggle active" aria-pressed="true" title="Кольцо над вращающимся восходящим потоком (UH 2–5 км выше порога вращения)">Мезоциклон</button><button id="swathToggle" class="flow-toggle" aria-pressed="false" title="Сколько дождя выпало на землю с начала расчёта: голубой до 5 мм, зелёный до 10, жёлтый до 25, оранжевый до 50, красный больше">Сумма осадков</button>
       </nav>
       <div class="viewport">
         <canvas id="sim" width="960" height="600"></canvas>
@@ -105,7 +105,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
           </div>
         </div>
       </div>
-      <div class="readout"><span>Сетка 40 × 32 × 30</span><span>Δx / Δy / Δz: 1.2 / 1.1 / 0.65 км</span><span>Δt: 1.0 с</span><span>Инсоляция: <b id="sun">—</b></span><span>Солнце: <b id="sunElevation">—</b></span><span>T+: <b id="time">00:00</b></span></div>
+      <div class="readout"><span>Сетка 40 × 32 × 50</span><span>Δx / Δy: 1.2 / 1.1 км, Δz: 0.1 км у земли → 1 км наверху</span><span>Δt: 1.0 с</span><span>Инсоляция: <b id="sun">—</b></span><span>Солнце: <b id="sunElevation">—</b></span><span>T+: <b id="time">00:00</b></span></div>
     </section>
 
     <aside class="diagnostics">
