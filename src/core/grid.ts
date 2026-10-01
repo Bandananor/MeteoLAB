@@ -25,8 +25,10 @@ export interface Grid extends GridOptions {
   xp: Int32Array; xm: Int32Array; yp: Int32Array; ym: Int32Array
 }
 
-// The top is at 18.9 km (dz 652 m as before) so strong storms overshoot the tropopause below the sponge, not into it.
-export const DEFAULT_GRID: GridOptions = { nx: 40, ny: 32, nz: 30, width: 48_000, depth: 36_000, height: 18_900 }
+// The top is at 18.9 km so strong storms overshoot the tropopause below the sponge, not into it. 50 levels stretched from
+// 100 m at the ground (2026-10-01; was 30 uniform 652 m levels): 9 levels below 1 km for the boundary layer, inversions and
+// cloud base, ~340 m at 5 km, ~630 m at the tropopause, ~970 m at the top.
+export const DEFAULT_GRID: GridOptions = { nx: 40, ny: 32, nz: 50, width: 48_000, depth: 36_000, height: 18_900, bottomSpacing: 100 }
 
 /** Geometric stretching ratio r with bottom * (r^m - 1) / (r - 1) = height for m = nz - 1 intervals (bisection). */
 function stretchRatio(bottom: number, height: number, intervals: number) {

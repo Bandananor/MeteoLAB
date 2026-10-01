@@ -95,9 +95,10 @@ export class AtmosphereModel {
     this.backtraceCorner = new Int32Array(grid.n * 8); this.backtraceWeight = new Float64Array(grid.n * 3)
     // UH over 2-5 km: the first level at or above 2 km to the last at or below 5 km.
     this.uhLevels = [grid.zs.findIndex(z => z >= 2000), grid.zs.findLastIndex(z => z <= 5000)]
-    // exp(-z / 300 m) per unit volume over the levels below 1 km (the two lowest on the uniform grid), each weighted by
-    // the height of its control volume, normalised.
-    const low = Math.max(2, grid.zs.findIndex(z => z >= 1000)), shape = Array.from({ length: low }, (_, z) => Math.exp(-grid.zs[z] / 300))
+    // exp(-z / 300 m) per unit volume over the levels below 500 m (the two lowest on the uniform grid), each weighted by
+    // the height of its control volume, normalised. Not higher: theta is float32 (~3e-5 K steps near 300 K), and the
+    // per-step heating of thin levels near 1 km is only a few such steps, so it rounds systematically (±15 %).
+    const low = Math.max(2, grid.zs.findIndex(z => z >= 500)), shape = Array.from({ length: low }, (_, z) => Math.exp(-grid.zs[z] / 300))
     const total = shape.reduce((sum, s, z) => sum + s * grid.hz[z], 0)
     this.surfaceShare = Float64Array.from(shape, s => s / total)
     this.rng = mulberry32(config.seed)
@@ -109,6 +110,9 @@ export class AtmosphereModel {
     const { nx, ny, nz, zs, width: W, depth: D } = this.grid
     let walk = 0
     for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++) { walk = walk * .82 + (this.rng() - .5) * .34; this.surfacePattern[x + nx * y] = walk }
+    // Zero mean: the pattern only redistributes the surface fluxes (a random offset once added ~1 % to H and LE).
+    const mean = this.surfacePattern.reduce((a, b) => a + b, 0) / this.surfacePattern.length
+    for (let i = 0; i < this.surfacePattern.length; i++) this.surfacePattern[i] -= mean
     for (let z = 0, i = 0; z < nz; z++) for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++, i++) {
       const alt = zs[z], [ue, ve] = this.env.windUV(alt)
       this.u[i] = ue; this.v[i] = ve; this.w[i] = 0
