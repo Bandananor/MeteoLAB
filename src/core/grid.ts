@@ -61,6 +61,31 @@ export function createGrid(options: GridOptions = DEFAULT_GRID): Grid {
   }
 }
 
+/**
+ * Fractional level index of the height zs[k] + shift (m), clamped to the column: a local search from level k, for
+ * semi-Lagrangian departure points (a few levels at most per step).
+ */
+export function shiftedLevel(grid: Grid, k: number, shift: number) {
+  const { zs, nz, dz, uniform } = grid
+  if (uniform) return Math.min(Math.max(k + shift / dz, 0), nz - 1)
+  const target = zs[k] + shift
+  if (target <= 0) return 0
+  if (target >= zs[nz - 1]) return nz - 1
+  let j = k
+  while (j > 0 && zs[j] > target) j--
+  while (j < nz - 2 && zs[j + 1] < target) j++
+  return j + (target - zs[j]) / (zs[j + 1] - zs[j])
+}
+
+/** Height, m, of a fractional level index (clamped to the column): zs interpolated linearly. */
+export function heightAt(grid: Grid, level: number) {
+  const { zs, nz } = grid
+  if (level <= 0) return 0
+  if (level >= nz - 1) return zs[nz - 1]
+  const k = Math.floor(level)
+  return zs[k] + (level - k) * (zs[k + 1] - zs[k])
+}
+
 /** Fractional level index of a height, m (clamped to the column): the inverse of zs. */
 export function levelAt(grid: Grid, height: number) {
   const { zs, nz } = grid

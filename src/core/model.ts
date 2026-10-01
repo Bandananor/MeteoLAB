@@ -1,7 +1,7 @@
 import type { SimConfig } from './config'
 import { CP, DT, G, LV, OMEGA } from './constants'
 import { Environment, type EnvironmentProfile } from './environment'
-import { createGrid, type Grid } from './grid'
+import { createGrid, type Grid, shiftedLevel } from './grid'
 import { clamp, lerp, mod, mulberry32 } from './math'
 import { FluxTransport } from './advection'
 import { weismanKlemp } from './profiles'
@@ -148,8 +148,8 @@ export class AtmosphereModel {
 
   /** Semi-Lagrangian transport of `a` with an extra downward fall speed per node into the scratch buffer (see commit). */
   private advectFalling(a: Float32Array, dt: number, fall: Float32Array) {
-    const { nx, ny, nz, dx, dy, dz } = this.grid, s = this.scratch, u = this.u, v = this.v, w = this.w
-    for (let z = 0, i = 0; z < nz; z++) for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++, i++) s[i] = this.sample(a, x - u[i] * dt / dx, y - v[i] * dt / dy, z - (w[i] - fall[i]) * dt / dz)
+    const grid = this.grid, { nx, ny, nz, dx, dy } = grid, s = this.scratch, u = this.u, v = this.v, w = this.w
+    for (let z = 0, i = 0; z < nz; z++) for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++, i++) s[i] = this.sample(a, x - u[i] * dt / dx, y - v[i] * dt / dy, shiftedLevel(grid, z, -(w[i] - fall[i]) * dt))
   }
 
   /**
@@ -213,9 +213,9 @@ export class AtmosphereModel {
   // Departure points of one semi-Lagrangian step (8 corner indices + 3 weights per cell), shared by every field
   // so that all of them are carried by the same, pre-step velocity.
   private computeBacktrace(dt: number) {
-    const { nx, ny, nz, dx, dy, dz, layer } = this.grid, c = this.backtraceCorner, wt = this.backtraceWeight, u = this.u, v = this.v, w = this.w
+    const grid = this.grid, { nx, ny, nz, dx, dy, layer } = grid, c = this.backtraceCorner, wt = this.backtraceWeight, u = this.u, v = this.v, w = this.w
     for (let z = 0, i = 0; z < nz; z++) for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++, i++) {
-      const px = mod(x - u[i] * dt / dx, nx), py = mod(y - v[i] * dt / dy, ny), pz = clamp(z - w[i] * dt / dz, 0, nz - 1)
+      const px = mod(x - u[i] * dt / dx, nx), py = mod(y - v[i] * dt / dy, ny), pz = shiftedLevel(grid, z, -w[i] * dt)
       const x0 = Math.floor(px), y0 = Math.floor(py), z0 = Math.min(Math.floor(pz), nz - 2), x1 = (x0 + 1) % nx, r0 = nx * y0, r1 = nx * ((y0 + 1) % ny), l0 = layer * z0, l1 = layer * (z0 + 1), k = i * 8
       c[k] = x0 + r0 + l0; c[k + 1] = x1 + r0 + l0; c[k + 2] = x0 + r1 + l0; c[k + 3] = x1 + r1 + l0; c[k + 4] = x0 + r0 + l1; c[k + 5] = x1 + r0 + l1; c[k + 6] = x0 + r1 + l1; c[k + 7] = x1 + r1 + l1
       wt[i * 3] = px - x0; wt[i * 3 + 1] = py - y0; wt[i * 3 + 2] = pz - z0

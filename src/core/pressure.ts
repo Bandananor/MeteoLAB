@@ -7,18 +7,18 @@ import { HorizontalDFT } from './spectral'
  *
  * Velocities live at grid nodes; pressure lives at the centres of the "dual" cells between nodes
  * (nx * ny * (nz-1) cells, periodic in x and y, the ground and top node levels are rigid walls).
- * D is the net flux out of a dual cell computed from its 8 corner nodes, which is the divergence that
- * trilinear semi-Lagrangian transport responds to. G is minus the adjoint of D (with half weight for
- * the wall nodes); with R = diag(rho0 of each node level), D·R·G is the consistent (density-weighted) Laplacian
- * and u - dt·G·p makes D·R·u exactly zero. The correction is the kinetic-energy-minimising one for the rho0-weighted
- * norm, i.e. the gradient of p'/rho0. D·R·G is diagonalised by a 2D DFT in x, y (rho0 depends on z only),
- * leaving one tridiagonal system per horizontal wavenumber.
+ * D is the net flux out of a dual cell computed from its 8 corner nodes (per unit volume; the cell between levels k
+ * and k+1 is dz_k = zs[k+1] - zs[k] high, stretched or not). G = -H^-1 D^T V is minus its adjoint with the cell
+ * volumes V (dz_k) and the node volumes H (hz: half a layer at the walls); with R = diag(rho0 of each node level),
+ * D·R·G is the consistent (density-weighted) Laplacian and u - dt·G·p makes D·R·u exactly zero. The correction is the
+ * kinetic-energy-minimising one for the rho0-weighted norm, i.e. the gradient of p'/rho0. D·R·G is diagonalised by
+ * a 2D DFT in x, y (rho0 and the spacings depend on z only), leaving one tridiagonal system per horizontal wavenumber.
  */
 export class PressureSolver {
   readonly cells: number
   private readonly grid: Grid
   private readonly dft: HorizontalDFT
-  /** Horizontal symbols per mode (m + nx*n): alpha multiplies Z_A, beta multiplies Z_delta / dz^2. */
+  /** Horizontal symbols per mode (m + nx*n): alpha of the horizontal Laplacian, beta of the 4-node horizontal average. */
   private readonly alpha: Float64Array; private readonly beta: Float64Array
   private readonly re: Float64Array; private readonly im: Float64Array
   private readonly cp: Float64Array; private readonly dRe: Float64Array; private readonly dIm: Float64Array
@@ -26,9 +26,7 @@ export class PressureSolver {
   private readonly rho: Float64Array
 
   constructor(grid: Grid, density?: ArrayLike<number>) {
-    const { nx, ny, nz, dx, dy, dz } = grid
-    // The stretched vertical grid is being built in stages; this operator is still derived for equal spacings.
-    if (!grid.uniform) throw new Error('PressureSolver: stretched vertical grids are not supported yet')
+    const { nx, ny, nz, dx, dy } = grid
     this.grid = grid
     this.rho = density ? Float64Array.from(density) : new Float64Array(nz).fill(1)
     if (this.rho.length !== nz) throw new Error(`density needs ${nz} levels, got ${this.rho.length}`)
@@ -40,7 +38,7 @@ export class PressureSolver {
     for (let n = 0; n < ny; n++) for (let m = 0; m < nx; m++) {
       const sx = exact(Math.sin(Math.PI * m / nx) ** 2), cx = exact(Math.cos(Math.PI * m / nx) ** 2), sy = exact(Math.sin(Math.PI * n / ny) ** 2), cy = exact(Math.cos(Math.PI * n / ny) ** 2)
       this.alpha[m + nx * n] = 4 * (sx * cy / (dx * dx) + cx * sy / (dy * dy))
-      this.beta[m + nx * n] = cx * cy / (dz * dz)
+      this.beta[m + nx * n] = cx * cy
     }
     this.re = this.dft.re; this.im = this.dft.im
     this.cp = new Float64Array(nz); this.dRe = new Float64Array(nz); this.dIm = new Float64Array(nz)
@@ -48,9 +46,9 @@ export class PressureSolver {
 
   /** Dual-cell divergence of the node mass flux rho0 u, divided by dt, into `out` (length `cells`). */
   divergence(u: Float32Array, v: Float32Array, w: Float32Array, dt: number, out: Float64Array) {
-    const { nx, ny, nz, dx, dy, dz, layer } = this.grid
+    const { nx, ny, nz, dx, dy, dzs, layer } = this.grid
     for (let k = 0, c = 0; k < nz - 1; k++) {
-      const l0 = k * layer, l1 = l0 + layer, r0 = this.rho[k] / 4, r1 = this.rho[k + 1] / 4
+      const l0 = k * layer, l1 = l0 + layer, r0 = this.rho[k] / 4, r1 = this.rho[k + 1] / 4, dz = dzs[k]
       for (let j = 0; j < ny; j++) {
         const y0 = j * nx, y1 = ((j + 1) % ny) * nx
         for (let i = 0; i < nx; i++, c++) {
@@ -67,21 +65,23 @@ export class PressureSolver {
 
   /** Subtracts dt * G p from the node velocities; w at the wall levels stays untouched (it is zero). */
   correct(p: Float64Array, u: Float32Array, v: Float32Array, w: Float32Array, dt: number) {
-    const { nx, ny, nz, dx, dy, dz, layer } = this.grid, cl = nx * ny
+    const { nx, ny, nz, dx, dy, dzs, hz, layer } = this.grid, cl = nx * ny
     for (let k = 0; k < nz; k++) {
-      // Dual-cell layers touching node level k; wall levels see one layer, counted twice (the 1/M = 2 weight).
+      // Dual-cell layers touching node level k, weighted by their height over the node's (V/H): a wall level sees one
+      // layer with weight 2 on a uniform grid.
       const lo = Math.max(0, k - 1) * cl, hi = Math.min(nz - 2, k) * cl
+      const wLo = k > 0 ? dzs[k - 1] / hz[k] : 0, wHi = k < nz - 1 ? dzs[k] / hz[k] : 0
       for (let j = 0; j < ny; j++) {
         const jm = ((j + ny - 1) % ny) * nx, j0 = j * nx
         for (let i = 0; i < nx; i++) {
           const im = (i + nx - 1) % nx, node = i + j * nx + k * layer
           const P = (ii: number, jj: number, base: number) => p[base + ii + jj]
-          const gx = (P(i, jm, lo) + P(i, j0, lo) + P(i, jm, hi) + P(i, j0, hi) - P(im, jm, lo) - P(im, j0, lo) - P(im, jm, hi) - P(im, j0, hi)) / (4 * dx)
-          const gy = (P(im, j0, lo) + P(i, j0, lo) + P(im, j0, hi) + P(i, j0, hi) - P(im, jm, lo) - P(i, jm, lo) - P(im, jm, hi) - P(i, jm, hi)) / (4 * dy)
+          const gx = (wLo * (P(i, jm, lo) + P(i, j0, lo) - P(im, jm, lo) - P(im, j0, lo)) + wHi * (P(i, jm, hi) + P(i, j0, hi) - P(im, jm, hi) - P(im, j0, hi))) / (4 * dx)
+          const gy = (wLo * (P(im, j0, lo) + P(i, j0, lo) - P(im, jm, lo) - P(i, jm, lo)) + wHi * (P(im, j0, hi) + P(i, j0, hi) - P(im, jm, hi) - P(i, jm, hi))) / (4 * dy)
           u[node] -= dt * gx; v[node] -= dt * gy
           if (k > 0 && k < nz - 1) {
             const below = (k - 1) * cl, above = k * cl
-            const gz = (P(im, jm, above) + P(i, jm, above) + P(im, j0, above) + P(i, j0, above) - P(im, jm, below) - P(i, jm, below) - P(im, j0, below) - P(i, j0, below)) / (4 * dz)
+            const gz = (P(im, jm, above) + P(i, jm, above) + P(im, j0, above) + P(i, j0, above) - P(im, jm, below) - P(i, jm, below) - P(im, j0, below) - P(i, j0, below)) / (4 * hz[k])
             w[node] -= dt * gz
           }
         }
@@ -93,7 +93,7 @@ export class PressureSolver {
   solve(rhs: Float64Array, p: Float64Array) {
     const { nx, ny, nz } = this.grid, cl = nx * ny, nc = nz - 1, re = this.re, im = this.im, mh = this.dft.mh
     this.dft.forward(rhs, nc)
-    // One tridiagonal system per mode: (-alpha Z_A + beta Z_delta) p = r.
+    // One tridiagonal system per mode.
     for (let n = 0; n < ny; n++) for (let m = 0; m <= mh; m++) {
       const mode = m + nx * n, a = this.alpha[mode], b = this.beta[mode]
       if (a === 0 && b === 0 || nc === 1 && a === 0) { for (let k = 0; k < nc; k++) re[mode + k * cl] = im[mode + k * cl] = 0; continue }
@@ -102,20 +102,21 @@ export class PressureSolver {
     this.dft.inverse(p, nc)
   }
 
-  // Thomas algorithm for one horizontal mode. Row k (cell between node levels k and k+1) collects, from each of its two
-  // node levels n, rho_n times: the horizontal part -alpha times half the node average of p (a wall node sees one cell:
-  // weight 1/2, an interior node averages two: 1/4 each), and the vertical part beta (p_above - p_below) for interior
-  // nodes (w stays zero on the ground and top walls). With rho = 1 this is -alpha Z_A + beta Z_delta.
+  // Thomas algorithm for one horizontal mode. Row k (the cell between node levels k and k+1, dz_k high) collects, from
+  // each of its two node levels n, rho_n times: the horizontal part -alpha/2 times the node's gradient weights
+  // dz_c / (2 hz_n) of the cells c touching it (uniform: 1/2 each for an interior node, 1 for a wall node), and the
+  // vertical part beta (p_above - p_below) / (hz_n dz_k) for interior nodes (w stays zero on the ground and top walls).
+  // On a uniform grid: -alpha Z_A + beta Z_delta / dz^2.
   private tridiagonal(mode: number, a: number, b: number, nc: number, cl: number) {
-    const re = this.re, im = this.im, cp = this.cp, dRe = this.dRe, dIm = this.dIm
+    const re = this.re, im = this.im, cp = this.cp, dRe = this.dRe, dIm = this.dIm, { dzs, hz } = this.grid
     // The horizontally uniform mode is singular (pressure defined up to a constant): pin the lowest cell.
     const pinned = a === 0
-    const rho = this.rho, node = (n: number) => n === 0 || n === nc ? -a / 2 : -a / 4 - b
-    const lower = (k: number) => k === 0 ? 0 : rho[k] * (-a / 4 + b)
-    const upper = (k: number) => k === nc - 1 ? 0 : rho[k + 1] * (-a / 4 + b)
-    const diag = (k: number) => rho[k] * node(k) + rho[k + 1] * node(k + 1)
+    const rho = this.rho
     for (let k = 0; k < nc; k++) {
-      let lo = lower(k), di = diag(k), up = upper(k), r = re[mode + k * cl], s = im[mode + k * cl]
+      let di = -a / 2 * (rho[k] * dzs[k] / (2 * hz[k]) + rho[k + 1] * dzs[k] / (2 * hz[k + 1])), lo = 0, up = 0
+      if (k > 0) { lo = -a / 2 * rho[k] * dzs[k - 1] / (2 * hz[k]); const v = b * rho[k] / (hz[k] * dzs[k]); lo += v; di -= v }
+      if (k < nc - 1) { up = -a / 2 * rho[k + 1] * dzs[k + 1] / (2 * hz[k + 1]); const v = b * rho[k + 1] / (hz[k + 1] * dzs[k]); up += v; di -= v }
+      let r = re[mode + k * cl], s = im[mode + k * cl]
       if (pinned && k === 0) { lo = 0; di = 1; up = 0; r = 0; s = 0 }
       if (pinned && k === 1) lo = 0
       const m = k === 0 ? di : di - lo * cp[k - 1]

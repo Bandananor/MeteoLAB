@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
-import { type AtmosphereModel, computeScalarField, MESO_PERSISTENCE, sunDirection, UH_ROTATING } from '../core'
+import { type AtmosphereModel, computeScalarField, heightAt, levelAt, MESO_PERSISTENCE, sunDirection, UH_ROTATING } from '../core'
 import { clamp, lerp, mod, mulberry32 } from '../core/math'
 import { colormapTexture, FIELDS, type FieldMode } from './fields'
 import { fieldVolumeFragment, groundShadowPars, precipFragment, precipVertex, sliceFragment, volumeFragment, volumeVertex } from './shaders'
@@ -63,11 +63,25 @@ export class StormView {
   private readonly precipGeometry: THREE.BufferGeometry; private readonly precipMaterial: THREE.ShaderMaterial; private readonly precipPoints: THREE.Points
   private readonly mesoMarker: THREE.Mesh
   private frame = 0
+  /**
+   * The volume textures are uniform in height (the shaders map height linearly onto them). On a stretched grid every
+   * texture level t is interpolated between model levels k0[t] and k0[t] + 1 with weight f[t]; on a uniform grid the
+   * texture levels are the model levels (null).
+   */
+  private readonly texLevels: { nz: number; k0: Int32Array; f: Float32Array } | null
 
   constructor(canvas: HTMLCanvasElement, model: AtmosphereModel, settings: ViewSettings) {
     this.canvas = canvas; this.model = model; this.settings = settings; this.rng = mulberry32(model.config.seed)
-    const { nx, ny, nz, n, width, depth, height } = model.grid, W = width / 1000, D = depth / 1000, H = height / 1000
-    this.volumeData = new Uint8Array(n * 2); this.fieldValues = new Float32Array(n); this.fieldData = new Uint8Array(n)
+    const { nx, ny, n, width, depth, height } = model.grid, W = width / 1000, D = depth / 1000, H = height / 1000
+    if (model.grid.uniform) this.texLevels = null
+    else {
+      // 300 m texture levels: finer than the model aloft, coarser than it next to the ground.
+      const tz = Math.max(model.grid.nz, Math.round(height / 300) + 1), k0 = new Int32Array(tz), f = new Float32Array(tz)
+      for (let t = 0; t < tz; t++) { const l = Math.min(levelAt(model.grid, t * height / (tz - 1)), model.grid.nz - 1.000001); k0[t] = Math.floor(l); f[t] = l - k0[t] }
+      this.texLevels = { nz: tz, k0, f }
+    }
+    const nz = this.texLevels?.nz ?? model.grid.nz, texels = nx * ny * nz
+    this.volumeData = new Uint8Array(texels * 2); this.fieldValues = new Float32Array(n); this.fieldData = new Uint8Array(texels)
 
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' })
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5)); this.renderer.outputColorSpace = THREE.SRGBColorSpace; this.renderer.toneMapping = THREE.ACESFilmicToneMapping; this.renderer.toneMappingExposure = 1.05
@@ -193,12 +207,12 @@ export class StormView {
   }
 
   private updateParticles(dt: number) {
-    const m = this.model, { dx, dy, dz, width, depth, height } = m.grid
+    const m = this.model, { dx, dy, width, depth, height } = m.grid
     const pos = this.flowGeometry.getAttribute('position') as THREE.BufferAttribute, col = this.flowGeometry.getAttribute('color') as THREE.BufferAttribute
     for (let p = 0; p < FLOW_PARTICLES; p++) {
       const j = p * 3
       let x = this.particleModel[j], y = this.particleModel[j + 1], z = this.particleModel[j + 2]
-      const gx = x / dx, gy = y / dy, gz = z / dz, uu = m.sample(m.u, gx, gy, gz), vv = m.sample(m.v, gx, gy, gz), ww = m.sample(m.w, gx, gy, gz)
+      const gx = x / dx, gy = y / dy, gz = levelAt(m.grid, z), uu = m.sample(m.u, gx, gy, gz), vv = m.sample(m.v, gx, gy, gz), ww = m.sample(m.w, gx, gy, gz)
       x = mod(x + uu * dt, width); y = mod(y + vv * dt, depth); z += ww * dt; this.particleAge[p] += dt
       if (z < 0 || z > height || this.particleAge[p] > 900) { this.respawnParticle(p); x = this.particleModel[j]; y = this.particleModel[j + 1]; z = this.particleModel[j + 2] }
       else { this.particleModel[j] = x; this.particleModel[j + 1] = y; this.particleModel[j + 2] = z }
@@ -212,16 +226,16 @@ export class StormView {
   private meltFraction(z: number) { const f = this.model.sounding.freezing; return f === null ? 1 : clamp((f * 1000 - z) / MELT_DEPTH) }
 
   private updatePrecip(dt: number) {
-    const m = this.model, { nx, ny, n, dx, dy, dz, width, depth, height } = m.grid
+    const m = this.model, { nx, ny, n, dx, dy, width, depth, height } = m.grid
     for (let i = 0; i < n; i++) {
       const r = m.rain[i]
       if (r < 3e-4 || Math.random() > Math.min(1, r / .002) * .015 * dt) continue
       const p = this.precipNext, j = p * 3, x = i % nx, y = Math.floor(i / nx) % ny, z = Math.floor(i / (nx * ny)); this.precipNext = (p + 1) % PRECIP_PARTICLES
-      this.precipModel[j] = mod((x + Math.random() - .5) * dx, width); this.precipModel[j + 1] = mod((y + Math.random() - .5) * dy, depth); this.precipModel[j + 2] = clamp((z + Math.random() - .5) * dz, 0, height); this.precipAge[p] = 0; this.precipAlive[p] = 1
+      this.precipModel[j] = mod((x + Math.random() - .5) * dx, width); this.precipModel[j + 1] = mod((y + Math.random() - .5) * dy, depth); this.precipModel[j + 2] = heightAt(m.grid, z + Math.random() - .5); this.precipAge[p] = 0; this.precipAlive[p] = 1
     }
     for (let p = 0; p < PRECIP_PARTICLES; p++) {
       if (!this.precipAlive[p]) continue
-      const j = p * 3, x = this.precipModel[j], y = this.precipModel[j + 1], z = this.precipModel[j + 2], gx = x / dx, gy = y / dy, gz = z / dz, fall = lerp(SNOW_FALL, Math.max(2, m.sample(m.fallSpeed, gx, gy, gz)), this.meltFraction(z))
+      const j = p * 3, x = this.precipModel[j], y = this.precipModel[j + 1], z = this.precipModel[j + 2], gx = x / dx, gy = y / dy, gz = levelAt(m.grid, z), fall = lerp(SNOW_FALL, Math.max(2, m.sample(m.fallSpeed, gx, gy, gz)), this.meltFraction(z))
       const nz = z + (m.sample(m.w, gx, gy, gz) - fall) * dt; this.precipAge[p] += dt
       const evaporated = m.sample(m.rain, gx, gy, gz) < 2e-5 && Math.random() < .02 * dt
       if (nz <= 0 || nz > height || this.precipAge[p] > 2400 || evaporated) { this.precipAlive[p] = 0; continue }
@@ -240,8 +254,18 @@ export class StormView {
   }
 
   private updateVolume() {
-    const m = this.model, d = this.volumeData
-    for (let i = 0; i < m.grid.n; i++) { d[i * 2] = clamp((m.cloud[i] + m.ice[i] - .00003) / .0014) * 255; d[i * 2 + 1] = clamp((m.rain[i] + m.snow[i] + m.graupel[i]) / .0025) * 255 }
+    const m = this.model, d = this.volumeData, tl = this.texLevels, cloud = (i: number) => m.cloud[i] + m.ice[i], precip = (i: number) => m.rain[i] + m.snow[i] + m.graupel[i]
+    if (!tl) for (let i = 0; i < m.grid.n; i++) { d[i * 2] = clamp((cloud(i) - .00003) / .0014) * 255; d[i * 2 + 1] = clamp(precip(i) / .0025) * 255 }
+    else {
+      const { layer } = m.grid
+      for (let t = 0, o = 0; t < tl.nz; t++) {
+        const base = tl.k0[t] * layer, f = tl.f[t]
+        for (let c = 0; c < layer; c++, o++) {
+          const i = base + c, j = i + layer
+          d[o * 2] = clamp((lerp(cloud(i), cloud(j), f) - .00003) / .0014) * 255; d[o * 2 + 1] = clamp(lerp(precip(i), precip(j), f) / .0025) * 255
+        }
+      }
+    }
     this.volumeTexture.needsUpdate = true; this.volumeMaterial.uniforms.uTime.value = m.time
   }
 
@@ -253,18 +277,26 @@ export class StormView {
     }
     computeScalarField(this.model, field, this.fieldValues)
     const span = info.max - info.min
-    for (let i = 0; i < this.fieldValues.length; i++) this.fieldData[i] = clamp((this.fieldValues[i] - info.min) / span) * 255
+    const tl = this.texLevels, v = this.fieldValues
+    if (!tl) for (let i = 0; i < v.length; i++) this.fieldData[i] = clamp((v[i] - info.min) / span) * 255
+    else {
+      const { layer } = this.model.grid
+      for (let t = 0, o = 0; t < tl.nz; t++) {
+        const base = tl.k0[t] * layer, f = tl.f[t]
+        for (let c = 0; c < layer; c++, o++) this.fieldData[o] = clamp((lerp(v[base + c], v[base + c + layer], f) - info.min) / span) * 255
+      }
+    }
     this.fieldTexture.needsUpdate = true
   }
 
   private updateVectors() {
-    const m = this.model, { nx, ny, nz, dx, dy, dz } = m.grid
+    const m = this.model, { nx, ny, nz, dx, dy, zs } = m.grid
     const p = this.vectorGeometry.getAttribute('position') as THREE.BufferAttribute, c = this.vectorGeometry.getAttribute('color') as THREE.BufferAttribute
     let n = 0
     for (let z = 2; z < nz - 2; z += 4) for (let y = 2; y < ny; y += 5) for (let x = 2; x < nx; x += 5) {
       const i = x + nx * (y + ny * z), uu = m.u[i], vv = m.v[i], ww = m.w[i], mag = Math.hypot(uu, vv, ww)
       if (mag < 1) continue
-      const scale = clamp(mag * .045, .18, 1.3), [sx, sy, sz] = this.toWorld(x * dx, y * dy, z * dz), ex = sx + uu / mag * scale, ey = sy + ww / mag * scale, ez = sz - vv / mag * scale
+      const scale = clamp(mag * .045, .18, 1.3), [sx, sy, sz] = this.toWorld(x * dx, y * dy, zs[z]), ex = sx + uu / mag * scale, ey = sy + ww / mag * scale, ez = sz - vv / mag * scale
       p.setXYZ(n, sx, sy, sz); p.setXYZ(n + 1, ex, ey, ez)
       const color = ww > 1 ? [1, .45, .12] : ww < -1 ? [.2, .6, 1] : [.7, .82, .86]
       c.setXYZ(n, color[0], color[1], color[2]); c.setXYZ(n + 1, color[0], color[1], color[2]); n += 2
