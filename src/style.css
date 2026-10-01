@@ -30,6 +30,6 @@ main{display:grid;grid-template-columns:310px minmax(650px,1fr) 270px;flex:1;min
 .radar-products{display:grid;gap:4px}.radar-products button{padding:6px}
 .radar-tilts button.active,.radar-products button.active{background:#13424a;border-color:#2f7d86;color:#e9fbf8}
 .radar-products button:disabled{opacity:.4;cursor:default}
-.radar-legend{display:grid;grid-template-columns:repeat(5,1fr);gap:2px}.radar-legend span{color:#05080a;font-size:9px;font-weight:600;text-align:center;padding:2px 0}
+.radar-legend{display:grid;grid-template-columns:repeat(4,1fr);gap:2px}.radar-legend span{color:#05080a;font-size:9px;font-weight:600;text-align:center;padding:2px 0}
 .radar-readout{line-height:1.7}.radar-readout b{color:#e9fbf8}
 .radar-help{color:#6f8b94;font-size:9.5px;line-height:1.55;margin-top:16px}
