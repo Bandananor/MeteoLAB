@@ -38,6 +38,8 @@ export class Atmosphere implements ViewSettings {
   }
 
   get time() { return this.mirror.time }
+  /** The model as last received from the worker (read-only use: the radar display samples it). */
+  get model() { return this.mirror }
 
   /** Sends the real elapsed time (and any slider change) to the worker; the fields arrive with the next snapshot. */
   advance(realDt: number) {
