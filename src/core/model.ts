@@ -1,7 +1,7 @@
 import type { SimConfig } from './config'
 import { CP, DT, G, LV, OMEGA } from './constants'
 import { Environment, type EnvironmentProfile } from './environment'
-import { createGrid, type Grid } from './grid'
+import { createGrid, type Grid, shiftedLevel } from './grid'
 import { clamp, lerp, mod, mulberry32 } from './math'
 import { FluxTransport } from './advection'
 import { weismanKlemp } from './profiles'
@@ -95,9 +95,10 @@ export class AtmosphereModel {
     this.backtraceCorner = new Int32Array(grid.n * 8); this.backtraceWeight = new Float64Array(grid.n * 3)
     // UH over 2-5 km: the first level at or above 2 km to the last at or below 5 km.
     this.uhLevels = [grid.zs.findIndex(z => z >= 2000), grid.zs.findLastIndex(z => z <= 5000)]
-    // exp(-z / 300 m) per unit volume over the levels below 1 km (the two lowest on the uniform grid), each weighted by
-    // the height of its control volume, normalised.
-    const low = Math.max(2, grid.zs.findIndex(z => z >= 1000)), shape = Array.from({ length: low }, (_, z) => Math.exp(-grid.zs[z] / 300))
+    // exp(-z / 300 m) per unit volume over the levels below 500 m (the two lowest on the uniform grid), each weighted by
+    // the height of its control volume, normalised. Not higher: theta is float32 (~3e-5 K steps near 300 K), and the
+    // per-step heating of thin levels near 1 km is only a few such steps, so it rounds systematically (±15 %).
+    const low = Math.max(2, grid.zs.findIndex(z => z >= 500)), shape = Array.from({ length: low }, (_, z) => Math.exp(-grid.zs[z] / 300))
     const total = shape.reduce((sum, s, z) => sum + s * grid.hz[z], 0)
     this.surfaceShare = Float64Array.from(shape, s => s / total)
     this.rng = mulberry32(config.seed)
@@ -109,6 +110,9 @@ export class AtmosphereModel {
     const { nx, ny, nz, zs, width: W, depth: D } = this.grid
     let walk = 0
     for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++) { walk = walk * .82 + (this.rng() - .5) * .34; this.surfacePattern[x + nx * y] = walk }
+    // Zero mean: the pattern only redistributes the surface fluxes (a random offset once added ~1 % to H and LE).
+    const mean = this.surfacePattern.reduce((a, b) => a + b, 0) / this.surfacePattern.length
+    for (let i = 0; i < this.surfacePattern.length; i++) this.surfacePattern[i] -= mean
     for (let z = 0, i = 0; z < nz; z++) for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++, i++) {
       const alt = zs[z], [ue, ve] = this.env.windUV(alt)
       this.u[i] = ue; this.v[i] = ve; this.w[i] = 0
@@ -127,7 +131,8 @@ export class AtmosphereModel {
    */
   injectBubble(cx: number, cy: number, strength: number) {
     const { nx, ny, nz, dx, dy, zs, width: W, depth: D } = this.grid
-    for (let z = 0; z < Math.min(5, nz); z++) for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++) {
+    // The levels up to 2.7 km (the lowest five on the old uniform grid): the thermal's depth is set in metres, not levels.
+    for (let z = 0; z < nz && zs[z] < 2700; z++) for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++) {
       let ddx = x * dx - cx, ddy = y * dy - cy
       if (ddx > W / 2) ddx -= W; if (ddx < -W / 2) ddx += W; if (ddy > D / 2) ddy -= D; if (ddy < -D / 2) ddy += D
       const d2 = (ddx / 4200) ** 2 + (ddy / 4200) ** 2 + (zs[z] / 1800) ** 2, a = Math.exp(-d2) * strength, i = x + nx * (y + ny * z)
@@ -148,8 +153,8 @@ export class AtmosphereModel {
 
   /** Semi-Lagrangian transport of `a` with an extra downward fall speed per node into the scratch buffer (see commit). */
   private advectFalling(a: Float32Array, dt: number, fall: Float32Array) {
-    const { nx, ny, nz, dx, dy, dz } = this.grid, s = this.scratch, u = this.u, v = this.v, w = this.w
-    for (let z = 0, i = 0; z < nz; z++) for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++, i++) s[i] = this.sample(a, x - u[i] * dt / dx, y - v[i] * dt / dy, z - (w[i] - fall[i]) * dt / dz)
+    const grid = this.grid, { nx, ny, nz, dx, dy } = grid, s = this.scratch, u = this.u, v = this.v, w = this.w
+    for (let z = 0, i = 0; z < nz; z++) for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++, i++) s[i] = this.sample(a, x - u[i] * dt / dx, y - v[i] * dt / dy, shiftedLevel(grid, z, -(w[i] - fall[i]) * dt))
   }
 
   /**
@@ -213,9 +218,9 @@ export class AtmosphereModel {
   // Departure points of one semi-Lagrangian step (8 corner indices + 3 weights per cell), shared by every field
   // so that all of them are carried by the same, pre-step velocity.
   private computeBacktrace(dt: number) {
-    const { nx, ny, nz, dx, dy, dz, layer } = this.grid, c = this.backtraceCorner, wt = this.backtraceWeight, u = this.u, v = this.v, w = this.w
+    const grid = this.grid, { nx, ny, nz, dx, dy, layer } = grid, c = this.backtraceCorner, wt = this.backtraceWeight, u = this.u, v = this.v, w = this.w
     for (let z = 0, i = 0; z < nz; z++) for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++, i++) {
-      const px = mod(x - u[i] * dt / dx, nx), py = mod(y - v[i] * dt / dy, ny), pz = clamp(z - w[i] * dt / dz, 0, nz - 1)
+      const px = mod(x - u[i] * dt / dx, nx), py = mod(y - v[i] * dt / dy, ny), pz = shiftedLevel(grid, z, -w[i] * dt)
       const x0 = Math.floor(px), y0 = Math.floor(py), z0 = Math.min(Math.floor(pz), nz - 2), x1 = (x0 + 1) % nx, r0 = nx * y0, r1 = nx * ((y0 + 1) % ny), l0 = layer * z0, l1 = layer * (z0 + 1), k = i * 8
       c[k] = x0 + r0 + l0; c[k + 1] = x1 + r0 + l0; c[k + 2] = x0 + r1 + l0; c[k + 3] = x1 + r1 + l0; c[k + 4] = x0 + r0 + l1; c[k + 5] = x1 + r0 + l1; c[k + 6] = x0 + r1 + l1; c[k + 7] = x1 + r1 + l1
       wt[i * 3] = px - x0; wt[i * 3 + 1] = py - y0; wt[i * 3 + 2] = pz - z0

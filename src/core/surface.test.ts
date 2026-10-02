@@ -27,21 +27,25 @@ describe('surface energy balance', () => {
     const cd = (surfaceType: SimConfig['surfaceType']) => dragCoefficient({ ...SUMMER_DAY, surfaceType }, 652)
     expect(cd('grass')).toBeGreaterThan(.0015); expect(cd('grass')).toBeLessThan(.003)
     expect(cd('water')).toBeLessThan(cd('grass')); expect(cd('urban')).toBeGreaterThan(2 * cd('grass'))
-    // A 10 m/s gust on top of the background decays over hours, not seconds (the old x0.94 took ~16 s).
-    const model = new AtmosphereModel({ ...QUIET, solarMax: 0 }), { layer } = model.grid
+    // A 10 m/s gust on top of the background decays over hours, not seconds (the old x0.94 took ~16 s). Measured as the
+    // column's momentum: on the stretched grid the 50 m ground layer also mixes the gust up into the next levels.
+    const model = new AtmosphereModel({ ...QUIET, solarMax: 0 }), { layer, nz, hz } = model.grid, e = model.env
     for (let i = 0; i < layer; i++) model.u[i] += 10
     model.step(1)
-    const gust = model.u.slice(0, layer).reduce((a, b) => a + b, 0) / layer - model.env.u[0]
-    expect(gust).toBeGreaterThan(9.9)
+    let momentum = 0
+    for (let z = 0; z < nz; z++) momentum += e.rho[z] * hz[z] * (model.u.slice(z * layer, (z + 1) * layer).reduce((a, b) => a + b, 0) / layer - e.u[z])
+    expect(momentum / (e.rho[0] * hz[0] * 10)).toBeGreaterThan(.99)
   })
 
   it('puts exactly H and LE into the air column', () => {
     const config = { ...QUIET, solarMax: 1000, hour: 12, wind0: 0, wind3: 0, wind6: 0, wind10: 0 }, model = new AtmosphereModel(config)
-    const { layer, dz } = model.grid, e = model.env, theta0 = model.theta.slice(), q0 = model.q.slice(), f = surfaceFluxes(config, 0)
+    const { layer, zs, hz } = model.grid, e = model.env, theta0 = model.theta.slice(), q0 = model.q.slice(), f = surfaceFluxes(config, 0)
     model.step(1)
     let heat = 0, moisture = 0
-    for (let z = 0; z < 2; z++) for (let i = z * layer; i < (z + 1) * layer; i++) {
-      const h = z === 0 ? dz / 2 : dz
+    // The fluxes go into the levels below 500 m (at least the two lowest), each owning hz of the column.
+    const low = Math.max(2, zs.findIndex(z => z >= 500))
+    for (let z = 0; z < low; z++) for (let i = z * layer; i < (z + 1) * layer; i++) {
+      const h = hz[z]
       heat += e.rho[z] * CP * e.exner[z] * (model.theta[i] - theta0[i]) * h; moisture += e.rho[z] * LV * (model.q[i] - q0[i]) * h
     }
     expect(heat / layer / f.sensible).toBeCloseTo(1, 2)

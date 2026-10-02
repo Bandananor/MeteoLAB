@@ -3,9 +3,11 @@ import { CW, KA, LF, LS, NU, PSI, qsatIce, SC, T0 } from './ice'
 
 // Ice microphysics, stage 2 (2026-09-29): graupel after Lin, Farley & Orville (1983).
 // Exponential size distribution with intercept N0G and density RHO_G; fall law V = (4 g rho_g D / (3 C_D rho))^0.5.
-const N0G = 4e4, RHO_G = 400, CD = .6
+export const N0G = 4e4, RHO_G = 400
+const CD = .6
 // Rain distribution of the Lin scheme (for the freezing of rain) and the Bigg (1953) freezing constants B', A'.
-const N0R = 8e6, RHO_W = 1000, BIGG_B = 100, BIGG_A = .66
+export const N0R = 8e6, RHO_W = 1000
+const BIGG_B = 100, BIGG_A = .66
 const GAMMA_45 = 11.6317, GAMMA_35 = 3.3234, GAMMA_275 = 1.6084 // Γ(4.5), Γ(3.5), Γ(2.75)
 /** Snow above this mixing ratio turns into graupel as it rimes (Lin 1983), kg/kg. */
 export const SNOW_TO_GRAUPEL_THRESHOLD = 6e-4

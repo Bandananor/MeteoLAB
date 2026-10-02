@@ -1,5 +1,6 @@
 import './style.css'
 import { Atmosphere } from './atmosphere'
+import { RadarPanel } from './radar/panel'
 import { createGrid, Environment, parcelIndices, SCENARIOS, type SimConfig, stormIndices, weismanKlemp } from './core'
 import { FIELDS, type FieldMode } from './render/fields'
 import type { LayerMode } from './render/view'
@@ -27,7 +28,7 @@ const presets = SCENARIOS.map(s => {
 document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
   <header>
     <div><span class="eyebrow">ЧИСЛЕННАЯ ЛАБОРАТОРИЯ АТМОСФЕРЫ / 1.0 3D</span><h1>StormLab</h1></div>
-    <div class="header-stats"><span>3D non-hydrostatic</span><span>48 × 36 × 19 км</span><div class="status"><i></i><span id="statusText">РАСЧЁТ ИДЁТ</span></div></div>
+    <div class="header-stats"><span>3D non-hydrostatic</span><span>48 × 36 × 19 км</span><button id="radarOpen" class="radar-open" title="Доплеровский радар: отражаемость на выбранном угле наклона луча">◉ Радар</button><div class="status"><i></i><span id="statusText">РАСЧЁТ ИДЁТ</span></div></div>
   </header>
   <main>
     <aside class="controls">
@@ -105,7 +106,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
           </div>
         </div>
       </div>
-      <div class="readout"><span>Сетка 40 × 32 × 30</span><span>Δx / Δy / Δz: 1.2 / 1.1 / 0.65 км</span><span>Δt: 1.0 с</span><span>Инсоляция: <b id="sun">—</b></span><span>Солнце: <b id="sunElevation">—</b></span><span>T+: <b id="time">00:00</b></span></div>
+      <div class="readout"><span>Сетка 40 × 32 × 50</span><span>Δx / Δy: 1.2 / 1.1 км, Δz: 0.1 км у земли → 1 км наверху</span><span>Δt: 1.0 с</span><span>Инсоляция: <b id="sun">—</b></span><span>Солнце: <b id="sunElevation">—</b></span><span>T+: <b id="time">00:00</b></span></div>
     </section>
 
     <aside class="diagnostics">
@@ -154,9 +155,11 @@ useSeed(Number.isInteger(urlSeed) && urlSeed > 0 ? urlSeed : nextSeed())
 const canvas = document.querySelector<HTMLCanvasElement>('#sim')!
 const view = { field: 'composite' as FieldMode, showVectors: false, showPrecip: false, showRainTotal: false, showMesocyclone: true, layerMode: 'both' as LayerMode, volumeThreshold: .1, volumeDensity: 1, sliceHeight: 2, sliceNorth: 0 }
 let sim = new Atmosphere(canvas, config)
+const radar = new RadarPanel(document.body); radar.attach(sim.model, sim.storm.rightMover)
+document.querySelector('#radarOpen')!.addEventListener('click', () => radar.toggle())
 let running = true
 let last = performance.now(), frameCount = 0
-const recreate = () => { useSeed(nextSeed()); sim.dispose(); sim = Object.assign(new Atmosphere(canvas, config), view) }
+const recreate = () => { useSeed(nextSeed()); sim.dispose(); sim = Object.assign(new Atmosphere(canvas, config), view); radar.attach(sim.model, sim.storm.rightMover) }
 
 const resetKeys = new Set<keyof SimConfig>(['surfaceTemp','lapseLow','lapseMid','lapseUpper','tropopause','stratoWarming','capStrength','capHeight','rhSurface','rhLow','rhMid','rhUpper','moistLayer','wind0','wind05','wind1','wind3','wind6','wind10','windDir0','windDir05','windDir1','windDir3','windDir6','windDir10','latitude','bubble','surfaceType'])
 const surfaceSelect = document.querySelector<HTMLSelectElement>('#surfaceType')!
@@ -324,6 +327,6 @@ function frame(now:number){
   const elapsed=Math.min(.2,(now-last)/1000);last=now;if(running)sim.advance(elapsed);sim.render();const d=sim.diagnostics()
   text('cape',d.cape.toFixed(0));text('mlcape',d.indices.ml.cape.toFixed(0));text('mlcin',d.indices.ml.cin.toFixed(0));text('mucape',d.indices.mu.cape.toFixed(0));text('dcape',d.indices.dcape.toFixed(0));text('srh01',d.storm.srh01.toFixed(0));text('srh03',d.storm.srh03.toFixed(0));text('scp',d.storm.scp.toFixed(1));text('stp',d.storm.stp.toFixed(1));text('cin',d.cin.toFixed(0));text('updraft',d.updraft.toFixed(1));text('downdraft',d.downdraft.toFixed(1));text('uh',d.updraftHelicity.toFixed(0));text('uhLow',`${d.uh01.toFixed(0)} / ${d.uh03.toFixed(0)}`);text('cloudTop',d.cloudTop.toFixed(1));text('thermalTop',d.thermalTop.toFixed(1));text('cloudWater',d.cloudWater.toFixed(2));text('coldPool',d.coldPool.toFixed(1));text('microburst',d.microburst.toFixed(1));text('clipped',String(d.clipped));text('rain',d.rain.toFixed(1));text('rainTotal',d.rainTotal.toFixed(1));text('lcl',d.lcl===null?'—':`${d.lcl.toFixed(1)} км`);text('lfc',d.lfc===null?'—':`${d.lfc.toFixed(1)} км`);text('el',d.el===null?'—':`${d.el.toFixed(1)} км`);text('cellType',d.cellType);text('cellReason',d.cellReason);text('logicText',d.logic);text('sun',`${d.insolation.toFixed(0)} Вт/м²`);text('sunElevation',d.sunElevation>0?`${d.sunElevation.toFixed(0)}° над горизонтом`:'ночь')
   text('surfaceReadout',({grass:'ТРАВА',dry:'СУХАЯ ПОЧВА',water:'ВОДА',urban:'ГОРОД'} as const)[config.surfaceType])
-  const sec=Math.floor(sim.time);text('time',`${String(Math.floor(sec/60)).padStart(2,'0')}:${String(sec%60).padStart(2,'0')}`);text('freezing',d.freezing===null?'—':`${d.freezing.toFixed(1)} км`);if(frameCount++%20===0){drawSounding();drawHodograph()}requestAnimationFrame(frame)
+  const sec=Math.floor(sim.time);text('time',`${String(Math.floor(sec/60)).padStart(2,'0')}:${String(sec%60).padStart(2,'0')}`);text('freezing',d.freezing===null?'—':`${d.freezing.toFixed(1)} км`);if(frameCount++%20===0){drawSounding();drawHodograph()}radar.refresh();requestAnimationFrame(frame)
 }
 requestAnimationFrame(frame)

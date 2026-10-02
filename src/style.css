@@ -13,3 +13,23 @@ main{display:grid;grid-template-columns:310px minmax(650px,1fr) 270px;flex:1;min
 .camera-help{position:absolute;left:12px;top:11px;padding:6px 8px;background:#10232dcc;border:1px solid #526873;color:#c6d3d9;font:8px IBM Plex Mono;border-radius:2px;pointer-events:none}.surface-badge{position:absolute;left:12px;bottom:12px;padding:5px 7px;background:#29382ccc;border:1px solid #76806b;color:#d9ddcf;font:8px IBM Plex Mono;border-radius:2px;pointer-events:none}
 .diagnostics h2{margin-bottom:10px}.cell-type{padding:11px;background:#e7ecee;border:1px solid #c8d2d6}.cell-type span{display:block;font-size:8px;text-transform:uppercase;color:#75868e}.cell-type strong{display:block;margin:4px 0;font-size:13px;color:#263e49}.cell-type small{font-size:8px;line-height:1.4;color:#71828a}.sounding{position:relative;margin:12px 0 8px;border:1px solid #c8d2d6;background:#e7ecee}.sounding canvas{width:100%;height:175px;display:block}.sounding-key{position:absolute;right:5px;top:5px;padding:4px;background:#f2f4f4cc;font:7px IBM Plex Mono}.sounding-key span{margin-left:6px}.sounding-key i{display:inline-block;width:10px;border-top:2px solid;margin-right:3px}.sounding-key .env{border-color:#4f7180}.sounding-key .parcel{border-color:#b46e43}.levels{display:grid;grid-template-columns:repeat(3,1fr);border:1px solid var(--line)}.levels div{padding:7px;border-right:1px solid var(--line)}.levels div:last-child{border:0}.levels span,.energy span{display:block;font:8px IBM Plex Mono;color:#74858d}.levels b{font:10px IBM Plex Mono;color:#293f49}.energy{display:grid;grid-template-columns:1fr 1fr;margin-top:8px}.energy>div{padding:8px;background:#e7ecee;border:1px solid var(--line)}.energy>div+div{border-left:0}.energy strong{font:18px IBM Plex Mono;color:#253943}.energy small{font:7px IBM Plex Mono;color:#7b8b92;margin-left:3px}.metric{padding:9px 0;border-bottom:1px solid var(--line);display:grid;grid-template-columns:1fr auto;align-items:end}.metric span{grid-column:1/3;font-size:8px;color:#6c7e87;margin-bottom:2px}.metric strong{font:17px IBM Plex Mono;color:#253943}.metric small{font:7px IBM Plex Mono;color:#7a8b93;margin:0 0 2px 5px}.note{margin-top:12px;padding:10px;background:#e8edef;border:1px solid #c8d1d5;border-radius:3px}.note b{display:block;font-size:9px;color:#526771}.note p{margin-top:5px}
 @media(max-width:1350px){main{grid-template-columns:280px minmax(620px,1fr) 245px}.controls,.diagnostics{padding-inline:14px}.readout{gap:10px}.tabs button{padding-inline:7px;font-size:9px}}
+
+/* Radar display: a dark workstation screen over the app. */
+.radar-open{background:#123038;border-color:#0b2026;color:#7fe3d6;font:600 10px IBM Plex Mono,monospace;letter-spacing:.6px;padding:6px 10px;margin-right:10px}
+.radar-app{position:fixed;inset:0;z-index:50;display:flex;flex-direction:column;background:#05080a;color:#b9cdd3;font:11px IBM Plex Mono,monospace}
+.radar-app[hidden]{display:none}
+.radar-bar{display:flex;align-items:center;gap:22px;padding:10px 16px;border-bottom:1px solid #1d2c32;background:#081014;letter-spacing:.5px}
+.radar-bar b{color:#7fe3d6;font-weight:600}.radar-name{color:#e3ecee;font-weight:600}
+.radar-close{margin-left:auto;background:transparent;border:1px solid #2c444d;color:#b9cdd3;font:600 10px IBM Plex Mono,monospace;padding:5px 10px}
+.radar-body{flex:1;display:grid;grid-template-columns:1fr 240px;min-height:0}
+.radar-screen{position:relative;min-height:0;cursor:crosshair}.radar-screen canvas{position:absolute;inset:0}
+.radar-side{border-left:1px solid #1d2c32;background:#081014;padding:14px;overflow-y:auto}
+.radar-side h3{font-size:10px;font-weight:600;color:#6f8b94;letter-spacing:.8px;text-transform:uppercase;margin:14px 0 8px}
+.radar-tilts{display:grid;grid-template-columns:repeat(3,1fr);gap:4px}
+.radar-tilts button,.radar-products button{background:#0e1b20;border:1px solid #22363e;color:#b9cdd3;font:10px IBM Plex Mono,monospace;padding:5px 0}
+.radar-products{display:grid;gap:4px}.radar-products button{padding:6px}
+.radar-tilts button.active,.radar-products button.active{background:#13424a;border-color:#2f7d86;color:#e9fbf8}
+.radar-products button:disabled{opacity:.4;cursor:default}
+.radar-legend{display:grid;grid-template-columns:repeat(4,1fr);gap:2px}.radar-legend span{color:#05080a;font-size:9px;font-weight:600;text-align:center;padding:2px 0}
+.radar-readout{line-height:1.7}.radar-readout b{color:#e9fbf8}
+.radar-help{color:#6f8b94;font-size:9.5px;line-height:1.55;margin-top:16px}

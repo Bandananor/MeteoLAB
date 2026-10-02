@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest'
 import { createGrid, DEFAULT_GRID, levelAt } from './grid'
 
 describe('vertical grid', () => {
-  it('keeps the uniform grid exactly: spacings dz, half a layer at ground and top', () => {
-    const g = createGrid()
+  it('keeps a uniform grid exactly: spacings dz, half a layer at ground and top', () => {
+    const g = createGrid({ ...DEFAULT_GRID, nz: 30, bottomSpacing: undefined })
     expect(g.uniform).toBe(true)
     expect(g.zs[g.nz - 1]).toBeCloseTo(g.height, 9)
     expect([...g.dzs].every(s => s === g.dz)).toBe(true)

@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { AtmosphereModel, createGrid, weismanKlemp } from '.'
+import { AtmosphereModel, createGrid, levelAt, weismanKlemp } from '.'
 import { run, SUMMER_DAY } from './fixtures'
 
 /** Local maxima of w at a level (w above `minW`, strongest within ±2 nodes), strongest first. */
 function updraftCores(model: AtmosphereModel, height: number, minW: number) {
-  const { nx, ny, dx, dy, dz, layer } = model.grid, l = Math.round(height / dz) * layer, cores: { x: number; y: number; w: number; uh: number }[] = []
+  const { nx, ny, dx, dy, layer } = model.grid, l = Math.round(levelAt(model.grid, height)) * layer, cores: { x: number; y: number; w: number; uh: number }[] = []
   for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++) {
     const w = model.w[x + nx * y + l]
     if (w < minW) continue

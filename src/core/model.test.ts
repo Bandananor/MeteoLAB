@@ -31,6 +31,6 @@ describe('AtmosphereModel', () => {
   it('uses the documented default grid spacing', () => {
     const g = createGrid(DEFAULT_GRID)
     expect([g.dx, g.dy]).toEqual([1200, 1125])
-    expect(g.dz).toBeCloseTo(18_900 / 29)
+    expect(g.nz).toBe(50); expect(g.dzs[0]).toBeCloseTo(100, 6); expect(g.zs[g.nz - 1]).toBeCloseTo(18_900, 6)
   })
 })

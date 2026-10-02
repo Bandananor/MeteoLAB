@@ -25,8 +25,10 @@ export interface Grid extends GridOptions {
   xp: Int32Array; xm: Int32Array; yp: Int32Array; ym: Int32Array
 }
 
-// The top is at 18.9 km (dz 652 m as before) so strong storms overshoot the tropopause below the sponge, not into it.
-export const DEFAULT_GRID: GridOptions = { nx: 40, ny: 32, nz: 30, width: 48_000, depth: 36_000, height: 18_900 }
+// The top is at 18.9 km so strong storms overshoot the tropopause below the sponge, not into it. 50 levels stretched from
+// 100 m at the ground (2026-10-01; was 30 uniform 652 m levels): 9 levels below 1 km for the boundary layer, inversions and
+// cloud base, ~340 m at 5 km, ~630 m at the tropopause, ~970 m at the top.
+export const DEFAULT_GRID: GridOptions = { nx: 40, ny: 32, nz: 50, width: 48_000, depth: 36_000, height: 18_900, bottomSpacing: 100 }
 
 /** Geometric stretching ratio r with bottom * (r^m - 1) / (r - 1) = height for m = nz - 1 intervals (bisection). */
 function stretchRatio(bottom: number, height: number, intervals: number) {
@@ -59,6 +61,31 @@ export function createGrid(options: GridOptions = DEFAULT_GRID): Grid {
     yp: Int32Array.from({ length: ny }, (_, y) => (y + 1) % ny * nx),
     ym: Int32Array.from({ length: ny }, (_, y) => (y + ny - 1) % ny * nx),
   }
+}
+
+/**
+ * Fractional level index of the height zs[k] + shift (m), clamped to the column: a local search from level k, for
+ * semi-Lagrangian departure points (a few levels at most per step).
+ */
+export function shiftedLevel(grid: Grid, k: number, shift: number) {
+  const { zs, nz, dz, uniform } = grid
+  if (uniform) return Math.min(Math.max(k + shift / dz, 0), nz - 1)
+  const target = zs[k] + shift
+  if (target <= 0) return 0
+  if (target >= zs[nz - 1]) return nz - 1
+  let j = k
+  while (j > 0 && zs[j] > target) j--
+  while (j < nz - 2 && zs[j + 1] < target) j++
+  return j + (target - zs[j]) / (zs[j + 1] - zs[j])
+}
+
+/** Height, m, of a fractional level index (clamped to the column): zs interpolated linearly. */
+export function heightAt(grid: Grid, level: number) {
+  const { zs, nz } = grid
+  if (level <= 0) return 0
+  if (level >= nz - 1) return zs[nz - 1]
+  const k = Math.floor(level)
+  return zs[k] + (level - k) * (zs[k + 1] - zs[k])
 }
 
 /** Fractional level index of a height, m (clamped to the column): the inverse of zs. */
