@@ -1,4 +1,4 @@
-import { AtmosphereModel, insolation, type ModelDiagnostics, parcelIndices, type ParcelIndices, type SimConfig, stormIndices, type StormIndices, sunDirection } from './core'
+import { AtmosphereModel, CellTracker, insolation, type ModelDiagnostics, parcelIndices, type ParcelIndices, type SimConfig, stormIndices, type StormIndices, sunDirection } from './core'
 import { describeConvection } from './describe'
 import type { FieldMode } from './render/fields'
 import { type LayerMode, StormView, type ViewSettings } from './render/view'
@@ -24,6 +24,8 @@ export class Atmosphere implements ViewSettings {
   private readonly indices: ParcelIndices
   /** Bunkers motion, SRH, SCP and STP of the environment. */
   readonly storm: StormIndices
+  /** Convective cells found and followed in every snapshot (src/core/cells.ts). */
+  readonly cells = new CellTracker()
 
   constructor(canvas: HTMLCanvasElement, config: SimConfig) {
     this.config = config; this.sentConfig = JSON.stringify(config)
@@ -56,6 +58,13 @@ export class Atmosphere implements ViewSettings {
   sounding() { return this.mirror.sounding }
 
   /** Double-click: warm moist thermal under the given normalised screen point. */
+  /** Ground point (m) under normalised screen coordinates. */
+  groundPoint(nx: number, ny: number) { return this.view.groundPoint(nx, ny) }
+  /** Canvas position of a model point (m), or null behind the camera. */
+  screenPoint(x: number, y: number, z: number) { return this.view.screenPoint(x, y, z) }
+  /** Rings the selected cell in the 3D view. */
+  setSelection(p: { x: number; y: number } | null) { this.view.setSelection(p) }
+
   perturb(nx: number, ny: number, strength = 1) { const p = this.view.groundPoint(nx, ny); this.post({ type: 'perturb', x: p.x, y: p.y, strength }) }
 
   diagnostics() {
@@ -78,6 +87,8 @@ export class Atmosphere implements ViewSettings {
     m.time = s.time; m.microburstOutflow = s.microburstOutflow; Object.assign(m.rotation, s.rotation); this.latest = s.diagnostics
     this.post({ type: 'release', buffer: s.buffer }, [s.buffer])
     this.inFlight = false
+    // Cells move about a grid column a minute: every 6 s of model time is plenty.
+    if (!(m.time - this.cells.time < 6)) this.cells.update(m)
     this.view.afterAdvance(s.steps)
   }
 }

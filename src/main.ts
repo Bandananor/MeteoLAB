@@ -1,7 +1,7 @@
 import './style.css'
 import { Atmosphere } from './atmosphere'
 import { RadarPanel } from './radar/panel'
-import { createGrid, Environment, parcelIndices, SCENARIOS, type SimConfig, stormIndices, weismanKlemp } from './core'
+import { CELL_STAGES, createGrid, Environment, parcelIndices, SCENARIOS, type SimConfig, stormIndices, weismanKlemp } from './core'
 import { FIELDS, type FieldMode } from './render/fields'
 import type { LayerMode } from './render/view'
 
@@ -92,6 +92,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
         <canvas id="sim" width="960" height="600"></canvas>
         <div class="camera-help">ЛКМ — вращение · ПКМ — перемещение · колесо — масштаб · двойной клик — термик</div>
         <div class="surface-badge" id="surfaceReadout">ТРАВА</div>
+        <div class="cell-labels" id="cellLabels"></div>
         <div class="legend" id="cloudLegend"><span><i class="cloud"></i>облачная вода</span><span><i class="rain"></i>осадки</span><span><i class="up"></i>updraft</span><span><i class="down"></i>downdraft</span></div>
         <div class="field-panel" id="fieldPanel" hidden>
           <b id="fieldTitle"></b>
@@ -112,6 +113,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
     <aside class="diagnostics">
       <h2>Состояние конвекции</h2>
       <div class="cell-type"><span>Режим</span><strong id="cellType">—</strong><small id="cellReason">ожидание инициализации</small></div>
+      <div class="cells"><div class="cells-head"><span>Ячейки</span><button id="cellAll" class="cell-chip" title="Показатели по всей области: максимумы по всем ячейкам">Вся область</button></div><div class="cell-list" id="cellList"><small>ячеек пока нет</small></div><small class="cells-hint">Щелчок по ячейке на 3D-виде или в списке закрепляет за ней показатели ниже</small></div>
       <div class="sounding"><canvas id="sounding"></canvas><div class="sounding-key"><span><i class="env"></i>среда</span><span><i class="dew"></i>точка росы</span><span><i class="parcel"></i>частица</span><span><i class="area cape"></i>CAPE</span><span><i class="area cin"></i>CIN</span></div></div>
       <div class="levels"><div><span>LCL</span><b id="lcl">—</b></div><div><span>LFC</span><b id="lfc">—</b></div><div><span>EL</span><b id="el">—</b></div><div><span>0 °C</span><b id="freezing">—</b></div></div>
       <div class="hodograph"><canvas id="hodograph"></canvas><div class="hodo-key"><span><i style="border-color:#c4553a"></i>0–3 км</span><span><i style="border-color:#4f8f5b"></i>3–6 км</span><span><i style="border-color:#3f6fa3"></i>6–10 км</span></div><div class="hodo-caption"><span>Сдвиг ветра 0–6 км</span><b id="shear">—</b><small id="shearHint"></small></div></div>
@@ -120,6 +122,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
       <div class="energy"><div title="Спиральность относительно правой ячейки (движение по Банкерсу), слой 0–1 км: главный признак смерчеопасной среды"><span>SRH 0–1 км</span><strong id="srh01">—</strong><small>м²/с²</small></div><div title="Спиральность относительно правой ячейки, слой 0–3 км"><span>SRH 0–3 км</span><strong id="srh03">—</strong><small>м²/с²</small></div></div>
       <div class="energy"><div title="Сложный параметр суперячейки (MUCAPE, SRH 0–3 км, сдвиг 0–6 км). Больше 1 — среда благоприятна для суперячеек"><span>SCP</span><strong id="scp">—</strong><small>безразм.</small></div><div title="Параметр значимого смерча, фиксированный слой (SBCAPE, LCL, SRH 0–1 км, сдвиг 0–6 км). Больше 1 — благоприятно для сильных смерчей"><span>STP</span><strong id="stp">—</strong><small>безразм.</small></div></div>
       <div class="energy"><div title="Наиболее неустойчивая частица в нижних 300 гПа"><span>MUCAPE</span><strong id="mucape">—</strong><small>Дж/кг</small></div><div title="Энергия нисходящего потока: сила холодных оттоков и микропорывов"><span>DCAPE</span><strong id="dcape">—</strong><small>Дж/кг</small></div></div>
+      <div class="metric-scope" id="metricScope">Показатели по всей области</div>
       <div class="metric"><span>Макс. updraft</span><strong id="updraft">—</strong><small>м/с</small></div>
       <div class="metric"><span>Макс. downdraft</span><strong id="downdraft">—</strong><small>м/с</small></div>
       <div class="metric" title="Спиральность восходящего потока: насколько поднимающийся воздух вращается циклонически в слое 2–5 км"><span>Вращение потока (UH 2–5 км)</span><strong id="uh">—</strong><small>м²/с²</small></div>
@@ -159,7 +162,7 @@ const radar = new RadarPanel(document.body); radar.attach(sim.model, sim.storm.r
 document.querySelector('#radarOpen')!.addEventListener('click', () => radar.toggle())
 let running = true
 let last = performance.now(), frameCount = 0
-const recreate = () => { useSeed(nextSeed()); sim.dispose(); sim = Object.assign(new Atmosphere(canvas, config), view); radar.attach(sim.model, sim.storm.rightMover) }
+const recreate = () => { useSeed(nextSeed()); sim.dispose(); sim = Object.assign(new Atmosphere(canvas, config), view); radar.attach(sim.model, sim.storm.rightMover); selectCell(null) }
 
 const resetKeys = new Set<keyof SimConfig>(['surfaceTemp','lapseLow','lapseMid','lapseUpper','tropopause','stratoWarming','capStrength','capHeight','rhSurface','rhLow','rhMid','rhUpper','moistLayer','wind0','wind05','wind1','wind3','wind6','wind10','windDir0','windDir05','windDir1','windDir3','windDir6','windDir10','latitude','bubble','surfaceType'])
 const surfaceSelect = document.querySelector<HTMLSelectElement>('#surfaceType')!
@@ -259,6 +262,67 @@ layerMode.addEventListener('change', () => { const mode = layerMode.value as Lay
 const volumeThreshold = document.querySelector<HTMLInputElement>('#volumeThreshold')!, volumeDensity = document.querySelector<HTMLInputElement>('#volumeDensity')!
 volumeThreshold.addEventListener('input', () => { setView({ volumeThreshold: Number(volumeThreshold.value) }); text('volumeThresholdOut', `${Math.round(Number(volumeThreshold.value) * 100)} %`) })
 volumeDensity.addEventListener('input', () => { setView({ volumeDensity: Number(volumeDensity.value) }); text('volumeDensityOut', `${Number(volumeDensity.value).toFixed(1)}×`) })
+// Cell selection: a click (not a drag of the camera) on the 3D view picks the nearest cell; so do the list and the labels.
+let selectedCell: number | null = null, cellNote = '', cellListKey = '', pressed: { x: number; y: number } | null = null
+function selectCell(id: number | null) { selectedCell = id; cellNote = ''; cellListKey = '' }
+canvas.addEventListener('pointerdown', event => { pressed = event.button === 0 ? { x: event.clientX, y: event.clientY } : null })
+canvas.addEventListener('pointerup', event => {
+  if (!pressed || Math.hypot(event.clientX - pressed.x, event.clientY - pressed.y) > 4) { pressed = null; return }
+  pressed = null
+  const r = canvas.getBoundingClientRect(), g = sim.groundPoint((event.clientX - r.left) / r.width, (event.clientY - r.top) / r.height), cell = sim.cells.nearest(g.x, g.y, sim.model)
+  if (cell) selectCell(cell.id)
+})
+document.querySelector('#cellAll')!.addEventListener('click', () => selectCell(null))
+document.querySelector('#cellList')!.addEventListener('click', event => { const b = (event.target as HTMLElement).closest<HTMLElement>('[data-cell]'); if (b) selectCell(Number(b.dataset.cell)) })
+const cellLabels = document.querySelector<HTMLDivElement>('#cellLabels')!
+cellLabels.addEventListener('click', event => { const b = (event.target as HTMLElement).closest<HTMLElement>('[data-cell]'); if (b) selectCell(Number(b.dataset.cell)) })
+const COMPASS = ['С', 'СВ', 'В', 'ЮВ', 'Ю', 'ЮЗ', 'З', 'СЗ']
+const heading = (u: number, v: number) => COMPASS[Math.round(((Math.atan2(u, v) * 180 / Math.PI + 360) % 360) / 45) % 8]
+const ORIGIN = { thermal: 'возникла из термика', split: 'отделилась при расщеплении', 'gust-front': 'возникла на фронте порывов' } as const
+/** Cell list, labels over the 3D view, the selection ring and, for a selected cell, its own numbers in the panel. */
+function updateCells() {
+  const tracker = sim.cells
+  if (selectedCell !== null && !tracker.find(selectedCell)) {
+    // The selected cell merged into another (follow it there) or decayed (back to the whole domain).
+    const end = tracker.ended.find(e => e.id === selectedCell)
+    if (end?.into) { const from = selectedCell; selectCell(end.into); cellNote = `№${from} слилась с №${end.into}` }
+    else { const from = selectedCell; selectCell(null); cellNote = `ячейка №${from} распалась` }
+  }
+  const cell = tracker.find(selectedCell)
+  sim.setSelection(cell ? { x: cell.x, y: cell.y } : null)
+  const key = tracker.cells.map(c => `${c.id}:${c.stage}`).join() + `|${selectedCell}`
+  if (key !== cellListKey) {
+    cellListKey = key
+    document.querySelector('#cellList')!.innerHTML = tracker.cells.length
+      ? tracker.cells.map(c => `<button class="cell-chip${c.id === selectedCell ? ' active' : ''}${c.supercell || c.leftMover ? ' super' : ''}" data-cell="${c.id}" title="${CELL_STAGES[c.stage].hint}"><b>№${c.id}</b> ${CELL_STAGES[c.stage].name}</button>`).join('')
+      : '<small>ячеек пока нет</small>'
+    document.querySelector('#cellAll')!.classList.toggle('active', selectedCell === null)
+  }
+  // Labels over the cloud tops.
+  const seen = new Set<string>()
+  for (const c of tracker.cells) {
+    const id = String(c.id), p = sim.screenPoint(c.x, c.y, (Math.max(c.stats.cloudTop, 2) + .8) * 1000)
+    let label = cellLabels.querySelector<HTMLButtonElement>(`[data-cell="${id}"]`)
+    if (!label) { label = document.createElement('button'); label.dataset.cell = id; label.textContent = `№${id}`; cellLabels.appendChild(label) }
+    label.classList.toggle('active', c.id === selectedCell); label.hidden = !p
+    if (p) label.style.transform = `translate(${p.x.toFixed(0)}px, ${p.y.toFixed(0)}px) translate(-50%, -100%)`
+    seen.add(id)
+  }
+  cellLabels.querySelectorAll<HTMLElement>('[data-cell]').forEach(l => { if (!seen.has(l.dataset.cell!)) l.remove() })
+  text('metricScope', cell ? `Показатели ячейки №${cell.id}${cellNote ? ` (${cellNote})` : ''}` : `Показатели по всей области${cellNote ? ` (${cellNote})` : ''}`)
+  if (!cell) {
+    // The whole domain: name the strongest cell's stage too.
+    const top = tracker.cells.reduce<typeof tracker.cells[number] | null>((a, b) => !a || b.stats.updraft > a.stats.updraft ? b : a, null)
+    if (top) document.querySelector('#cellReason')!.textContent += `; сильнейшая — №${top.id}: ${CELL_STAGES[top.stage].name.toLowerCase()}`
+    return
+  }
+  // Motion only once the centre has been followed for 2 min since the last split or merger (before that it jumps about).
+  const s = cell.stats, age = Math.floor((sim.time - cell.born) / 60), speed = Math.hypot(cell.u, cell.v), followed = cell.trail[cell.trail.length - 1].t - cell.trail[0].t >= 120
+  text('cellType', CELL_STAGES[cell.stage].name)
+  text('cellReason', `№${cell.id}: ${CELL_STAGES[cell.stage].hint}. Возраст ${age} мин, ${ORIGIN[cell.origin]}${cell.parent ? ` (от №${cell.parent})` : ''}; ${!followed ? 'движение уточняется' : speed < 1 ? 'почти стоит' : `движется на ${heading(cell.u, cell.v)}, ${speed.toFixed(0)} м/с`}`)
+  text('updraft', s.updraft.toFixed(1)); text('downdraft', s.downdraft.toFixed(1)); text('uh', s.uh.toFixed(0)); text('uhLow', `${s.uh01.toFixed(0)} / ${s.uh03.toFixed(0)}`)
+  text('cloudTop', s.cloudTop.toFixed(1)); text('coldPool', s.coldPool.toFixed(1)); text('rain', s.rainRate.toFixed(1))
+}
 canvas.addEventListener('dblclick', event => { const r=canvas.getBoundingClientRect(); sim.perturb((event.clientX-r.left)/r.width,(event.clientY-r.top)/r.height,1.25) })
 
 const text = (id:string,value:string) => { document.querySelector(`#${id}`)!.textContent=value }
@@ -327,6 +391,6 @@ function frame(now:number){
   const elapsed=Math.min(.2,(now-last)/1000);last=now;if(running)sim.advance(elapsed);sim.render();const d=sim.diagnostics()
   text('cape',d.cape.toFixed(0));text('mlcape',d.indices.ml.cape.toFixed(0));text('mlcin',d.indices.ml.cin.toFixed(0));text('mucape',d.indices.mu.cape.toFixed(0));text('dcape',d.indices.dcape.toFixed(0));text('srh01',d.storm.srh01.toFixed(0));text('srh03',d.storm.srh03.toFixed(0));text('scp',d.storm.scp.toFixed(1));text('stp',d.storm.stp.toFixed(1));text('cin',d.cin.toFixed(0));text('updraft',d.updraft.toFixed(1));text('downdraft',d.downdraft.toFixed(1));text('uh',d.updraftHelicity.toFixed(0));text('uhLow',`${d.uh01.toFixed(0)} / ${d.uh03.toFixed(0)}`);text('cloudTop',d.cloudTop.toFixed(1));text('thermalTop',d.thermalTop.toFixed(1));text('cloudWater',d.cloudWater.toFixed(2));text('coldPool',d.coldPool.toFixed(1));text('microburst',d.microburst.toFixed(1));text('clipped',String(d.clipped));text('rain',d.rain.toFixed(1));text('rainTotal',d.rainTotal.toFixed(1));text('lcl',d.lcl===null?'—':`${d.lcl.toFixed(1)} км`);text('lfc',d.lfc===null?'—':`${d.lfc.toFixed(1)} км`);text('el',d.el===null?'—':`${d.el.toFixed(1)} км`);text('cellType',d.cellType);text('cellReason',d.cellReason);text('logicText',d.logic);text('sun',`${d.insolation.toFixed(0)} Вт/м²`);text('sunElevation',d.sunElevation>0?`${d.sunElevation.toFixed(0)}° над горизонтом`:'ночь')
   text('surfaceReadout',({grass:'ТРАВА',dry:'СУХАЯ ПОЧВА',water:'ВОДА',urban:'ГОРОД'} as const)[config.surfaceType])
-  const sec=Math.floor(sim.time);text('time',`${String(Math.floor(sec/60)).padStart(2,'0')}:${String(sec%60).padStart(2,'0')}`);text('freezing',d.freezing===null?'—':`${d.freezing.toFixed(1)} км`);if(frameCount++%20===0){drawSounding();drawHodograph()}radar.refresh();requestAnimationFrame(frame)
+  const sec=Math.floor(sim.time);text('time',`${String(Math.floor(sec/60)).padStart(2,'0')}:${String(sec%60).padStart(2,'0')}`);text('freezing',d.freezing===null?'—':`${d.freezing.toFixed(1)} км`);if(frameCount++%20===0){drawSounding();drawHodograph()}updateCells();radar.refresh();requestAnimationFrame(frame)
 }
 requestAnimationFrame(frame)

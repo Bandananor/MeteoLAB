@@ -33,3 +33,15 @@ main{display:grid;grid-template-columns:310px minmax(650px,1fr) 270px;flex:1;min
 .radar-legend{display:grid;grid-template-columns:repeat(4,1fr);gap:2px}.radar-legend span{color:#05080a;font-size:9px;font-weight:600;text-align:center;padding:2px 0}
 .radar-readout{line-height:1.7}.radar-readout b{color:#e9fbf8}
 .radar-help{color:#6f8b94;font-size:9.5px;line-height:1.55;margin-top:16px}
+
+/* Convective cells: list in the diagnostics panel and labels over the 3D view. */
+.cells{margin-top:8px;padding:9px;background:#e7ecee;border:1px solid #c8d2d6}.cells-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}.cells-head span{font-size:8px;text-transform:uppercase;color:#75868e}
+.cell-list{display:flex;flex-direction:column;gap:3px}.cell-list small,.cells-hint{font-size:8px;color:#7a8b93}.cells-hint{display:block;margin-top:6px;line-height:1.4}
+.cell-chip{all:unset;cursor:pointer;padding:4px 6px;font:9px IBM Plex Mono,monospace;color:#2d4550;background:#f3f5f6;border:1px solid #c8d2d6;border-radius:3px}.cell-chip b{color:#17242d;margin-right:4px}
+.cell-chip:hover{border-color:#39768a}.cell-chip.active{background:#d6eef3;border-color:#2b8ea3;color:#123a45}.cell-chip.super b{color:#b0661c}
+.metric-scope{margin-top:12px;padding:5px 0;font:8px IBM Plex Mono,monospace;text-transform:uppercase;color:#2b8ea3;border-bottom:1px solid var(--line)}
+.cell-labels{position:absolute;inset:0;pointer-events:none;overflow:hidden}.cell-labels button{all:unset;position:absolute;left:0;top:0;pointer-events:auto;cursor:pointer;padding:2px 5px;font:10px IBM Plex Mono,monospace;color:#e9f3f6;background:#16303acc;border:1px solid #5d7d88;border-radius:3px;white-space:nowrap}
+.cell-labels button:hover{border-color:#9fd4e2}.cell-labels button.active{background:#1e7f93;border-color:#9fe6f5}
+.radar-check{display:flex;gap:6px;align-items:center;font-size:10px;color:#9fb6bd;cursor:pointer}.radar-mda{margin-top:6px;display:flex;flex-direction:column;gap:6px;font-size:9.5px;line-height:1.55}.radar-dim{color:#6f8b94}
+.radar-meso{padding:6px 7px;border-left:3px solid #f3f0b0;background:#0d1a1f}.radar-meso b{color:#e9fbf8}.radar-meso.weak{border-color:#ffe23d}.radar-meso.moderate{border-color:#ff9a1f}.radar-meso.strong{border-color:#ff3df2}
+.radar-hook{color:#ffffff;letter-spacing:.6px}

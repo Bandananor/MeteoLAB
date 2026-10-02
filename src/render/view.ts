@@ -62,6 +62,8 @@ export class StormView {
   private readonly precipModel = new Float32Array(PRECIP_PARTICLES * 3); private readonly precipAge = new Float32Array(PRECIP_PARTICLES); private readonly precipAlive = new Uint8Array(PRECIP_PARTICLES); private precipNext = 0
   private readonly precipGeometry: THREE.BufferGeometry; private readonly precipMaterial: THREE.ShaderMaterial; private readonly precipPoints: THREE.Points
   private readonly mesoMarker: THREE.Mesh
+  /** Ring around the selected cell (see setSelection). */
+  private readonly selectionMarker: THREE.Mesh; private selection: { x: number; y: number } | null = null
   private frame = 0
   /**
    * The volume textures are uniform in height (the shaders map height linearly onto them). On a stretched grid every
@@ -143,6 +145,8 @@ export class StormView {
     this.precipPoints = new THREE.Points(this.precipGeometry, this.precipMaterial); this.precipPoints.frustumCulled = false; this.precipPoints.renderOrder = 2; this.scene.add(this.precipPoints)
     this.mesoMarker = new THREE.Mesh(new THREE.TorusGeometry(2.6, .07, 8, 64), new THREE.MeshBasicMaterial({ color: 0xf0b44c, transparent: true, opacity: .9, depthWrite: false }))
     this.mesoMarker.rotation.x = Math.PI / 2; this.mesoMarker.position.y = 3.5; this.mesoMarker.renderOrder = 3; this.mesoMarker.visible = false; this.scene.add(this.mesoMarker)
+    this.selectionMarker = new THREE.Mesh(new THREE.TorusGeometry(4, .09, 8, 72), new THREE.MeshBasicMaterial({ color: 0x5fd4e8, transparent: true, opacity: .85, depthWrite: false }))
+    this.selectionMarker.rotation.x = Math.PI / 2; this.selectionMarker.position.y = .15; this.selectionMarker.renderOrder = 3; this.selectionMarker.visible = false; this.scene.add(this.selectionMarker)
 
     this.updateLevels()
     for (let p = 0; p < FLOW_PARTICLES; p++) this.respawnParticle(p, true)
@@ -150,7 +154,7 @@ export class StormView {
 
   dispose() {
     this.controls.dispose()
-    ;[this.volumeTexture, this.fieldTexture, this.colormap, this.volumeMaterial, this.fieldMaterial, this.sliceMaterial, this.volumeMesh.geometry, this.sliceH.geometry, this.sliceV.geometry, this.precipGeometry, this.precipMaterial, this.swathTexture, this.swath.geometry, this.swath.material as THREE.Material, this.mesoMarker.geometry, this.mesoMarker.material as THREE.Material].forEach(r => r?.dispose())
+    ;[this.volumeTexture, this.fieldTexture, this.colormap, this.volumeMaterial, this.fieldMaterial, this.sliceMaterial, this.volumeMesh.geometry, this.sliceH.geometry, this.sliceV.geometry, this.precipGeometry, this.precipMaterial, this.swathTexture, this.swath.geometry, this.swath.material as THREE.Material, this.mesoMarker.geometry, this.mesoMarker.material as THREE.Material, this.selectionMarker.geometry, this.selectionMarker.material as THREE.Material].forEach(r => r?.dispose())
     this.renderer.dispose()
   }
 
@@ -170,6 +174,16 @@ export class StormView {
     this.pointer.set(nx * 2 - 1, -(ny * 2 - 1)); this.raycaster.setFromCamera(this.pointer, this.camera)
     const hit = this.raycaster.intersectObject(this.ground, false)[0]
     return { x: hit ? clamp((hit.point.x + width / 2000) * 1000, 0, width) : width / 2, y: hit ? clamp((depth / 2000 - hit.point.z) * 1000, 0, depth) : depth / 2 }
+  }
+
+  /** Rings the selected cell (ground position in m from the domain corner), or removes the ring. */
+  setSelection(p: { x: number; y: number } | null) { this.selection = p }
+
+  /** Canvas position (CSS px) of a model point (m; z above the ground), or null behind the camera. */
+  screenPoint(x: number, y: number, z: number) {
+    const [wx, wy, wz] = this.toWorld(x, y, z), v = new THREE.Vector3(wx, wy, wz).project(this.camera)
+    if (v.z > 1 || v.z < -1) return null
+    return { x: (v.x + 1) / 2 * this.canvas.clientWidth, y: (1 - v.y) / 2 * this.canvas.clientHeight }
   }
 
   /** Moves tracer and precipitation particles by the model time that just elapsed. */
@@ -328,6 +342,8 @@ export class StormView {
       this.mesoMarker.position.x = wx; this.mesoMarker.position.z = wz
       ;(this.mesoMarker.material as THREE.MeshBasicMaterial).color.set(r.persisted >= MESO_PERSISTENCE ? 0xf0b44c : 0xc9d6dc)
     }
+    this.selectionMarker.visible = !!this.selection
+    if (this.selection) { const [wx, , wz] = this.toWorld(this.selection.x, this.selection.y, 0); this.selectionMarker.position.x = wx; this.selectionMarker.position.z = wz }
     this.precipPoints.visible = s.showPrecip; this.freezingHelper.visible = s.showPrecip && m.sounding.freezing !== null
     if (s.showPrecip) { this.syncPrecip(); this.precipMaterial.uniforms.uScale.value = this.renderer.getDrawingBufferSize(new THREE.Vector2()).y * .5 }
     if (s.showVectors && this.frame % 4 === 0) this.updateVectors()

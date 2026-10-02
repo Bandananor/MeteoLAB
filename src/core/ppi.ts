@@ -80,8 +80,8 @@ export class PPI {
     return gz
   }
 
-  /** Reflectivity and fall speed of the precipitation at every model node, from the current fields. */
-  private prepare() {
+  /** Reflectivity and fall speed of the precipitation at every model node, from the current fields (sample and composite call it). */
+  prepare() {
     const m = this.model, e = m.env, { nz, layer } = m.grid, rhoGround = e.rho[0]
     for (let z = 0, i = 0; z < nz; z++) {
       const rho = e.rho[z], exner = e.exner[z]
@@ -122,5 +122,35 @@ export class PPI {
       const gz = this.levelsFor(tilt)
       for (let i = 0; i < out.length; i++) { const z = gz[i]; if (z >= 0) { const d = m.sample(this.nodeDbz, this.gx[i], this.gy[i], z); if (d > out[i]) out[i] = d } }
     }
+  }
+
+  /** Reflectivity (dBZ) the beam of `tilt` sees over a ground point, m (call prepare() first; periodic like the model). */
+  dbzAt(x: number, y: number, tilt: number) {
+    const m = this.model, grid = m.grid, h = beamHeight(Math.hypot(x - this.site.x, y - this.site.y), tilt)
+    if (h > grid.height) return DBZ_FLOOR
+    return m.sample(this.nodeDbz, x / grid.dx, y / grid.dy, levelAt(grid, h))
+  }
+
+  /**
+   * Polar scan of one tilt for the detection algorithms (call prepare() first): reflectivity and base radial velocity at
+   * `gates` range gates `step` m apart (gate g at range (g + 1) * step) on `beams` azimuths (beam b at b * 360 / beams
+   * degrees), beam-major. Beams leave the domain on one side and come back on the other, as the periodic model does (a
+   * storm across the edge is seen whole). Above the model top: no echo; without echo the velocity is NaN.
+   */
+  polar(tilt: number, step: number, gates: number, beams: number) {
+    const m = this.model, grid = m.grid, { dx, dy } = grid, el = tilt * Math.PI / 180, ce = Math.cos(el), se = Math.sin(el)
+    const dbz = new Float32Array(gates * beams).fill(DBZ_FLOOR), velocity = new Float32Array(gates * beams).fill(NaN)
+    const levels = Float64Array.from({ length: gates }, (_, g) => { const h = beamHeight((g + 1) * step, tilt); return h > grid.height ? -1 : levelAt(grid, h) })
+    for (let b = 0; b < beams; b++) {
+      const az = b * 2 * Math.PI / beams, sa = Math.sin(az), ca = Math.cos(az)
+      for (let g = 0; g < gates; g++) {
+        const r = (g + 1) * step, x = this.site.x + r * sa, y = this.site.y + r * ca, z = levels[g], i = b * gates + g
+        if (z < 0) continue
+        const gx = x / dx, gy = y / dy, d = m.sample(this.nodeDbz, gx, gy, z)
+        dbz[i] = d
+        if (d >= VELOCITY_MIN_DBZ) velocity[i] = (m.sample(m.u, gx, gy, z) * sa + m.sample(m.v, gx, gy, z) * ca) * ce + (m.sample(m.w, gx, gy, z) - m.sample(this.nodeFall, gx, gy, z)) * se
+      }
+    }
+    return { dbz, velocity }
   }
 }
