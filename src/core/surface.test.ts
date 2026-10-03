@@ -33,7 +33,7 @@ describe('surface energy balance', () => {
     for (let i = 0; i < layer; i++) model.u[i] += 10
     model.step(1)
     let momentum = 0
-    for (let z = 0; z < nz; z++) momentum += e.rho[z] * hz[z] * (model.u.slice(z * layer, (z + 1) * layer).reduce((a, b) => a + b, 0) / layer - e.u[z])
+    for (let z = 0; z < nz; z++) momentum += e.rho[z] * hz[z] * (model.u.slice(z * layer, (z + 1) * layer).reduce((a, b) => a + b, 0) / layer + model.frame[0] - e.u[z])
     expect(momentum / (e.rho[0] * hz[0] * 10)).toBeGreaterThan(.99)
   })
 

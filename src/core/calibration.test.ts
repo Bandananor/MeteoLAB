@@ -25,10 +25,9 @@ describe('Weisman-Klemp supercell (calibration)', () => {
   // With the trilinear semi-Lagrangian transport the storm peaks at ~21 m/s and dies by 40 min without splitting;
   // with WENO5 + RK3 it lives past 70 min at ~30 m/s and splits at 30-45 min (2026-09-29).
   it.runIf(slow)('splits into a dominant cyclonic right mover and an anticyclonic left mover (WENO transport)', () => {
-    // Warm rain, as in Weisman & Klemp (1982). With ice (the default) the split is the same, but the right mover crosses the
-    // periodic east edge at ~52 min into its own cold pool, which melting graupel makes a little colder: it drops to 13 m/s
-    // at 60 min (warm rain: 22). The 60-minute check with ice waits for the storm-following domain (level 2).
-    const model = new AtmosphereModel({ ...SUMMER_DAY, solarMax: 0, bubble: 0, microphysics: 'warm' }, createGrid(), weismanKlemp({ qvMax: .016 }))
+    // With ice (the default since 2026-10-03; was warm rain): in a fixed domain the right mover crossed the periodic east
+    // edge at ~52 min into its own cold pool and dropped to 13 m/s by 60 min. The domain now follows the right mover.
+    const model = new AtmosphereModel({ ...SUMMER_DAY, solarMax: 0, bubble: 0 }, createGrid(), weismanKlemp({ qvMax: .016 }))
     model.transport = 'weno'
     model.injectBubble(model.grid.width * .3, model.grid.depth * .5, 1.5)
     run(model, 35 * 60)

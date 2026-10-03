@@ -20,6 +20,13 @@ export interface SimConfig {
   transport?: 'semi-lagrangian' | 'weno'
   /** An analytic environment instead of the slider profile: 'weisman-klemp' (WK82 sounding, 16 g/kg, quarter-circle hodograph, one thermal). */
   profile?: 'weisman-klemp'
+  /**
+   * The domain moves with the storm (default, absent = true): the model works in a frame moving at domainMotion(env), so
+   * the storm stays inside instead of leaving on one side and coming back on the other into its own cold pool.
+   */
+  followStorm?: boolean
+  /** Domain size (absent = 'standard'): 48 x 36 km, or 96 x 72 km at the same resolution (about 4x slower). */
+  domain?: 'standard' | 'large'
   latitude: number; turbulence: number; hour: number; solarMax: number; soilMoisture: number; surfaceType: SurfaceType
   speed: number; seed: number; bubble: number
 }

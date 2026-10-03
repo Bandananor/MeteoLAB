@@ -75,6 +75,7 @@ describe('cell stages', () => {
     expect(cellStage(ordinary, stats({ uh: 300 }))).toBe('rotating')
     // Rotation of both signs (a vortex pair) is not a developing mesocyclone.
     expect(cellStage(ordinary, stats({ uh: 300, anticyclonic: 280 }))).toBe('growing')
+    expect(cellStage({ ...ordinary, stage: 'rotating' }, stats({ uh: 300, anticyclonic: 280 }))).toBe('rotating')
   })
 
   it('tells the supercell stages apart', () => {

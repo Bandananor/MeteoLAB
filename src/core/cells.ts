@@ -67,8 +67,10 @@ export interface Cell {
 }
 
 /** What the cell's numbers say its stage is now (before the STAGE_HOLD smoothing). */
-export function cellStage(c: Pick<Cell, 'supercell' | 'leftMover' | 'occluded' | 'peakW' | 'peakUH'> & { age: number }, s: CellStats): CellStage {
-  const weak = s.updraft < .45 * c.peakW, rotating = s.uh >= UH_ROTATING && s.uh >= MESO_DOMINANCE * s.anticyclonic
+export function cellStage(c: Pick<Cell, 'supercell' | 'leftMover' | 'occluded' | 'peakW' | 'peakUH'> & { age: number; stage?: CellStage }, s: CellStats): CellStage {
+  // Rotation must first outweigh the anticyclonic (a vortex pair is not a mesocyclone); once it has, a split that brings the
+  // left mover's anticyclonic rotation into the same storm area does not undo it.
+  const weak = s.updraft < .45 * c.peakW, rotating = s.uh >= UH_ROTATING && (s.uh >= MESO_DOMINANCE * s.anticyclonic || c.stage === 'rotating')
   if (c.supercell) {
     if (weak && !rotating) return 'supercell-decay'
     if (s.coldUnder >= OCCLUSION_COLD && s.uh < .7 * c.peakUH) return 'occluding'

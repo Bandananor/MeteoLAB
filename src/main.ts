@@ -28,7 +28,7 @@ const presets = SCENARIOS.map(s => {
 document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
   <header>
     <div><span class="eyebrow">ЧИСЛЕННАЯ ЛАБОРАТОРИЯ АТМОСФЕРЫ / 1.0 3D</span><h1>StormLab</h1></div>
-    <div class="header-stats"><span>3D non-hydrostatic</span><span>48 × 36 × 19 км</span><button id="radarOpen" class="radar-open" title="Доплеровский радар: отражаемость на выбранном угле наклона луча">◉ Радар</button><div class="status"><i></i><span id="statusText">РАСЧЁТ ИДЁТ</span></div></div>
+    <div class="header-stats"><span>3D non-hydrostatic</span><span id="domainSize">48 × 36 × 19 км</span><button id="radarOpen" class="radar-open" title="Доплеровский радар: отражаемость на выбранном угле наклона луча">◉ Радар</button><div class="status"><i></i><span id="statusText">РАСЧЁТ ИДЁТ</span></div></div>
   </header>
   <main>
     <aside class="controls">
@@ -76,6 +76,8 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
       </div></details>
       <details><summary>Расчёт</summary><div class="group">
         <label title="Точный перенос (WENO 5-го порядка, по умолчанию) почти не размывает восходящие потоки и сам сохраняет массу воды. Быстрый (полулагранжев) примерно вдвое дешевле, но размывает потоки: в сильном сдвиге термик не стартует">Перенос<select id="transport"><option value="weno">Точный (WENO5)</option><option value="semi-lagrangian">Быстрый (полулагранжев)</option></select></label>
+        <label title="Область сдвигается вместе с грозой (правая ячейка по Банкерсу при сдвиге 0–6 км от 15 м/с, иначе средний ветер 0–6 км): гроза остаётся внутри и не въезжает с другой стороны в собственный холодный отток. Ветер, годограф и радар — относительно земли" class="check"><input type="checkbox" id="followStorm" checked> Область движется вместе с грозой</label>
+        <label title="Большая область — 96 × 72 км с тем же шагом: ячейкам просторнее, но расчёт примерно в 4 раза медленнее">Размер области<select id="domain"><option value="standard">Стандарт — 48 × 36 км</option><option value="large">Большая — 96 × 72 км (в ~4 раза медленнее)</option></select></label>
         <label title="Со льдом (по умолчанию): облачный лёд, снег и крупа (Lin et al. 1983) — наковальня из кристаллов, теплота замерзания, таяние крупы в дождь. Тёплый дождь (Кесслер) — только капли: дешевле, но без наковальни и теплоты замерзания">Микрофизика<select id="microphysics"><option value="ice">Со льдом — лёд, снег, крупа</option><option value="warm">Тёплый дождь (Кесслер)</option></select></label>
         ${slider('speed','Ускорение времени',1,30,1,8,'×')}
         ${slider('bubble','Сила начального термика (0 — без термика)',0,2.5,.05,1,'×',2)}
@@ -107,7 +109,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
           </div>
         </div>
       </div>
-      <div class="readout"><span>Сетка 40 × 32 × 50</span><span>Δx / Δy: 1.2 / 1.1 км, Δz: 0.1 км у земли → 1 км наверху</span><span>Δt: 1.0 с</span><span>Инсоляция: <b id="sun">—</b></span><span>Солнце: <b id="sunElevation">—</b></span><span>T+: <b id="time">00:00</b></span></div>
+      <div class="readout"><span id="gridSize">Сетка 40 × 32 × 50</span><span>Область: <b id="frameMotion">—</b></span><span>Δx / Δy: 1.2 / 1.1 км, Δz: 0.1 км у земли → 1 км наверху</span><span>Δt: 1.0 с</span><span>Инсоляция: <b id="sun">—</b></span><span>Солнце: <b id="sunElevation">—</b></span><span>T+: <b id="time">00:00</b></span></div>
     </section>
 
     <aside class="diagnostics">
@@ -162,12 +164,15 @@ const radar = new RadarPanel(document.body); radar.attach(sim.model, sim.storm.r
 document.querySelector('#radarOpen')!.addEventListener('click', () => radar.toggle())
 let running = true
 let last = performance.now(), frameCount = 0
-const recreate = () => { useSeed(nextSeed()); sim.dispose(); sim = Object.assign(new Atmosphere(canvas, config), view); radar.attach(sim.model, sim.storm.rightMover); selectCell(null) }
+const recreate = () => { useSeed(nextSeed()); sim.dispose(); sim = Object.assign(new Atmosphere(canvas, config), view); radar.attach(sim.model, sim.storm.rightMover); selectCell(null); showDomain() }
 
 const resetKeys = new Set<keyof SimConfig>(['surfaceTemp','lapseLow','lapseMid','lapseUpper','tropopause','stratoWarming','capStrength','capHeight','rhSurface','rhLow','rhMid','rhUpper','moistLayer','wind0','wind05','wind1','wind3','wind6','wind10','windDir0','windDir05','windDir1','windDir3','windDir6','windDir10','latitude','bubble','surfaceType'])
 const surfaceSelect = document.querySelector<HTMLSelectElement>('#surfaceType')!
 const transportSelect = document.querySelector<HTMLSelectElement>('#transport')!
 transportSelect.addEventListener('change', () => { config.transport = transportSelect.value as SimConfig['transport'] })
+const followCheck = document.querySelector<HTMLInputElement>('#followStorm')!, domainSelect = document.querySelector<HTMLSelectElement>('#domain')!
+followCheck.addEventListener('change', () => { config.followStorm = followCheck.checked; recreate() })
+domainSelect.addEventListener('change', () => { config.domain = domainSelect.value as SimConfig['domain']; recreate() })
 const microSelect = document.querySelector<HTMLSelectElement>('#microphysics')!
 microSelect.addEventListener('change', () => { config.microphysics = microSelect.value as SimConfig['microphysics']; markPreset(null); recreate() })
 const showOutput = (input: HTMLInputElement) => {
@@ -194,7 +199,7 @@ surfaceSelect.addEventListener('change', () => {
 })
 document.querySelectorAll<HTMLButtonElement>('[data-preset]').forEach(button => button.addEventListener('click', () => {
   const index = Number(button.dataset.preset)
-  Object.assign(config, defaults, { speed: config.speed, wind05: undefined, wind1: undefined, windDir05: undefined, windDir1: undefined, profile: undefined, transport: 'weno' }, presets[index].values)
+  Object.assign(config, defaults, { speed: config.speed, followStorm: config.followStorm, domain: config.domain, wind05: undefined, wind1: undefined, windDir05: undefined, windDir1: undefined, profile: undefined, transport: 'weno' }, presets[index].values)
   fillLowWind(config)
   syncControls()
   markPreset(index)
@@ -208,6 +213,7 @@ function syncControls() {
   surfaceSelect.value = config.surfaceType
   transportSelect.value = config.transport ?? 'weno'
   microSelect.value = config.microphysics ?? 'ice'
+  followCheck.checked = config.followStorm !== false; domainSelect.value = config.domain ?? 'standard'
   markProfileGroups()
 }
 syncControls()
@@ -317,11 +323,19 @@ function updateCells() {
     return
   }
   // Motion only once the centre has been followed for 2 min since the last split or merger (before that it jumps about).
-  const s = cell.stats, age = Math.floor((sim.time - cell.born) / 60), speed = Math.hypot(cell.u, cell.v), followed = cell.trail[cell.trail.length - 1].t - cell.trail[0].t >= 120
+  // The tracker follows cells in the domain's frame; over the ground they also move with the domain.
+  const [fu, fv] = sim.model.frame, gu = cell.u + fu, gv = cell.v + fv
+  const s = cell.stats, age = Math.floor((sim.time - cell.born) / 60), speed = Math.hypot(gu, gv), followed = cell.trail[cell.trail.length - 1].t - cell.trail[0].t >= 120
   text('cellType', CELL_STAGES[cell.stage].name)
-  text('cellReason', `№${cell.id}: ${CELL_STAGES[cell.stage].hint}. Возраст ${age} мин, ${ORIGIN[cell.origin]}${cell.parent ? ` (от №${cell.parent})` : ''}; ${!followed ? 'движение уточняется' : speed < 1 ? 'почти стоит' : `движется на ${heading(cell.u, cell.v)}, ${speed.toFixed(0)} м/с`}`)
+  text('cellReason', `№${cell.id}: ${CELL_STAGES[cell.stage].hint}. Возраст ${age} мин, ${ORIGIN[cell.origin]}${cell.parent ? ` (от №${cell.parent})` : ''}; ${!followed ? 'движение уточняется' : speed < 1 ? 'почти стоит' : `движется на ${heading(gu, gv)}, ${speed.toFixed(0)} м/с`}`)
   text('updraft', s.updraft.toFixed(1)); text('downdraft', s.downdraft.toFixed(1)); text('uh', s.uh.toFixed(0)); text('uhLow', `${s.uh01.toFixed(0)} / ${s.uh03.toFixed(0)}`)
   text('cloudTop', s.cloudTop.toFixed(1)); text('coldPool', s.coldPool.toFixed(1)); text('rain', s.rainRate.toFixed(1))
+}
+/** Domain size and grid in the header and footer, and how fast the domain moves with the storm. */
+function showDomain() {
+  const { nx, ny, nz, width, depth, height } = sim.model.grid, [fu, fv] = sim.model.frame, speed = Math.hypot(fu, fv)
+  text('domainSize', `${width / 1000} × ${depth / 1000} × ${Math.round(height / 1000)} км`); text('gridSize', `Сетка ${nx} × ${ny} × ${nz}`)
+  text('frameMotion', speed < .1 ? 'неподвижна' : `движется на ${heading(fu, fv)}, ${speed.toFixed(1)} м/с`)
 }
 canvas.addEventListener('dblclick', event => { const r=canvas.getBoundingClientRect(); sim.perturb((event.clientX-r.left)/r.width,(event.clientY-r.top)/r.height,1.25) })
 
@@ -393,4 +407,5 @@ function frame(now:number){
   text('surfaceReadout',({grass:'ТРАВА',dry:'СУХАЯ ПОЧВА',water:'ВОДА',urban:'ГОРОД'} as const)[config.surfaceType])
   const sec=Math.floor(sim.time);text('time',`${String(Math.floor(sec/60)).padStart(2,'0')}:${String(sec%60).padStart(2,'0')}`);text('freezing',d.freezing===null?'—':`${d.freezing.toFixed(1)} км`);if(frameCount++%20===0){drawSounding();drawHodograph()}updateCells();radar.refresh();requestAnimationFrame(frame)
 }
+showDomain()
 requestAnimationFrame(frame)

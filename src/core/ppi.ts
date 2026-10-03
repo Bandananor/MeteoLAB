@@ -24,6 +24,8 @@ export const VELOCITY_MIN_DBZ = 5
  * is computed per radar site, its grid level per tilt (cached). `sample` and `composite` first compute reflectivity and
  * the precipitation's fall speed at the model nodes, then interpolate them along the beams. With `stormMotion` the
  * velocity is storm-relative (SRV): the storm's own motion, which masks a mesocyclone's couplet, is subtracted.
+ * The raster, the site and every position are fixed to the ground: when the model domain follows the storm
+ * (AtmosphereModel.frame), the storm moves across the screen as past a real radar.
  */
 export class PPI {
   readonly w: number; readonly h: number
@@ -80,6 +82,9 @@ export class PPI {
     return gz
   }
 
+  /** Distance the moving domain has travelled, in grid columns (x, y): ground point X lies over model point X - shift. */
+  private shift() { const [ox, oy] = this.model.frameOffset(); return [ox / this.model.grid.dx, oy / this.model.grid.dy] as const }
+
   /** Reflectivity and fall speed of the precipitation at every model node, from the current fields (sample and composite call it). */
   prepare() {
     const m = this.model, e = m.env, { nz, layer } = m.grid, rhoGround = e.rho[0]
@@ -102,14 +107,16 @@ export class PPI {
   sample() {
     this.prepare()
     const m = this.model, gz = this.levelsFor(this.tilt), el = this.tilt * Math.PI / 180, ce = Math.cos(el), se = Math.sin(el)
-    const [su, sv] = this.stormMotion ?? [0, 0]
+    // Ground-fixed raster over the moving domain: the model column under a pixel is shifted back by the distance the domain
+    // has moved, and the radial wind is over the ground (model wind plus the frame velocity), minus the storm motion for SRV.
+    const [ox, oy] = this.shift(), [fu, fv] = m.frame, [su, sv] = this.stormMotion ?? [0, 0], cu = fu - su, cv = fv - sv
     for (let i = 0; i < this.dbz.length; i++) {
       const z = gz[i]
       if (z < 0) { this.dbz[i] = DBZ_FLOOR; this.velocity[i] = NaN; continue }
-      const x = this.gx[i], y = this.gy[i], d = m.sample(this.nodeDbz, x, y, z)
+      const x = this.gx[i] - ox, y = this.gy[i] - oy, d = m.sample(this.nodeDbz, x, y, z)
       this.dbz[i] = d
       if (d < VELOCITY_MIN_DBZ) { this.velocity[i] = NaN; continue }
-      this.velocity[i] = ((m.sample(m.u, x, y, z) - su) * this.sinAz[i] + (m.sample(m.v, x, y, z) - sv) * this.cosAz[i]) * ce + (m.sample(m.w, x, y, z) - m.sample(this.nodeFall, x, y, z)) * se
+      this.velocity[i] = ((m.sample(m.u, x, y, z) + cu) * this.sinAz[i] + (m.sample(m.v, x, y, z) + cv) * this.cosAz[i]) * ce + (m.sample(m.w, x, y, z) - m.sample(this.nodeFall, x, y, z)) * se
     }
   }
 
@@ -117,10 +124,11 @@ export class PPI {
   composite() {
     this.prepare()
     const out = this.compositeDbz, m = this.model
+    const [ox, oy] = this.shift()
     out.fill(DBZ_FLOOR)
     for (const tilt of RADAR_TILTS) {
       const gz = this.levelsFor(tilt)
-      for (let i = 0; i < out.length; i++) { const z = gz[i]; if (z >= 0) { const d = m.sample(this.nodeDbz, this.gx[i], this.gy[i], z); if (d > out[i]) out[i] = d } }
+      for (let i = 0; i < out.length; i++) { const z = gz[i]; if (z >= 0) { const d = m.sample(this.nodeDbz, this.gx[i] - ox, this.gy[i] - oy, z); if (d > out[i]) out[i] = d } }
     }
   }
 
@@ -128,7 +136,8 @@ export class PPI {
   dbzAt(x: number, y: number, tilt: number) {
     const m = this.model, grid = m.grid, h = beamHeight(Math.hypot(x - this.site.x, y - this.site.y), tilt)
     if (h > grid.height) return DBZ_FLOOR
-    return m.sample(this.nodeDbz, x / grid.dx, y / grid.dy, levelAt(grid, h))
+    const [ox, oy] = this.shift()
+    return m.sample(this.nodeDbz, x / grid.dx - ox, y / grid.dy - oy, levelAt(grid, h))
   }
 
   /**
@@ -138,7 +147,7 @@ export class PPI {
    * storm across the edge is seen whole). Above the model top: no echo; without echo the velocity is NaN.
    */
   polar(tilt: number, step: number, gates: number, beams: number) {
-    const m = this.model, grid = m.grid, { dx, dy } = grid, el = tilt * Math.PI / 180, ce = Math.cos(el), se = Math.sin(el)
+    const m = this.model, grid = m.grid, { dx, dy } = grid, el = tilt * Math.PI / 180, ce = Math.cos(el), se = Math.sin(el), [ox, oy] = this.shift(), [fu, fv] = m.frame
     const dbz = new Float32Array(gates * beams).fill(DBZ_FLOOR), velocity = new Float32Array(gates * beams).fill(NaN)
     const levels = Float64Array.from({ length: gates }, (_, g) => { const h = beamHeight((g + 1) * step, tilt); return h > grid.height ? -1 : levelAt(grid, h) })
     for (let b = 0; b < beams; b++) {
@@ -146,9 +155,9 @@ export class PPI {
       for (let g = 0; g < gates; g++) {
         const r = (g + 1) * step, x = this.site.x + r * sa, y = this.site.y + r * ca, z = levels[g], i = b * gates + g
         if (z < 0) continue
-        const gx = x / dx, gy = y / dy, d = m.sample(this.nodeDbz, gx, gy, z)
+        const gx = x / dx - ox, gy = y / dy - oy, d = m.sample(this.nodeDbz, gx, gy, z)
         dbz[i] = d
-        if (d >= VELOCITY_MIN_DBZ) velocity[i] = (m.sample(m.u, gx, gy, z) * sa + m.sample(m.v, gx, gy, z) * ca) * ce + (m.sample(m.w, gx, gy, z) - m.sample(this.nodeFall, gx, gy, z)) * se
+        if (d >= VELOCITY_MIN_DBZ) velocity[i] = ((m.sample(m.u, gx, gy, z) + fu) * sa + (m.sample(m.v, gx, gy, z) + fv) * ca) * ce + (m.sample(m.w, gx, gy, z) - m.sample(this.nodeFall, gx, gy, z)) * se
       }
     }
     return { dbz, velocity }

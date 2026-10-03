@@ -1,7 +1,8 @@
 import type { SimConfig } from './config'
 import { CP, DT, G, LV, OMEGA } from './constants'
 import { Environment, type EnvironmentProfile } from './environment'
-import { createGrid, type Grid, shiftedLevel } from './grid'
+import { createGrid, domainGrid, type Grid, shiftedLevel } from './grid'
+import { domainMotion } from './kinematics'
 import { clamp, lerp, mod, mulberry32 } from './math'
 import { FluxTransport } from './advection'
 import { weismanKlemp } from './profiles'
@@ -78,11 +79,22 @@ export class AtmosphereModel {
   /** Share of the surface fluxes deposited at each of the lowest levels, per metre of that level's thickness. */
   private surfaceShare: Float64Array
   private rng: () => number; private accumulator = 0
+  /**
+   * Velocity of the domain over the ground (u, v, m/s; see SimConfig.followStorm). The model's winds are relative to the
+   * domain; the environmental wind it relaxes to (uEnv, vEnv) is the ground-relative one minus the frame velocity.
+   */
+  readonly frame: readonly [number, number]
+  private readonly uEnv: Float64Array; private readonly vEnv: Float64Array
+  /** This step's surface pattern under each column (the ground moves under the domain) and where each column's rain lands. */
+  private readonly patternNow: Float32Array; private readonly groundCell: Int32Array; private readonly groundWeight: Float64Array
 
   /** `profile` replaces the slider environment with an analytic one (idealised test cases). */
-  constructor(config: SimConfig, grid: Grid = createGrid(), profile?: EnvironmentProfile) {
+  constructor(config: SimConfig, grid: Grid = createGrid(domainGrid(config.domain)), profile?: EnvironmentProfile) {
     this.config = config; this.grid = grid
     this.env = new Environment(config, grid, profile ?? (config.profile === 'weisman-klemp' ? weismanKlemp({ qvMax: .016 }) : undefined))
+    this.frame = config.followStorm === false ? [0, 0] : domainMotion(this.env)
+    this.uEnv = this.env.u.map(u => u - this.frame[0]); this.vEnv = this.env.v.map(v => v - this.frame[1])
+    this.patternNow = new Float32Array(grid.layer); this.groundCell = new Int32Array(grid.layer * 4); this.groundWeight = new Float64Array(grid.layer * 4)
     const f = () => new Float32Array(grid.n)
     this.u = f(); this.v = f(); this.w = f(); this.theta = f(); this.q = f(); this.cloud = f(); this.rain = f(); this.cold = f()
     this.ice = f(); this.snow = f(); this.snowFall = f(); this.graupel = f(); this.graupelFall = f()
@@ -115,7 +127,7 @@ export class AtmosphereModel {
     for (let i = 0; i < this.surfacePattern.length; i++) this.surfacePattern[i] -= mean
     for (let z = 0, i = 0; z < nz; z++) for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++, i++) {
       const alt = zs[z], [ue, ve] = this.env.windUV(alt)
-      this.u[i] = ue; this.v[i] = ve; this.w[i] = 0
+      this.u[i] = ue - this.frame[0]; this.v[i] = ve - this.frame[1]; this.w[i] = 0
       this.theta[i] = this.env.thetaEnv(alt) + (this.rng() - .5) * .018; this.q[i] = this.env.qEnv(alt)
       this.cloud[i] = this.rain[i] = this.cold[i] = this.ice[i] = this.snow[i] = this.graupel[i] = 0
     }
@@ -181,7 +193,7 @@ export class AtmosphereModel {
    */
   private sediment(rain: Float32Array, vt: Float32Array, dt: number) {
     const { nz, layer } = this.grid, rho = this.env.rho, lw = this.levelWeight, dz = this.grid.dz
-    for (let i = 0; i < layer; i++) this.precipitation[i] += rho[0] * rain[i] * vt[i] * dt
+    for (let i = 0; i < layer; i++) this.deposit(i, rho[0] * rain[i] * vt[i] * dt)
     // Level weight lw = rho0 h / dz, so dq = dt (F_in - F_out) / (lw dz). Bottom-up, so each face uses pre-step values above.
     for (let z = 0; z < nz; z++) {
       const l = z * layer, inflow = z < nz - 1 ? rho[z + 1] : 0
@@ -207,11 +219,36 @@ export class AtmosphereModel {
     this.negativeFilled += negative
   }
 
+  /** Distance the domain has moved over the ground since the start (m east, m north). */
+  frameOffset() { return [this.frame[0] * this.time, this.frame[1] * this.time] as const }
+
+  /**
+   * The ground under the domain this step: the surface pattern under each column and the four ground columns (with
+   * bilinear weights) that receive its rain. `precipitation` is fixed to the ground, so the rain total is a real swath.
+   * Without frame motion both are the identity.
+   */
+  private updateGround() {
+    const { nx, ny, dx, dy } = this.grid, [ox, oy] = this.frameOffset(), sx = mod(ox / dx, nx), sy = mod(oy / dy, ny)
+    const x0 = Math.floor(sx), y0 = Math.floor(sy), fx = sx - x0, fy = sy - y0, c = this.groundCell, w = this.groundWeight, pattern = this.surfacePattern
+    for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++) {
+      const i = x + nx * y, ax = (x + x0) % nx, bx = (ax + 1) % nx, ay = (y + y0) % ny * nx, by = (ay / nx + 1) % ny * nx, k = i * 4
+      c[k] = ax + ay; c[k + 1] = bx + ay; c[k + 2] = ax + by; c[k + 3] = bx + by
+      w[k] = (1 - fx) * (1 - fy); w[k + 1] = fx * (1 - fy); w[k + 2] = (1 - fx) * fy; w[k + 3] = fx * fy
+      this.patternNow[i] = w[k] * pattern[c[k]] + w[k + 1] * pattern[c[k + 1]] + w[k + 2] * pattern[c[k + 2]] + w[k + 3] * pattern[c[k + 3]]
+    }
+  }
+
+  /** Adds rain (mm) falling out of model column i to the ground columns under it. */
+  private deposit(i: number, mm: number) {
+    const c = this.groundCell, w = this.groundWeight, k = i * 4
+    for (let j = 0; j < 4; j++) if (w[k + j] > 0) this.precipitation[c[k + j]] += w[k + j] * mm
+  }
+
   /** Precipitation leaving through the ground this step: adds it to `precipitation` (mm) and returns it in level-weight (mass) units. */
   private fallout(rain: Float32Array, vt: Float32Array, dt: number) {
     const { layer, dz } = this.grid, rhoGround = this.env.rho[0]
     let total = 0
-    for (let i = 0; i < layer; i++) { const flux = rain[i] * vt[i] * dt; this.precipitation[i] += rhoGround * flux; total += rhoGround * flux / dz }
+    for (let i = 0; i < layer; i++) { const flux = rain[i] * vt[i] * dt; this.deposit(i, rhoGround * flux); total += rhoGround * flux / dz }
     return total
   }
 
@@ -261,6 +298,7 @@ export class AtmosphereModel {
   step(dt: number) {
     const { nx, ny, nz, zs, hz, height: H, layer, xp: XP, xm: XM, yp: YP, ym: YM } = this.grid
     this.microburstOutflow *= .993
+    this.updateGround()
     // Water is transported conservatively (WENO: by the flux form; semi-Lagrangian: by the mass fixer). Only the
     // cold-pool indicator decays: it belongs to the cold-pool parameterisation and goes away with it.
     const { rho } = this.env, withIce = (this.config.microphysics ?? this.microphysics) === 'ice'
@@ -300,7 +338,7 @@ export class AtmosphereModel {
     const flux = surfaceFluxes(cfg, this.time), lfcZ = (this.sounding.lfc ?? 1.5) * 1000, f = 2 * OMEGA * Math.sin(cfg.latitude * Math.PI / 180)
     const spongeStart = Math.max(cfg.tropopause * 1000 + 2500, 14_000), liftTop = Math.min(3200, lfcZ)
     for (let z = 0, i = 0; z < nz; z++) {
-      const alt = zs[z], p = e.p[z], rhoZ = e.rho[z], exner = e.exner[z], thEnv = e.theta[z], qEnv = e.q[z], thvEnv = thEnv * (1 + .61 * qEnv), ue = e.u[z], ve = e.v[z], l = z * layer
+      const alt = zs[z], p = e.p[z], rhoZ = e.rho[z], exner = e.exner[z], thEnv = e.theta[z], qEnv = e.q[z], thvEnv = thEnv * (1 + .61 * qEnv), ue = this.uEnv[z], ve = this.vEnv[z], l = z * layer
       for (let y = 0; y < ny; y++) {
         const row = y * nx, yp = YP[y], ym = YM[y]
         for (let x = 0; x < nx; x++, i++) {
@@ -327,7 +365,7 @@ export class AtmosphereModel {
           // Damp and rotate only the departure from the environmental wind, so the imposed shear profile is not eroded.
           const du = (u[i] - ue) * .9999, dv = (v[i] - ve) * .9999; u[i] = ue + du + f * dv * dt; v[i] = ve + dv - f * du * dt
           // Surface fluxes enter the lowest levels with the shares in surfaceShare, so the column receives exactly H and LE.
-          if (z < this.surfaceShare.length) { const pattern = 1 + this.surfacePattern[x + row] * .32, per = pattern * this.surfaceShare[z] * dt / rhoZ; theta[i] += flux.sensible * per / (CP * exner); q[i] += flux.latent * per / LV }
+          if (z < this.surfaceShare.length) { const pattern = 1 + this.patternNow[x + row] * .32, per = pattern * this.surfaceShare[z] * dt / rhoZ; theta[i] += flux.sensible * per / (CP * exner); q[i] += flux.latent * per / LV }
           if (alt < liftTop) { const gx = cold[xp + row] - cold[xm + row], gy = cold[x + yp] - cold[x + ym], edge = Math.hypot(gx, gy), core = cold[x + row]; w[i] += G * edge / 300 * .45 * Math.max(.12, 1 - alt / Math.max(300, lfcZ)) * dt; if (alt < 1300 && core > 1) w[i] -= G * core / 300 * .52 * Math.exp(-alt / 520) * dt }
           if (z <= 1 && w[i] < -5 && rain[i] > .0001) { const impact = Math.min(38, -w[i] * Math.sqrt(rain[i] / .00055)), dpx = (-w[xp + row + l] + w[xm + row + l]) * .5, dpy = (-w[x + yp + l] + w[x + ym + l]) * .5; u[i] -= dpx * .12 * dt; v[i] -= dpy * .12 * dt; cold[i] += impact * .0012 * dt; this.microburstOutflow = Math.max(this.microburstOutflow, impact) }
           // Below 0.001 K the indicator is noise from the transport tails: zero, so the transport can skip it.
@@ -342,16 +380,17 @@ export class AtmosphereModel {
     if (withIce) for (let k = 0; k < ice.length; k++) this.scratch[k] = cloud[k] + ice[k]
     const moist = { q, condensate: withIce ? this.scratch : cloud, exner: e.exner }
     turb.viscosity(u, v, w, theta, e.theta, SMAGORINSKY * cfg.turbulence / .55, dt, moist)
-    turb.mix(u, e.u, 1, dt); turb.mix(v, e.v, 1, dt); turb.mix(w, null, 1, dt)
+    turb.mix(u, this.uEnv, 1, dt); turb.mix(v, this.vEnv, 1, dt); turb.mix(w, null, 1, dt)
     turb.mix(theta, e.theta, 3, dt); turb.mix(q, e.q, 3, dt); turb.mix(cloud, null, 3, dt); if (withIce) turb.mix(ice, null, 3, dt)
     // Surface drag on the ground node, which owns half a layer: dV/dt = -C_D (|V| V - |V_env| V_env) / h_0. The
     // environment's own drag is taken as balanced by the large-scale flow that maintains the profile, so the background
     // stays steady (was: u, v *= 0.94 every step, which stopped the ground wind in ~16 s). Applied with the rigid
     // ground/top before the projection, so the transport velocity is D-free.
-    const drag = dragCoefficient(cfg, 2 * hz[0]) * dt / hz[0], ue0 = e.u[0], ve0 = e.v[0], envSpeed = Math.hypot(ue0, ve0)
+    // Friction acts on the wind over the ground: the model's (domain-relative) wind plus the frame velocity.
+    const drag = dragCoefficient(cfg, 2 * hz[0]) * dt / hz[0], ue0 = e.u[0], ve0 = e.v[0], envSpeed = Math.hypot(ue0, ve0), [fu, fv] = this.frame
     for (let b = 0; b < layer; b++) {
-      const speed = Math.hypot(u[b], v[b])
-      u[b] -= drag * (speed * u[b] - envSpeed * ue0); v[b] -= drag * (speed * v[b] - envSpeed * ve0)
+      const ug = u[b] + fu, vg = v[b] + fv, speed = Math.hypot(ug, vg)
+      u[b] -= drag * (speed * ug - envSpeed * ue0); v[b] -= drag * (speed * vg - envSpeed * ve0)
       w[b] = 0; w[b + (nz - 1) * layer] = 0
     }
     this.project(dt)

@@ -33,14 +33,31 @@ function helicity(env: Environment, top: number, cu: number, cv: number) {
   return srh
 }
 
+/** Bunkers right and left movers (ID method) and the 0-6 km pressure-weighted mean wind, m/s. */
+export function stormMotion(env: Environment) {
+  const [mu, mv] = meanWind(env, 0, 6000), [tu, tv] = meanWind(env, 0, 500), [hu, hv] = meanWind(env, 5500, 6000)
+  const su = hu - tu, sv = hv - tv, s = Math.hypot(su, sv) || 1
+  return { rightMover: [mu + 7.5 * sv / s, mv - 7.5 * su / s] as const, leftMover: [mu - 7.5 * sv / s, mv + 7.5 * su / s] as const, meanWind: [mu, mv] as const }
+}
+
+/** Bulk shear 0-6 km above which the domain follows the Bunkers right mover instead of the mean wind, m/s. */
+export const FOLLOW_SUPERCELL_SHEAR = 15
+
+/**
+ * Velocity of the storm-following domain (u, v, m/s): the Bunkers right mover in supercell shear (0-6 km bulk shear at
+ * least FOLLOW_SUPERCELL_SHEAR), otherwise the 0-6 km mean wind, with which ordinary and multicell storms drift.
+ */
+export function domainMotion(env: Environment) {
+  const m = stormMotion(env), [u0, v0] = env.windUV(0), [u6, v6] = env.windUV(6000)
+  return Math.hypot(u6 - u0, v6 - v0) >= FOLLOW_SUPERCELL_SHEAR ? m.rightMover : m.meanWind
+}
+
 /**
  * Supercell indices of the environment's hodograph, as in MetPy: Bunkers storm motion (ID method: 0-6 km mean wind
  * plus 7.5 m/s across the shear between the 0-0.5 and 5.5-6 km means), SRH for the right mover, SCP and fixed-layer STP.
  */
 export function stormIndices(env: Environment, parcels: ParcelIndices): StormIndices {
-  const [mu, mv] = meanWind(env, 0, 6000), [tu, tv] = meanWind(env, 0, 500), [hu, hv] = meanWind(env, 5500, 6000)
-  const su = hu - tu, sv = hv - tv, s = Math.hypot(su, sv) || 1
-  const rightMover = [mu + 7.5 * sv / s, mv - 7.5 * su / s] as const, leftMover = [mu - 7.5 * sv / s, mv + 7.5 * su / s] as const
+  const { rightMover, leftMover } = stormMotion(env)
   const srh01 = helicity(env, 1000, ...rightMover), srh03 = helicity(env, 3000, ...rightMover)
   const [u0, v0] = env.windUV(0), [u6, v6] = env.windUV(6000), shear06 = Math.hypot(u6 - u0, v6 - v0)
   // SCP: the shear term is 0 below 10 m/s and capped at 1 above 20 m/s.

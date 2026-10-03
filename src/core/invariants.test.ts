@@ -24,8 +24,9 @@ describe('background state without a trigger', () => {
   // Passing since the consistent projection and the top-boundary advection fix (before: 0.28 K and 0.052 m/s).
   it('keeps theta(z) within 0.05 K for 3 hours', () => { expect(worst(model.theta, env.theta)).toBeLessThan(.05) })
   it('keeps the wind profile within 0.05 m/s for 3 hours', () => {
-    expect(worst(model.u, env.u)).toBeLessThan(.05)
-    expect(worst(model.v, env.v)).toBeLessThan(.05)
+    // The model wind is relative to the moving domain (AtmosphereModel.frame); the environment is over the ground.
+    expect(worst(model.u, env.u.map(u => u - model.frame[0]))).toBeLessThan(.05)
+    expect(worst(model.v, env.v.map(v => v - model.frame[1]))).toBeLessThan(.05)
   })
   // Measured against the surface value: near the tropopause q is ~1000x smaller and a relative error there is noise.
   // Passing since the hidden q *= 0.999999 sink was removed (it destroyed 1 % in 3 h). With WENO (default since

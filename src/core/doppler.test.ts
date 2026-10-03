@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest'
 import { AtmosphereModel, createGrid, PPI } from '.'
 import { QUIET } from './fixtures'
 
-const small = () => new AtmosphereModel({ ...QUIET }, createGrid({ nx: 16, ny: 12, nz: 20, width: 19_200, depth: 13_500, height: 15_000, bottomSpacing: 100 }))
+// A domain fixed to the ground: the model winds set below are the winds over the ground.
+const small = () => new AtmosphereModel({ ...QUIET, followStorm: false }, createGrid({ nx: 16, ny: 12, nz: 20, width: 19_200, depth: 13_500, height: 15_000, bottomSpacing: 100 }))
 
 describe('Doppler velocity and composite reflectivity', () => {
   it('measures the radial wind where there is echo: a westerly is outbound east of the radar, inbound west', () => {
@@ -36,6 +37,25 @@ describe('Doppler velocity and composite reflectivity', () => {
     // Air moving with the storm: only the falling rain is left (-V_t sin el, under 0.5 m/s at 2.4°).
     expect(base).toBeGreaterThan(10)
     expect(Math.max(...ppi.velocity.map(Math.abs))).toBeLessThan(.5)
+  })
+
+  it('measures the wind over the ground and sees the storm move past when the domain follows it', () => {
+    const model = new AtmosphereModel({ ...QUIET }, createGrid({ nx: 16, ny: 12, nz: 20, width: 19_200, depth: 13_500, height: 15_000, bottomSpacing: 100 }))
+    const [fu, fv] = model.frame, { nx, layer, nz, dx } = model.grid
+    expect(Math.hypot(fu, fv)).toBeGreaterThan(3)
+    // Calm air in the domain's frame is air moving with the domain over the ground.
+    model.u.fill(0); model.v.fill(0); model.w.fill(0); model.rain.fill(1e-3)
+    const ppi = new PPI(model, 64, 45)
+    ppi.tilt = .5; ppi.sample()
+    const i = 50 + 20 * ppi.w, g = ppi.ground(50, 20), b = ppi.beamAt(g.x, g.y), az = b.azimuth * Math.PI / 180
+    expect(ppi.velocity[i]).toBeCloseTo((fu * Math.sin(az) + fv * Math.cos(az)) * Math.cos(.5 * Math.PI / 180), 1)
+    // One rainy column of the domain: after the domain has moved 3 columns east (and some north), the echo is 3 columns east.
+    model.rain.fill(0)
+    for (let z = 0; z < nz; z++) model.rain[4 + nx * 6 + z * layer] = 2e-3
+    model.time = 3 * dx / fu
+    const echo = (x: number) => ppi.dbzAt(x, 6 * model.grid.dy + fv * model.time, .5)
+    ppi.prepare()
+    expect(echo(7 * dx)).toBeGreaterThan(echo(4 * dx) + 20)
   })
 
   it('makes the composite at least as strong as any single tilt', () => {

@@ -45,3 +45,4 @@ main{display:grid;grid-template-columns:310px minmax(650px,1fr) 270px;flex:1;min
 .radar-check{display:flex;gap:6px;align-items:center;font-size:10px;color:#9fb6bd;cursor:pointer}.radar-mda{margin-top:6px;display:flex;flex-direction:column;gap:6px;font-size:9.5px;line-height:1.55}.radar-dim{color:#6f8b94}
 .radar-meso{padding:6px 7px;border-left:3px solid #f3f0b0;background:#0d1a1f}.radar-meso b{color:#e9fbf8}.radar-meso.weak{border-color:#ffe23d}.radar-meso.moderate{border-color:#ff9a1f}.radar-meso.strong{border-color:#ff3df2}
 .radar-hook{color:#ffffff;letter-spacing:.6px}
+.controls label.check{display:flex;gap:7px;align-items:center;cursor:pointer}

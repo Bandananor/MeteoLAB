@@ -13,6 +13,8 @@ const REFLECTIVITY_RGB = rgb(REFLECTIVITY), VELOCITY_RGB = rgb(VELOCITY)
 const PIXEL = 150
 /** Real time between two runs of the mesocyclone detection (all 14 tilts), ms. */
 const MDA_EVERY = 2000
+/** Shortest signed periodic difference. */
+const wrap = (d: number, size: number) => d - size * Math.round(d / size)
 /** Circles of the MDA detections: dashed white-yellow for a circulation below the mesocyclone threshold, then yellow, orange, magenta. */
 const MDA_COLORS = { circulation: '#f3f0b0', weak: '#ffe23d', moderate: '#ff9a1f', strong: '#ff3df2' } as const
 
@@ -149,12 +151,13 @@ export class RadarPanel {
    * within 5 km, which the radar cannot see but the model knows.
    */
   private listMda() {
-    const ppi = this.ppi!, m = ppi.model, { nx, ny, dx, dy } = m.grid, out = this.root.querySelector('#radarMdaList') as HTMLElement
+    const ppi = this.ppi!, m = ppi.model, { nx, ny, dx, dy, width, depth } = m.grid, [ox, oy] = m.frameOffset(), out = this.root.querySelector('#radarMdaList') as HTMLElement
     const shown = this.shown(), hidden = this.detections.length - shown.length
     if (!shown.length) { out.innerHTML = `<span class="radar-dim">${hidden ? `мезоциклонов нет; слабых циркуляций: ${hidden}` : 'вращения не найдено'}</span>`; return }
     out.innerHTML = shown.map(d => {
       let uh = 0
-      for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++) if (Math.hypot(x * dx - d.x, y * dy - d.y) < 5000) uh = Math.max(uh, m.uhColumn[x + nx * y])
+      // Model columns over the ground point (the domain may have moved; distances are periodic).
+      for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++) if (Math.hypot(wrap(x * dx + ox - d.x, width), wrap(y * dy + oy - d.y, depth)) < 5000) uh = Math.max(uh, m.uhColumn[x + nx * y])
       const age = Math.floor((m.time - d.born) / 60)
       return `<div class="radar-meso ${d.strength}"><b>M${d.id}</b> ${MESO_STRENGTH[d.strength].name}<br>`
         + `Vrot <b>${d.vrot.toFixed(1)} м/с</b> (у основания ${d.lowVrot.toFixed(1)}) · Ø <b>${(d.diameter / 1000).toFixed(1)} км</b><br>`

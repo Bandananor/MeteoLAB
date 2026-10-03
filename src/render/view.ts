@@ -48,6 +48,8 @@ export class StormView {
   private readonly canvas: HTMLCanvasElement; private readonly renderer: THREE.WebGLRenderer; private readonly scene: THREE.Scene
   private readonly camera: THREE.PerspectiveCamera; private readonly controls: OrbitControls
   private readonly swathData: Uint8Array; private readonly swathTexture: THREE.DataTexture; private readonly swath: THREE.Mesh
+  /** Lines on the ground every 3 km; they move with the ground when the domain follows the storm. */
+  private readonly groundGrid: THREE.GridHelper
   private readonly ground: THREE.Mesh; private readonly raycaster = new THREE.Raycaster(); private readonly pointer = new THREE.Vector2()
   private readonly sunLight: THREE.DirectionalLight; private readonly hemiLight: THREE.HemisphereLight
   private readonly shared: Record<string, THREE.IUniform>
@@ -75,6 +77,8 @@ export class StormView {
   constructor(canvas: HTMLCanvasElement, model: AtmosphereModel, settings: ViewSettings) {
     this.canvas = canvas; this.model = model; this.settings = settings; this.rng = mulberry32(model.config.seed)
     const { nx, ny, n, width, depth, height } = model.grid, W = width / 1000, D = depth / 1000, H = height / 1000
+    // Camera distance and fog grow with the domain (1 for the standard 48 km).
+    const scale = Math.max(1, W / 48)
     if (model.grid.uniform) this.texLevels = null
     else {
       // 300 m texture levels: finer than the model aloft, coarser than it next to the ground.
@@ -87,9 +91,9 @@ export class StormView {
 
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' })
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5)); this.renderer.outputColorSpace = THREE.SRGBColorSpace; this.renderer.toneMapping = THREE.ACESFilmicToneMapping; this.renderer.toneMappingExposure = 1.05
-    this.scene = new THREE.Scene(); this.scene.background = new THREE.Color(0x172d3b); this.scene.fog = new THREE.FogExp2(0x172d3b, .012)
-    this.camera = new THREE.PerspectiveCamera(42, 1, .1, 180); this.camera.position.set(38, 24, 39)
-    this.controls = new OrbitControls(this.camera, canvas); this.controls.target.set(0, 6, 0); this.controls.enableDamping = true; this.controls.dampingFactor = .07; this.controls.maxPolarAngle = Math.PI * .495; this.controls.minDistance = 15; this.controls.maxDistance = 100
+    this.scene = new THREE.Scene(); this.scene.background = new THREE.Color(0x172d3b); this.scene.fog = new THREE.FogExp2(0x172d3b, .012 / scale)
+    this.camera = new THREE.PerspectiveCamera(42, 1, .1, 180 * scale); this.camera.position.set(38 * scale, 24 * scale, 39 * scale)
+    this.controls = new OrbitControls(this.camera, canvas); this.controls.target.set(0, 6, 0); this.controls.enableDamping = true; this.controls.dampingFactor = .07; this.controls.maxPolarAngle = Math.PI * .495; this.controls.minDistance = 15; this.controls.maxDistance = 100 * scale
     this.hemiLight = new THREE.HemisphereLight(0xd9efff, 0x4b4439, 1.35); this.scene.add(this.hemiLight)
     this.sunLight = new THREE.DirectionalLight(0xfff0d2, 2); this.scene.add(this.sunLight)
 
@@ -97,10 +101,10 @@ export class StormView {
     this.ground = new THREE.Mesh(new THREE.PlaneGeometry(W, D), groundMat); this.ground.rotation.x = -Math.PI / 2; this.scene.add(this.ground)
     // Rain swath: one texel per ground column (row 0 is the southern edge, as the plane's v runs north).
     this.swathData = new Uint8Array(nx * ny * 4); this.swathTexture = new THREE.DataTexture(this.swathData, nx, ny, THREE.RGBAFormat)
-    this.swathTexture.magFilter = this.swathTexture.minFilter = THREE.LinearFilter; this.swathTexture.needsUpdate = true
+    this.swathTexture.magFilter = this.swathTexture.minFilter = THREE.LinearFilter; this.swathTexture.wrapS = this.swathTexture.wrapT = THREE.RepeatWrapping; this.swathTexture.needsUpdate = true
     this.swath = new THREE.Mesh(new THREE.PlaneGeometry(W, D), new THREE.MeshBasicMaterial({ map: this.swathTexture, transparent: true, depthWrite: false, toneMapped: false }))
     this.swath.rotation.x = -Math.PI / 2; this.swath.position.y = .02; this.swath.visible = false; this.scene.add(this.swath)
-    const grid = new THREE.GridHelper(W, 16, 0x71838a, 0x485d66); grid.material.transparent = true; grid.material.opacity = .32; this.scene.add(grid)
+    const grid = new THREE.GridHelper(W, Math.round(W / 3), 0x71838a, 0x485d66); grid.material.transparent = true; grid.material.opacity = .32; this.scene.add(grid); this.groundGrid = grid
     const box = new THREE.BoxGeometry(W, H, D); box.translate(0, H / 2, 0)
     this.scene.add(new THREE.LineSegments(new THREE.EdgesGeometry(box), new THREE.LineBasicMaterial({ color: 0x75909c, transparent: true, opacity: .4 })))
     this.levelHelpers = [0xb6d4dd, 0xe1bf7e, 0xd88e74].map(color => { const h = new THREE.GridHelper(W, 12, color, color); h.material.transparent = true; h.material.opacity = .18; this.scene.add(h); return h })
@@ -166,6 +170,16 @@ export class StormView {
       d[i * 4] = r; d[i * 4 + 1] = g; d[i * 4 + 2] = b; d[i * 4 + 3] = mm < .5 ? 0 : Math.min(230, 120 + mm * 10)
     }
     this.swathTexture.needsUpdate = true
+  }
+
+  /**
+   * The ground under a domain that follows the storm: the swath (rain totals are fixed to the ground) and the ground lines
+   * slide by the distance travelled, so the storm is seen moving over the land.
+   */
+  private updateGround() {
+    const { width, depth } = this.model.grid, [ox, oy] = this.model.frameOffset(), step = width / 1000 / Math.round(width / 3000)
+    this.swathTexture.offset.set(ox / width, oy / depth)
+    this.groundGrid.position.x = -((ox / 1000) % step); this.groundGrid.position.z = (oy / 1000) % step
   }
 
   /** Model-space position (m from the domain corner) of the ground point under normalised screen coordinates. */
@@ -335,6 +349,7 @@ export class StormView {
     this.shared.uSliceOn.value = slices ? 1 : 0; this.shared.uSliceH.value = this.sliceH.position.y = s.sliceHeight; this.shared.uSliceZ.value = this.sliceV.position.z = -s.sliceNorth
     this.flowPoints.visible = s.showVectors; this.vectorLines.visible = s.showVectors
     this.swath.visible = s.showRainTotal; if (s.showRainTotal) this.updateSwath()
+    this.updateGround()
     const r = m.rotation
     this.mesoMarker.visible = s.showMesocyclone && r.uh >= UH_ROTATING
     if (this.mesoMarker.visible) {
