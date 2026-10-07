@@ -7,11 +7,11 @@ on:
   workflow_dispatch:
     inputs:
       variants:
-        description: 'JSON list: base, uniform, warm, fixed, old'
-        default: '["base", "uniform", "warm", "fixed", "old"]'
+        description: 'JSON list: base, uniform, warm, fixed, old, aniso'
+        default: '["base", "aniso"]'
       scenarios:
         description: 'JSON list of SCENARIOS indices'
-        default: '[0, 2]'
+        default: '[0, 2, 5, 7]'
   push:
     branches: ['exp/**']
 
@@ -23,8 +23,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        variant: ${{ fromJSON(inputs.variants || '["base", "uniform", "warm", "fixed", "old"]') }}
-        scenario: ${{ fromJSON(inputs.scenarios || '[0, 2]') }}
+        variant: ${{ fromJSON(inputs.variants || '["base", "aniso"]') }}
+        scenario: ${{ fromJSON(inputs.scenarios || '[0, 2, 5, 7]') }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -42,3 +42,25 @@ jobs:
           [ -s experiment.txt ] && cp experiment.txt result.txt || { grep -E 'Tests |Error' test.log | head -3 > result.txt; }
           { echo '```'; cat result.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
           echo "::notice title=${{ matrix.variant }} / scenario ${{ matrix.scenario }}::$(sed ':a;N;$!ba;s/\n/%0A/g' result.txt)"
+
+  calibration:
+    name: Weisman-Klemp split with anisotropic turbulence
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 24, cache: npm }
+      - run: npm ci
+      - name: Run
+        env: { STORMLAB_TURBULENCE: anisotropic }
+        run: |
+          set -o pipefail
+          npm run test:slow 2>&1 | tee test.log
+      - name: Report
+        if: always()
+        run: |
+          line=$(grep -E '^\s+Tests ' test.log | tail -1 | sed 's/^ *//')
+          fail=$(grep -E 'AssertionError' test.log | head -1 | sed 's/^ *//')
+          echo "### WK anisotropic: ${line:-no result} ${fail}" >> "$GITHUB_STEP_SUMMARY"
+          echo "::notice title=WK anisotropic::EXPERIMENT WK split / aniso: ${line:-no result} ${fail}"

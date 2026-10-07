@@ -284,6 +284,8 @@ export class AtmosphereModel {
    * (src/core/graupel.ts), Lin et al. (1983); or Kessler warm rain only (cheaper, no anvil, no heat of fusion).
    */
   microphysics: 'warm' | 'ice' = 'ice'
+  /** Subgrid filter width of the horizontal mixing: (dx dy dz)^(1/3), or sqrt(dx dy) (experiment; see Turbulence.anisotropic). */
+  turbulenceWidth: 'cube' | 'anisotropic' = 'cube'
   private flux: FluxTransport | null = null
   private turbulence: Turbulence | null = null
 
@@ -378,6 +380,7 @@ export class AtmosphereModel {
     }
     // Smagorinsky-Lilly subgrid mixing of momentum, heat and water (replaces the old horizontal smoothing of theta and q).
     const turb = this.turbulence ??= new Turbulence(this.grid, e.rho)
+    turb.anisotropic = this.turbulenceWidth === 'anisotropic'
     // Saturated stability inside clouds (cloud water plus ice): see Turbulence.viscosity.
     if (withIce) for (let k = 0; k < ice.length; k++) this.scratch[k] = cloud[k] + ice[k]
     const moist = { q, condensate: withIce ? this.scratch : cloud, exner: e.exner }
