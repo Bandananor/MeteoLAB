@@ -40,10 +40,13 @@ export class Turbulence {
   viscosity(u: Float32Array, v: Float32Array, w: Float32Array, theta: Float32Array, thetaEnv: ArrayLike<number>, cs: number, dt: number,
     moist?: { q: Float32Array; condensate: Float32Array; exner: ArrayLike<number> }) {
     const { nx, ny, nz, dx, dy, zs, dzs, hz, layer, xp, xm, yp, ym } = this.grid, km = this.km
-    const cap = .05 * Math.min(dx, dy, ...dzs) ** 2 / dt
     for (let z = 0, i = 0; z < nz; z++) {
       // Filter width from the local vertical spacing (the spacing next to the ground and top nodes, which own half a layer).
       const local = z === 0 ? dzs[0] : z === nz - 1 ? dzs[nz - 2] : hz[z], len2 = (cs * Math.cbrt(dx * dy * local)) ** 2
+      // Explicit-stability cap from the spacings around this level. It was one cap from the smallest spacing anywhere:
+      // on the stretched grid (100 m at the ground) that held K <= 500 m2/s even at 2-8 km, in ~20 % of the updraught
+      // nodes (2026-10-07) — the cores' edges, where entrainment happens — and updraughts neared parcel theory.
+      const cap = .05 * Math.min(dx, dy, z > 0 ? dzs[z - 1] : Infinity, z < nz - 1 ? dzs[z] : Infinity) ** 2 / dt
       const up = z < nz - 1 ? layer : 0, down = z > 0 ? -layer : 0, span = zs[z + (up ? 1 : 0)] - zs[z - (down ? 1 : 0)]
       for (let y = 0; y < ny; y++) {
         const row = y * nx + z * layer

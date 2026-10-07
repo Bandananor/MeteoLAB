@@ -38,6 +38,7 @@ jobs:
       - name: Report
         if: always()
         run: |
-          awk '/^EXPERIMENT/{on=1} on&&/^$/{exit} on' test.log > result.txt
+          # The test writes its result to experiment.txt (vitest does not show the output of passing tests).
+          [ -s experiment.txt ] && cp experiment.txt result.txt || { grep -E 'Tests |Error' test.log | head -3 > result.txt; }
           { echo '```'; cat result.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
           echo "::notice title=${{ matrix.variant }} / scenario ${{ matrix.scenario }}::$(sed ':a;N;$!ba;s/\n/%0A/g' result.txt)"
