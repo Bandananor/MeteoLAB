@@ -15,6 +15,7 @@ import { SUMMER_DAY } from './fixtures'
 const env = (globalThis as { process?: { env: Record<string, string | undefined> } }).process?.env ?? {}
 const variant = env.STORMLAB_EXPERIMENT, slow = (import.meta as { env?: { MODE?: string } }).env?.MODE === 'slow'
 const UNIFORM = { ...DEFAULT_GRID, nz: 30, bottomSpacing: undefined }
+const ZETAS = [.002, .003, .004, .005, .006]
 
 describe('experiments', () => {
   it.runIf(slow && !!variant)(`${variant} on scenario ${env.STORMLAB_SCENARIO}`, async () => {
@@ -26,8 +27,11 @@ describe('experiments', () => {
     if (variant === 'aniso') model.turbulenceWidth = 'anisotropic'
     const { layer, zs } = model.grid, rows: string[] = []
     let longest = 0, peakW = 0, peakUH = 0
+    const held = ZETAS.map(() => 0), heldMax = ZETAS.map(() => 0)
     for (let t = 1; t <= Number(env.STORMLAB_MINUTES ?? 40) * 60; t++) {
       model.step(1); model.time += 1; longest = Math.max(longest, model.rotation.persisted); peakUH = Math.max(peakUH, model.rotation.uh)
+      // How long the updraught-core vorticity stays above each candidate threshold (a mesocyclone criterion to calibrate).
+      ZETAS.forEach((z, k) => { held[k] = model.rotation.coreZeta >= z ? held[k] + 1 : 0; heldMax[k] = Math.max(heldMax[k], held[k]) })
       if (t % 300) continue
       // Strongest updraught and its height; strongest cyclonic and anticyclonic UH; the column of the UH maximum.
       let w = 0, at = 0
@@ -35,9 +39,10 @@ describe('experiments', () => {
       peakW = Math.max(peakW, w)
       const d = model.diagnostics(), r = model.rotation
       rows.push(`${String(t / 60).padStart(2)} min  w ${w.toFixed(1).padStart(5)} at ${(zs[at] / 1000).toFixed(1)} km  UH ${r.uh.toFixed(0).padStart(4)} anti ${r.anticyclonic.toFixed(0).padStart(4)}` +
-        ` held ${String(r.persisted).padStart(4)} s  UH03 ${r.uh03.toFixed(0).padStart(4)}  down ${d.downdraft.toFixed(1)}  cold ${d.coldMax.toFixed(1)} K  cores ${d.cores}  top ${d.cloudTop.toFixed(1)} km  rain ${d.rainTotal.toFixed(1)} mm  at x${r.x} y${r.y}`)
+        ` held ${String(r.persisted).padStart(4)} s  coreZ ${(r.coreZeta * 1000).toFixed(1).padStart(4)}e-3 coreUH ${r.coreUH.toFixed(0).padStart(4)}  UH03 ${r.uh03.toFixed(0).padStart(4)}  down ${d.downdraft.toFixed(1)}  cold ${d.coldMax.toFixed(1)} K  cores ${d.cores}  top ${d.cloudTop.toFixed(1)} km  rain ${d.rainTotal.toFixed(1)} mm  at x${r.x} y${r.y}`)
     }
-    const lines = [`EXPERIMENT ${s.name} / ${variant}: max w ${peakW.toFixed(1)} m/s, max UH ${peakUH.toFixed(0)}, mesocyclone ${longest} s, clipped ${model.clipped}`, ...rows]
+    const lines = [`EXPERIMENT ${s.name} / ${variant}: max w ${peakW.toFixed(1)} m/s, max UH ${peakUH.toFixed(0)}, mesocyclone ${longest} s, clipped ${model.clipped}`,
+      `core zeta held (s) at ${ZETAS.map((z, k) => `${z * 1000}e-3: ${heldMax[k]}`).join(', ')}`, ...rows]
     // Into a file (STORMLAB_RESULT, default experiment.txt): vitest does not show the console output of this test.
     const fs: { appendFileSync(path: string, data: string): void } = await import(/* @vite-ignore */ 'node:' + 'fs')
     fs.appendFileSync(env.STORMLAB_RESULT ?? 'experiment.txt', lines.join('\n') + '\n')
