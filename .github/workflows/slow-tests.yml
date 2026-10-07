@@ -1,0 +1,83 @@
+# Fast tests, the Weisman-Klemp calibration and every scenario, each in its own job (in parallel): about 20 min
+# instead of ~2 h on one laptop core. Results: the run's summary page and one annotation per job.
+name: Tests
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['src/core/**', 'package*.json', 'vitest.config.ts', '.github/workflows/slow-tests.yml']
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fast:
+    name: Fast tests and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 24, cache: npm }
+      - run: npm ci
+      - run: npm run build
+      - name: npm test
+        run: |
+          set -o pipefail
+          npm test 2>&1 | tee test.log
+      - name: Report
+        if: always()
+        run: |
+          line=$(grep -E '^\s+Tests ' test.log | tail -1 | sed 's/^ *//')
+          echo "### Fast tests: ${line:-no result}" >> "$GITHUB_STEP_SUMMARY"
+          echo "::notice title=Fast tests::${line:-no result}"
+
+  calibration:
+    name: Weisman-Klemp (60 min)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 24, cache: npm }
+      - run: npm ci
+      - name: npm run test:slow
+        run: |
+          set -o pipefail
+          npm run test:slow 2>&1 | tee test.log
+      - name: Report
+        if: always()
+        run: |
+          line=$(grep -E '^\s+Tests ' test.log | tail -1 | sed 's/^ *//')
+          fail=$(grep -E 'AssertionError|Error:' test.log | head -1 | sed 's/^ *//')
+          echo "### Weisman-Klemp: ${line:-no result} ${fail}" >> "$GITHUB_STEP_SUMMARY"
+          echo "::notice title=Weisman-Klemp::${line:-no result} ${fail}"
+
+  scenario:
+    name: Scenario ${{ matrix.index }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        index: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 24, cache: npm }
+      - run: npm ci
+      - name: Scenario ${{ matrix.index }}
+        env: { STORMLAB_SCENARIO: '${{ matrix.index }}' }
+        run: |
+          set -o pipefail
+          npx vitest run --mode slow src/core/scenarios.test.ts -t 'calibration' 2>&1 | tee test.log
+      - name: Report
+        if: always()
+        run: |
+          result=$(grep -E 'max w .* clipped' test.log | tail -1 | sed 's/^ *//')
+          line=$(grep -E '^\s+Tests ' test.log | tail -1 | sed 's/^ *//')
+          fail=$(grep -E 'AssertionError' test.log | head -1 | sed 's/^ *//')
+          echo "### ${result:-scenario ${{ matrix.index }}: no result} — ${line} ${fail}" >> "$GITHUB_STEP_SUMMARY"
+          echo "::notice title=Scenario ${{ matrix.index }}::${result:-no result} | ${line} ${fail}"

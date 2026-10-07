@@ -2,8 +2,11 @@ import { describe, expect, it } from 'vitest'
 import { AtmosphereModel, createGrid, Environment, MESO_PERSISTENCE, parcelIndices, SCENARIOS, type SimConfig } from '.'
 import { SUMMER_DAY } from './fixtures'
 
-// STORMLAB_MICRO=ice runs the scenarios with the ice microphysics (to decide when ice becomes the default).
-const micro = (globalThis as { process?: { env: Record<string, string | undefined> } }).process?.env.STORMLAB_MICRO as SimConfig['microphysics']
+// STORMLAB_MICRO=warm runs the scenarios with Kessler warm rain; STORMLAB_SCENARIO=<index> runs only that scenario of
+// SCENARIOS (the CI workflow runs each in its own job, in parallel).
+const env = (globalThis as { process?: { env: Record<string, string | undefined> } }).process?.env ?? {}
+const micro = env.STORMLAB_MICRO as SimConfig['microphysics'], only = env.STORMLAB_SCENARIO
+const selected = only ? [SCENARIOS[Number(only)]] : SCENARIOS
 const config = (values: Partial<SimConfig>): SimConfig => ({ ...SUMMER_DAY, ...values, ...(micro ? { microphysics: micro } : {}) })
 
 describe('scenarios: realistic environments', () => {
@@ -20,11 +23,12 @@ describe('scenarios: realistic environments', () => {
   })
 })
 
-// Slow (~25 min: 40 simulated minutes per scenario, WENO for the sheared ones): `npm run test:slow`.
+// Slow (~10 min per scenario on a laptop: 40 simulated minutes each): `npm run test:scenarios`, or in the cloud
+// (.github/workflows/slow-tests.yml, all scenarios in parallel).
 const slow = (import.meta as { env?: { MODE?: string } }).env?.MODE === 'slow'
 
 describe('scenarios: rotation only where a supercell is intended (calibration)', () => {
-  for (const s of SCENARIOS) it.runIf(slow)(`${s.name}: ${s.mesocyclone === undefined ? 'no limiter hits' : s.mesocyclone ? 'a mesocyclone persists' : 'no mesocyclone'}`, () => {
+  for (const s of selected) it.runIf(slow)(`${s.name}: ${s.mesocyclone === undefined ? 'no limiter hits' : s.mesocyclone ? 'a mesocyclone persists' : 'no mesocyclone'}`, () => {
     const model = new AtmosphereModel(config(s.values))
     let longest = 0, maxW = 0, maxUH = 0
     for (let t = 0; t < 40 * 60; t++) {

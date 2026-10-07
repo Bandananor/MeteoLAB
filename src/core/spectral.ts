@@ -1,4 +1,76 @@
 /**
+ * Complex FFT of one length, any n: mixed-radix Cooley-Tukey (recursive decimation in time, as in KISS FFT) over the
+ * factors 4, 2, 3, 5 and then any remaining primes (a prime factor p is a direct p-point DFT, so a prime n costs n^2
+ * like the plain DFT). Replaced the matrix DFT on 2026-10-07: that took ~20 % of a model step on the 40 x 32 grid.
+ */
+export class FFT {
+  readonly n: number
+  /** exp(-2 pi i k / n). */
+  private readonly twRe: Float64Array; private readonly twIm: Float64Array
+  /** [radix, remaining length] pairs. */
+  private readonly factors: number[] = []
+  private readonly outRe: Float64Array; private readonly outIm: Float64Array
+  private readonly scrRe: Float64Array; private readonly scrIm: Float64Array
+
+  constructor(n: number) {
+    this.n = n
+    this.twRe = Float64Array.from({ length: n }, (_, k) => Math.cos(2 * Math.PI * k / n)); this.twIm = Float64Array.from({ length: n }, (_, k) => -Math.sin(2 * Math.PI * k / n))
+    let rest = n, p = 4, largest = 1
+    while (rest > 1) {
+      while (rest % p) { p = p === 4 ? 2 : p === 2 ? 3 : p + 2; if (p * p > rest) p = rest }
+      rest /= p; this.factors.push(p, rest); largest = Math.max(largest, p)
+    }
+    this.outRe = new Float64Array(n); this.outIm = new Float64Array(n); this.scrRe = new Float64Array(largest); this.scrIm = new Float64Array(largest)
+  }
+
+  /** In place: forward (exp(-i theta), sign -1) or unnormalised inverse (exp(+i theta), sign +1) transform of re/im[0..n). */
+  transform(re: Float64Array, im: Float64Array, sign: -1 | 1) {
+    const n = this.n
+    if (n === 1) return
+    // The inverse is the conjugate of the forward transform of the conjugate.
+    if (sign > 0) for (let k = 0; k < n; k++) im[k] = -im[k]
+    this.work(0, re, im, 0, 1, 0)
+    for (let k = 0; k < n; k++) { re[k] = this.outRe[k]; im[k] = sign > 0 ? -this.outIm[k] : this.outIm[k] }
+  }
+
+  private work(out: number, re: Float64Array, im: Float64Array, src: number, stride: number, f: number) {
+    const p = this.factors[f], m = this.factors[f + 1], oRe = this.outRe, oIm = this.outIm
+    if (m === 1) for (let k = 0; k < p; k++) { oRe[out + k] = re[src + k * stride]; oIm[out + k] = im[src + k * stride] }
+    else for (let k = 0; k < p; k++) this.work(out + k * m, re, im, src + k * stride, stride * p, f + 2)
+    const n = this.n, twRe = this.twRe, twIm = this.twIm, sRe = this.scrRe, sIm = this.scrIm
+    if (p === 2) {
+      for (let u = 0, t = 0; u < m; u++, t += stride) {
+        const a = out + u, b = a + m, c = twRe[t], s = twIm[t], xr = oRe[b] * c - oIm[b] * s, xi = oRe[b] * s + oIm[b] * c
+        oRe[b] = oRe[a] - xr; oIm[b] = oIm[a] - xi; oRe[a] += xr; oIm[a] += xi
+      }
+      return
+    }
+    if (p === 4) {
+      for (let u = 0, t = 0; u < m; u++, t += stride) {
+        const a = out + u, b = a + m, c = b + m, d = c + m, t2 = 2 * t, t3 = 3 * t
+        const r0 = oRe[b] * twRe[t] - oIm[b] * twIm[t], i0 = oRe[b] * twIm[t] + oIm[b] * twRe[t]
+        const r1 = oRe[c] * twRe[t2] - oIm[c] * twIm[t2], i1 = oRe[c] * twIm[t2] + oIm[c] * twRe[t2]
+        const r2 = oRe[d] * twRe[t3] - oIm[d] * twIm[t3], i2 = oRe[d] * twIm[t3] + oIm[d] * twRe[t3]
+        const r5 = oRe[a] - r1, i5 = oIm[a] - i1, ra = oRe[a] + r1, ia = oIm[a] + i1, r3 = r0 + r2, i3 = i0 + i2, r4 = r0 - r2, i4 = i0 - i2
+        oRe[c] = ra - r3; oIm[c] = ia - i3; oRe[a] = ra + r3; oIm[a] = ia + i3
+        oRe[b] = r5 + i4; oIm[b] = i5 - r4; oRe[d] = r5 - i4; oIm[d] = i5 + r4
+      }
+      return
+    }
+    // Generic radix-p butterflies over the p sub-transforms of length m (stride * k < n, so one subtraction wraps t).
+    for (let u = 0; u < m; u++) {
+      for (let q = 0; q < p; q++) { sRe[q] = oRe[out + u + q * m]; sIm[q] = oIm[out + u + q * m] }
+      for (let q1 = 0, k = u; q1 < p; q1++, k += m) {
+        let a = sRe[0], b = sIm[0], t = 0
+        const step = stride * k
+        for (let q = 1; q < p; q++) { t += step; if (t >= n) t -= n; const c = twRe[t], s = twIm[t]; a += sRe[q] * c - sIm[q] * s; b += sRe[q] * s + sIm[q] * c }
+        oRe[out + k] = a; oIm[out + k] = b
+      }
+    }
+  }
+}
+
+/**
  * 2D discrete Fourier transform over x and y of a stack of horizontal layers (periodic nx * ny), as used by the exact
  * elliptic solvers. The input is real, so its spectrum is Hermitian: only x-wavenumbers 0..nx/2 are kept, the others are
  * their conjugates. Coefficients live in `re`/`im` at [layer * nx * ny + n * nx + m] for m <= nx/2.
@@ -8,30 +80,35 @@ export class HorizontalDFT {
   /** Highest x-wavenumber kept. */
   readonly mh: number
   private readonly nx: number; private readonly ny: number
-  private readonly cosX: Float64Array; private readonly sinX: Float64Array
-  private readonly cosY: Float64Array; private readonly sinY: Float64Array
+  private readonly fx: FFT; private readonly fy: FFT
   private readonly rowRe: Float64Array; private readonly rowIm: Float64Array
 
   constructor(nx: number, ny: number, layers: number) {
     this.nx = nx; this.ny = ny; this.mh = Math.floor(nx / 2)
-    const table = (n: number, f: (a: number) => number) => { const t = new Float64Array(n * n); for (let a = 0; a < n; a++) for (let b = 0; b < n; b++) t[a * n + b] = f(2 * Math.PI * ((a * b) % n) / n); return t }
-    this.cosX = table(nx, Math.cos); this.sinX = table(nx, Math.sin); this.cosY = table(ny, Math.cos); this.sinY = table(ny, Math.sin)
+    this.fx = new FFT(nx); this.fy = new FFT(ny)
     this.re = new Float64Array(nx * ny * layers); this.im = new Float64Array(nx * ny * layers)
     this.rowRe = new Float64Array(Math.max(nx, ny)); this.rowIm = new Float64Array(Math.max(nx, ny))
   }
 
   /** Forward transform, exp(-i theta), of layers 0..layers-1 of `src` into re/im. */
   forward(src: ArrayLike<number>, layers: number) {
-    const { nx, ny, mh, re, im, rowRe, rowIm, cosX, sinX, cosY, sinY } = this, cl = nx * ny
+    const { nx, ny, mh, re, im, rowRe, rowIm, fx, fy } = this, cl = nx * ny
     for (let k = 0; k < layers; k++) {
       const base = k * cl
-      for (let j = 0; j < ny; j++) {
-        const row = base + j * nx
-        for (let m = 0; m <= mh; m++) { let a = 0, b = 0; for (let i = 0; i < nx; i++) { const x = src[row + i], t = m * nx + i; a += x * cosX[t]; b -= x * sinX[t] } rowRe[m] = a; rowIm[m] = b }
-        for (let m = 0; m <= mh; m++) { re[row + m] = rowRe[m]; im[row + m] = rowIm[m] }
+      // Two real rows per complex transform, z = a + i b: A[m] = (Z[m] + conj Z[-m]) / 2, B[m] = (Z[m] - conj Z[-m]) / 2i.
+      for (let j = 0; j < ny; j += 2) {
+        const row = base + j * nx, pair = j + 1 < ny, row2 = row + nx
+        for (let i = 0; i < nx; i++) { rowRe[i] = src[row + i]; rowIm[i] = pair ? src[row2 + i] : 0 }
+        fx.transform(rowRe, rowIm, -1)
+        for (let m = 0; m <= mh; m++) {
+          const c = m ? nx - m : 0, zr = rowRe[m], zi = rowIm[m], cr = rowRe[c], ci = rowIm[c]
+          re[row + m] = (zr + cr) / 2; im[row + m] = (zi - ci) / 2
+          if (pair) { re[row2 + m] = (zi + ci) / 2; im[row2 + m] = (cr - zr) / 2 }
+        }
       }
       for (let m = 0; m <= mh; m++) {
-        for (let n = 0; n < ny; n++) { let a = 0, b = 0; for (let j = 0; j < ny; j++) { const x = re[base + j * nx + m], y = im[base + j * nx + m], t = n * ny + j, c = cosY[t], s = sinY[t]; a += x * c + y * s; b += y * c - x * s } rowRe[n] = a; rowIm[n] = b }
+        for (let j = 0; j < ny; j++) { rowRe[j] = re[base + j * nx + m]; rowIm[j] = im[base + j * nx + m] }
+        fy.transform(rowRe, rowIm, -1)
         for (let n = 0; n < ny; n++) { re[base + n * nx + m] = rowRe[n]; im[base + n * nx + m] = rowIm[n] }
       }
     }
@@ -39,21 +116,26 @@ export class HorizontalDFT {
 
   /** Inverse transform, exp(+i theta), of re/im (consumed) into the real `dst`, normalised. */
   inverse(dst: { [i: number]: number }, layers: number) {
-    const { nx, ny, mh, re, im, rowRe, rowIm, cosX, sinX, cosY, sinY } = this, cl = nx * ny
+    const { nx, ny, mh, re, im, rowRe, rowIm, fx, fy } = this, cl = nx * ny
     for (let k = 0; k < layers; k++) {
       const base = k * cl
       for (let m = 0; m <= mh; m++) {
-        for (let j = 0; j < ny; j++) { let a = 0, b = 0; for (let n = 0; n < ny; n++) { const x = re[base + n * nx + m], y = im[base + n * nx + m], t = j * ny + n, c = cosY[t], s = sinY[t]; a += x * c - y * s; b += y * c + x * s } rowRe[j] = a; rowIm[j] = b }
+        for (let n = 0; n < ny; n++) { rowRe[n] = re[base + n * nx + m]; rowIm[n] = im[base + n * nx + m] }
+        fy.transform(rowRe, rowIm, 1)
         for (let j = 0; j < ny; j++) { re[base + j * nx + m] = rowRe[j]; im[base + j * nx + m] = rowIm[j] }
       }
-      for (let j = 0; j < ny; j++) {
-        const row = base + j * nx
-        // Wavenumbers strictly between 0 and nx/2 stand for themselves and their conjugate partner (weight 2).
-        for (let i = 0; i < nx; i++) {
-          let a = 0
-          for (let m = 0; m <= mh; m++) { const t = i * nx + m, weight = m === 0 || 2 * m === nx ? 1 : 2; a += weight * (re[row + m] * cosX[t] - im[row + m] * sinX[t]) }
-          dst[row + i] = a / cl
+      // Two rows per complex transform again: Z = A + i B over the full Hermitian rows (wavenumbers above nx/2 are the
+      // conjugates of those below); the real part is row j, the imaginary part row j + 1. The imaginary parts of
+      // wavenumbers 0 and nx/2 drop out, as they must for a real field (else they would leak into the other row).
+      for (let j = 0; j < ny; j += 2) {
+        const row = base + j * nx, pair = j + 1 < ny, row2 = row + nx
+        for (let m = 0; m < nx; m++) {
+          const c = m <= mh ? m : nx - m, s = m <= mh ? 1 : -1, real = c === 0 || 2 * c === nx
+          const ar = re[row + c], ai = real ? 0 : s * im[row + c], br = pair ? re[row2 + c] : 0, bi = pair && !real ? s * im[row2 + c] : 0
+          rowRe[m] = ar - bi; rowIm[m] = ai + br
         }
+        fx.transform(rowRe, rowIm, 1)
+        for (let i = 0; i < nx; i++) { dst[row + i] = rowRe[i] / cl; if (pair) dst[row2 + i] = rowIm[i] / cl }
       }
     }
   }

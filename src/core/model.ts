@@ -367,7 +367,9 @@ export class AtmosphereModel {
           // Surface fluxes enter the lowest levels with the shares in surfaceShare, so the column receives exactly H and LE.
           if (z < this.surfaceShare.length) { const pattern = 1 + this.patternNow[x + row] * .32, per = pattern * this.surfaceShare[z] * dt / rhoZ; theta[i] += flux.sensible * per / (CP * exner); q[i] += flux.latent * per / LV }
           if (alt < liftTop) { const gx = cold[xp + row] - cold[xm + row], gy = cold[x + yp] - cold[x + ym], edge = Math.hypot(gx, gy), core = cold[x + row]; w[i] += G * edge / 300 * .45 * Math.max(.12, 1 - alt / Math.max(300, lfcZ)) * dt; if (alt < 1300 && core > 1) w[i] -= G * core / 300 * .52 * Math.exp(-alt / 520) * dt }
-          if (z <= 1 && w[i] < -5 && rain[i] > .0001) { const impact = Math.min(38, -w[i] * Math.sqrt(rain[i] / .00055)), dpx = (-w[xp + row + l] + w[xm + row + l]) * .5, dpy = (-w[x + yp + l] + w[x + ym + l]) * .5; u[i] -= dpx * .12 * dt; v[i] -= dpy * .12 * dt; cold[i] += impact * .0012 * dt; this.microburstOutflow = Math.max(this.microburstOutflow, impact) }
+          // Below ~1 km: the old uniform grid's second level (652 m) owned 326-978 m; `z <= 1` on the stretched grid meant
+          // only the 100 m level, so the microburst parameterisation almost never acted.
+          if (alt < 1000 && z > 0 && w[i] < -5 && rain[i] > .0001) { const impact = Math.min(38, -w[i] * Math.sqrt(rain[i] / .00055)), dpx = (-w[xp + row + l] + w[xm + row + l]) * .5, dpy = (-w[x + yp + l] + w[x + ym + l]) * .5; u[i] -= dpx * .12 * dt; v[i] -= dpy * .12 * dt; cold[i] += impact * .0012 * dt; this.microburstOutflow = Math.max(this.microburstOutflow, impact) }
           // Below 0.001 K the indicator is noise from the transport tails: zero, so the transport can skip it.
           cold[i] = cold[i] < 1e-3 ? 0 : Math.min(cold[i], 15)
           if (alt > spongeStart) { const s = clamp((alt - spongeStart) / (H - spongeStart)) * .06 * dt; w[i] *= 1 - s; u[i] = lerp(u[i], ue, s); v[i] = lerp(v[i], ve, s); theta[i] = lerp(theta[i], thEnv, s) }
@@ -436,10 +438,13 @@ export class AtmosphereModel {
   }
 
   private countCores() {
-    const { nx, ny, nz, layer } = this.grid, mask = new Uint8Array(layer)
+    const { nx, ny, nz, zs, layer } = this.grid, mask = new Uint8Array(layer)
+    // Cores between ~1.9 and 6.6 km (levels 3-10 of the old uniform 652 m grid; on the stretched grid those indices lay
+    // at 0.3-1.1 km, below cloud base, so almost no core was found).
+    const lo = zs.findIndex(z => z >= 1900), hi = Math.min(nz - 3, zs.findLastIndex(z => z <= 6600))
     for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++) {
       let active = false
-      for (let z = 3; z < Math.min(nz - 2, 11); z++) { const i = x + nx * y + z * layer; if (this.w[i] > 2 && this.cloud[i] + this.ice[i] > .00007) { active = true; break } }
+      for (let z = lo; z <= hi; z++) { const i = x + nx * y + z * layer; if (this.w[i] > 2 && this.cloud[i] + this.ice[i] > .00007) { active = true; break } }
       mask[x + nx * y] = active ? 1 : 0
     }
     let cores = 0; const stack: number[] = []

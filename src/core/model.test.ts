@@ -22,6 +22,15 @@ describe('AtmosphereModel', () => {
     expect(allFinite(m)).toBe(true)
   })
 
+  it('counts updraught cores by height on the stretched grid', () => {
+    const m = new AtmosphereModel({ ...summerDay }), { nx, layer, zs } = m.grid
+    m.w.fill(0); m.cloud.fill(0); m.ice.fill(0)
+    // Cloudy cores at 2-6 km on two separate columns, and one only below 1.2 km (under cloud base): two cores.
+    const core = (x: number, y: number, lo: number, hi: number) => zs.forEach((z, k) => { if (z >= lo && z <= hi) { m.w[x + nx * y + k * layer] = 8; m.cloud[x + nx * y + k * layer] = 1e-3 } })
+    core(5, 5, 2000, 6000); core(25, 20, 2000, 6000); core(15, 10, 300, 1200)
+    expect(m.diagnostics().cores).toBe(2)
+  })
+
   it('is deterministic for a given seed', () => {
     const a = new AtmosphereModel({ ...summerDay }), b = new AtmosphereModel({ ...summerDay })
     run(a, 60); run(b, 60)
