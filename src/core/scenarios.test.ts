@@ -30,12 +30,15 @@ const slow = (import.meta as { env?: { MODE?: string } }).env?.MODE === 'slow'
 describe('scenarios: rotation only where a supercell is intended (calibration)', () => {
   for (const s of selected) it.runIf(slow)(`${s.name}: ${s.mesocyclone === undefined ? 'no limiter hits' : s.mesocyclone ? 'a mesocyclone persists' : 'no mesocyclone'}`, () => {
     const model = new AtmosphereModel(config(s.values))
-    let longest = 0, maxW = 0, maxUH = 0
+    let longest = 0, maxW = 0, maxUH = 0, gust = 0
+    // Strongest wind over the ground at the 100 m level (outflow, microburst gusts).
+    const { layer, zs } = model.grid, near = zs.findIndex(z => z >= 100) * layer, [fu, fv] = model.frame
     for (let t = 0; t < 40 * 60; t++) {
       model.step(1); model.time += 1; longest = Math.max(longest, model.rotation.persisted); maxUH = Math.max(maxUH, model.rotation.uh)
       if (t % 60 === 0) maxW = Math.max(maxW, model.diagnostics().updraft)
+      if (t % 30 === 0) for (let c = 0; c < layer; c++) gust = Math.max(gust, Math.hypot(model.u[near + c] + fu, model.v[near + c] + fv))
     }
-    console.log(`${s.name}: max w ${maxW.toFixed(1)} m/s, max UH ${maxUH.toFixed(0)}, mesocyclone ${longest} s, rain ${Math.max(...model.precipitation).toFixed(1)} mm, clipped ${model.clipped}`)
+    console.log(`${s.name}: max w ${maxW.toFixed(1)} m/s, max UH ${maxUH.toFixed(0)}, mesocyclone ${longest} s, wind at 100 m ${gust.toFixed(1)} m/s, rain ${Math.max(...model.precipitation).toFixed(1)} mm, clipped ${model.clipped}`)
     expect(model.clipped).toBe(0)
     if (s.mesocyclone === true) expect(longest).toBeGreaterThanOrEqual(MESO_PERSISTENCE)
     if (s.mesocyclone === false) expect(longest).toBeLessThan(MESO_PERSISTENCE)

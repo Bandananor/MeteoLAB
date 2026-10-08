@@ -30,6 +30,8 @@ jobs:
       - name: Report
         if: always()
         run: |
+          # vitest colours its output in CI: strip the ANSI codes so the summary lines can be found.
+          sed -i 's/\x1b\[[0-9;]*m//g' test.log
           line=$(grep -E '^\s+Tests ' test.log | tail -1 | sed 's/^ *//')
           echo "### Fast tests: ${line:-no result}" >> "$GITHUB_STEP_SUMMARY"
           echo "::notice title=Fast tests::${line:-no result}"
@@ -50,6 +52,7 @@ jobs:
       - name: Report
         if: always()
         run: |
+          sed -i 's/\x1b\[[0-9;]*m//g' test.log
           line=$(grep -E '^\s+Tests ' test.log | tail -1 | sed 's/^ *//')
           fail=$(grep -E 'AssertionError|Error:' test.log | head -1 | sed 's/^ *//')
           echo "### Weisman-Klemp: ${line:-no result} ${fail}" >> "$GITHUB_STEP_SUMMARY"
@@ -76,6 +79,7 @@ jobs:
       - name: Report
         if: always()
         run: |
+          sed -i 's/\x1b\[[0-9;]*m//g' test.log
           result=$(grep -E 'max w .* clipped' test.log | tail -1 | sed 's/^ *//')
           line=$(grep -E '^\s+Tests ' test.log | tail -1 | sed 's/^ *//')
           fail=$(grep -E 'AssertionError' test.log | head -1 | sed 's/^ *//')
