@@ -11,7 +11,7 @@ import { SUMMER_DAY } from './fixtures'
  * of ice (2026-10-03); `fixed` — no storm-following domain (2026-10-03); `old` — all three, the 2026-09-29 setup; `base`.
  * `aniso` — horizontal mixing with the horizontal filter width (Turbulence.anisotropic); wind controls: `calm` (no wind),
  * `calm-eq` (no wind, no Coriolis), `half` and `double` (the wind profile x0.5, x2); `narrow` (2.5 km thermal), `nosun`
- * (no solar heating), `narrow-nosun`. STORMLAB_MINUTES sets the
+ * (no solar heating), `narrow-nosun`; `nomicroburst` (no microburst parameterisation), `noparam` (nor the cold-pool one). STORMLAB_MINUTES sets the
  * model time (default 40).
  */
 const env = (globalThis as { process?: { env: Record<string, string | undefined> } }).process?.env ?? {}
@@ -34,8 +34,11 @@ describe('experiments', () => {
     if (variant === 'fixed' || old) config.followStorm = false
     const model = new AtmosphereModel(config, createGrid(variant === 'uniform' || old ? UNIFORM : DEFAULT_GRID))
     if (variant === 'aniso') model.turbulenceWidth = 'anisotropic'
+    // Without the hand-made microburst parameterisation, or without it and the cold-pool one.
+    if (variant === 'nomicroburst' || variant === 'noparam') model.microburstParam = false
+    if (variant === 'noparam') model.coldPoolParam = false
     const { layer, zs } = model.grid, rows: string[] = []
-    let longest = 0, peakW = 0, peakUH = 0
+    let longest = 0, peakW = 0, peakUH = 0, peakGust = 0
     // Air at 100 m away from the storm (no cold pool): theta and vapour, to see whether the sun built up CAPE meanwhile.
     const level = zs.findIndex(z => z >= 100), surfaceAir = () => {
       let th = 0, q = 0, n = 0
@@ -43,10 +46,13 @@ describe('experiments', () => {
       return [th / n, q / n * 1000]
     }
     const [th0, q0] = surfaceAir()
+    const gust = () => { let g = 0; const [fu, fv] = model.frame; for (let c = 0; c < layer; c++) g = Math.max(g, Math.hypot(model.u[c + level * layer] + fu, model.v[c + level * layer] + fv)); return g }
     const held = ZETAS.map(() => 0), heldMax = ZETAS.map(() => 0)
     for (let t = 1; t <= Number(env.STORMLAB_MINUTES ?? 40) * 60; t++) {
       model.step(1); model.time += 1; longest = Math.max(longest, model.rotation.persisted); peakUH = Math.max(peakUH, model.rotation.uh)
       // How long the updraught-core vorticity stays above each candidate threshold (a mesocyclone criterion to calibrate).
+      // Strongest wind over the ground at 100 m (outflow and microburst gusts), every 30 s.
+      if (model.time % 30 === 0) peakGust = Math.max(peakGust, gust())
       ZETAS.forEach((z, k) => { held[k] = model.rotation.coreZeta >= z ? held[k] + 1 : 0; heldMax[k] = Math.max(heldMax[k], held[k]) })
       if (t % 300) continue
       // Strongest updraught and its height; strongest cyclonic and anticyclonic UH; the column of the UH maximum.
@@ -58,12 +64,12 @@ describe('experiments', () => {
       for (let z = model.uhLevels[0]; z <= model.uhLevels[1]; z++) for (let y = 0; y < model.grid.ny; y++) for (let x = 0; x < model.grid.nx; x++) {
         const zeta = model.zeta(x, y, z); zMax = Math.max(zMax, zeta); zMin = Math.min(zMin, zeta)
       }
-      const d = model.diagnostics(), r = model.rotation
+      const d = model.diagnostics(), r = model.rotation, g = gust()
       rows.push(`${String(t / 60).padStart(2)} min  w ${w.toFixed(1).padStart(5)} at ${(zs[at] / 1000).toFixed(1)} km  UH ${r.uh.toFixed(0).padStart(4)} anti ${r.anticyclonic.toFixed(0).padStart(4)}` +
-        ` zeta ${(zMax * 1000).toFixed(1)}/${(zMin * 1000).toFixed(1)}e-3  held ${String(r.persisted).padStart(4)} s  coreZ ${(r.coreZeta * 1000).toFixed(1).padStart(4)}e-3 coreUH ${r.coreUH.toFixed(0).padStart(4)}  UH03 ${r.uh03.toFixed(0).padStart(4)}  down ${d.downdraft.toFixed(1)}  cold ${d.coldMax.toFixed(1)} K  cores ${d.cores}  top ${d.cloudTop.toFixed(1)} km  rain ${d.rainTotal.toFixed(1)} mm  at x${r.x} y${r.y}`)
+        ` gust ${g.toFixed(1)}  zeta ${(zMax * 1000).toFixed(1)}/${(zMin * 1000).toFixed(1)}e-3  held ${String(r.persisted).padStart(4)} s  coreZ ${(r.coreZeta * 1000).toFixed(1).padStart(4)}e-3 coreUH ${r.coreUH.toFixed(0).padStart(4)}  UH03 ${r.uh03.toFixed(0).padStart(4)}  down ${d.downdraft.toFixed(1)}  cold ${d.coldMax.toFixed(1)} K  cores ${d.cores}  top ${d.cloudTop.toFixed(1)} km  rain ${d.rainTotal.toFixed(1)} mm  at x${r.x} y${r.y}`)
     }
     const [th1, q1] = surfaceAir()
-    const lines = [`EXPERIMENT ${s.name} / ${variant}: max w ${peakW.toFixed(1)} m/s, max UH ${peakUH.toFixed(0)}, mesocyclone ${longest} s, clipped ${model.clipped}`,
+    const lines = [`EXPERIMENT ${s.name} / ${variant}: max w ${peakW.toFixed(1)} m/s, max UH ${peakUH.toFixed(0)}, mesocyclone ${longest} s, wind at 100 m ${peakGust.toFixed(1)} m/s, clipped ${model.clipped}`,
       `air at 100 m away from the storm: theta ${(th1 - th0 >= 0 ? '+' : '') + (th1 - th0).toFixed(2)} K, vapour ${(q1 - q0 >= 0 ? '+' : '') + (q1 - q0).toFixed(2)} g/kg over the run`,
       `core zeta held (s) at ${ZETAS.map((z, k) => `${z * 1000}e-3: ${heldMax[k]}`).join(', ')}`, ...rows]
     // Into a file (STORMLAB_RESULT, default experiment.txt): vitest does not show the console output of this test.

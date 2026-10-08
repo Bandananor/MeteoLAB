@@ -306,6 +306,12 @@ export class AtmosphereModel {
   microphysics: 'warm' | 'ice' = 'ice'
   /** Subgrid filter width of the horizontal mixing: (dx dy dz)^(1/3), or sqrt(dx dy) (experiment; see Turbulence.anisotropic). */
   turbulenceWidth: 'cube' | 'anisotropic' = 'cube'
+  /**
+   * The hand-made cold-pool and microburst parameterisations of step() (lift on the cold-pool edge and a push down in
+   * its core; the radial push of a rain-loaded downdraught hitting the ground). The roadmap removes them (level 2);
+   * these switches let experiments run without them (2026-10-08: ordinary storms gave 44-52 m/s winds at 100 m).
+   */
+  coldPoolParam = true; microburstParam = true
   private flux: FluxTransport | null = null
   private turbulence: Turbulence | null = null
 
@@ -356,6 +362,7 @@ export class AtmosphereModel {
     }
     carry(this.u, 1); carry(this.v, 1); carry(this.w, 1); carry(this.theta, 1); carry(this.q, 1, true); carry(this.cloud, 1, true); if (withIce) carry(this.ice, 1, true); carry(this.cold, .9992)
     const cfg = this.config, e = this.env, u = this.u, v = this.v, w = this.w, theta = this.theta, q = this.q, cloud = this.cloud, rain = this.rain, cold = this.cold
+    const coldPoolParam = this.coldPoolParam, microburstParam = this.microburstParam
     const ice = this.ice, snow = this.snow, graupel = this.graupel, rhoGround = e.rho[0]
     const flux = surfaceFluxes(cfg, this.time), lfcZ = (this.sounding.lfc ?? 1.5) * 1000, f = 2 * OMEGA * Math.sin(cfg.latitude * Math.PI / 180)
     const spongeStart = Math.max(cfg.tropopause * 1000 + 2500, 14_000), liftTop = Math.min(3200, lfcZ)
@@ -388,10 +395,10 @@ export class AtmosphereModel {
           const du = (u[i] - ue) * .9999, dv = (v[i] - ve) * .9999; u[i] = ue + du + f * dv * dt; v[i] = ve + dv - f * du * dt
           // Surface fluxes enter the lowest levels with the shares in surfaceShare, so the column receives exactly H and LE.
           if (z < this.surfaceShare.length) { const pattern = 1 + this.patternNow[x + row] * .32, per = pattern * this.surfaceShare[z] * dt / rhoZ; theta[i] += flux.sensible * per / (CP * exner); q[i] += flux.latent * per / LV }
-          if (alt < liftTop) { const gx = cold[xp + row] - cold[xm + row], gy = cold[x + yp] - cold[x + ym], edge = Math.hypot(gx, gy), core = cold[x + row]; w[i] += G * edge / 300 * .45 * Math.max(.12, 1 - alt / Math.max(300, lfcZ)) * dt; if (alt < 1300 && core > 1) w[i] -= G * core / 300 * .52 * Math.exp(-alt / 520) * dt }
+          if (coldPoolParam && alt < liftTop) { const gx = cold[xp + row] - cold[xm + row], gy = cold[x + yp] - cold[x + ym], edge = Math.hypot(gx, gy), core = cold[x + row]; w[i] += G * edge / 300 * .45 * Math.max(.12, 1 - alt / Math.max(300, lfcZ)) * dt; if (alt < 1300 && core > 1) w[i] -= G * core / 300 * .52 * Math.exp(-alt / 520) * dt }
           // Below ~1 km: the old uniform grid's second level (652 m) owned 326-978 m; `z <= 1` on the stretched grid meant
           // only the 100 m level, so the microburst parameterisation almost never acted.
-          if (alt < 1000 && z > 0 && w[i] < -5 && rain[i] > .0001) { const impact = Math.min(38, -w[i] * Math.sqrt(rain[i] / .00055)), dpx = (-w[xp + row + l] + w[xm + row + l]) * .5, dpy = (-w[x + yp + l] + w[x + ym + l]) * .5; u[i] -= dpx * .12 * dt; v[i] -= dpy * .12 * dt; cold[i] += impact * .0012 * dt; this.microburstOutflow = Math.max(this.microburstOutflow, impact) }
+          if (microburstParam && alt < 1000 && z > 0 && w[i] < -5 && rain[i] > .0001) { const impact = Math.min(38, -w[i] * Math.sqrt(rain[i] / .00055)), dpx = (-w[xp + row + l] + w[xm + row + l]) * .5, dpy = (-w[x + yp + l] + w[x + ym + l]) * .5; u[i] -= dpx * .12 * dt; v[i] -= dpy * .12 * dt; cold[i] += impact * .0012 * dt; this.microburstOutflow = Math.max(this.microburstOutflow, impact) }
           // Below 0.001 K the indicator is noise from the transport tails: zero, so the transport can skip it.
           cold[i] = cold[i] < 1e-3 ? 0 : Math.min(cold[i], 15)
           if (alt > spongeStart) { const s = clamp((alt - spongeStart) / (H - spongeStart)) * .06 * dt; w[i] *= 1 - s; u[i] = lerp(u[i], ue, s); v[i] = lerp(v[i], ve, s); theta[i] = lerp(theta[i], thEnv, s) }
