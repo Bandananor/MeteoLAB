@@ -1,4 +1,5 @@
 import { graupelFallSpeed } from './graupel'
+import { hailFallSpeed } from './hail'
 import { snowFallSpeed } from './ice'
 import { fallSpeed } from './microphysics'
 import { type AtmosphereModel, MESO_CORE_ZETA, MESO_PERSISTENCE, UH_ROTATING } from './model'
@@ -126,8 +127,8 @@ export class CellTracker {
     const rain = new Float32Array(layer), cold = new Float32Array(layer), uh01 = new Float32Array(layer), uh03 = new Float32Array(layer)
     const rho0 = m.env.rho[0], top1 = zs.findLastIndex(z => z <= 1000), top3 = zs.findLastIndex(z => z <= 3000)
     for (let c = 0; c < layer; c++) {
-      const r = m.rain[c], s = m.snow[c], g = m.graupel[c]
-      rain[c] = rho0 * (r * fallSpeed(r, rho0, rho0) + s * snowFallSpeed(s, rho0, rho0) + g * graupelFallSpeed(g, rho0)) * 3600
+      const r = m.rain[c], s = m.snow[c], g = m.graupel[c], h = m.hail[c]
+      rain[c] = rho0 * (r * fallSpeed(r, rho0, rho0) + s * snowFallSpeed(s, rho0, rho0) + g * graupelFallSpeed(g, rho0) + h * hailFallSpeed(h, rho0)) * 3600
     }
     for (let z = 0, i = 0; z < nz; z++) {
       const alt = zs[z], inCore = alt >= CORE_BASE && alt <= CORE_TOP

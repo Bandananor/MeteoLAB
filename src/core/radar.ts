@@ -1,4 +1,5 @@
 import { graupelFallSpeed, N0G, N0R, RHO_G, RHO_W } from './graupel'
+import { hailFallSpeed, N0H, RHO_H } from './hail'
 import { N0S, RHO_S, snowFallSpeed } from './ice'
 import { fallSpeed } from './microphysics'
 
@@ -17,15 +18,18 @@ function factor(rhoQ: number, n0: number, rhoX: number) {
   return rhoQ > 0 ? 720e18 * (rhoQ / (Math.PI * rhoX)) ** 1.75 / n0 ** .75 : 0
 }
 
-/** Reflectivity factor of rain, snow and graupel separately, mm6/m3 (mixing ratios kg/kg, density rho, temperature tc °C). */
-export function speciesZ(rho: number, rain: number, snow: number, graupel: number, tc: number) {
+/**
+ * Reflectivity factor of rain, snow, graupel and hail separately, mm6/m3 (mixing ratios kg/kg, density rho, temperature
+ * tc °C). Rayleigh scattering throughout: for centimetre hail at S band it overstates Z by a few dB (Mie).
+ */
+export function speciesZ(rho: number, rain: number, snow: number, graupel: number, tc: number, hail = 0) {
   const ice = (rhoX: number) => (rhoX / RHO_W) ** 2 * (tc > 0 ? 1 : ICE_DIELECTRIC)
-  return { rain: factor(rho * rain, N0R, RHO_W), snow: factor(rho * snow, N0S, RHO_S) * ice(RHO_S), graupel: factor(rho * graupel, N0G, RHO_G) * ice(RHO_G) }
+  return { rain: factor(rho * rain, N0R, RHO_W), snow: factor(rho * snow, N0S, RHO_S) * ice(RHO_S), graupel: factor(rho * graupel, N0G, RHO_G) * ice(RHO_G), hail: factor(rho * hail, N0H, RHO_H) * ice(RHO_H) }
 }
 
-/** Radar reflectivity, dBZ, of rain, snow and graupel mixing ratios (kg/kg) in air of density rho at temperature tc (°C). */
-export function reflectivity(rho: number, rain: number, snow: number, graupel: number, tc: number) {
-  const s = speciesZ(rho, rain, snow, graupel, tc), z = s.rain + s.snow + s.graupel
+/** Radar reflectivity, dBZ, of rain, snow, graupel and hail mixing ratios (kg/kg) in air of density rho at temperature tc (°C). */
+export function reflectivity(rho: number, rain: number, snow: number, graupel: number, tc: number, hail = 0) {
+  const s = speciesZ(rho, rain, snow, graupel, tc, hail), z = s.rain + s.snow + s.graupel + s.hail
   return z > 0 ? Math.max(DBZ_FLOOR, 10 * Math.log10(z)) : DBZ_FLOOR
 }
 
@@ -33,8 +37,8 @@ export function reflectivity(rho: number, rain: number, snow: number, graupel: n
  * Reflectivity-weighted fall speed of the precipitation, m/s (what a vertically pointing Doppler radar sees on top of
  * the air's motion); rhoGround is the surface air density of the fall-speed laws.
  */
-export function reflectivityFallSpeed(rho: number, rhoGround: number, rain: number, snow: number, graupel: number, tc: number) {
-  const s = speciesZ(rho, rain, snow, graupel, tc), z = s.rain + s.snow + s.graupel
+export function reflectivityFallSpeed(rho: number, rhoGround: number, rain: number, snow: number, graupel: number, tc: number, hail = 0) {
+  const s = speciesZ(rho, rain, snow, graupel, tc, hail), z = s.rain + s.snow + s.graupel + s.hail
   if (!(z > 0)) return 0
-  return (s.rain * fallSpeed(rain, rho, rhoGround) + s.snow * snowFallSpeed(snow, rho, rhoGround) + s.graupel * graupelFallSpeed(graupel, rho)) / z
+  return (s.rain * fallSpeed(rain, rho, rhoGround) + s.snow * snowFallSpeed(snow, rho, rhoGround) + s.graupel * graupelFallSpeed(graupel, rho) + s.hail * hailFallSpeed(hail, rho)) / z
 }

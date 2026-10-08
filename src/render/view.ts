@@ -282,7 +282,7 @@ export class StormView {
   }
 
   private updateVolume() {
-    const m = this.model, d = this.volumeData, tl = this.texLevels, cloud = (i: number) => m.cloud[i] + m.ice[i], precip = (i: number) => m.rain[i] + m.snow[i] + m.graupel[i]
+    const m = this.model, d = this.volumeData, tl = this.texLevels, cloud = (i: number) => m.cloud[i] + m.ice[i], precip = (i: number) => m.rain[i] + m.snow[i] + m.graupel[i] + m.hail[i]
     if (!tl) for (let i = 0; i < m.grid.n; i++) { d[i * 2] = clamp((cloud(i) - .00003) / .0014) * 255; d[i * 2 + 1] = clamp(precip(i) / .0025) * 255 }
     else {
       const { layer } = m.grid

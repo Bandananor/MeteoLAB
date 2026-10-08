@@ -38,7 +38,7 @@ describe('scenarios: rotation only where a supercell is intended (calibration)',
       if (t % 60 === 0) maxW = Math.max(maxW, model.diagnostics().updraft)
       if (t % 30 === 0) for (let c = 0; c < layer; c++) gust = Math.max(gust, Math.hypot(model.u[near + c] + fu, model.v[near + c] + fv))
     }
-    console.log(`${s.name}: max w ${maxW.toFixed(1)} m/s, max UH ${maxUH.toFixed(0)}, mesocyclone ${longest} s, wind at 100 m ${gust.toFixed(1)} m/s, rain ${Math.max(...model.precipitation).toFixed(1)} mm, clipped ${model.clipped}`)
+    console.log(`${s.name}: max w ${maxW.toFixed(1)} m/s, max UH ${maxUH.toFixed(0)}, mesocyclone ${longest} s, wind at 100 m ${gust.toFixed(1)} m/s, rain ${Math.max(...model.precipitation).toFixed(1)} mm, hail ${(Math.max(...model.hailSize) / 10).toFixed(1)} cm / ${Math.max(...model.hailGround).toFixed(1)} mm, clipped ${model.clipped}`)
     expect(model.clipped).toBe(0)
     if (s.mesocyclone === true) expect(longest).toBeGreaterThanOrEqual(MESO_PERSISTENCE)
     if (s.mesocyclone === false) expect(longest).toBeLessThan(MESO_PERSISTENCE)

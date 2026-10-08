@@ -12,6 +12,7 @@ export function describeConvection(d: ModelDiagnostics, s: Sounding, r: Rotation
   if (top >= (s.el ?? 99) - .6) logic = 'У EL плавучесть исчезает: поток расходится во всех горизонтальных направлениях, формируя наковальню.'
   if (coldMax > 3) logic += coldMax > 7 ? ' Холодный купол подтекает под inflow и уничтожает исходное ядро.' : ' 3D gust front поднимает тёплый воздух на периферии cold pool.'
   if (d.gust > 20 && d.coldMax > 2) logic += ` Холодный отток растекается у земли: порывы до ${d.gust.toFixed(0)} м/с.`
+  if (d.hail >= 5) logic += ` Из ядра у земли выпадает град до ${(d.hail / 10).toFixed(1)} см.`
 
   const meso = r.persisted >= MESO_PERSISTENCE, rotating = r.uh >= UH_ROTATING
   if (meso) logic += ` Восходящий поток вращается циклонически уже ${Math.floor(r.persisted / 60)} мин: горизонтальные вихри от сдвига ветра наклонены потоком и растянуты в мезоциклон.`

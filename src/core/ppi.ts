@@ -91,10 +91,10 @@ export class PPI {
     for (let z = 0, i = 0; z < nz; z++) {
       const rho = e.rho[z], exner = e.exner[z]
       for (let end = i + layer; i < end; i++) {
-        const rain = m.rain[i], snow = m.snow[i], graupel = m.graupel[i]
-        if (rain <= 0 && snow <= 0 && graupel <= 0) { this.nodeDbz[i] = DBZ_FLOOR; this.nodeFall[i] = 0; continue }
+        const rain = m.rain[i], snow = m.snow[i], graupel = m.graupel[i], hail = m.hail[i]
+        if (rain <= 0 && snow <= 0 && graupel <= 0 && hail <= 0) { this.nodeDbz[i] = DBZ_FLOOR; this.nodeFall[i] = 0; continue }
         const tc = m.theta[i] * exner - 273.15
-        this.nodeDbz[i] = reflectivity(rho, rain, snow, graupel, tc); this.nodeFall[i] = reflectivityFallSpeed(rho, rhoGround, rain, snow, graupel, tc)
+        this.nodeDbz[i] = reflectivity(rho, rain, snow, graupel, tc, hail); this.nodeFall[i] = reflectivityFallSpeed(rho, rhoGround, rain, snow, graupel, tc, hail)
       }
     }
   }
