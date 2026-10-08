@@ -1,0 +1,45 @@
+# A/B experiments (src/core/experiments.test.ts): every variant x scenario in its own job, in parallel. Started by hand
+# (Actions -> Experiments -> Run workflow) or by a push to an exp/** branch with the default lists. Results: the run's
+# summary page and one annotation per job with the time series.
+name: Experiments
+
+on:
+  workflow_dispatch:
+    inputs:
+      variants:
+        description: 'JSON list: base, uniform, warm, fixed, old, aniso, calm, calm-eq, half, double, narrow, nosun, narrow-nosun'
+        default: '["base"]'
+      scenarios:
+        description: 'JSON list of SCENARIOS indices'
+        default: '[0, 1, 2, 3, 4, 5, 6, 7]'
+  push:
+    branches: ['exp/**']
+
+jobs:
+  experiment:
+    name: ${{ matrix.variant }} / scenario ${{ matrix.scenario }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: ${{ fromJSON(inputs.variants || '["base"]') }}
+        scenario: ${{ fromJSON(inputs.scenarios || '[0, 1, 2, 3, 4, 5, 6, 7]') }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 24, cache: npm }
+      - run: npm ci
+      - name: Run
+        env: { STORMLAB_EXPERIMENT: '${{ matrix.variant }}', STORMLAB_SCENARIO: '${{ matrix.scenario }}' }
+        run: |
+          set -o pipefail
+          npx vitest run --mode slow src/core/experiments.test.ts 2>&1 | tee test.log
+      - name: Report
+        if: always()
+        run: |
+          # The test writes its result to experiment.txt (vitest does not show the output of passing tests).
+          [ -s experiment.txt ] && cp experiment.txt result.txt || { grep -E 'Tests |Error' test.log | head -3 > result.txt; }
+          { echo '```'; cat result.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          echo "::notice title=${{ matrix.variant }} / scenario ${{ matrix.scenario }}::$(sed ':a;N;$!ba;s/\n/%0A/g' result.txt)"
+

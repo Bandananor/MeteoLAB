@@ -29,6 +29,8 @@ export interface SimConfig {
   domain?: 'standard' | 'large'
   latitude: number; turbulence: number; hour: number; solarMax: number; soilMoisture: number; surfaceType: SurfaceType
   speed: number; seed: number; bubble: number
+  /** Horizontal e-folding radius of the starting thermals, km (absent = 4.2: a broad thermal, ~8 km across). */
+  bubbleRadius?: number
 }
 
 /**

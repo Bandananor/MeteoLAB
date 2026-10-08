@@ -31,6 +31,32 @@ describe('AtmosphereModel', () => {
     expect(m.diagnostics().cores).toBe(2)
   })
 
+  it('tells a rotating updraught from one with a tilted vortex pair on its flanks (core vorticity)', () => {
+    const m = new AtmosphereModel({ ...summerDay }), { nx, ny, layer, zs, dx, dy } = m.grid, cx = 20, cy = 16
+    /** A broad updraught at 1.5-6 km, and Rankine vortices (circulation zeta inside 2 km) at the given column offsets. */
+    const setup = (vortices: { ox: number; zeta: number }[]) => {
+      m.u.fill(0); m.v.fill(0); m.w.fill(0)
+      for (let z = 0; z < zs.length; z++) {
+        if (zs[z] < 1500 || zs[z] > 6000) continue
+        for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++) {
+          const i = x + nx * y + z * layer, ex = (x - cx) * dx, ny_ = (y - cy) * dy
+          m.w[i] = 25 * Math.exp(-(ex * ex + ny_ * ny_) / 5000 ** 2)
+          for (const { ox, zeta } of vortices) {
+            const rx = ex - ox * dx, r = Math.hypot(rx, ny_), speed = zeta / 2 * (r < 2000 ? r : 2000 ** 2 / r)
+            if (r > 0) { m.u[i] += -speed * ny_ / r; m.v[i] += speed * rx / r }
+          }
+        }
+      }
+      ;(m as unknown as { updateRotation(dt: number): void }).updateRotation(1)
+      return { ...m.rotation }
+    }
+    const meso = setup([{ ox: 0, zeta: .02 }]), pair = setup([{ ox: -3, zeta: .02 }, { ox: 3, zeta: -.02 }])
+    expect(meso.coreZeta).toBeGreaterThan(.004)
+    // The pair has strong UH of both signs, but the updraught as a whole does not rotate.
+    expect(pair.uh).toBeGreaterThan(200); expect(pair.anticyclonic).toBeGreaterThan(200)
+    expect(Math.abs(pair.coreZeta)).toBeLessThan(.002)
+  })
+
   it('is deterministic for a given seed', () => {
     const a = new AtmosphereModel({ ...summerDay }), b = new AtmosphereModel({ ...summerDay })
     run(a, 60); run(b, 60)

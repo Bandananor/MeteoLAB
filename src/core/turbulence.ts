@@ -19,15 +19,23 @@ const PRANDTL = 1 / 3
  */
 export class Turbulence {
   private readonly grid: Grid; private readonly rho: Float64Array
-  /** Eddy viscosity for momentum at each node, m2/s. */
+  /** Eddy viscosity for momentum at each node, m2/s (vertical mixing; also horizontal unless `anisotropic`). */
   readonly km: Float64Array
+  /** Horizontal eddy viscosity, m2/s: km itself, or with the horizontal filter width when `anisotropic`. */
+  readonly kh: Float64Array
+  /**
+   * Horizontal mixing with the horizontal filter width sqrt(dx dy) instead of (dx dy dz)^(1/3) (experiment, 2026-10-07).
+   * On the stretched grid the cube-root width shrank with dz (~0.8x at 5 km, K ~0.65x), so the lateral entrainment into
+   * updraughts, which the 1.2 km horizontal spacing governs, weakened, and updraughts gained 7-8 m/s.
+   */
+  anisotropic = false
   private readonly tmp: Float32Array
   /** Control-volume height of each level (the ground and top nodes own half a layer). */
   private readonly h: Float64Array
 
   constructor(grid: Grid, rho: ArrayLike<number>) {
     this.grid = grid; this.rho = Float64Array.from(rho)
-    this.km = new Float64Array(grid.n); this.tmp = new Float32Array(grid.n)
+    this.km = new Float64Array(grid.n); this.kh = new Float64Array(grid.n); this.tmp = new Float32Array(grid.n)
     this.h = grid.hz
   }
 
@@ -39,11 +47,16 @@ export class Turbulence {
    */
   viscosity(u: Float32Array, v: Float32Array, w: Float32Array, theta: Float32Array, thetaEnv: ArrayLike<number>, cs: number, dt: number,
     moist?: { q: Float32Array; condensate: Float32Array; exner: ArrayLike<number> }) {
-    const { nx, ny, nz, dx, dy, zs, dzs, hz, layer, xp, xm, yp, ym } = this.grid, km = this.km
-    const cap = .05 * Math.min(dx, dy, ...dzs) ** 2 / dt
+    const { nx, ny, nz, dx, dy, zs, dzs, hz, layer, xp, xm, yp, ym } = this.grid, km = this.km, kh = this.kh
+    // Horizontal filter width and stability cap of the anisotropic option (horizontal fluxes only see dx and dy).
+    const lenH2 = (cs * Math.sqrt(dx * dy)) ** 2, capH = .05 * Math.min(dx, dy) ** 2 / dt
     for (let z = 0, i = 0; z < nz; z++) {
       // Filter width from the local vertical spacing (the spacing next to the ground and top nodes, which own half a layer).
       const local = z === 0 ? dzs[0] : z === nz - 1 ? dzs[nz - 2] : hz[z], len2 = (cs * Math.cbrt(dx * dy * local)) ** 2
+      // Explicit-stability cap from the spacings around this level. It was one cap from the smallest spacing anywhere:
+      // on the stretched grid (100 m at the ground) that held K <= 500 m2/s even at 2-8 km, in ~20 % of the updraught
+      // nodes (2026-10-07) — the cores' edges, where entrainment happens — and updraughts neared parcel theory.
+      const cap = .05 * Math.min(dx, dy, z > 0 ? dzs[z - 1] : Infinity, z < nz - 1 ? dzs[z] : Infinity) ** 2 / dt
       const up = z < nz - 1 ? layer : 0, down = z > 0 ? -layer : 0, span = zs[z + (up ? 1 : 0)] - zs[z - (down ? 1 : 0)]
       for (let y = 0; y < ny; y++) {
         const row = y * nx + z * layer
@@ -60,7 +73,8 @@ export class Turbulence {
             n2 = G / te(i, z) * (te(i + up, z + (up ? 1 : 0)) - te(i + down, z - (down ? 1 : 0))) / span
           }
           // Capped for explicit stability: scalars mix 3x faster, three directions add up.
-          km[i] = Math.min(cap, len2 * Math.sqrt(Math.max(0, s2 - n2 / PRANDTL)))
+          const rate = Math.sqrt(Math.max(0, s2 - n2 / PRANDTL))
+          km[i] = Math.min(cap, len2 * rate); kh[i] = this.anisotropic ? Math.min(capH, lenH2 * rate) : km[i]
         }
       }
     }
@@ -71,7 +85,7 @@ export class Turbulence {
    * (1 for momentum, 1/Pr for scalars): da/dt = (1/rho0) div(rho0 K grad a').
    */
   mix(a: Float32Array, base: ArrayLike<number> | null, factor: number, dt: number) {
-    const { nx, ny, nz, dx, dy, layer, xp, yp } = this.grid, km = this.km, t = this.tmp, rho = this.rho, h = this.h
+    const { nx, ny, nz, dx, dy, layer, xp, yp } = this.grid, km = this.km, kh = this.kh, t = this.tmp, rho = this.rho, h = this.h
     t.fill(0)
     const dev = (i: number, z: number) => a[i] - (base ? base[z] : 0)
     for (let z = 0, i = 0; z < nz; z++) {
@@ -82,9 +96,9 @@ export class Turbulence {
           const here = dev(i, z)
           // Flux towards +x, +y, +z through the face shared with the next node; each face is visited once.
           const e = xp[x] + row, n = x + yp[y] + z * layer
-          const fx = factor * (km[i] + km[e]) / 2 * (dev(e, z) - here) / dx
+          const fx = factor * (kh[i] + kh[e]) / 2 * (dev(e, z) - here) / dx
           t[i] += fx / dx; t[e] -= fx / dx
-          const fy = factor * (km[i] + km[n]) / 2 * (dev(n, z) - here) / dy
+          const fy = factor * (kh[i] + kh[n]) / 2 * (dev(n, z) - here) / dy
           t[i] += fy / dy; t[n] -= fy / dy
           if (z < nz - 1) {
             const fz = factor * rUp * (km[i] + km[i + layer]) / 2 * (dev(i + layer, z + 1) - here) / this.grid.dzs[z]

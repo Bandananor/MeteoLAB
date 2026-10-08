@@ -14,20 +14,37 @@ import { PressureSolver } from './pressure'
 import { dragCoefficient, surfaceFluxes } from './surface'
 import { computeSounding, type Sounding } from './sounding'
 
-// Updraft helicity (integral of w*zeta over 2-5 km, m2/s2) thresholds and the persistence that makes rotation a mesocyclone.
-// Recalibrated 2026-09-29 on the realistic scenarios (~1 km grid, honest microphysics): strong updraughts in weak shear
-// tilt the environmental vorticity into vortex pairs of both signs with UH up to ~380 cyclonic and ~320 anticyclonic;
-// supercells hold 700-1900 with the anticyclonic maximum several times weaker (3-km NWP uses ~75).
+// Updraft helicity (integral of w*zeta over 2-5 km, m2/s2): levels of rotation strength for the display and the cell
+// stages, and the persistence that makes rotation a mesocyclone. Since 2026-10-08 the mesocyclone itself is decided by
+// MESO_CORE_ZETA (UH also counts vortex pairs of both signs: up to ~400-600 in weak shear; supercells 700-1900; 3-km NWP
+// uses ~75).
 export const UH_ROTATING = 200, UH_MESOCYCLONE = 400, MESO_PERSISTENCE = 600
 /** Condensate below this mixing ratio (kg/kg, 1e-7 g/kg) is set to zero by the WENO positivity fix, conservatively. */
 const TINY_WATER = 1e-10
 /** Safety limits of the horizontal and vertical velocity, m/s (see AtmosphereModel.clipped). */
 export const U_LIMIT = 120, W_LIMIT = 100
-/** A mesocyclone must also outweigh the strongest anticyclonic rotation by this factor (a vortex pair is not one). */
-export const MESO_DOMINANCE = 1.5
+/** Updraught (m/s) of the 2-5 km nodes that count as an updraught core for RotationState.coreZeta. */
+export const CORE_ROTATION_W = 10
+/**
+ * Mesocyclone criterion (2026-10-08): the updraught core itself rotates, coreZeta >= this (s-1), for MESO_PERSISTENCE.
+ * It replaced "UH 2-5 km >= UH_MESOCYCLONE and 1.5x the strongest anticyclonic UH anywhere": a strong updraught tilts the
+ * shear's vorticity into a vortex pair on its flanks, honest physics that grows with w (UH ~ w zeta ~ w^2), and the
+ * old criterion counted a weak-shear pair whenever its cyclonic member briefly outweighed the other. In the core-weighted
+ * mean the pair cancels. Cloud experiments: HSLC and Weisman-Klemp hold it 1300-1500 s, all other scenarios <= 360 s.
+ */
+export const MESO_CORE_ZETA = 3e-3
 
 export interface RotationState {
+  /** Strongest cyclonic / anticyclonic UH 2-5 km (m2/s2), the column of the cyclonic one, and how long (s) a mesocyclone has held (MESO_CORE_ZETA). */
   uh: number; x: number; y: number; anticyclonic: number; persisted: number
+  /**
+   * Rotation of the updraught itself: the w-weighted mean vertical vorticity (s-1) over the 2-5 km nodes with w above
+   * CORE_ROTATION_W of the most cyclonic updraught core (connected columns), and that core's strongest UH. A vortex pair
+   * that a strong updraught tilts out of the shear sits on its two flanks and cancels here; a mesocyclone does not.
+   */
+  coreZeta: number; coreUH: number
+  /** The same for the most anticyclonic core (positive, s-1): a left mover after a split. */
+  coreAnti: number
   /** Largest cyclonic updraft helicity of the 0-1 and 0-3 km layers (low-level mesocyclone), m2/s2. */
   uh01: number; uh03: number
 }
@@ -56,13 +73,15 @@ export class AtmosphereModel {
   readonly pressure: Float64Array
   /** Updraft helicity of every column (2-5 km), m2/s2. */
   readonly uhColumn: Float32Array
+  /** Per column, the 2-5 km updraught-core sums w hz and w zeta hz, and a flood-fill label (see RotationState.coreZeta). */
+  readonly coreW: Float64Array; readonly coreWZ: Float64Array; private readonly coreLabel: Uint8Array
   /** Rain that has reached the ground in each column since the start, mm (kg/m2). */
   readonly precipitation: Float32Array
   /** Fall speed of rain at every node (Kessler), m/s, raised to that of the rain just above (sedimentation), updated each step. */
   readonly fallSpeed: Float32Array
   /** Mass-weighted fall speeds of snow and graupel at each node, m/s. */
   readonly snowFall: Float32Array; readonly graupelFall: Float32Array
-  readonly rotation: RotationState = { uh: 0, x: 0, y: 0, anticyclonic: 0, persisted: 0, uh01: 0, uh03: 0 }
+  readonly rotation: RotationState = { uh: 0, x: 0, y: 0, anticyclonic: 0, persisted: 0, uh01: 0, uh03: 0, coreZeta: 0, coreUH: 0, coreAnti: 0 }
   readonly sounding: Sounding
   /** Lowest and highest level of the 2-5 km updraft-helicity layer. */
   readonly uhLevels: readonly [number, number]
@@ -101,6 +120,7 @@ export class AtmosphereModel {
     // Anelastic: the projection makes the mass flux rho0 u divergence-free (rho0 falls ~6x over 15 km).
     this.solver = new PressureSolver(grid, this.env.rho)
     this.pressure = new Float64Array(this.solver.cells); this.divergence = new Float64Array(this.solver.cells); this.scratch = f()
+    this.coreW = new Float64Array(grid.layer); this.coreWZ = new Float64Array(grid.layer); this.coreLabel = new Uint8Array(grid.layer)
     this.surfacePattern = new Float32Array(grid.layer); this.uhColumn = new Float32Array(grid.layer); this.precipitation = new Float32Array(grid.layer); this.fallSpeed = f()
     // Mass of each level per unit area and per metre of mean spacing: rho0 times the control-volume height over dz.
     this.levelWeight = Float64Array.from({ length: grid.nz }, (_, z) => grid.hz[z] / grid.dz * this.env.rho[z])
@@ -142,12 +162,12 @@ export class AtmosphereModel {
    * larger CAPE than the environment it is meant to probe.
    */
   injectBubble(cx: number, cy: number, strength: number) {
-    const { nx, ny, nz, dx, dy, zs, width: W, depth: D } = this.grid
+    const { nx, ny, nz, dx, dy, zs, width: W, depth: D } = this.grid, radius = (this.config.bubbleRadius ?? 4.2) * 1000
     // The levels up to 2.7 km (the lowest five on the old uniform grid): the thermal's depth is set in metres, not levels.
     for (let z = 0; z < nz && zs[z] < 2700; z++) for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++) {
       let ddx = x * dx - cx, ddy = y * dy - cy
       if (ddx > W / 2) ddx -= W; if (ddx < -W / 2) ddx += W; if (ddy > D / 2) ddy -= D; if (ddy < -D / 2) ddy += D
-      const d2 = (ddx / 4200) ** 2 + (ddy / 4200) ** 2 + (zs[z] / 1800) ** 2, a = Math.exp(-d2) * strength, i = x + nx * (y + ny * z)
+      const d2 = (ddx / radius) ** 2 + (ddy / radius) ** 2 + (zs[z] / 1800) ** 2, a = Math.exp(-d2) * strength, i = x + nx * (y + ny * z)
       this.theta[i] += 3.2 * a; this.w[i] += 1.1 * a
     }
   }
@@ -284,6 +304,8 @@ export class AtmosphereModel {
    * (src/core/graupel.ts), Lin et al. (1983); or Kessler warm rain only (cheaper, no anvil, no heat of fusion).
    */
   microphysics: 'warm' | 'ice' = 'ice'
+  /** Subgrid filter width of the horizontal mixing: (dx dy dz)^(1/3), or sqrt(dx dy) (experiment; see Turbulence.anisotropic). */
+  turbulenceWidth: 'cube' | 'anisotropic' = 'cube'
   private flux: FluxTransport | null = null
   private turbulence: Turbulence | null = null
 
@@ -378,6 +400,7 @@ export class AtmosphereModel {
     }
     // Smagorinsky-Lilly subgrid mixing of momentum, heat and water (replaces the old horizontal smoothing of theta and q).
     const turb = this.turbulence ??= new Turbulence(this.grid, e.rho)
+    turb.anisotropic = this.turbulenceWidth === 'anisotropic'
     // Saturated stability inside clouds (cloud water plus ice): see Turbulence.viscosity.
     if (withIce) for (let k = 0; k < ice.length; k++) this.scratch[k] = cloud[k] + ice[k]
     const moist = { q, condensate: withIce ? this.scratch : cloud, exner: e.exner }
@@ -425,16 +448,40 @@ export class AtmosphereModel {
     // Low layers: the levels up to 1 and 3 km (on the uniform ~650 m grid: one level at ~650 m, w = 0 on the ground; four).
     const top1 = zs.findLastIndex(z => z <= 1000), top3 = zs.findLastIndex(z => z <= 3000)
     let max = 0, min = 0, bx = 0, by = 0, max01 = 0, max03 = 0
+    const coreW = this.coreW, coreWZ = this.coreWZ
     for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++) {
-      let uh = 0, low = 0
+      let uh = 0, low = 0, sw = 0, swz = 0
       for (let z = 1; z <= top3; z++) { low += this.w[x + nx * y + z * layer] * this.zeta(x, y, z) * hz[z]; if (z === top1) max01 = Math.max(max01, low) }
       max03 = Math.max(max03, low)
-      for (let z = z0; z <= z1; z++) uh += this.w[x + nx * y + z * layer] * this.zeta(x, y, z) * hz[z]
-      col[x + nx * y] = uh
+      for (let z = z0; z <= z1; z++) {
+        const w = this.w[x + nx * y + z * layer], wz = w * this.zeta(x, y, z) * hz[z]
+        uh += wz
+        if (w > CORE_ROTATION_W) { sw += w * hz[z]; swz += wz }
+      }
+      col[x + nx * y] = uh; coreW[x + nx * y] = sw; coreWZ[x + nx * y] = swz
       if (uh > max) { max = uh; bx = x; by = y }
       min = Math.min(min, uh)
     }
-    r.uh = max; r.anticyclonic = -min; r.uh01 = max01; r.uh03 = max03; r.x = bx; r.y = by; r.persisted = max >= UH_MESOCYCLONE && max >= MESO_DOMINANCE * -min ? r.persisted + dt : 0
+    // Updraught cores: connected columns (8 neighbours, periodic) with 2-5 km nodes above CORE_ROTATION_W.
+    const label = this.coreLabel.fill(0), stack: number[] = []
+    let coreZeta = 0, coreUH = 0, coreAnti = 0
+    for (let start = 0; start < layer; start++) {
+      if (coreW[start] <= 0 || label[start]) continue
+      let sw = 0, swz = 0, peak = 0
+      label[start] = 1; stack.push(start)
+      while (stack.length) {
+        const a = stack.pop()!, x = a % nx, y = (a - x) / nx
+        sw += coreW[a]; swz += coreWZ[a]; peak = Math.max(peak, col[a])
+        for (let oy = -1; oy <= 1; oy++) for (let ox = -1; ox <= 1; ox++) {
+          const b = (x + ox + nx) % nx + nx * ((y + oy + ny) % ny)
+          if (coreW[b] > 0 && !label[b]) { label[b] = 1; stack.push(b) }
+        }
+      }
+      if (swz / sw > coreZeta) { coreZeta = swz / sw; coreUH = peak }
+      coreAnti = Math.max(coreAnti, -swz / sw)
+    }
+    r.coreZeta = coreZeta; r.coreUH = coreUH; r.coreAnti = coreAnti
+    r.uh = max; r.anticyclonic = -min; r.uh01 = max01; r.uh03 = max03; r.x = bx; r.y = by; r.persisted = coreZeta >= MESO_CORE_ZETA ? r.persisted + dt : 0
   }
 
   private countCores() {
