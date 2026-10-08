@@ -1,3 +1,5 @@
+import { type Memory, PRIVATE_MEMORY } from './threads'
+
 /**
  * Complex FFT of one length, any n: mixed-radix Cooley-Tukey (recursive decimation in time, as in KISS FFT) over the
  * factors 4, 2, 3, 5 and then any remaining primes (a prime factor p is a direct p-point DFT, so a prime n costs n^2
@@ -75,6 +77,7 @@ export class FFT {
  * elliptic solvers. The input is real, so its spectrum is Hermitian: only x-wavenumbers 0..nx/2 are kept, the others are
  * their conjugates. Coefficients live in `re`/`im` at [layer * nx * ny + n * nx + m] for m <= nx/2.
  */
+/** 2D DFT in x and y of every layer; layers are independent (helper threads each take some). */
 export class HorizontalDFT {
   readonly re: Float64Array; readonly im: Float64Array
   /** Highest x-wavenumber kept. */
@@ -83,17 +86,21 @@ export class HorizontalDFT {
   private readonly fx: FFT; private readonly fy: FFT
   private readonly rowRe: Float64Array; private readonly rowIm: Float64Array
 
-  constructor(nx: number, ny: number, layers: number) {
+  /** `memory` and `name` place the spectra where helper threads see them (threads.ts). */
+  constructor(nx: number, ny: number, layers: number, memory: Memory = PRIVATE_MEMORY, name = 'dft') {
     this.nx = nx; this.ny = ny; this.mh = Math.floor(nx / 2)
     this.fx = new FFT(nx); this.fy = new FFT(ny)
-    this.re = new Float64Array(nx * ny * layers); this.im = new Float64Array(nx * ny * layers)
+    this.re = memory.f64(`${name}Re`, nx * ny * layers); this.im = memory.f64(`${name}Im`, nx * ny * layers)
     this.rowRe = new Float64Array(Math.max(nx, ny)); this.rowIm = new Float64Array(Math.max(nx, ny))
   }
 
   /** Forward transform, exp(-i theta), of layers 0..layers-1 of `src` into re/im. */
-  forward(src: ArrayLike<number>, layers: number) {
+  forward(src: ArrayLike<number>, layers: number) { this.forwardLayers(src, 0, layers) }
+
+  /** Forward transform of layers k0..k1-1 only. */
+  forwardLayers(src: ArrayLike<number>, k0: number, k1: number) {
     const { nx, ny, mh, re, im, rowRe, rowIm, fx, fy } = this, cl = nx * ny
-    for (let k = 0; k < layers; k++) {
+    for (let k = k0; k < k1; k++) {
       const base = k * cl
       // Two real rows per complex transform, z = a + i b: A[m] = (Z[m] + conj Z[-m]) / 2, B[m] = (Z[m] - conj Z[-m]) / 2i.
       for (let j = 0; j < ny; j += 2) {
@@ -115,9 +122,12 @@ export class HorizontalDFT {
   }
 
   /** Inverse transform, exp(+i theta), of re/im (consumed) into the real `dst`, normalised. */
-  inverse(dst: { [i: number]: number }, layers: number) {
+  inverse(dst: { [i: number]: number }, layers: number) { this.inverseLayers(dst, 0, layers) }
+
+  /** Inverse transform of layers k0..k1-1 only. */
+  inverseLayers(dst: { [i: number]: number }, k0: number, k1: number) {
     const { nx, ny, mh, re, im, rowRe, rowIm, fx, fy } = this, cl = nx * ny
-    for (let k = 0; k < layers; k++) {
+    for (let k = k0; k < k1; k++) {
       const base = k * cl
       for (let m = 0; m <= mh; m++) {
         for (let n = 0; n < ny; n++) { rowRe[n] = re[base + n * nx + m]; rowIm[n] = im[base + n * nx + m] }

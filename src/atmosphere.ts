@@ -26,6 +26,8 @@ export class Atmosphere implements ViewSettings {
   readonly storm: StormIndices
   /** Convective cells found and followed in every snapshot (src/core/cells.ts). */
   readonly cells = new CellTracker()
+  /** Threads the physics runs on (see simulation.worker.ts). */
+  threads = 1
 
   constructor(canvas: HTMLCanvasElement, config: SimConfig) {
     this.config = config; this.sentConfig = JSON.stringify(config)
@@ -36,7 +38,8 @@ export class Atmosphere implements ViewSettings {
     this.view = new StormView(canvas, this.mirror, this)
     this.worker = new Worker(new URL('./simulation.worker.ts', import.meta.url), { type: 'module' })
     this.worker.addEventListener('message', (event: MessageEvent<Snapshot>) => this.receive(event.data))
-    this.post({ type: 'init', config: { ...config } })
+    const threads = Number(new URLSearchParams(location.search).get('threads')) || undefined
+    this.post({ type: 'init', config: { ...config }, threads })
   }
 
   get time() { return this.mirror.time }
@@ -84,7 +87,7 @@ export class Atmosphere implements ViewSettings {
     let offset = 0
     for (const key of SNAPSHOT_FIELDS) { m[key].set(data.subarray(offset, offset + n)); offset += n }
     for (const key of SNAPSHOT_COLUMNS) { m[key].set(data.subarray(offset, offset + layer)); offset += layer }
-    m.time = s.time; Object.assign(m.rotation, s.rotation); this.latest = s.diagnostics
+    m.time = s.time; Object.assign(m.rotation, s.rotation); this.latest = s.diagnostics; this.threads = s.threads
     this.post({ type: 'release', buffer: s.buffer }, [s.buffer])
     this.inFlight = false
     // Cells move about a grid column a minute: every 6 s of model time is plenty.
