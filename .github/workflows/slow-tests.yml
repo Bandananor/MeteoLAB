@@ -75,8 +75,8 @@ jobs:
       - name: Report
         if: always()
         run: |
-          sed -i 's/[[0-9;]*m//g' test.log
-          line=$(grep -E '^s+Tests ' test.log | tail -1 | sed 's/^ *//')
+          sed -i 's/\x1b\[[0-9;]*m//g' test.log
+          line=$(grep -E '^\s+Tests ' test.log | tail -1 | sed 's/^ *//')
           fail=$(grep -E 'AssertionError|Error:' test.log | head -1 | sed 's/^ *//')
           result=$(cat reference.txt 2>/dev/null | paste -sd ';' -)
           echo "### Reference: ${line:-no result} ${fail} ${result}" >> "$GITHUB_STEP_SUMMARY"
