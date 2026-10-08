@@ -77,13 +77,13 @@ function moistNeutral(): EnvironmentProfile {
 /**
  * Bryan & Fritsch (2002): a warm bubble (theta' = 2 cos^2(pi L / 2) K, radius 2 km, centred at 2 km) rises for 1000 s in
  * a neutral atmosphere, dry (theta 300 K) or saturated (above; no rain, cloud water only condenses and evaporates). The
- * moist bubble gets the same initial buoyancy as the dry one, so with consistent thermodynamics the two rise alike; and
- * theta_e must not leave the initial range. 2D, 20 x 10 km, no explicit diffusion (the paper used a weak filter).
- * Measured 2026-10-08 at 100 m, 1000 s (top / buoyancy-weighted centre km, w max m/s): dry 8.1 / 6.27 / 14.5, moist 8.7 /
- * 6.92 / 16.2. The moist bubble rises ~0.65 km higher with a 12 % stronger updraught: the inconsistency Bryan & Fritsch
- * warn about — latent heat with the dry-air heat capacity and constant L (no heat capacity of the 20 g/kg of water,
- * ~8 % more heating). theta_e minus the environment's: 0..4.03 K at the start, -0.36..4.45 K at the end; the dry theta
- * overshoots too (2.00 -> 2.13 K): the linear upwind transport of theta is not monotone. Open questions (roadmap).
+ * moist bubble gets the same initial buoyancy as the dry one (it still ends up stronger: its buoyancy grows as it rises). 2D, 20 x 10 km, no explicit diffusion (the paper used a weak filter).
+ * Reference at 1000 s (Bryan & Fritsch 2002, as quoted by Duarte et al. 2014, arXiv:1311.4265): moist w max 15.7 m/s,
+ * min -9.9, theta_e' max 4.10 K, min -0.31; dry (Duarte et al., 512 x 256) w max 13.9, theta' 2.21 / -0.13, top ~8 km.
+ * Measured 2026-10-08 at 100 m (top / buoyancy-weighted centre km, w max m/s): dry 8.1 / 6.27 / 14.5 (theta' 2.13 /
+ * -0.18), moist 8.7 / 6.92 / 16.2, theta_e minus the environment's -0.36 / 4.45 K (approximate theta_e: not the paper's
+ * wet theta_e). Both within ~4 % of the reference w; the moist one 12 % stronger than the dry one, as in the reference
+ * (13 %). Tried 2026-10-08: latent heat with the moist heat capacity and L(T) changed the moist centre by 0.02 km only.
  */
 function bryanFritsch(moist: boolean, dx = 100) {
   const nx = Math.round(20_000 / dx), nz = Math.round(10_000 / dx) + 1
@@ -105,7 +105,7 @@ function bryanFritsch(moist: boolean, dx = 100) {
     for (let k = 0; k < 60; k++) { const th = (lo + hi) / 2; if (buoyancy(th, qv(th), QT - qv(th), z) > target) hi = th; else lo = th }
     model.theta[i] = lo; model.q[i] = qv(lo); model.cloud[i] = QT - qv(lo)
   }
-  // Range of theta_e minus that of the environment at the same level: mixing may only shrink it. (theta_e itself is not
+  // Range of theta_e minus that of the environment at the same level, the paper's theta_e' (theta_e itself is not
   // this model's invariant: its own reversibly neutral column above goes from 320 K at the ground to 322.5 K at 10 km.)
   const thetaE = (th: number, qv: number, z: number) => th * Math.exp(LV * qv / (CP * th * e.exner[z]))
   const teEnv = Float64Array.from(e.theta, (t, z) => thetaE(t, e.q[z], z))
@@ -140,14 +140,15 @@ describe('reference cases', () => {
     expect(r.wMin).toBeGreaterThan(-19); expect(r.wMin).toBeLessThan(-13.5)
   }, 600_000)
 
-  it.runIf(slow)('Bryan-Fritsch bubble: the dry one rises as measured, the moist one not much faster, theta_e within bounds', async () => {
+  it.runIf(slow)('Bryan-Fritsch bubble: dry and moist thermals near the reference', async () => {
     const dry = bryanFritsch(false), moist = bryanFritsch(true), f = (r: typeof dry) => `top ${r.top.toFixed(1)} km, centre ${r.centre.toFixed(2)} km, w max ${r.wMax.toFixed(1)} m/s`
     await report(`Bryan-Fritsch 100 m: dry ${f(dry)}; moist ${f(moist)}, theta_e - env ${moist.thetaE.map(t => t.toFixed(2)).join(' / ')} K`)
     expect(dry.top).toBeGreaterThan(7.6); expect(dry.top).toBeLessThan(8.6)
     expect(dry.centre).toBeGreaterThan(5.8); expect(dry.centre).toBeLessThan(6.8)
-    expect(dry.wMax).toBeGreaterThan(12.5); expect(dry.wMax).toBeLessThan(16.5)
-    // Today's gap (0.65 km, +12 %) with a margin: a regression guard until the thermodynamics are made consistent.
-    expect(moist.centre - dry.centre).toBeLessThan(1); expect(moist.wMax / dry.wMax).toBeLessThan(1.25)
-    expect(moist.thetaE[3] - moist.thetaE[1]).toBeLessThan(.8); expect(moist.thetaE[2]).toBeGreaterThan(-.8)
+    expect(dry.wMax).toBeGreaterThan(12.5); expect(dry.wMax).toBeLessThan(15.5)
+    // The reference: moist w max 15.7 m/s, theta_e' -0.31..4.10 K; the moist thermal stronger than the dry one by ~13 %.
+    expect(moist.wMax).toBeGreaterThan(14.2); expect(moist.wMax).toBeLessThan(17.3)
+    expect(moist.wMax / dry.wMax).toBeGreaterThan(1.03); expect(moist.wMax / dry.wMax).toBeLessThan(1.25)
+    expect(moist.thetaE[3]).toBeGreaterThan(3.6); expect(moist.thetaE[3]).toBeLessThan(4.9); expect(moist.thetaE[2]).toBeGreaterThan(-.7)
   }, 1_200_000)
 })
