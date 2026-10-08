@@ -18,7 +18,7 @@ function send() {
   let offset = 0
   for (const key of SNAPSHOT_FIELDS) { data.set(model[key], offset); offset += n }
   for (const key of SNAPSHOT_COLUMNS) { data.set(model[key], offset); offset += layer }
-  const snapshot: Snapshot = { type: 'snapshot', buffer, steps: pendingSteps, time: model.time, microburstOutflow: model.microburstOutflow, rotation: { ...model.rotation }, diagnostics: model.diagnostics() }
+  const snapshot: Snapshot = { type: 'snapshot', buffer, steps: pendingSteps, time: model.time, rotation: { ...model.rotation }, diagnostics: model.diagnostics() }
   pendingSteps = 0
   scope.postMessage(snapshot, [buffer])
 }

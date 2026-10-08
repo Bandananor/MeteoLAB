@@ -53,7 +53,8 @@ export interface ModelDiagnostics {
   /** Heaviest rain reaching the ground now, mm/h: rho0 q_r V_t at the surface. */ rainRate: number
   /** Largest rain total on the ground since the start, mm. */ rainTotal: number
   updraft: number; downdraft: number; cloudTop: number; thermalTop: number
-  maxCloud: number; coldMax: number; cores: number; shear06: number; microburst: number
+  maxCloud: number; coldMax: number; cores: number; shear06: number
+  /** Strongest wind over the ground at the ~100 m level, m/s: outflow and downburst gusts. */ gust: number
   /**
    * Velocity components clipped by the safety limits since the start. The limits (|u|, |v| <= 120, |w| <= 100 m/s,
    * raised from 85 / 60 on 2026-09-29) lie well above any real storm and well inside the stability of both transports
@@ -66,7 +67,9 @@ export interface ModelDiagnostics {
 export class AtmosphereModel {
   readonly grid: Grid; readonly config: SimConfig; readonly env: Environment
   readonly u: Float32Array; readonly v: Float32Array; readonly w: Float32Array; readonly theta: Float32Array
-  readonly q: Float32Array; readonly cloud: Float32Array; readonly rain: Float32Array; readonly cold: Float32Array
+  readonly q: Float32Array; readonly cloud: Float32Array; readonly rain: Float32Array
+  /** Cold-pool indicator, K: cooling by evaporation, melting and sublimation, carried by the flow (diagnostic only). */
+  readonly cold: Float32Array
   /** Cloud ice, snow and graupel mixing ratios, kg/kg (ice microphysics, src/core/ice.ts and graupel.ts). */
   readonly ice: Float32Array; readonly snow: Float32Array; readonly graupel: Float32Array
   /** Projection pressure (times dt, per unit density) at the dual-cell centres between nodes; see PressureSolver. */
@@ -85,7 +88,7 @@ export class AtmosphereModel {
   readonly sounding: Sounding
   /** Lowest and highest level of the 2-5 km updraft-helicity layer. */
   readonly uhLevels: readonly [number, number]
-  time = 0; microburstOutflow = 0
+  time = 0
   /** Velocity components clipped by the safety limits since the start: the model is outside its working range. */
   clipped = 0
   /** Water mass (level-weight units, summed over all fields) that the WENO positivity fix has moved since the start. */
@@ -318,11 +321,13 @@ export class AtmosphereModel {
   }
 
   step(dt: number) {
-    const { nx, ny, nz, zs, hz, height: H, layer, xp: XP, xm: XM, yp: YP, ym: YM } = this.grid
-    this.microburstOutflow *= .993
+    const { nx, ny, nz, zs, hz, height: H, layer } = this.grid
     this.updateGround()
     // Water is transported conservatively (WENO: by the flux form; semi-Lagrangian: by the mass fixer). Only the
-    // cold-pool indicator decays: it belongs to the cold-pool parameterisation and goes away with it.
+    // cold-pool indicator decays. It is a diagnostic only since 2026-10-08: the cold-pool and microburst
+    // parameterisations that pushed the air by it (lift on its edge, a push down in its core, a radial push of a
+    // rain-loaded downdraught at the ground) are gone — they gave 30-36 m/s downdraughts and 44-52 m/s winds at
+    // 100 m in ordinary storms; without them 9-16 and 20-29 m/s, the WK supercell unchanged (cloud experiments).
     const { rho } = this.env, withIce = (this.config.microphysics ?? this.microphysics) === 'ice'
     // Precipitation fields with their fall speeds (snow only with ice microphysics).
     const falling: [Float32Array, Float32Array][] = withIce ? [[this.rain, this.fallSpeed], [this.snow, this.snowFall], [this.graupel, this.graupelFall]] : [[this.rain, this.fallSpeed]]
@@ -357,14 +362,13 @@ export class AtmosphereModel {
     carry(this.u, 1); carry(this.v, 1); carry(this.w, 1); carry(this.theta, 1); carry(this.q, 1, true); carry(this.cloud, 1, true); if (withIce) carry(this.ice, 1, true); carry(this.cold, .9992)
     const cfg = this.config, e = this.env, u = this.u, v = this.v, w = this.w, theta = this.theta, q = this.q, cloud = this.cloud, rain = this.rain, cold = this.cold
     const ice = this.ice, snow = this.snow, graupel = this.graupel, rhoGround = e.rho[0]
-    const flux = surfaceFluxes(cfg, this.time), lfcZ = (this.sounding.lfc ?? 1.5) * 1000, f = 2 * OMEGA * Math.sin(cfg.latitude * Math.PI / 180)
-    const spongeStart = Math.max(cfg.tropopause * 1000 + 2500, 14_000), liftTop = Math.min(3200, lfcZ)
+    const flux = surfaceFluxes(cfg, this.time), f = 2 * OMEGA * Math.sin(cfg.latitude * Math.PI / 180)
+    const spongeStart = Math.max(cfg.tropopause * 1000 + 2500, 14_000)
     for (let z = 0, i = 0; z < nz; z++) {
-      const alt = zs[z], p = e.p[z], rhoZ = e.rho[z], exner = e.exner[z], thEnv = e.theta[z], qEnv = e.q[z], thvEnv = thEnv * (1 + .61 * qEnv), ue = this.uEnv[z], ve = this.vEnv[z], l = z * layer
+      const alt = zs[z], p = e.p[z], rhoZ = e.rho[z], exner = e.exner[z], thEnv = e.theta[z], qEnv = e.q[z], thvEnv = thEnv * (1 + .61 * qEnv), ue = this.uEnv[z], ve = this.vEnv[z]
       for (let y = 0; y < ny; y++) {
-        const row = y * nx, yp = YP[y], ym = YM[y]
+        const row = y * nx
         for (let x = 0; x < nx; x++, i++) {
-          const xp = XP[x], xm = XM[x]
           // Kessler warm rain, then saturation adjustment (vapour and cloud water in equilibrium after every step).
           // Evaporation of rain and cloud feeds the cold-pool indicator.
           const evap = rainProcesses(q, cloud, rain, i, theta[i] * exner, p, rhoZ, dt)
@@ -388,10 +392,6 @@ export class AtmosphereModel {
           const du = (u[i] - ue) * .9999, dv = (v[i] - ve) * .9999; u[i] = ue + du + f * dv * dt; v[i] = ve + dv - f * du * dt
           // Surface fluxes enter the lowest levels with the shares in surfaceShare, so the column receives exactly H and LE.
           if (z < this.surfaceShare.length) { const pattern = 1 + this.patternNow[x + row] * .32, per = pattern * this.surfaceShare[z] * dt / rhoZ; theta[i] += flux.sensible * per / (CP * exner); q[i] += flux.latent * per / LV }
-          if (alt < liftTop) { const gx = cold[xp + row] - cold[xm + row], gy = cold[x + yp] - cold[x + ym], edge = Math.hypot(gx, gy), core = cold[x + row]; w[i] += G * edge / 300 * .45 * Math.max(.12, 1 - alt / Math.max(300, lfcZ)) * dt; if (alt < 1300 && core > 1) w[i] -= G * core / 300 * .52 * Math.exp(-alt / 520) * dt }
-          // Below ~1 km: the old uniform grid's second level (652 m) owned 326-978 m; `z <= 1` on the stretched grid meant
-          // only the 100 m level, so the microburst parameterisation almost never acted.
-          if (alt < 1000 && z > 0 && w[i] < -5 && rain[i] > .0001) { const impact = Math.min(38, -w[i] * Math.sqrt(rain[i] / .00055)), dpx = (-w[xp + row + l] + w[xm + row + l]) * .5, dpy = (-w[x + yp + l] + w[x + ym + l]) * .5; u[i] -= dpx * .12 * dt; v[i] -= dpy * .12 * dt; cold[i] += impact * .0012 * dt; this.microburstOutflow = Math.max(this.microburstOutflow, impact) }
           // Below 0.001 K the indicator is noise from the transport tails: zero, so the transport can skip it.
           cold[i] = cold[i] < 1e-3 ? 0 : Math.min(cold[i], 15)
           if (alt > spongeStart) { const s = clamp((alt - spongeStart) / (H - spongeStart)) * .06 * dt; w[i] *= 1 - s; u[i] = lerp(u[i], ue, s); v[i] = lerp(v[i], ve, s); theta[i] = lerp(theta[i], thEnv, s) }
@@ -519,8 +519,10 @@ export class AtmosphereModel {
     const [u0, v0] = this.env.windUV(0), [u6, v6] = this.env.windUV(6000)
     // Surface precipitation flux, rain and snow as water (was the largest q_r anywhere times 12000, 2-2.5x too low).
     const rho0 = this.env.rho[0]
-    let rainTotal = 0
+    let rainTotal = 0, gust = 0
+    const near = this.grid.zs.findIndex(z => z >= 100) * this.grid.layer, [fu, fv] = this.frame
+    for (let c = 0; c < this.grid.layer; c++) gust = Math.max(gust, Math.hypot(this.u[near + c] + fu, this.v[near + c] + fv))
     for (let i = 0; i < this.grid.layer; i++) { rainRate = Math.max(rainRate, rho0 * (this.rain[i] * fallSpeed(this.rain[i], rho0, rho0) + this.snow[i] * snowFallSpeed(this.snow[i], rho0, rho0) + this.graupel[i] * graupelFallSpeed(this.graupel[i], rho0)) * 3600); rainTotal = Math.max(rainTotal, this.precipitation[i]) }
-    return { updraft: up, downdraft: down, rainRate, rainTotal, cloudTop: top, thermalTop, maxCloud, coldMax, cores: this.countCores(), shear06: Math.hypot(u6 - u0, v6 - v0), microburst: this.microburstOutflow, clipped: this.clipped }
+    return { updraft: up, downdraft: down, rainRate, rainTotal, cloudTop: top, thermalTop, maxCloud, coldMax, cores: this.countCores(), shear06: Math.hypot(u6 - u0, v6 - v0), gust, clipped: this.clipped }
   }
 }

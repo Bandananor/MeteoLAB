@@ -72,7 +72,7 @@ export class Atmosphere implements ViewSettings {
     return {
       ...m.sounding, ...text, indices: this.indices, storm: this.storm,
       updraft: d.updraft, downdraft: d.downdraft, rain: d.rainRate, rainTotal: d.rainTotal, cloudTop: d.cloudTop, thermalTop: d.thermalTop,
-      cloudWater: d.maxCloud * 1000, coldPool: d.coldMax, microburst: d.microburst, clipped: d.clipped, updraftHelicity: m.rotation.uh, uh01: m.rotation.uh01, uh03: m.rotation.uh03,
+      cloudWater: d.maxCloud * 1000, coldPool: d.coldMax, gust: d.gust, clipped: d.clipped, updraftHelicity: m.rotation.uh, uh01: m.rotation.uh01, uh03: m.rotation.uh03,
       insolation: insolation(m.config, m.time), sunElevation: Math.asin(Math.max(-1, Math.min(1, sunDirection(m.config, m.time).y))) * 180 / Math.PI,
     }
   }
@@ -84,7 +84,7 @@ export class Atmosphere implements ViewSettings {
     let offset = 0
     for (const key of SNAPSHOT_FIELDS) { m[key].set(data.subarray(offset, offset + n)); offset += n }
     for (const key of SNAPSHOT_COLUMNS) { m[key].set(data.subarray(offset, offset + layer)); offset += layer }
-    m.time = s.time; m.microburstOutflow = s.microburstOutflow; Object.assign(m.rotation, s.rotation); this.latest = s.diagnostics
+    m.time = s.time; Object.assign(m.rotation, s.rotation); this.latest = s.diagnostics
     this.post({ type: 'release', buffer: s.buffer }, [s.buffer])
     this.inFlight = false
     // Cells move about a grid column a minute: every 6 s of model time is plenty.
