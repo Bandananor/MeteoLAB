@@ -9,7 +9,8 @@ import { SUMMER_DAY } from './fixtures'
  * Variants undo what changed after the realistic scenarios were calibrated on 2026-09-29 (updraughts then ~45-54 m/s):
  * `uniform` — the old 30 uniform 652 m levels instead of 50 stretched (2026-10-01); `warm` — Kessler warm rain instead
  * of ice (2026-10-03); `fixed` — no storm-following domain (2026-10-03); `old` — all three, the 2026-09-29 setup; `base`.
- * `aniso` — horizontal mixing with the horizontal filter width (Turbulence.anisotropic). STORMLAB_MINUTES sets the
+ * `aniso` — horizontal mixing with the horizontal filter width (Turbulence.anisotropic); wind controls: `calm` (no wind),
+ * `calm-eq` (no wind, no Coriolis), `half` and `double` (the wind profile x0.5, x2). STORMLAB_MINUTES sets the
  * model time (default 40).
  */
 const env = (globalThis as { process?: { env: Record<string, string | undefined> } }).process?.env ?? {}
@@ -21,6 +22,10 @@ describe('experiments', () => {
   it.runIf(slow && !!variant)(`${variant} on scenario ${env.STORMLAB_SCENARIO}`, async () => {
     const s = SCENARIOS[Number(env.STORMLAB_SCENARIO ?? 0)], old = variant === 'old'
     const config: SimConfig = { ...SUMMER_DAY, ...s.values }
+    // Wind controls: no wind at all (no shear to tilt), and the same without Coriolis; the wind profile scaled by 0.5 or 2.
+    const scale = variant === 'calm' || variant === 'calm-eq' ? 0 : variant === 'half' ? .5 : variant === 'double' ? 2 : 1
+    if (scale !== 1) for (const k of ['wind0', 'wind05', 'wind1', 'wind3', 'wind6', 'wind10'] as const) if (config[k] !== undefined) config[k] = config[k]! * scale
+    if (variant === 'calm-eq') config.latitude = 0
     if (variant === 'warm' || old) config.microphysics = 'warm'
     if (variant === 'fixed' || old) config.followStorm = false
     const model = new AtmosphereModel(config, createGrid(variant === 'uniform' || old ? UNIFORM : DEFAULT_GRID))
@@ -37,9 +42,14 @@ describe('experiments', () => {
       let w = 0, at = 0
       for (let i = 0; i < model.w.length; i++) if (model.w[i] > w) { w = model.w[i]; at = Math.floor(i / layer) }
       peakW = Math.max(peakW, w)
+      // Strongest cyclonic and anticyclonic vertical vorticity at 2-5 km (s-1): is the vortex too strong, or only the updraught?
+      let zMax = 0, zMin = 0
+      for (let z = model.uhLevels[0]; z <= model.uhLevels[1]; z++) for (let y = 0; y < model.grid.ny; y++) for (let x = 0; x < model.grid.nx; x++) {
+        const zeta = model.zeta(x, y, z); zMax = Math.max(zMax, zeta); zMin = Math.min(zMin, zeta)
+      }
       const d = model.diagnostics(), r = model.rotation
       rows.push(`${String(t / 60).padStart(2)} min  w ${w.toFixed(1).padStart(5)} at ${(zs[at] / 1000).toFixed(1)} km  UH ${r.uh.toFixed(0).padStart(4)} anti ${r.anticyclonic.toFixed(0).padStart(4)}` +
-        ` held ${String(r.persisted).padStart(4)} s  coreZ ${(r.coreZeta * 1000).toFixed(1).padStart(4)}e-3 coreUH ${r.coreUH.toFixed(0).padStart(4)}  UH03 ${r.uh03.toFixed(0).padStart(4)}  down ${d.downdraft.toFixed(1)}  cold ${d.coldMax.toFixed(1)} K  cores ${d.cores}  top ${d.cloudTop.toFixed(1)} km  rain ${d.rainTotal.toFixed(1)} mm  at x${r.x} y${r.y}`)
+        ` zeta ${(zMax * 1000).toFixed(1)}/${(zMin * 1000).toFixed(1)}e-3  held ${String(r.persisted).padStart(4)} s  coreZ ${(r.coreZeta * 1000).toFixed(1).padStart(4)}e-3 coreUH ${r.coreUH.toFixed(0).padStart(4)}  UH03 ${r.uh03.toFixed(0).padStart(4)}  down ${d.downdraft.toFixed(1)}  cold ${d.coldMax.toFixed(1)} K  cores ${d.cores}  top ${d.cloudTop.toFixed(1)} km  rain ${d.rainTotal.toFixed(1)} mm  at x${r.x} y${r.y}`)
     }
     const lines = [`EXPERIMENT ${s.name} / ${variant}: max w ${peakW.toFixed(1)} m/s, max UH ${peakUH.toFixed(0)}, mesocyclone ${longest} s, clipped ${model.clipped}`,
       `core zeta held (s) at ${ZETAS.map((z, k) => `${z * 1000}e-3: ${heldMax[k]}`).join(', ')}`, ...rows]
