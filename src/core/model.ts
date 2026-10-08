@@ -153,12 +153,12 @@ export class AtmosphereModel {
    * larger CAPE than the environment it is meant to probe.
    */
   injectBubble(cx: number, cy: number, strength: number) {
-    const { nx, ny, nz, dx, dy, zs, width: W, depth: D } = this.grid
+    const { nx, ny, nz, dx, dy, zs, width: W, depth: D } = this.grid, radius = (this.config.bubbleRadius ?? 4.2) * 1000
     // The levels up to 2.7 km (the lowest five on the old uniform grid): the thermal's depth is set in metres, not levels.
     for (let z = 0; z < nz && zs[z] < 2700; z++) for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++) {
       let ddx = x * dx - cx, ddy = y * dy - cy
       if (ddx > W / 2) ddx -= W; if (ddx < -W / 2) ddx += W; if (ddy > D / 2) ddy -= D; if (ddy < -D / 2) ddy += D
-      const d2 = (ddx / 4200) ** 2 + (ddy / 4200) ** 2 + (zs[z] / 1800) ** 2, a = Math.exp(-d2) * strength, i = x + nx * (y + ny * z)
+      const d2 = (ddx / radius) ** 2 + (ddy / radius) ** 2 + (zs[z] / 1800) ** 2, a = Math.exp(-d2) * strength, i = x + nx * (y + ny * z)
       this.theta[i] += 3.2 * a; this.w[i] += 1.1 * a
     }
   }

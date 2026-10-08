@@ -7,11 +7,11 @@ on:
   workflow_dispatch:
     inputs:
       variants:
-        description: 'JSON list: base, uniform, warm, fixed, old, aniso, calm, calm-eq, half, double'
-        default: '["base", "calm", "calm-eq", "half", "double"]'
+        description: 'JSON list: base, uniform, warm, fixed, old, aniso, calm, calm-eq, half, double, narrow, nosun, narrow-nosun'
+        default: '["base", "narrow", "nosun", "narrow-nosun"]'
       scenarios:
         description: 'JSON list of SCENARIOS indices'
-        default: '[0, 2]'
+        default: '[0, 2, 5]'
   push:
     branches: ['exp/**']
 
@@ -23,8 +23,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        variant: ${{ fromJSON(inputs.variants || '["base", "calm", "calm-eq", "half", "double"]') }}
-        scenario: ${{ fromJSON(inputs.scenarios || '[0, 2]') }}
+        variant: ${{ fromJSON(inputs.variants || '["base", "narrow", "nosun", "narrow-nosun"]') }}
+        scenario: ${{ fromJSON(inputs.scenarios || '[0, 2, 5]') }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
