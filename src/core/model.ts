@@ -14,21 +14,28 @@ import { PressureSolver } from './pressure'
 import { dragCoefficient, surfaceFluxes } from './surface'
 import { computeSounding, type Sounding } from './sounding'
 
-// Updraft helicity (integral of w*zeta over 2-5 km, m2/s2) thresholds and the persistence that makes rotation a mesocyclone.
-// Recalibrated 2026-09-29 on the realistic scenarios (~1 km grid, honest microphysics): strong updraughts in weak shear
-// tilt the environmental vorticity into vortex pairs of both signs with UH up to ~380 cyclonic and ~320 anticyclonic;
-// supercells hold 700-1900 with the anticyclonic maximum several times weaker (3-km NWP uses ~75).
+// Updraft helicity (integral of w*zeta over 2-5 km, m2/s2): levels of rotation strength for the display and the cell
+// stages, and the persistence that makes rotation a mesocyclone. Since 2026-10-08 the mesocyclone itself is decided by
+// MESO_CORE_ZETA (UH also counts vortex pairs of both signs: up to ~400-600 in weak shear; supercells 700-1900; 3-km NWP
+// uses ~75).
 export const UH_ROTATING = 200, UH_MESOCYCLONE = 400, MESO_PERSISTENCE = 600
 /** Condensate below this mixing ratio (kg/kg, 1e-7 g/kg) is set to zero by the WENO positivity fix, conservatively. */
 const TINY_WATER = 1e-10
 /** Safety limits of the horizontal and vertical velocity, m/s (see AtmosphereModel.clipped). */
 export const U_LIMIT = 120, W_LIMIT = 100
-/** A mesocyclone must also outweigh the strongest anticyclonic rotation by this factor (a vortex pair is not one). */
-export const MESO_DOMINANCE = 1.5
 /** Updraught (m/s) of the 2-5 km nodes that count as an updraught core for RotationState.coreZeta. */
 export const CORE_ROTATION_W = 10
+/**
+ * Mesocyclone criterion (2026-10-08): the updraught core itself rotates, coreZeta >= this (s-1), for MESO_PERSISTENCE.
+ * It replaced "UH 2-5 km >= UH_MESOCYCLONE and 1.5x the strongest anticyclonic UH anywhere": a strong updraught tilts the
+ * shear's vorticity into a vortex pair on its flanks, honest physics that grows with w (UH ~ w zeta ~ w^2), and the
+ * old criterion counted a weak-shear pair whenever its cyclonic member briefly outweighed the other. In the core-weighted
+ * mean the pair cancels. Cloud experiments: HSLC and Weisman-Klemp hold it 1300-1500 s, all other scenarios <= 360 s.
+ */
+export const MESO_CORE_ZETA = 3e-3
 
 export interface RotationState {
+  /** Strongest cyclonic / anticyclonic UH 2-5 km (m2/s2), the column of the cyclonic one, and how long (s) a mesocyclone has held (MESO_CORE_ZETA). */
   uh: number; x: number; y: number; anticyclonic: number; persisted: number
   /**
    * Rotation of the updraught itself: the w-weighted mean vertical vorticity (s-1) over the 2-5 km nodes with w above
@@ -36,6 +43,8 @@ export interface RotationState {
    * that a strong updraught tilts out of the shear sits on its two flanks and cancels here; a mesocyclone does not.
    */
   coreZeta: number; coreUH: number
+  /** The same for the most anticyclonic core (positive, s-1): a left mover after a split. */
+  coreAnti: number
   /** Largest cyclonic updraft helicity of the 0-1 and 0-3 km layers (low-level mesocyclone), m2/s2. */
   uh01: number; uh03: number
 }
@@ -65,14 +74,14 @@ export class AtmosphereModel {
   /** Updraft helicity of every column (2-5 km), m2/s2. */
   readonly uhColumn: Float32Array
   /** Per column, the 2-5 km updraught-core sums w hz and w zeta hz, and a flood-fill label (see RotationState.coreZeta). */
-  private readonly coreW: Float64Array; private readonly coreWZ: Float64Array; private readonly coreLabel: Uint8Array
+  readonly coreW: Float64Array; readonly coreWZ: Float64Array; private readonly coreLabel: Uint8Array
   /** Rain that has reached the ground in each column since the start, mm (kg/m2). */
   readonly precipitation: Float32Array
   /** Fall speed of rain at every node (Kessler), m/s, raised to that of the rain just above (sedimentation), updated each step. */
   readonly fallSpeed: Float32Array
   /** Mass-weighted fall speeds of snow and graupel at each node, m/s. */
   readonly snowFall: Float32Array; readonly graupelFall: Float32Array
-  readonly rotation: RotationState = { uh: 0, x: 0, y: 0, anticyclonic: 0, persisted: 0, uh01: 0, uh03: 0, coreZeta: 0, coreUH: 0 }
+  readonly rotation: RotationState = { uh: 0, x: 0, y: 0, anticyclonic: 0, persisted: 0, uh01: 0, uh03: 0, coreZeta: 0, coreUH: 0, coreAnti: 0 }
   readonly sounding: Sounding
   /** Lowest and highest level of the 2-5 km updraft-helicity layer. */
   readonly uhLevels: readonly [number, number]
@@ -455,7 +464,7 @@ export class AtmosphereModel {
     }
     // Updraught cores: connected columns (8 neighbours, periodic) with 2-5 km nodes above CORE_ROTATION_W.
     const label = this.coreLabel.fill(0), stack: number[] = []
-    let coreZeta = 0, coreUH = 0
+    let coreZeta = 0, coreUH = 0, coreAnti = 0
     for (let start = 0; start < layer; start++) {
       if (coreW[start] <= 0 || label[start]) continue
       let sw = 0, swz = 0, peak = 0
@@ -469,9 +478,10 @@ export class AtmosphereModel {
         }
       }
       if (swz / sw > coreZeta) { coreZeta = swz / sw; coreUH = peak }
+      coreAnti = Math.max(coreAnti, -swz / sw)
     }
-    r.coreZeta = coreZeta; r.coreUH = coreUH
-    r.uh = max; r.anticyclonic = -min; r.uh01 = max01; r.uh03 = max03; r.x = bx; r.y = by; r.persisted = max >= UH_MESOCYCLONE && max >= MESO_DOMINANCE * -min ? r.persisted + dt : 0
+    r.coreZeta = coreZeta; r.coreUH = coreUH; r.coreAnti = coreAnti
+    r.uh = max; r.anticyclonic = -min; r.uh01 = max01; r.uh03 = max03; r.x = bx; r.y = by; r.persisted = coreZeta >= MESO_CORE_ZETA ? r.persisted + dt : 0
   }
 
   private countCores() {

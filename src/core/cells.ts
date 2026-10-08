@@ -1,7 +1,7 @@
 import { graupelFallSpeed } from './graupel'
 import { snowFallSpeed } from './ice'
 import { fallSpeed } from './microphysics'
-import { type AtmosphereModel, MESO_DOMINANCE, MESO_PERSISTENCE, UH_MESOCYCLONE, UH_ROTATING } from './model'
+import { type AtmosphereModel, MESO_CORE_ZETA, MESO_PERSISTENCE, UH_ROTATING } from './model'
 
 /** Updraught core of a cell: columns with w above this (m/s) in cloud somewhere between CORE_BASE and CORE_TOP. */
 export const CELL_W = 4
@@ -27,11 +27,11 @@ export const CELL_STAGES: Record<CellStage, { name: string; hint: string }> = {
   growing: { name: 'Кучевая стадия', hint: 'восходящий поток растёт, осадки ещё не дошли до земли' },
   mature: { name: 'Зрелая стадия', hint: 'дождь у земли; восходящий и нисходящий потоки рядом' },
   dissipating: { name: 'Распад', hint: 'восходящий поток ослаб, преобладают нисходящий поток и дождь' },
-  rotating: { name: 'Развитие мезоциклона', hint: 'восходящий поток закручивается (UH 2–5 км выше порога вращения)' },
+  rotating: { name: 'Развитие мезоциклона', hint: 'восходящий поток сам вращается циклонически (завихренность ядра на 2–5 км выше порога)' },
   supercell: { name: 'Суперячейка: зрелая', hint: 'мезоциклон держится 10 минут и дольше' },
   occluding: { name: 'Суперячейка: окклюзия', hint: 'холодный отток подтёк под низкое вращение, мезоциклон слабеет' },
   cycling: { name: 'Суперячейка: новый мезоциклон', hint: 'после окклюзии вращение снова усилилось — циклический перезапуск' },
-  'supercell-weak': { name: 'Суперячейка: вращение ослабло', hint: 'поток ещё сильный, но UH ниже порога мезоциклона' },
+  'supercell-weak': { name: 'Суперячейка: вращение ослабло', hint: 'поток ещё сильный, но вращение ядра ниже порога мезоциклона' },
   'supercell-decay': { name: 'Суперячейка: распад', hint: 'и восходящий поток, и вращение ослабли' },
   'left-supercell': { name: 'Левая суперячейка', hint: 'антициклоническое вращение 10+ минут — левая ячейка после расщепления' },
 }
@@ -46,6 +46,11 @@ export interface CellStats {
   /** Strongest cold-pool indicator below 1.5 km, K. */ coldPool: number
   /** Cold-pool indicator at the ground under the low-level rotation (or the updraught when there is none), K. */ coldUnder: number
   /** Area of the updraught core, km2. */ area: number
+  /**
+   * Rotation of the updraught core itself: w-weighted mean vertical vorticity at 2-5 km over the core's columns (s-1;
+   * negative = anticyclonic), as RotationState.coreZeta; a vortex pair on the flanks cancels.
+   */
+  coreZeta: number
 }
 
 export interface Cell {
@@ -68,13 +73,12 @@ export interface Cell {
 
 /** What the cell's numbers say its stage is now (before the STAGE_HOLD smoothing). */
 export function cellStage(c: Pick<Cell, 'supercell' | 'leftMover' | 'occluded' | 'peakW' | 'peakUH'> & { age: number; stage?: CellStage }, s: CellStats): CellStage {
-  // Rotation must first outweigh the anticyclonic (a vortex pair is not a mesocyclone); once it has, a split that brings the
-  // left mover's anticyclonic rotation into the same storm area does not undo it.
-  const weak = s.updraft < .45 * c.peakW, rotating = s.uh >= UH_ROTATING && (s.uh >= MESO_DOMINANCE * s.anticyclonic || c.stage === 'rotating')
+  // The updraught core itself must rotate (its own columns only, so a left mover splitting off does not cancel it).
+  const weak = s.updraft < .45 * c.peakW, rotating = s.coreZeta >= MESO_CORE_ZETA
   if (c.supercell) {
     if (weak && !rotating) return 'supercell-decay'
     if (s.coldUnder >= OCCLUSION_COLD && s.uh < .7 * c.peakUH) return 'occluding'
-    if (s.uh >= UH_MESOCYCLONE) return c.occluded ? 'cycling' : 'supercell'
+    if (rotating) return c.occluded ? 'cycling' : 'supercell'
     return 'supercell-weak'
   }
   if (c.leftMover && !weak) return 'left-supercell'
@@ -232,6 +236,9 @@ export class CellTracker {
       // Under the low-level rotation if there is any, else under the strongest part of the core.
       const under = lowest[k] > 0 ? lowAt[k] : cell.columns.reduce((a, b) => core[b] > core[a] ? b : a, cell.columns[0])
       s.coldUnder = m.cold[under]; s.area = cell.columns.length * dx * dy / 1e6
+      let sw = 0, swz = 0
+      for (const c of cell.columns) { sw += m.coreW[c]; swz += m.coreWZ[c] }
+      s.coreZeta = sw > 0 ? swz / sw : 0
       this.advance(cell, s, time, dt)
       if (!cell.id && time - cell.born >= CELL_CONFIRM && cell.peakW >= CELL_START_W) cell.id = this.nextId++
     })
@@ -251,8 +258,8 @@ export class CellTracker {
 
   private advance(c: Cell, s: CellStats, time: number, dt: number) {
     c.stats = s; c.peakW = Math.max(c.peakW, s.updraft); c.peakUH = Math.max(c.peakUH, s.uh)
-    c.meso = s.uh >= UH_MESOCYCLONE && s.uh >= MESO_DOMINANCE * s.anticyclonic ? c.meso + dt : 0
-    c.antiMeso = s.anticyclonic >= UH_MESOCYCLONE && s.anticyclonic >= MESO_DOMINANCE * s.uh ? c.antiMeso + dt : 0
+    c.meso = s.coreZeta >= MESO_CORE_ZETA ? c.meso + dt : 0
+    c.antiMeso = s.coreZeta <= -MESO_CORE_ZETA ? c.antiMeso + dt : 0
     if (c.meso >= MESO_PERSISTENCE) c.supercell = true
     if (c.antiMeso >= MESO_PERSISTENCE) c.leftMover = true
     // A new mesocyclone that has held as long as the first one had to is the storm's mature stage again.
@@ -268,7 +275,7 @@ export class CellTracker {
   }
 }
 
-const emptyStats = (): CellStats => ({ updraft: 0, downdraft: 0, uh: 0, anticyclonic: 0, uh01: 0, uh03: 0, cloudTop: 0, rainRate: 0, coldPool: 0, coldUnder: 0, area: 0 })
+const emptyStats = (): CellStats => ({ updraft: 0, downdraft: 0, uh: 0, anticyclonic: 0, uh01: 0, uh03: 0, cloudTop: 0, rainRate: 0, coldPool: 0, coldUnder: 0, area: 0, coreZeta: 0 })
 const mod = (a: number, n: number) => ((a % n) + n) % n
 /** Shortest signed periodic difference. */
 const wrap = (d: number, size: number) => d - size * Math.round(d / size)
