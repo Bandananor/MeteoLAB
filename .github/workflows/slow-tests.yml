@@ -59,7 +59,7 @@ jobs:
           echo "::notice title=Weisman-Klemp::${line:-no result} ${fail}"
 
   reference:
-    name: Reference cases (Straka)
+    name: Reference cases (Straka, Bryan-Fritsch)
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { AtmosphereModel, createGrid, type SimConfig } from '.'
+import { AtmosphereModel, CP, createGrid, G, KAPPA, LV, qsatP, RD, saturationAdjust, type SimConfig } from '.'
 import type { EnvironmentProfile } from './environment'
 import { SUMMER_DAY } from './fixtures'
 
@@ -53,6 +53,83 @@ function straka(dx: number) {
   return { front: front / 1000, thetaMin, uMax, wMin, wMax }
 }
 
+/** Total water of the Bryan & Fritsch (2002) moist case, kg/kg. */
+const QT = .02
+
+/**
+ * The saturated moist-neutral column of Bryan & Fritsch (2002): total water 20 g/kg everywhere, theta_e 320 K at the
+ * ground. Built by lifting a saturated parcel in 10 m steps with the model's own saturation adjustment and the same
+ * hydrostatic pressure as Environment, so the column is neutral for this model's thermodynamics.
+ */
+function moistNeutral(): EnvironmentProfile {
+  const step = 10, p0 = 101_325, ex0 = (p0 / 1e5) ** KAPPA
+  let lo = 270, hi = 310
+  for (let k = 0; k < 60; k++) { const t = (lo + hi) / 2; if (t / ex0 * Math.exp(LV * qsatP(t - 273.15, p0) / (CP * t)) > 320) hi = t; else lo = t }
+  const th = Float32Array.of(lo / ex0), q = Float32Array.of(qsatP(lo - 273.15, p0)), c = Float32Array.of(QT - q[0]), thetas = [th[0]]
+  let lnp = Math.log(p0)
+  for (let z = step; z <= 12_000; z += step) {
+    lnp -= G * step / (RD * th[0] * Math.exp(KAPPA * (lnp - Math.log(1e5))) * (1 + .61 * q[0]))
+    const p = Math.exp(lnp); saturationAdjust(th, q, c, 0, (p / 1e5) ** KAPPA, p); thetas.push(th[0])
+  }
+  return { theta: z => { const x = Math.min(z / step, thetas.length - 1.001), k = Math.floor(x); return thetas[k] + (thetas[k + 1] - thetas[k]) * (x - k) }, rh: () => 1, wind: () => [0, 0] }
+}
+
+/**
+ * Bryan & Fritsch (2002): a warm bubble (theta' = 2 cos^2(pi L / 2) K, radius 2 km, centred at 2 km) rises for 1000 s in
+ * a neutral atmosphere, dry (theta 300 K) or saturated (above; no rain, cloud water only condenses and evaporates). The
+ * moist bubble gets the same initial buoyancy as the dry one, so with consistent thermodynamics the two rise alike; and
+ * theta_e must not leave the initial range. 2D, 20 x 10 km, no explicit diffusion (the paper used a weak filter).
+ * Measured 2026-10-08 at 100 m, 1000 s (top / buoyancy-weighted centre km, w max m/s): dry 8.1 / 6.27 / 14.5, moist 8.7 /
+ * 6.92 / 16.2. The moist bubble rises ~0.65 km higher with a 12 % stronger updraught: the inconsistency Bryan & Fritsch
+ * warn about — latent heat with the dry-air heat capacity and constant L (no heat capacity of the 20 g/kg of water,
+ * ~8 % more heating). theta_e minus the environment's: 0..4.03 K at the start, -0.36..4.45 K at the end; the dry theta
+ * overshoots too (2.00 -> 2.13 K): the linear upwind transport of theta is not monotone. Open questions (roadmap).
+ */
+function bryanFritsch(moist: boolean, dx = 100) {
+  const nx = Math.round(20_000 / dx), nz = Math.round(10_000 / dx) + 1
+  const model = new AtmosphereModel(DRY, createGrid({ nx, ny: 1, nz, width: 20_000, depth: dx, height: 10_000 }), moist ? moistNeutral() : NEUTRAL)
+  model.fixedViscosity = 0; model.surfaceDrag = false; model.windRelaxation = 0; model.rainFormation = false
+  const { zs, layer } = model.grid, e = model.env
+  const qcEnv = Float64Array.from(e.q, qv => moist ? Math.max(0, QT - qv) : 0), thvEnv = Float64Array.from(e.theta, (t, z) => t * (1 + .61 * e.q[z]))
+  // Buoyancy (over g) of a node as the model computes it, without the level-uniform loading of the cloudy environment.
+  const buoyancy = (th: number, qv: number, qc: number, z: number) => (th * (1 + .61 * qv) - thvEnv[z]) / thvEnv[z] - (qc - qcEnv[z])
+  for (let z = 0; z < nz; z++) for (let x = 0; x < nx; x++) {
+    const i = x + z * layer, l = Math.hypot((x * dx - 10_000) / 2000, (zs[z] - 2000) / 2000)
+    if (moist) model.cloud[i] = qcEnv[z]
+    if (l > 1) continue
+    const target = 2 * Math.cos(Math.PI * l / 2) ** 2 / 300
+    if (!moist) { model.theta[i] = 300 * (1 + target); continue }
+    // Saturated with the same total water: the theta whose buoyancy equals the dry bubble's (bisection).
+    const ex = e.exner[z], p = e.p[z], qv = (th: number) => Math.min(QT, qsatP(th * ex - 273.15, p))
+    let lo = e.theta[z] - 1, hi = e.theta[z] + 10
+    for (let k = 0; k < 60; k++) { const th = (lo + hi) / 2; if (buoyancy(th, qv(th), QT - qv(th), z) > target) hi = th; else lo = th }
+    model.theta[i] = lo; model.q[i] = qv(lo); model.cloud[i] = QT - qv(lo)
+  }
+  // Range of theta_e minus that of the environment at the same level: mixing may only shrink it. (theta_e itself is not
+  // this model's invariant: its own reversibly neutral column above goes from 320 K at the ground to 322.5 K at 10 km.)
+  const thetaE = (th: number, qv: number, z: number) => th * Math.exp(LV * qv / (CP * th * e.exner[z]))
+  const teEnv = Float64Array.from(e.theta, (t, z) => thetaE(t, e.q[z], z))
+  const thetaERange = () => {
+    let min = Infinity, max = -Infinity
+    for (let z = 0, i = 0; z < nz; z++) for (let x = 0; x < nx; x++, i++) {
+      const d = thetaE(model.theta[i], model.q[i], z) - teEnv[z]; min = Math.min(min, d); max = Math.max(max, d)
+    }
+    return [min, max]
+  }
+  const [te0min, te0max] = thetaERange()
+  for (let t = 0; t < 2000; t++) model.step(.5)
+  // Top: the highest level with buoyancy above 1e-3 (theta' ~0.3 K); centre: the buoyancy-weighted height; max w.
+  let top = 0, bz = 0, bs = 0, wMax = 0
+  for (let z = 0, i = 0; z < nz; z++) for (let x = 0; x < nx; x++, i++) {
+    const b = buoyancy(model.theta[i], model.q[i], model.cloud[i], z)
+    if (b > 1e-3) top = zs[z]
+    if (b > 0) { bz += b * zs[z]; bs += b }
+    wMax = Math.max(wMax, model.w[i])
+  }
+  const [te1min, te1max] = thetaERange()
+  return { top: top / 1000, centre: bz / bs / 1000, wMax, thetaE: [te0min, te0max, te1min, te1max] }
+}
+
 describe('reference cases', () => {
   it.runIf(slow)('Straka density current at 100 m: front, coldest air and winds stay where the model converges', async () => {
     const r = straka(100)
@@ -62,4 +139,15 @@ describe('reference cases', () => {
     expect(r.uMax).toBeGreaterThan(30.5); expect(r.uMax).toBeLessThan(40)
     expect(r.wMin).toBeGreaterThan(-19); expect(r.wMin).toBeLessThan(-13.5)
   }, 600_000)
+
+  it.runIf(slow)('Bryan-Fritsch bubble: the dry one rises as measured, the moist one not much faster, theta_e within bounds', async () => {
+    const dry = bryanFritsch(false), moist = bryanFritsch(true), f = (r: typeof dry) => `top ${r.top.toFixed(1)} km, centre ${r.centre.toFixed(2)} km, w max ${r.wMax.toFixed(1)} m/s`
+    await report(`Bryan-Fritsch 100 m: dry ${f(dry)}; moist ${f(moist)}, theta_e - env ${moist.thetaE.map(t => t.toFixed(2)).join(' / ')} K`)
+    expect(dry.top).toBeGreaterThan(7.6); expect(dry.top).toBeLessThan(8.6)
+    expect(dry.centre).toBeGreaterThan(5.8); expect(dry.centre).toBeLessThan(6.8)
+    expect(dry.wMax).toBeGreaterThan(12.5); expect(dry.wMax).toBeLessThan(16.5)
+    // Today's gap (0.65 km, +12 %) with a margin: a regression guard until the thermodynamics are made consistent.
+    expect(moist.centre - dry.centre).toBeLessThan(1); expect(moist.wMax / dry.wMax).toBeLessThan(1.25)
+    expect(moist.thetaE[3] - moist.thetaE[1]).toBeLessThan(.8); expect(moist.thetaE[2]).toBeGreaterThan(-.8)
+  }, 1_200_000)
 })

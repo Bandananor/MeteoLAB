@@ -321,6 +321,8 @@ export class AtmosphereModel {
    * the damping to the step length); 0 in the reference cases.
    */
   windRelaxation = 1e-4
+  /** Warm rain (Kessler); off for the reversible moist reference case: cloud water only condenses and evaporates. */
+  rainFormation = true
   private flux: FluxTransport | null = null
   private turbulence: Turbulence | null = null
 
@@ -383,7 +385,7 @@ export class AtmosphereModel {
         for (let x = 0; x < nx; x++, i++) {
           // Kessler warm rain, then saturation adjustment (vapour and cloud water in equilibrium after every step).
           // Evaporation of rain and cloud feeds the cold-pool indicator.
-          const evap = rainProcesses(q, cloud, rain, i, theta[i] * exner, p, rhoZ, dt)
+          const evap = this.rainFormation ? rainProcesses(q, cloud, rain, i, theta[i] * exner, p, rhoZ, dt) : 0
           // Evaporation takes exactly L/cp per unit mass from the air (no strength multiplier): energy is conserved.
           if (evap > 0) { const cool = LV / CP / exner * evap; theta[i] -= cool; cold[i] += cool }
           // Ice: rain freezes (Bigg into graupel, below -40 °C at once into snow), snow aggregates, rimes, grows by
