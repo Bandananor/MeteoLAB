@@ -309,6 +309,18 @@ export class AtmosphereModel {
   microphysics: 'warm' | 'ice' = 'ice'
   /** Subgrid filter width of the horizontal mixing: (dx dy dz)^(1/3), or sqrt(dx dy) (experiment; see Turbulence.anisotropic). */
   turbulenceWidth: 'cube' | 'anisotropic' = 'cube'
+  /**
+   * Reference cases (Straka et al. 1993, Bryan & Fritsch 2002): a constant eddy viscosity, m2/s, the same for momentum
+   * and scalars, instead of Smagorinsky; null = Smagorinsky.
+   */
+  fixedViscosity: number | null = null
+  /** Drag on the ground node; off in the free-slip reference cases. */
+  surfaceDrag = true
+  /**
+   * Relaxation of the wind departure from the environmental wind, s-1: 1e-4 (was a factor .9999 per step, which tied
+   * the damping to the step length); 0 in the reference cases.
+   */
+  windRelaxation = 1e-4
   private flux: FluxTransport | null = null
   private turbulence: Turbulence | null = null
 
@@ -363,7 +375,7 @@ export class AtmosphereModel {
     const cfg = this.config, e = this.env, u = this.u, v = this.v, w = this.w, theta = this.theta, q = this.q, cloud = this.cloud, rain = this.rain, cold = this.cold
     const ice = this.ice, snow = this.snow, graupel = this.graupel, rhoGround = e.rho[0]
     const flux = surfaceFluxes(cfg, this.time), f = 2 * OMEGA * Math.sin(cfg.latitude * Math.PI / 180)
-    const spongeStart = Math.max(cfg.tropopause * 1000 + 2500, 14_000)
+    const spongeStart = Math.max(cfg.tropopause * 1000 + 2500, 14_000), keep = Math.exp(-this.windRelaxation * dt)
     for (let z = 0, i = 0; z < nz; z++) {
       const alt = zs[z], p = e.p[z], rhoZ = e.rho[z], exner = e.exner[z], thEnv = e.theta[z], qEnv = e.q[z], thvEnv = thEnv * (1 + .61 * qEnv), ue = this.uEnv[z], ve = this.vEnv[z]
       for (let y = 0; y < ny; y++) {
@@ -389,7 +401,7 @@ export class AtmosphereModel {
           // B = g [(θv − θv_env) / θv_env − q_c − q_i − q_r − q_s − q_g]: condensate loads the air with its own mass.
           const buoy = (theta[i] * (1 + .61 * q[i]) - thvEnv) / thvEnv - cloud[i] - ice[i] - rain[i] - snow[i] - graupel[i]; w[i] += G * buoy * dt
           // Damp and rotate only the departure from the environmental wind, so the imposed shear profile is not eroded.
-          const du = (u[i] - ue) * .9999, dv = (v[i] - ve) * .9999; u[i] = ue + du + f * dv * dt; v[i] = ve + dv - f * du * dt
+          const du = (u[i] - ue) * keep, dv = (v[i] - ve) * keep; u[i] = ue + du + f * dv * dt; v[i] = ve + dv - f * du * dt
           // Surface fluxes enter the lowest levels with the shares in surfaceShare, so the column receives exactly H and LE.
           if (z < this.surfaceShare.length) { const pattern = 1 + this.patternNow[x + row] * .32, per = pattern * this.surfaceShare[z] * dt / rhoZ; theta[i] += flux.sensible * per / (CP * exner); q[i] += flux.latent * per / LV }
           // Below 0.001 K the indicator is noise from the transport tails: zero, so the transport can skip it.
@@ -404,15 +416,17 @@ export class AtmosphereModel {
     // Saturated stability inside clouds (cloud water plus ice): see Turbulence.viscosity.
     if (withIce) for (let k = 0; k < ice.length; k++) this.scratch[k] = cloud[k] + ice[k]
     const moist = { q, condensate: withIce ? this.scratch : cloud, exner: e.exner }
-    turb.viscosity(u, v, w, theta, e.theta, SMAGORINSKY * cfg.turbulence / .55, dt, moist)
+    const fixed = this.fixedViscosity, scalars = fixed === null ? 3 : 1
+    if (fixed === null) turb.viscosity(u, v, w, theta, e.theta, SMAGORINSKY * cfg.turbulence / .55, dt, moist)
+    else { turb.km.fill(fixed); turb.kh.fill(fixed) }
     turb.mix(u, this.uEnv, 1, dt); turb.mix(v, this.vEnv, 1, dt); turb.mix(w, null, 1, dt)
-    turb.mix(theta, e.theta, 3, dt); turb.mix(q, e.q, 3, dt); turb.mix(cloud, null, 3, dt); if (withIce) turb.mix(ice, null, 3, dt)
+    turb.mix(theta, e.theta, scalars, dt); turb.mix(q, e.q, scalars, dt); turb.mix(cloud, null, scalars, dt); if (withIce) turb.mix(ice, null, scalars, dt)
     // Surface drag on the ground node, which owns half a layer: dV/dt = -C_D (|V| V - |V_env| V_env) / h_0. The
     // environment's own drag is taken as balanced by the large-scale flow that maintains the profile, so the background
     // stays steady (was: u, v *= 0.94 every step, which stopped the ground wind in ~16 s). Applied with the rigid
     // ground/top before the projection, so the transport velocity is D-free.
     // Friction acts on the wind over the ground: the model's (domain-relative) wind plus the frame velocity.
-    const drag = dragCoefficient(cfg, 2 * hz[0]) * dt / hz[0], ue0 = e.u[0], ve0 = e.v[0], envSpeed = Math.hypot(ue0, ve0), [fu, fv] = this.frame
+    const drag = this.surfaceDrag ? dragCoefficient(cfg, 2 * hz[0]) * dt / hz[0] : 0, ue0 = e.u[0], ve0 = e.v[0], envSpeed = Math.hypot(ue0, ve0), [fu, fv] = this.frame
     for (let b = 0; b < layer; b++) {
       const ug = u[b] + fu, vg = v[b] + fv, speed = Math.hypot(ug, vg)
       u[b] -= drag * (speed * ug - envSpeed * ue0); v[b] -= drag * (speed * vg - envSpeed * ve0)

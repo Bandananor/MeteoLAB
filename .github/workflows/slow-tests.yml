@@ -58,6 +58,30 @@ jobs:
           echo "### Weisman-Klemp: ${line:-no result} ${fail}" >> "$GITHUB_STEP_SUMMARY"
           echo "::notice title=Weisman-Klemp::${line:-no result} ${fail}"
 
+  reference:
+    name: Reference cases (Straka)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 24, cache: npm }
+      - run: npm ci
+      - name: npm run test:reference
+        env: { STORMLAB_RESULT: reference.txt }
+        run: |
+          set -o pipefail
+          npm run test:reference 2>&1 | tee test.log
+      - name: Report
+        if: always()
+        run: |
+          sed -i 's/[[0-9;]*m//g' test.log
+          line=$(grep -E '^s+Tests ' test.log | tail -1 | sed 's/^ *//')
+          fail=$(grep -E 'AssertionError|Error:' test.log | head -1 | sed 's/^ *//')
+          result=$(cat reference.txt 2>/dev/null | paste -sd ';' -)
+          echo "### Reference: ${line:-no result} ${fail} ${result}" >> "$GITHUB_STEP_SUMMARY"
+          echo "::notice title=Reference::${line:-no result} ${fail} ${result}"
+
   scenario:
     name: Scenario ${{ matrix.index }}
     runs-on: ubuntu-latest

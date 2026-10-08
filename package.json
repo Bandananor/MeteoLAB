@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:slow": "vitest run --mode slow src/core/calibration.test.ts",
+    "test:reference": "vitest run --mode slow src/core/reference.test.ts",
     "test:scenarios": "vitest run --mode slow src/core/scenarios.test.ts"
   },
   "devDependencies": {
