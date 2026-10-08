@@ -11,9 +11,15 @@ export const MAX_STEPS_PER_BATCH = 12
  * is slow: the model then runs slower than the speed setting instead of freezing between large jumps.
  */
 export const BATCH_BUDGET_MS = 60
+/**
+ * Most threads the physics uses (its worker plus helpers; one core is left for the page). Measured 2026-10-08 on a
+ * 12-thread laptop (4 performance cores): beyond ~6 the step stops getting faster (memory bandwidth, efficiency cores).
+ */
+export const MAX_THREADS = 6
 
 export type WorkerRequest =
-  | { type: 'init'; config: SimConfig }
+  /** threads: an upper limit for the physics threads (the page's ?threads= parameter, to compare speeds). */
+  | { type: 'init'; config: SimConfig; threads?: number }
   | { type: 'advance'; seconds: number }
   | { type: 'config'; config: SimConfig }
   | { type: 'perturb'; x: number; y: number; strength: number }
@@ -22,4 +28,6 @@ export type WorkerRequest =
 export interface Snapshot {
   type: 'snapshot'; buffer: ArrayBuffer; steps: number; time: number
   rotation: RotationState; diagnostics: ModelDiagnostics
+  /** Threads the physics runs on (1 without cross-origin isolation). */
+  threads: number
 }

@@ -4,7 +4,7 @@ import { Environment, type EnvironmentProfile } from './environment'
 import { createGrid, domainGrid, type Grid, shiftedLevel } from './grid'
 import { domainMotion } from './kinematics'
 import { clamp, lerp, mod, mulberry32 } from './math'
-import { FluxTransport } from './advection'
+import { FluxTransport, RK3 } from './advection'
 import { weismanKlemp } from './profiles'
 import { SMAGORINSKY, Turbulence } from './turbulence'
 import { graupelFallSpeed, graupelProcesses } from './graupel'
@@ -14,6 +14,24 @@ import { fallSpeed, rainProcesses, saturationAdjust } from './microphysics'
 import { PressureSolver } from './pressure'
 import { dragCoefficient, surfaceFluxes } from './surface'
 import { computeSounding, type Sounding } from './sounding'
+import { type Memory, type Phase, PRIVATE_MEMORY, type StepRunner, type TaskModel } from './threads'
+
+/** One field a step transports: WENO (monotone) or linear upwind, with the positivity fix or not, and a decay factor. */
+interface Carried { field: Float32Array; monotone: boolean; conserve: boolean; decay: number }
+/** At most this many fields are transported (rain, snow, graupel, hail, u, v, w, theta, vapour, cloud, ice, cold pool). */
+const MAX_CARRIED = 12
+/**
+ * Slabs of levels each transported field is split into when helper threads share the step (AtmosphereModel.transportSlabs):
+ * finer work for them, but ~15 % more work in all (each slab recomputes the vertical flux below it).
+ */
+export const TRANSPORT_SLABS = 10
+
+export interface ModelOptions {
+  /** Where the arrays helper threads read live (threads.ts); default ordinary arrays. */
+  memory?: Memory
+  /** A helper's view of a model running elsewhere: the fields are not initialised (they are the main thread's). */
+  attach?: boolean
+}
 
 // Updraft helicity (integral of w*zeta over 2-5 km, m2/s2): levels of rotation strength for the display and the cell
 // stages, and the persistence that makes rotation a mesocyclone. Since 2026-10-08 the mesocyclone itself is decided by
@@ -66,7 +84,7 @@ export interface ModelDiagnostics {
 }
 
 /** Cloud-scale atmosphere on a periodic box: prognostic u, v, w, theta, q, cloud water, cloud ice, rain, snow, graupel, hail and the cold-pool indicator. */
-export class AtmosphereModel {
+export class AtmosphereModel implements TaskModel {
   readonly grid: Grid; readonly config: SimConfig; readonly env: Environment
   readonly u: Float32Array; readonly v: Float32Array; readonly w: Float32Array; readonly theta: Float32Array
   readonly q: Float32Array; readonly cloud: Float32Array; readonly rain: Float32Array
@@ -118,21 +136,26 @@ export class AtmosphereModel {
   private readonly patternNow: Float32Array; private readonly groundCell: Int32Array; private readonly groundWeight: Float64Array
 
   /** `profile` replaces the slider environment with an analytic one (idealised test cases). */
-  constructor(config: SimConfig, grid: Grid = createGrid(domainGrid(config.domain)), profile?: EnvironmentProfile) {
-    this.config = config; this.grid = grid
+  constructor(config: SimConfig, grid: Grid = createGrid(domainGrid(config.domain)), profile?: EnvironmentProfile, options: ModelOptions = {}) {
+    this.config = config; this.grid = grid; this.memory = options.memory ?? PRIVATE_MEMORY
+    const shared = (name: string, length = grid.n) => this.memory.f32(name, length)
     this.env = new Environment(config, grid, profile ?? (config.profile === 'weisman-klemp' ? weismanKlemp({ qvMax: .016 }) : undefined))
     this.frame = config.followStorm === false ? [0, 0] : domainMotion(this.env)
     this.uEnv = this.env.u.map(u => u - this.frame[0]); this.vEnv = this.env.v.map(v => v - this.frame[1])
-    this.patternNow = new Float32Array(grid.layer); this.groundCell = new Int32Array(grid.layer * 4); this.groundWeight = new Float64Array(grid.layer * 4)
+    this.patternNow = shared('patternNow', grid.layer); this.groundCell = new Int32Array(grid.layer * 4); this.groundWeight = new Float64Array(grid.layer * 4)
     const f = () => new Float32Array(grid.n)
-    this.u = f(); this.v = f(); this.w = f(); this.theta = f(); this.q = f(); this.cloud = f(); this.rain = f(); this.cold = f()
-    this.ice = f(); this.snow = f(); this.snowFall = f(); this.graupel = f(); this.graupelFall = f(); this.hail = f(); this.hailFall = f()
+    this.u = shared('u'); this.v = shared('v'); this.w = shared('w'); this.theta = shared('theta'); this.q = shared('q'); this.cloud = shared('cloud'); this.rain = shared('rain'); this.cold = shared('cold')
+    this.ice = shared('ice'); this.snow = shared('snow'); this.snowFall = shared('snowFall'); this.graupel = shared('graupel'); this.graupelFall = shared('graupelFall'); this.hail = shared('hail'); this.hailFall = shared('hailFall')
+    this.condensate = shared('condensate')
+    this.stageStart = Array.from({ length: MAX_CARRIED }, (_, k) => shared(`start${k}`)); this.stageTend = Array.from({ length: MAX_CARRIED }, (_, k) => this.memory.f64(`tend${k}`, grid.n))
+    this.taskNegative = this.memory.f64('taskNegative', 32)
+    this.flux = new FluxTransport(grid, this.env.rho, this.memory); this.turbulence = new Turbulence(grid, this.env.rho, this.memory)
     this.hailGround = new Float32Array(grid.layer); this.hailSize = new Float32Array(grid.layer)
     // Anelastic: the projection makes the mass flux rho0 u divergence-free (rho0 falls ~6x over 15 km).
-    this.solver = new PressureSolver(grid, this.env.rho)
-    this.pressure = new Float64Array(this.solver.cells); this.divergence = new Float64Array(this.solver.cells); this.scratch = f()
+    this.solver = new PressureSolver(grid, this.env.rho, this.memory)
+    this.pressure = this.memory.f64('pressure', this.solver.cells); this.divergence = this.memory.f64('divergence', this.solver.cells); this.scratch = f()
     this.coreW = new Float64Array(grid.layer); this.coreWZ = new Float64Array(grid.layer); this.coreLabel = new Uint8Array(grid.layer)
-    this.surfacePattern = new Float32Array(grid.layer); this.uhColumn = new Float32Array(grid.layer); this.precipitation = new Float32Array(grid.layer); this.fallSpeed = f()
+    this.surfacePattern = new Float32Array(grid.layer); this.uhColumn = new Float32Array(grid.layer); this.precipitation = new Float32Array(grid.layer); this.fallSpeed = shared('fallSpeed')
     // Mass of each level per unit area and per metre of mean spacing: rho0 times the control-volume height over dz.
     this.levelWeight = Float64Array.from({ length: grid.nz }, (_, z) => grid.hz[z] / grid.dz * this.env.rho[z])
     this.backtraceCorner = new Int32Array(grid.n * 8); this.backtraceWeight = new Float64Array(grid.n * 3)
@@ -145,7 +168,7 @@ export class AtmosphereModel {
     const total = shape.reduce((sum, s, z) => sum + s * grid.hz[z], 0)
     this.surfaceShare = Float64Array.from(shape, s => s / total)
     this.rng = mulberry32(config.seed)
-    this.initialize()
+    if (!options.attach) this.initialize()
     this.sounding = computeSounding(config, this.env, grid.height)
   }
 
@@ -235,7 +258,8 @@ export class AtmosphereModel {
   /**
    * Removes the small negative values WENO leaves behind (it is not positivity-preserving) and the tiny tails it spreads
    * (below TINY_WATER), without changing the total: they are set to zero and their net mass is given to or taken from
-   * the remaining values in proportion to them. Exact zeros let the transport skip the empty air (see weno).
+   * the remaining values in proportion to them. Exact zeros let the transport skip the empty air (see weno). Returns
+   * the negative mass it removed (level-weight units).
    */
   private fillNegative(a: Float32Array) {
     const { nz, layer } = this.grid, lw = this.levelWeight
@@ -244,10 +268,10 @@ export class AtmosphereModel {
       const wz = lw[z]
       for (let e = i + layer; i < e; i++) { const x = a[i]; if (x < TINY_WATER) { if (x !== 0) { removed += wz * x; if (x < 0) negative -= wz * x } } else kept += wz * x }
     }
-    if (removed === 0 && negative === 0) return
+    if (removed === 0 && negative === 0) return 0
     const scale = kept > 0 ? Math.max(0, 1 + removed / kept) : 0
     for (let i = 0; i < a.length; i++) a[i] = a[i] < TINY_WATER ? 0 : a[i] * scale
-    this.negativeFilled += negative
+    return negative
   }
 
   /** Distance the domain has moved over the ground since the start (m east, m north). */
@@ -343,8 +367,19 @@ export class AtmosphereModel {
   windRelaxation = 1e-4
   /** Warm rain (Kessler); off for the reversible moist reference case: cloud water only condenses and evaporates. */
   rainFormation = true
-  private flux: FluxTransport | null = null
-  private turbulence: Turbulence | null = null
+  // Created with the model, so that their shared arrays exist before any helper thread attaches.
+  private readonly flux: FluxTransport; private readonly turbulence: Turbulence
+  private readonly memory: Memory
+  /** Mass the positivity fix moved in each transport task of this step (summed in task order into negativeFilled). */
+  private readonly taskNegative: Float64Array
+  /** Per transported field: its value at the start of the step and the tendency of the current Runge-Kutta stage. */
+  private readonly stageStart: Float32Array[]; private readonly stageTend: Float64Array[]
+  /** Cloud water plus ice (the saturated stability of the eddy viscosity), filled by the physics. */
+  private readonly condensate: Float32Array
+  /** Runs the parallel phases of a step: here, in order (default), or on helper threads (threads.ts). */
+  runner: StepRunner = { run: (phase, tasks, dt) => { for (let k = 0; k < tasks; k++) this.runTask(phase, k, dt) } }
+  /** Slabs of levels per transported field (1: whole fields, for one thread; TRANSPORT_SLABS with helper threads). */
+  transportSlabs = 1
 
   /** Advances by real elapsed seconds scaled by the speed setting; returns the number of model steps taken. */
   advance(realDt: number) {
@@ -355,34 +390,30 @@ export class AtmosphereModel {
   }
 
   step(dt: number) {
-    const { nx, ny, nz, zs, hz, height: H, layer } = this.grid
+    const { nz, hz, layer } = this.grid
     this.updateGround()
     // Water is transported conservatively (WENO: by the flux form; semi-Lagrangian: by the mass fixer). Only the
     // cold-pool indicator decays. It is a diagnostic only since 2026-10-08: the cold-pool and microburst
     // parameterisations that pushed the air by it (lift on its edge, a push down in its core, a radial push of a
     // rain-loaded downdraught at the ground) are gone — they gave 30-36 m/s downdraughts and 44-52 m/s winds at
     // 100 m in ordinary storms; without them 9-16 and 20-29 m/s, the WK supercell unchanged (cloud experiments).
-    const { rho } = this.env, withIce = (this.config.microphysics ?? this.microphysics) === 'ice'
+    const withIce = (this.config.microphysics ?? this.microphysics) === 'ice'
     // Precipitation fields with their fall speeds (snow only with ice microphysics).
     const falling: [Float32Array, Float32Array][] = withIce ? [[this.rain, this.fallSpeed], [this.snow, this.snowFall], [this.graupel, this.graupelFall], [this.hail, this.hailFall]] : [[this.rain, this.fallSpeed]]
-    for (let z = 0, i = 0; z < nz; z++) for (let end = i + layer; i < end; i++) { this.fallSpeed[i] = fallSpeed(this.rain[i], rho[z], rho[0]); this.snowFall[i] = snowFallSpeed(this.snow[i], rho[z], rho[0]); this.graupelFall[i] = graupelFallSpeed(this.graupel[i], rho[z]); this.hailFall[i] = hailFallSpeed(this.hail[i], rho[z]) }
+    this.runner.run('fall', nz, dt)
     if (withIce) this.collectHail(dt)
-    let carry: (a: Float32Array, decay: number, conserve?: boolean) => void
     if ((this.config.transport ?? this.transport) === 'weno') {
       // Flux-form WENO5 + RK3 with the velocity frozen at the start of the step. The face fluxes are projected to zero
       // divergence, so water is conserved by the scheme itself: no mass fixer, only a positivity fix (fillNegative).
-      const flux = this.flux ??= new FluxTransport(this.grid, this.env.rho)
-      flux.setVelocity(this.u, this.v, this.w)
-      for (const [field, vt] of falling) {
-        this.sediment(field, vt, dt)
-        this.scratch.set(field); flux.advect(this.scratch, dt); this.fillNegative(this.scratch); this.commit(field, 1)
-      }
-      // WENO for water and the cold-pool indicator (no overshoots); linear 5th-order upwind for the smooth u, v, w, theta.
-      carry = (a, decay, conserve = false) => {
-        this.scratch.set(a); flux.advect(this.scratch, dt, a === this.q || a === this.cloud || a === this.ice || a === this.cold)
-        if (conserve) this.fillNegative(this.scratch)
-        this.commit(a, decay)
-      }
+      // Precipitation first falls (sedimentation, here), then every field is transported (one task per field).
+      // The face fluxes of the transport velocity, projected (FluxTransport.setVelocity, in parts).
+      const run = (phase: Phase, tasks: number) => this.runner.run(phase, tasks, dt)
+      run('faces', nz); run('faceDivergence', nz); run('faceForward', nz); run('faceModes', this.grid.ny); run('faceInverse', nz); run('faceCorrect', nz); run('faceDivergence', nz)
+      for (const [field, vt] of falling) this.sediment(field, vt, dt)
+      const carried = this.carried(), tasks = carried.length * this.slabs()
+      for (const stage of [0, 1, 2] as const) { this.runner.run(`tendency${stage}`, tasks, dt); this.runner.run(`update${stage}`, tasks, dt) }
+      this.runner.run('finish', carried.length, dt)
+      for (let k = 0; k < carried.length; k++) if (carried[k].conserve) this.negativeFilled += this.taskNegative[k]
     } else {
       for (const [field, fs] of falling) {
         const lost = this.fallout(field, fs, dt)
@@ -392,14 +423,112 @@ export class AtmosphereModel {
         this.advectFalling(field, dt, fs); this.commit(field, 1, true, lost)
       }
       this.computeBacktrace(dt)
-      carry = (a, decay, conserve = false) => { this.advectBacktrace(a); this.commit(a, decay, conserve) }
+      const carry = (a: Float32Array, decay: number, conserve = false) => { this.advectBacktrace(a); this.commit(a, decay, conserve) }
+      carry(this.u, 1); carry(this.v, 1); carry(this.w, 1); carry(this.theta, 1); carry(this.q, 1, true); carry(this.cloud, 1, true); if (withIce) carry(this.ice, 1, true); carry(this.cold, .9992)
     }
-    carry(this.u, 1); carry(this.v, 1); carry(this.w, 1); carry(this.theta, 1); carry(this.q, 1, true); carry(this.cloud, 1, true); if (withIce) carry(this.ice, 1, true); carry(this.cold, .9992)
+    // Microphysics, buoyancy, Coriolis, surface fluxes and the sponge: node by node, one task per level.
+    this.runner.run('physics', nz, dt)
+    const cfg = this.config, e = this.env, u = this.u, v = this.v, w = this.w
+    // Smagorinsky-Lilly subgrid mixing of momentum, heat and water (replaces the old horizontal smoothing of theta and q).
+    const turb = this.turbulence
+    turb.anisotropic = this.turbulenceWidth === 'anisotropic'
+    const fixed = this.fixedViscosity
+    if (fixed === null) this.runner.run('viscosity', nz, dt)
+    else { turb.km.fill(fixed); turb.kh.fill(fixed) }
+    this.runner.run('mix', this.mixed().length, dt)
+    // Surface drag on the ground node, which owns half a layer: dV/dt = -C_D (|V| V - |V_env| V_env) / h_0. The
+    // environment's own drag is taken as balanced by the large-scale flow that maintains the profile, so the background
+    // stays steady (was: u, v *= 0.94 every step, which stopped the ground wind in ~16 s). Applied with the rigid
+    // ground/top before the projection, so the transport velocity is D-free.
+    // Friction acts on the wind over the ground: the model's (domain-relative) wind plus the frame velocity.
+    const drag = this.surfaceDrag ? dragCoefficient(cfg, 2 * hz[0]) * dt / hz[0] : 0, ue0 = e.u[0], ve0 = e.v[0], envSpeed = Math.hypot(ue0, ve0), [fu, fv] = this.frame
+    for (let b = 0; b < layer; b++) {
+      const ug = u[b] + fu, vg = v[b] + fv, speed = Math.hypot(ug, vg)
+      u[b] -= drag * (speed * ug - envSpeed * ue0); v[b] -= drag * (speed * vg - envSpeed * ve0)
+      w[b] = 0; w[b + (nz - 1) * layer] = 0
+    }
+    this.project(dt)
+    this.updateRotation(dt)
+  }
+
+  /** Does task k of a parallel phase (see threads.ts): transport field k, physics of level k, or mixing of field k. */
+  runTask(phase: Phase, k: number, dt: number) {
+    const { nz, layer } = this.grid
+    switch (phase) {
+      case 'fall': {
+        const rho = this.env.rho
+        for (let i = k * layer, end = i + layer; i < end; i++) { this.fallSpeed[i] = fallSpeed(this.rain[i], rho[k], rho[0]); this.snowFall[i] = snowFallSpeed(this.snow[i], rho[k], rho[0]); this.graupelFall[i] = graupelFallSpeed(this.graupel[i], rho[k]); this.hailFall[i] = hailFallSpeed(this.hail[i], rho[k]) }
+        break
+      }
+      case 'tendency0': case 'tendency1': case 'tendency2': case 'update0': case 'update1': case 'update2': {
+        // Task k: field k / slabs, levels of slab k % slabs. The first tendency also saves the field's starting value.
+        const slabs = this.slabs(), f = Math.floor(k / slabs), j = k % slabs, c = this.carried()[f]
+        const z0 = Math.floor(j * nz / slabs), z1 = Math.floor((j + 1) * nz / slabs), a = c.field, start = this.stageStart[f], tend = this.stageTend[f]
+        if (phase === 'tendency0') start.set(a.subarray(z0 * layer, z1 * layer), z0 * layer)
+        if (phase.startsWith('tendency')) this.flux.tendency(a, tend, z0, z1, c.monotone)
+        else { const fraction = RK3[Number(phase[6])] * dt; for (let i = z0 * layer; i < z1 * layer; i++) a[i] = start[i] + fraction * tend[i] }
+        break
+      }
+      case 'finish': {
+        const c = this.carried()[k], a = c.field
+        this.taskNegative[k] = c.conserve ? this.fillNegative(a) : 0
+        if (c.decay !== 1) for (let i = 0; i < a.length; i++) a[i] *= c.decay
+        break
+      }
+      case 'physics': this.physics(k, dt); break
+      case 'faces': this.flux.faces(this.u, this.v, this.w, k, k + 1); break
+      case 'faceDivergence': this.flux.divergence(k, k + 1); break
+      case 'faceForward': this.flux.forward(k, k + 1); break
+      case 'faceModes': this.flux.modes(k, k + 1); break
+      case 'faceInverse': this.flux.inverse(k, k + 1); break
+      case 'faceCorrect': this.flux.correctFaces(k, k + 1); break
+      case 'pressureDivergence': this.solver.divergence(this.u, this.v, this.w, dt, this.divergence, k, k + 1); break
+      case 'pressureForward': this.solver.transform(this.divergence, k, k + 1); break
+      case 'pressureModes': this.solver.modes(k, k + 1); break
+      case 'pressureInverse': this.solver.back(this.pressure, k, k + 1); break
+      case 'pressureCorrect': this.solver.correct(this.pressure, this.u, this.v, this.w, dt, k, k + 1); break
+      case 'viscosity': {
+        // Saturated stability inside clouds (cloud water plus ice): see Turbulence.viscosity.
+        const e = this.env, moist = { q: this.q, condensate: this.withIce() ? this.condensate : this.cloud, exner: e.exner }
+        this.turbulence.viscosity(this.u, this.v, this.w, this.theta, e.theta, SMAGORINSKY * this.config.turbulence / .55, dt, moist, k, k + 1)
+        break
+      }
+      case 'mix': { const [a, base, factor] = this.mixed()[k]; this.turbulence.mix(a, base, factor, dt) }
+    }
+  }
+
+  private slabs() { return Math.max(1, Math.min(this.transportSlabs, this.grid.nz)) }
+
+  private withIce() { return (this.config.microphysics ?? this.microphysics) === 'ice' }
+
+  /** The fields a step transports, in order: falling precipitation, wind and theta (linear upwind), vapour and cloud, the cold-pool indicator. */
+  private carried(): Carried[] {
+    const withIce = this.withIce(), c: Carried[] = [], water = (field: Float32Array) => c.push({ field, monotone: true, conserve: true, decay: 1 })
+    water(this.rain); if (withIce) { water(this.snow); water(this.graupel); water(this.hail) }
+    // WENO for water and the cold-pool indicator (no overshoots); linear 5th-order upwind for the smooth u, v, w, theta.
+    for (const field of [this.u, this.v, this.w, this.theta]) c.push({ field, monotone: false, conserve: false, decay: 1 })
+    water(this.q); water(this.cloud); if (withIce) water(this.ice)
+    c.push({ field: this.cold, monotone: true, conserve: false, decay: .9992 })
+    return c
+  }
+
+  /** The fields the subgrid turbulence mixes, with the base state it mixes the departure from and the K factor (1/Pr for scalars). */
+  private mixed(): [Float32Array, ArrayLike<number> | null, number][] {
+    const scalars = this.fixedViscosity === null ? 3 : 1, e = this.env
+    const list: [Float32Array, ArrayLike<number> | null, number][] = [[this.u, this.uEnv, 1], [this.v, this.vEnv, 1], [this.w, null, 1], [this.theta, e.theta, scalars], [this.q, e.q, scalars], [this.cloud, null, scalars]]
+    if (this.withIce()) list.push([this.ice, null, scalars])
+    return list
+  }
+
+  /** Microphysics, buoyancy, Coriolis, surface fluxes and the sponge at every node of level z (nodes are independent). */
+  private physics(z: number, dt: number) {
+    const { nx, ny, zs, height: H, layer } = this.grid, withIce = this.withIce()
     const cfg = this.config, e = this.env, u = this.u, v = this.v, w = this.w, theta = this.theta, q = this.q, cloud = this.cloud, rain = this.rain, cold = this.cold
     const ice = this.ice, snow = this.snow, graupel = this.graupel, hail = this.hail, rhoGround = e.rho[0]
     const flux = surfaceFluxes(cfg, this.time), f = 2 * OMEGA * Math.sin(cfg.latitude * Math.PI / 180)
     const spongeStart = Math.max(cfg.tropopause * 1000 + 2500, 14_000), keep = Math.exp(-this.windRelaxation * dt)
-    for (let z = 0, i = 0; z < nz; z++) {
+    {
+      let i = z * layer
       const alt = zs[z], p = e.p[z], rhoZ = e.rho[z], exner = e.exner[z], thEnv = e.theta[z], qEnv = e.q[z], thvEnv = thEnv * (1 + .61 * qEnv), ue = this.uEnv[z], ve = this.vEnv[z]
       for (let y = 0; y < ny; y++) {
         const row = y * nx
@@ -434,38 +563,25 @@ export class AtmosphereModel {
         }
       }
     }
-    // Smagorinsky-Lilly subgrid mixing of momentum, heat and water (replaces the old horizontal smoothing of theta and q).
-    const turb = this.turbulence ??= new Turbulence(this.grid, e.rho)
-    turb.anisotropic = this.turbulenceWidth === 'anisotropic'
-    // Saturated stability inside clouds (cloud water plus ice): see Turbulence.viscosity.
-    if (withIce) for (let k = 0; k < ice.length; k++) this.scratch[k] = cloud[k] + ice[k]
-    const moist = { q, condensate: withIce ? this.scratch : cloud, exner: e.exner }
-    const fixed = this.fixedViscosity, scalars = fixed === null ? 3 : 1
-    if (fixed === null) turb.viscosity(u, v, w, theta, e.theta, SMAGORINSKY * cfg.turbulence / .55, dt, moist)
-    else { turb.km.fill(fixed); turb.kh.fill(fixed) }
-    turb.mix(u, this.uEnv, 1, dt); turb.mix(v, this.vEnv, 1, dt); turb.mix(w, null, 1, dt)
-    turb.mix(theta, e.theta, scalars, dt); turb.mix(q, e.q, scalars, dt); turb.mix(cloud, null, scalars, dt); if (withIce) turb.mix(ice, null, scalars, dt)
-    // Surface drag on the ground node, which owns half a layer: dV/dt = -C_D (|V| V - |V_env| V_env) / h_0. The
-    // environment's own drag is taken as balanced by the large-scale flow that maintains the profile, so the background
-    // stays steady (was: u, v *= 0.94 every step, which stopped the ground wind in ~16 s). Applied with the rigid
-    // ground/top before the projection, so the transport velocity is D-free.
-    // Friction acts on the wind over the ground: the model's (domain-relative) wind plus the frame velocity.
-    const drag = this.surfaceDrag ? dragCoefficient(cfg, 2 * hz[0]) * dt / hz[0] : 0, ue0 = e.u[0], ve0 = e.v[0], envSpeed = Math.hypot(ue0, ve0), [fu, fv] = this.frame
-    for (let b = 0; b < layer; b++) {
-      const ug = u[b] + fu, vg = v[b] + fv, speed = Math.hypot(ug, vg)
-      u[b] -= drag * (speed * ug - envSpeed * ue0); v[b] -= drag * (speed * vg - envSpeed * ve0)
-      w[b] = 0; w[b + (nz - 1) * layer] = 0
-    }
-    this.project(dt)
-    this.updateRotation(dt)
+    if (withIce) for (let i = z * layer, e = i + layer; i < e; i++) this.condensate[i] = cloud[i] + ice[i]
+  }
+
+  /** The settings helper threads must follow (threads.ts): the config and the model's switches. */
+  settings() {
+    return JSON.stringify({ config: this.config, microphysics: this.microphysics, transport: this.transport, rainFormation: this.rainFormation, windRelaxation: this.windRelaxation, fixedViscosity: this.fixedViscosity, transportSlabs: this.transportSlabs })
+  }
+
+  applySettings(json: string) {
+    const s = JSON.parse(json)
+    Object.assign(this.config, s.config)
+    this.microphysics = s.microphysics; this.transport = s.transport; this.rainFormation = s.rainFormation; this.windRelaxation = s.windRelaxation; this.fixedViscosity = s.fixedViscosity; this.transportSlabs = s.transportSlabs
   }
 
   /** Makes the node velocities exactly free of dual-cell divergence (see PressureSolver); ground and top are rigid walls. */
   private project(dt: number) {
     const u = this.u, v = this.v, w = this.w
-    this.solver.divergence(u, v, w, dt, this.divergence)
-    this.solver.solve(this.divergence, this.pressure)
-    this.solver.correct(this.pressure, u, v, w, dt)
+    const { nz, ny } = this.grid, run = (phase: Phase, tasks: number) => this.runner.run(phase, tasks, dt)
+    run('pressureDivergence', nz - 1); run('pressureForward', nz - 1); run('pressureModes', ny); run('pressureInverse', nz - 1); run('pressureCorrect', nz)
     let clipped = 0
     for (let i = 0; i < this.grid.n; i++) {
       if (u[i] < -U_LIMIT || u[i] > U_LIMIT) { u[i] = clamp(u[i], -U_LIMIT, U_LIMIT); clipped++ }

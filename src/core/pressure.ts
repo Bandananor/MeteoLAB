@@ -1,5 +1,6 @@
 import type { Grid } from './grid'
 import { HorizontalDFT } from './spectral'
+import { type Memory, PRIVATE_MEMORY } from './threads'
 
 /**
  * Exact, consistent pressure projection for node-based velocities, anelastic: the mass flux rho0(z) u is made
@@ -25,13 +26,14 @@ export class PressureSolver {
   /** Base-state density of each node level (ones: incompressible). */
   private readonly rho: Float64Array
 
-  constructor(grid: Grid, density?: ArrayLike<number>) {
+  /** `memory` holds the spectra, which helper threads share (threads.ts). */
+  constructor(grid: Grid, density?: ArrayLike<number>, memory: Memory = PRIVATE_MEMORY) {
     const { nx, ny, nz, dx, dy } = grid
     this.grid = grid
     this.rho = density ? Float64Array.from(density) : new Float64Array(nz).fill(1)
     if (this.rho.length !== nz) throw new Error(`density needs ${nz} levels, got ${this.rho.length}`)
     this.cells = nx * ny * (nz - 1)
-    this.dft = new HorizontalDFT(nx, ny, nz - 1)
+    this.dft = new HorizontalDFT(nx, ny, nz - 1, memory, 'pressure')
     this.alpha = new Float64Array(nx * ny); this.beta = new Float64Array(nx * ny)
     // cos^2 of pi/2 is 3.7e-33 in floating point, not 0; the null modes must be exactly zero or the solve blows up.
     const exact = (x: number) => x < 1e-12 ? 0 : x > 1 - 1e-12 ? 1 : x
@@ -44,10 +46,10 @@ export class PressureSolver {
     this.cp = new Float64Array(nz); this.dRe = new Float64Array(nz); this.dIm = new Float64Array(nz)
   }
 
-  /** Dual-cell divergence of the node mass flux rho0 u, divided by dt, into `out` (length `cells`). */
-  divergence(u: Float32Array, v: Float32Array, w: Float32Array, dt: number, out: Float64Array) {
-    const { nx, ny, nz, dx, dy, dzs, layer } = this.grid
-    for (let k = 0, c = 0; k < nz - 1; k++) {
+  /** Dual-cell divergence of the node mass flux rho0 u, divided by dt, into `out` (length `cells`); cell layers k0..k1-1. */
+  divergence(u: Float32Array, v: Float32Array, w: Float32Array, dt: number, out: Float64Array, k0 = 0, k1 = this.grid.nz - 1) {
+    const { nx, ny, dx, dy, dzs, layer } = this.grid
+    for (let k = k0, c = k0 * nx * ny; k < k1; k++) {
       const l0 = k * layer, l1 = l0 + layer, r0 = this.rho[k] / 4, r1 = this.rho[k + 1] / 4, dz = dzs[k]
       for (let j = 0; j < ny; j++) {
         const y0 = j * nx, y1 = ((j + 1) % ny) * nx
@@ -63,10 +65,10 @@ export class PressureSolver {
     }
   }
 
-  /** Subtracts dt * G p from the node velocities; w at the wall levels stays untouched (it is zero). */
-  correct(p: Float64Array, u: Float32Array, v: Float32Array, w: Float32Array, dt: number) {
+  /** Subtracts dt * G p from the node velocities of levels k0..k1-1; w at the wall levels stays untouched (it is zero). */
+  correct(p: Float64Array, u: Float32Array, v: Float32Array, w: Float32Array, dt: number, k0 = 0, k1 = this.grid.nz) {
     const { nx, ny, nz, dx, dy, dzs, hz, layer } = this.grid, cl = nx * ny
-    for (let k = 0; k < nz; k++) {
+    for (let k = k0; k < k1; k++) {
       // Dual-cell layers touching node level k, weighted by their height over the node's (V/H): a wall level sees one
       // layer with weight 2 on a uniform grid.
       const lo = Math.max(0, k - 1) * cl, hi = Math.min(nz - 2, k) * cl
@@ -91,15 +93,22 @@ export class PressureSolver {
 
   /** Solves (D·R·G) p = rhs exactly; rhs is consumed (overwritten). Null modes of D·R·G get p = 0. */
   solve(rhs: Float64Array, p: Float64Array) {
-    const { nx, ny, nz } = this.grid, cl = nx * ny, nc = nz - 1, re = this.re, im = this.im, mh = this.dft.mh
-    this.dft.forward(rhs, nc)
+    const nc = this.grid.nz - 1
+    this.transform(rhs, 0, nc); this.modes(0, this.grid.ny); this.back(p, 0, nc)
+  }
+
+  // The three parts of solve, for helper threads: the forward transform of cell layers k0..k1-1 (rhs consumed), the
+  // tridiagonal systems of the modes with y-wavenumbers n0..n1-1, the inverse transform of layers k0..k1-1 into p.
+  transform(rhs: Float64Array, k0: number, k1: number) { this.dft.forwardLayers(rhs, k0, k1) }
+  back(p: Float64Array, k0: number, k1: number) { this.dft.inverseLayers(p, k0, k1) }
+  modes(n0: number, n1: number) {
+    const { nx, nz } = this.grid, cl = nx * this.grid.ny, nc = nz - 1, re = this.re, im = this.im, mh = this.dft.mh
     // One tridiagonal system per mode.
-    for (let n = 0; n < ny; n++) for (let m = 0; m <= mh; m++) {
+    for (let n = n0; n < n1; n++) for (let m = 0; m <= mh; m++) {
       const mode = m + nx * n, a = this.alpha[mode], b = this.beta[mode]
       if (a === 0 && b === 0 || nc === 1 && a === 0) { for (let k = 0; k < nc; k++) re[mode + k * cl] = im[mode + k * cl] = 0; continue }
       this.tridiagonal(mode, a, b, nc, cl)
     }
-    this.dft.inverse(p, nc)
   }
 
   // Thomas algorithm for one horizontal mode. Row k (the cell between node levels k and k+1, dz_k high) collects, from

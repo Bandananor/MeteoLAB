@@ -1,5 +1,6 @@
 import type { Grid } from './grid'
 import { HorizontalDFT } from './spectral'
+import { type Memory, PRIVATE_MEMORY } from './threads'
 
 /**
  * Flux-form transport with fifth-order WENO reconstruction (Jiang & Shu 1996) and the three-stage Runge-Kutta scheme
@@ -29,16 +30,18 @@ export class FluxTransport {
   /** Per grid row (z * ny + y): the field has a non-zero value in the row; a non-zero value within the stencil reach. */
   private readonly rowNonzero: Uint8Array; private readonly rowActive: Uint8Array
 
-  constructor(grid: Grid, rho: ArrayLike<number>) {
+  /** `memory` holds the face fluxes (and their divergence), which helper threads read (see threads.ts). */
+  constructor(grid: Grid, rho: ArrayLike<number>, memory: Memory = PRIVATE_MEMORY) {
     const { n, nx, ny, nz } = grid
     this.grid = grid; this.rho = Float64Array.from(rho)
     const f = () => new Float64Array(n)
-    this.mx = f(); this.my = f(); this.mz = f(); this.div = f(); this.fx = f(); this.fy = f(); this.fz = f(); this.tend = f()
+    this.mx = memory.f64('mx', n); this.my = memory.f64('my', n); this.mz = memory.f64('mz', n); this.div = memory.f64('div', n)
+    this.fx = f(); this.fy = f(); this.fz = f(); this.tend = f()
     this.start = new Float32Array(n)
     this.xo = [-2, -1, 0, 1, 2, 3].map(o => Int32Array.from({ length: nx }, (_, x) => (x + o + 2 * nx) % nx))
     this.yo = [-2, -1, 0, 1, 2, 3].map(o => Int32Array.from({ length: ny }, (_, y) => ((y + o + 2 * ny) % ny) * nx))
     this.h = grid.hz
-    this.dft = new HorizontalDFT(nx, ny, nz); this.phi = f()
+    this.dft = new HorizontalDFT(nx, ny, nz, memory, 'faces'); this.phi = memory.f64('phi', n)
     this.cp = new Float64Array(nz); this.dRe = new Float64Array(nz); this.dIm = new Float64Array(nz)
     // -lambda is the symbol of the periodic second difference in x plus y (exactly 0 for the uniform mode).
     this.rowNonzero = new Uint8Array(nz * ny); this.rowActive = new Uint8Array(nz * ny)
@@ -50,8 +53,19 @@ export class FluxTransport {
 
   /** Face mass fluxes of the (frozen) transport velocity, projected to zero divergence (div keeps the round-off). */
   setVelocity(u: Float32Array, v: Float32Array, w: Float32Array) {
+    const { nz, ny } = this.grid
+    this.faces(u, v, w, 0, nz); this.divergence(0, nz)
+    this.forward(0, nz); this.modes(0, ny); this.inverse(0, nz); this.correctFaces(0, nz)
+    this.divergence(0, nz)
+  }
+
+  // setVelocity in parts, for helper threads (levels z0..z1-1, or modes with y-wavenumbers n0..n1-1): the face fluxes,
+  // their divergence, its forward transform, the tridiagonal solves, the inverse transform into phi, the correction.
+
+  /** Face mass fluxes of levels z0..z1-1 from the node velocities (before the projection). */
+  faces(u: Float32Array, v: Float32Array, w: Float32Array, z0: number, z1: number) {
     const { nx, ny, nz, layer } = this.grid, rho = this.rho, { mx, my, mz, xo, yo } = this
-    for (let z = 0, i = 0; z < nz; z++) {
+    for (let z = z0, i = z0 * layer; z < z1; z++) {
       const l = z * layer, r = rho[z], rUp = z < nz - 1 ? (rho[z] + rho[z + 1]) / 2 : 0
       for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++, i++) {
         mx[i] = r * (u[i] + u[xo[3][x] + y * nx + l]) / 2
@@ -59,14 +73,12 @@ export class FluxTransport {
         mz[i] = z < nz - 1 ? rUp * (w[i] + w[i + layer]) / 2 : 0
       }
     }
-    this.divergence()
-    this.projectFaces()
-    this.divergence()
   }
 
-  private divergence() {
-    const { nx, ny, nz, dx, dy, layer } = this.grid, { mx, my, mz, div, xo, yo, h } = this
-    for (let z = 0, i = 0; z < nz; z++) {
+  /** Divergence of the face fluxes at the nodes of levels z0..z1-1. */
+  divergence(z0: number, z1: number) {
+    const { nx, ny, dx, dy, layer } = this.grid, { mx, my, mz, div, xo, yo, h } = this
+    for (let z = z0, i = z0 * layer; z < z1; z++) {
       const l = z * layer
       for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++, i++) {
         div[i] = (mx[i] - mx[xo[1][x] + y * nx + l]) / dx + (my[i] - my[x + yo[1][y] + l]) / dy + (mz[i] - (z > 0 ? mz[i - layer] : 0)) / h[z]
@@ -80,11 +92,13 @@ export class FluxTransport {
    * - rho_(k-1/2) (phi_k - phi_(k-1))] / dz_(k-1/2)] = h_k div_k (spacings between the levels, stretched or not), a
    * tridiagonal system; the uniform mode is pinned at the ground.
    */
-  private projectFaces() {
-    const { nx, ny, nz, dx, dy, dzs, layer } = this.grid, { mx, my, mz, div, xo, yo, h, rho, phi, dft, cp, dRe, dIm, lambda } = this
+  forward(z0: number, z1: number) { this.dft.forwardLayers(this.div, z0, z1) }
+  inverse(z0: number, z1: number) { this.dft.inverseLayers(this.phi, z0, z1) }
+
+  modes(n0: number, n1: number) {
+    const { nx, nz, layer } = this.grid, { h, rho, dft, cp, dRe, dIm, lambda } = this, { dzs } = this.grid
     const re = dft.re, im = dft.im, face = (k: number) => k < 0 || k >= nz - 1 ? 0 : (rho[k] + rho[k + 1]) / 2
-    dft.forward(div, nz)
-    for (let n = 0; n < ny; n++) for (let m = 0; m <= dft.mh; m++) {
+    for (let n = n0; n < n1; n++) for (let m = 0; m <= dft.mh; m++) {
       const mode = m + nx * n, lam = lambda[mode], pinned = lam === 0
       for (let k = 0; k < nz; k++) {
         let lo = k > 0 ? face(k - 1) / dzs[k - 1] : 0, up = k < nz - 1 ? face(k) / dzs[k] : 0, di = -rho[k] * h[k] * lam - lo - up, rr = h[k] * re[mode + k * layer], ri = h[k] * im[mode + k * layer]
@@ -100,8 +114,13 @@ export class FluxTransport {
         re[mode + k * layer] = dRe[k]; im[mode + k * layer] = dIm[k]
       }
     }
-    dft.inverse(phi, nz)
-    for (let z = 0, i = 0; z < nz; z++) {
+  }
+
+  /** Subtracts rho0 grad(phi) from the face fluxes of levels z0..z1-1. */
+  correctFaces(z0: number, z1: number) {
+    const { nx, ny, nz, dx, dy, dzs, layer } = this.grid, { mx, my, mz, xo, yo, rho, phi } = this
+    const face = (k: number) => k < 0 || k >= nz - 1 ? 0 : (rho[k] + rho[k + 1]) / 2
+    for (let z = z0, i = z0 * layer; z < z1; z++) {
       const l = z * layer, r = rho[z], rUp = face(z)
       for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++, i++) {
         mx[i] -= r * (phi[xo[3][x] + y * nx + l] - phi[i]) / dx
@@ -118,21 +137,29 @@ export class FluxTransport {
   advect(a: Float32Array, dt: number, monotone = true) {
     this.start.set(a)
     const start = this.start, tend = this.tend, n = a.length
-    for (const fraction of [1 / 3, 1 / 2, 1]) {
-      if (monotone) this.tendency(a); else this.tendencyLinear(a)
+    for (const fraction of RK3) {
+      this.tendency(a, tend, 0, this.grid.nz, monotone)
       for (let i = 0; i < n; i++) a[i] = start[i] + fraction * dt * tend[i]
     }
+  }
+
+  /**
+   * The transport tendency of q at the levels z0..z1-1, into the same nodes of `tend` (helper threads each take a slab
+   * of levels: the stencil only reads q, and the vertical flux below the slab is recomputed here).
+   */
+  tendency(q: Float32Array, tend: Float64Array, z0: number, z1: number, monotone: boolean) {
+    if (monotone) this.tendencyWeno(q, tend, z0, z1); else this.tendencyLinear(q, tend, z0, z1)
   }
 
   /**
    * Marks the grid rows whose stencil (3 nodes in y and z) reaches a non-zero value. Water species other than vapour
    * are exactly zero in most of the domain (the positivity fix removes WENO's tiny tails): their rows are skipped.
    */
-  private markActiveRows(q: Float32Array) {
+  private markActiveRows(q: Float32Array, z0: number, z1: number) {
     const { nx, ny, nz } = this.grid, rows = this.rowNonzero, active = this.rowActive
-    for (let r = 0; r < nz * ny; r++) { const b = r * nx; let any = 0; for (let x = 0; x < nx; x++) if (q[b + x] !== 0) { any = 1; break } rows[r] = any }
+    for (let r = Math.max(0, z0 - 3) * ny; r < Math.min(nz, z1 + 3) * ny; r++) { const b = r * nx; let any = 0; for (let x = 0; x < nx; x++) if (q[b + x] !== 0) { any = 1; break } rows[r] = any }
     let count = 0
-    for (let z = 0; z < nz; z++) for (let y = 0; y < ny; y++) {
+    for (let z = z0; z < z1; z++) for (let y = 0; y < ny; y++) {
       let any = 0
       for (let dz = -3; dz <= 3 && !any; dz++) { const zz = z + dz; if (zz < 0 || zz >= nz) continue; for (let dy = -3; dy <= 3; dy++) if (rows[zz * ny + (y + dy + ny) % ny]) { any = 1; break } }
       active[z * ny + y] = any; count += any
@@ -140,12 +167,12 @@ export class FluxTransport {
     return count
   }
 
-  private tendency(q: Float32Array) {
-    const { nx, ny, nz, dx, dy, layer } = this.grid, { mx, my, mz, div, fx, fy, fz, tend, xo, yo, h, rho } = this
+  private tendencyWeno(q: Float32Array, tend: Float64Array, z0: number, z1: number) {
+    const { nx, ny, nz, dx, dy, layer } = this.grid, { mx, my, mz, div, fx, fy, fz, xo, yo, h, rho } = this
     const [xm2, xm1, , xp1, xp2, xp3] = xo, [ym2, ym1, , yp1, yp2, yp3] = yo
-    const active = this.rowActive
-    if (this.markActiveRows(q) === 0) { tend.fill(0); return }
-    for (let z = 0, i = 0; z < nz; z++) {
+    const active = this.rowActive, below = Math.max(0, z0 - 1)
+    if (this.markActiveRows(q, below, z1) === 0) { tend.fill(0, z0 * layer, z1 * layer); return }
+    for (let z = below, i = below * layer; z < z1; z++) {
       const l = z * layer, top = z === nz - 1
       const zm2 = Math.max(0, z - 2) * layer, zm1 = Math.max(0, z - 1) * layer, zp1 = Math.min(nz - 1, z + 1) * layer, zp2 = Math.min(nz - 1, z + 2) * layer, zp3 = Math.min(nz - 1, z + 3) * layer
       for (let y = 0; y < ny; y++) {
@@ -163,7 +190,7 @@ export class FluxTransport {
         }
       }
     }
-    for (let z = 0, i = 0; z < nz; z++) {
+    for (let z = z0, i = z0 * layer; z < z1; z++) {
       const l = z * layer, r = rho[z], hz = h[z]
       for (let y = 0; y < ny; y++) {
         if (!active[z * ny + y]) { tend.fill(0, i, i + nx); i += nx; continue }
@@ -176,10 +203,11 @@ export class FluxTransport {
   }
 
   // Same as tendency with the linear reconstruction: a separate copy keeps each loop monomorphic for the JIT.
-  private tendencyLinear(q: Float32Array) {
-    const { nx, ny, nz, dx, dy, layer } = this.grid, { mx, my, mz, div, fx, fy, fz, tend, xo, yo, h, rho } = this
+  private tendencyLinear(q: Float32Array, tend: Float64Array, z0: number, z1: number) {
+    const { nx, ny, nz, dx, dy, layer } = this.grid, { mx, my, mz, div, fx, fy, fz, xo, yo, h, rho } = this
     const [xm2, xm1, , xp1, xp2, xp3] = xo, [ym2, ym1, , yp1, yp2, yp3] = yo
-    for (let z = 0, i = 0; z < nz; z++) {
+    const below = Math.max(0, z0 - 1)
+    for (let z = below, i = below * layer; z < z1; z++) {
       const l = z * layer, top = z === nz - 1
       const zm2 = Math.max(0, z - 2) * layer, zm1 = Math.max(0, z - 1) * layer, zp1 = Math.min(nz - 1, z + 1) * layer, zp2 = Math.min(nz - 1, z + 2) * layer, zp3 = Math.min(nz - 1, z + 3) * layer
       for (let y = 0; y < ny; y++) {
@@ -195,7 +223,7 @@ export class FluxTransport {
         }
       }
     }
-    for (let z = 0, i = 0; z < nz; z++) {
+    for (let z = z0, i = z0 * layer; z < z1; z++) {
       const l = z * layer, r = rho[z], hz = h[z]
       for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++, i++) {
         const flux = (fx[i] - fx[xm1[x] + y * nx + l]) / dx + (fy[i] - fy[x + ym1[y] + l]) / dy + (fz[i] - (z > 0 ? fz[i - layer] : 0)) / hz
@@ -204,6 +232,9 @@ export class FluxTransport {
     }
   }
 }
+
+/** Fractions of the step of the three Runge-Kutta stages (Wicker & Skamarock 2002). */
+export const RK3 = [1 / 3, 1 / 2, 1] as const
 
 /** Linear fifth-order upwind value at the face between c and d for flow from a towards e (Wicker & Skamarock 2002). */
 export function upwind5(a: number, b: number, c: number, d: number, e: number) { return (2 * a - 13 * b + 47 * c + 27 * d - 3 * e) / 60 }

@@ -1,5 +1,6 @@
 import { CP, G, LV } from './constants'
 import type { Grid } from './grid'
+import { type Memory, PRIVATE_MEMORY } from './threads'
 
 /**
  * Smagorinsky constant at the default slider value; the turbulence slider scales it. Tried 0.21 and 0.25 (WRF's value
@@ -33,9 +34,10 @@ export class Turbulence {
   /** Control-volume height of each level (the ground and top nodes own half a layer). */
   private readonly h: Float64Array
 
-  constructor(grid: Grid, rho: ArrayLike<number>) {
+  /** `memory` holds the eddy viscosities, which helper threads read (see threads.ts). */
+  constructor(grid: Grid, rho: ArrayLike<number>, memory: Memory = PRIVATE_MEMORY) {
     this.grid = grid; this.rho = Float64Array.from(rho)
-    this.km = new Float64Array(grid.n); this.kh = new Float64Array(grid.n); this.tmp = new Float32Array(grid.n)
+    this.km = memory.f64('km', grid.n); this.kh = memory.f64('kh', grid.n); this.tmp = new Float32Array(grid.n)
     this.h = grid.hz
   }
 
@@ -46,11 +48,11 @@ export class Turbulence {
    * updraughts (no entrainment, parcel-like updraughts).
    */
   viscosity(u: Float32Array, v: Float32Array, w: Float32Array, theta: Float32Array, thetaEnv: ArrayLike<number>, cs: number, dt: number,
-    moist?: { q: Float32Array; condensate: Float32Array; exner: ArrayLike<number> }) {
+    moist?: { q: Float32Array; condensate: Float32Array; exner: ArrayLike<number> }, z0 = 0, z1 = this.grid.nz) {
     const { nx, ny, nz, dx, dy, zs, dzs, hz, layer, xp, xm, yp, ym } = this.grid, km = this.km, kh = this.kh
     // Horizontal filter width and stability cap of the anisotropic option (horizontal fluxes only see dx and dy).
     const lenH2 = (cs * Math.sqrt(dx * dy)) ** 2, capH = .05 * Math.min(dx, dy) ** 2 / dt
-    for (let z = 0, i = 0; z < nz; z++) {
+    for (let z = z0, i = z0 * layer; z < z1; z++) {
       // Filter width from the local vertical spacing (the spacing next to the ground and top nodes, which own half a layer).
       const local = z === 0 ? dzs[0] : z === nz - 1 ? dzs[nz - 2] : hz[z], len2 = (cs * Math.cbrt(dx * dy * local)) ** 2
       // Explicit-stability cap from the spacings around this level. It was one cap from the smallest spacing anywhere:
