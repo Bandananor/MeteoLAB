@@ -20,6 +20,6 @@ export type WorkerRequest =
   | { type: 'release'; buffer: ArrayBuffer }
 
 export interface Snapshot {
-  type: 'snapshot'; buffer: ArrayBuffer; steps: number; time: number; microburstOutflow: number
+  type: 'snapshot'; buffer: ArrayBuffer; steps: number; time: number
   rotation: RotationState; diagnostics: ModelDiagnostics
 }

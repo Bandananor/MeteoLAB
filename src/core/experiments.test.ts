@@ -11,7 +11,7 @@ import { SUMMER_DAY } from './fixtures'
  * of ice (2026-10-03); `fixed` — no storm-following domain (2026-10-03); `old` — all three, the 2026-09-29 setup; `base`.
  * `aniso` — horizontal mixing with the horizontal filter width (Turbulence.anisotropic); wind controls: `calm` (no wind),
  * `calm-eq` (no wind, no Coriolis), `half` and `double` (the wind profile x0.5, x2); `narrow` (2.5 km thermal), `nosun`
- * (no solar heating), `narrow-nosun`; `nomicroburst` (no microburst parameterisation), `noparam` (nor the cold-pool one). STORMLAB_MINUTES sets the
+ * (no solar heating), `narrow-nosun`. STORMLAB_MINUTES sets the
  * model time (default 40).
  */
 const env = (globalThis as { process?: { env: Record<string, string | undefined> } }).process?.env ?? {}
@@ -34,9 +34,6 @@ describe('experiments', () => {
     if (variant === 'fixed' || old) config.followStorm = false
     const model = new AtmosphereModel(config, createGrid(variant === 'uniform' || old ? UNIFORM : DEFAULT_GRID))
     if (variant === 'aniso') model.turbulenceWidth = 'anisotropic'
-    // Without the hand-made microburst parameterisation, or without it and the cold-pool one.
-    if (variant === 'nomicroburst' || variant === 'noparam') model.microburstParam = false
-    if (variant === 'noparam') model.coldPoolParam = false
     const { layer, zs } = model.grid, rows: string[] = []
     let longest = 0, peakW = 0, peakUH = 0, peakGust = 0
     // Air at 100 m away from the storm (no cold pool): theta and vapour, to see whether the sun built up CAPE meanwhile.
