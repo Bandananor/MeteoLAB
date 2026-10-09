@@ -9,7 +9,7 @@ import { SUMMER_DAY } from './fixtures'
  * Variants undo what changed after the realistic scenarios were calibrated on 2026-09-29 (updraughts then ~45-54 m/s):
  * `uniform` — the old 30 uniform 652 m levels instead of 50 stretched (2026-10-01); `warm` — Kessler warm rain instead
  * of ice (2026-10-03); `fixed` — no storm-following domain (2026-10-03); `old` — all three, the 2026-09-29 setup; `base`.
- * `aniso` — horizontal mixing with the horizontal filter width (Turbulence.anisotropic); wind controls: `calm` (no wind),
+ * `cube` — horizontal mixing with the old cube-root filter width (anisotropic is the default since 2026-10-09); wind controls: `calm` (no wind),
  * `calm-eq` (no wind, no Coriolis), `half` and `double` (the wind profile x0.5, x2); `narrow` (2.5 km thermal), `nosun`
  * (no solar heating), `narrow-nosun`. STORMLAB_MINUTES sets the
  * model time (default 40).
@@ -33,7 +33,7 @@ describe('experiments', () => {
     if (variant === 'warm' || old) config.microphysics = 'warm'
     if (variant === 'fixed' || old) config.followStorm = false
     const model = new AtmosphereModel(config, createGrid(variant === 'uniform' || old ? UNIFORM : DEFAULT_GRID))
-    if (variant === 'aniso') model.turbulenceWidth = 'anisotropic'
+    if (variant === 'cube') model.turbulenceWidth = 'cube'
     const { layer, zs } = model.grid, rows: string[] = []
     let longest = 0, peakW = 0, peakUH = 0, peakGust = 0
     // Air at 100 m away from the storm (no cold pool): theta and vapour, to see whether the sun built up CAPE meanwhile.

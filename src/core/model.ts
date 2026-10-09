@@ -377,8 +377,12 @@ export class AtmosphereModel implements TaskModel {
    * (src/core/graupel.ts), Lin et al. (1983); or Kessler warm rain only (cheaper, no anvil, no heat of fusion).
    */
   microphysics: 'warm' | 'ice' = 'ice'
-  /** Subgrid filter width of the horizontal mixing: (dx dy dz)^(1/3), or sqrt(dx dy) (experiment; see Turbulence.anisotropic). */
-  turbulenceWidth: 'cube' | 'anisotropic' = 'cube'
+  /**
+   * Subgrid filter width of the horizontal mixing: sqrt(dx dy) (default since 2026-10-09; see Turbulence.anisotropic), or
+   * (dx dy dz)^(1/3) as before. With sqrt(dx dy) weak-shear updraughts are 4-10 m/s weaker and rotate less; the WK
+   * supercell keeps its split and mesocyclone (w 54 -> 51 m/s).
+   */
+  turbulenceWidth: 'cube' | 'anisotropic' = 'anisotropic'
   /**
    * Reference cases (Straka et al. 1993, Bryan & Fritsch 2002): a constant eddy viscosity, m2/s, the same for momentum
    * and scalars, instead of Smagorinsky; null = Smagorinsky.

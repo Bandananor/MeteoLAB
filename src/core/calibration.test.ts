@@ -29,8 +29,8 @@ describe('Weisman-Klemp supercell (calibration)', () => {
     // edge at ~52 min into its own cold pool and dropped to 13 m/s by 60 min. The domain now follows the right mover.
     const model = new AtmosphereModel({ ...SUMMER_DAY, solarMax: 0, bubble: 0 }, createGrid(), weismanKlemp({ qvMax: .016 }))
     model.transport = 'weno'
-    // STORMLAB_TURBULENCE=anisotropic: the experiment of Turbulence.anisotropic must keep the split (the left mover).
-    if ((globalThis as { process?: { env: Record<string, string | undefined> } }).process?.env.STORMLAB_TURBULENCE === 'anisotropic') model.turbulenceWidth = 'anisotropic'
+    // STORMLAB_TURBULENCE=cube: the old cube-root filter width for the horizontal mixing (anisotropic is the default).
+    if ((globalThis as { process?: { env: Record<string, string | undefined> } }).process?.env.STORMLAB_TURBULENCE === 'cube') model.turbulenceWidth = 'cube'
     model.injectBubble(model.grid.width * .3, model.grid.depth * .5, 1.5)
     run(model, 35 * 60)
     const cores = updraftCores(model, 4500, 8)

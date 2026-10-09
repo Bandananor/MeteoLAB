@@ -25,7 +25,8 @@ export class Turbulence {
   /** Horizontal eddy viscosity, m2/s: km itself, or with the horizontal filter width when `anisotropic`. */
   readonly kh: Float64Array
   /**
-   * Horizontal mixing with the horizontal filter width sqrt(dx dy) instead of (dx dy dz)^(1/3) (experiment, 2026-10-07).
+   * Horizontal mixing with the horizontal filter width sqrt(dx dy) instead of (dx dy dz)^(1/3) (experiment 2026-10-07; the
+   * model's default since 2026-10-09, AtmosphereModel.turbulenceWidth).
    * On the stretched grid the cube-root width shrank with dz (~0.8x at 5 km, K ~0.65x), so the lateral entrainment into
    * updraughts, which the 1.2 km horizontal spacing governs, weakened, and updraughts gained 7-8 m/s.
    */
