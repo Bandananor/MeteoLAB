@@ -5,7 +5,7 @@
 import { isMainThread, Worker, workerData } from 'node:worker_threads'
 import { fileURLToPath } from 'node:url'
 import { availableParallelism } from 'node:os'
-import { AtmosphereModel, createGrid, DEFAULT_GRID, LARGE_GRID, SCENARIOS, type SimConfig } from '../../src/core'
+import { AtmosphereModel, createGrid, DEFAULT_GRID, DT, LARGE_GRID, SCENARIOS, type SimConfig } from '../../src/core'
 import { SUMMER_DAY } from '../../src/core/fixtures'
 import { AttachedMemory, controlBuffer, serveTasks, SharedMemory, ThreadRunner } from '../../src/core/threads'
 
@@ -35,7 +35,7 @@ if (!isMainThread) {
   if (threads === 1) model.runTask = (ph, k, dt) => { const s = performance.now(); orig(ph, k, dt); const key = ph + k; taskTime[key] = (taskTime[key] ?? 0) + performance.now() - s }
   let t0 = performance.now(), times: number[] = []
   for (let k = 0; k < warm + steps; k++) {
-    const s = performance.now(); model.step(1); model.time += 1
+    const s = performance.now(); model.step(DT); model.time += DT
     if (k >= warm) times.push(performance.now() - s)
     if (k === warm - 1) { t0 = performance.now(); for (const key in phase) delete phase[key]; for (const key in taskTime) delete taskTime[key] }
   }
