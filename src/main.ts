@@ -1,9 +1,10 @@
 import './style.css'
 import { Atmosphere } from './atmosphere'
 import { RadarPanel } from './radar/panel'
-import { CELL_STAGES, createGrid, Environment, parcelIndices, SCENARIOS, type SimConfig, stormIndices, weismanKlemp } from './core'
+import { CELL_STAGES, createGrid, DT, Environment, parcelIndices, SCENARIOS, type SimConfig, stormIndices, weismanKlemp } from './core'
 import { FIELDS, type FieldMode } from './render/fields'
 import type { LayerMode } from './render/view'
+import { Timeline } from './timeline'
 
 const slider = (key: keyof SimConfig, label: string, min: number, max: number, step: number, value: number, suffix: string, digits = 0) => `
   <label>${label}<output data-output="${key}">${value.toFixed(digits)}${suffix}</output>
@@ -109,7 +110,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
           </div>
         </div>
       </div>
-      <div class="readout"><span id="gridSize">Сетка 40 × 32 × 50</span><span>Область: <b id="frameMotion">—</b></span><span>Δx / Δy: 1.2 / 1.1 км, Δz: 0.1 км у земли → 1 км наверху</span><span>Δt: 1.0 с</span><span>Инсоляция: <b id="sun">—</b></span><span>Солнце: <b id="sunElevation">—</b></span><span>T+: <b id="time">00:00</b></span><span>Потоки: <b id="threads">—</b></span></div>
+      <div class="readout"><span id="gridSize">Сетка 40 × 32 × 50</span><span>Область: <b id="frameMotion">—</b></span><span>Δx / Δy: 1.2 / 1.1 км, Δz: 0.1 км у земли → 1 км наверху</span><span>Δt: ${DT} с</span><span>Инсоляция: <b id="sun">—</b></span><span>Солнце: <b id="sunElevation">—</b></span><span>T+: <b id="time">00:00</b></span><span>Потоки: <b id="threads">—</b></span></div>
     </section>
 
     <aside class="diagnostics">
@@ -138,6 +139,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
       <div class="metric" title="Сколько раз скорость упёрлась в предохранитель (|u|,|v| ≤ 120, |w| ≤ 100 м/с — заметно выше любых реальных гроз). Не ноль — расчёт пошёл вразнос, цифрам доверять нельзя."><span>Срабатывания ограничителей</span><strong id="clipped">—</strong><small>с начала расчёта</small></div>
       <div class="metric" title="Самый сильный дождь у земли сейчас: поток ρ·q_r·V_t"><span>Интенсивность дождя</span><strong id="rain">—</strong><small>мм/ч</small></div>
       <div class="metric" title="Наибольшая сумма дождя на земле с начала расчёта"><span>Сумма осадков, макс.</span><strong id="rainTotal">—</strong><small>мм</small></div>
+      <div class="timeline" title="Ход грозы по модельному времени (вся область, точка каждые 30 с): самый сильный восходящий поток, вращение потока и дождь у земли. Перезапуск начинает графики заново"><h3>Ход грозы</h3><canvas id="timeline"></canvas></div>
       <div class="note"><b>Логика</b><p id="logicText">Частица ещё не достигла уровня свободной конвекции.</p></div>
     </aside>
   </main>`
@@ -402,11 +404,12 @@ function drawHodograph(){
   text('shear', `${shear.toFixed(0)} м/с`)
   text('shearHint', shear < 10 ? 'слабый: одиночные ячейки' : shear < 20 ? 'умеренный: мультиячейки' : 'сильный: возможны суперячейки')
 }
+const timeline = new Timeline()
 function frame(now:number){
   const elapsed=Math.min(.2,(now-last)/1000);last=now;if(running)sim.advance(elapsed);sim.render();const d=sim.diagnostics()
   text('cape',d.cape.toFixed(0));text('mlcape',d.indices.ml.cape.toFixed(0));text('mlcin',d.indices.ml.cin.toFixed(0));text('mucape',d.indices.mu.cape.toFixed(0));text('dcape',d.indices.dcape.toFixed(0));text('srh01',d.storm.srh01.toFixed(0));text('srh03',d.storm.srh03.toFixed(0));text('scp',d.storm.scp.toFixed(1));text('stp',d.storm.stp.toFixed(1));text('cin',d.cin.toFixed(0));text('updraft',d.updraft.toFixed(1));text('downdraft',d.downdraft.toFixed(1));text('uh',d.updraftHelicity.toFixed(0));text('uhLow',`${d.uh01.toFixed(0)} / ${d.uh03.toFixed(0)}`);text('cloudTop',d.cloudTop.toFixed(1));text('thermalTop',d.thermalTop.toFixed(1));text('cloudWater',d.cloudWater.toFixed(2));text('coldPool',d.coldPool.toFixed(1));text('gust',d.gust.toFixed(1));text('hail',d.hail>=1?(d.hail/10).toFixed(1):'нет');text('hailSwath',d.hailSwath>=1?`крупнейшие, см; за прогон до ${(d.hailSwath/10).toFixed(1)}`:'крупнейшие градины, см');text('clipped',String(d.clipped));text('rain',d.rain.toFixed(1));text('rainTotal',d.rainTotal.toFixed(1));text('lcl',d.lcl===null?'—':`${d.lcl.toFixed(1)} км`);text('lfc',d.lfc===null?'—':`${d.lfc.toFixed(1)} км`);text('el',d.el===null?'—':`${d.el.toFixed(1)} км`);text('cellType',d.cellType);text('cellReason',d.cellReason);text('logicText',d.logic);text('sun',`${d.insolation.toFixed(0)} Вт/м²`);text('sunElevation',d.sunElevation>0?`${d.sunElevation.toFixed(0)}° над горизонтом`:'ночь')
   text('surfaceReadout',({grass:'ТРАВА',dry:'СУХАЯ ПОЧВА',water:'ВОДА',urban:'ГОРОД'} as const)[config.surfaceType])
-  const sec=Math.floor(sim.time);text('time',`${String(Math.floor(sec/60)).padStart(2,'0')}:${String(sec%60).padStart(2,'0')}`);text('threads',String(sim.threads));text('freezing',d.freezing===null?'—':`${d.freezing.toFixed(1)} км`);if(frameCount++%20===0){drawSounding();drawHodograph()}updateCells();radar.refresh();requestAnimationFrame(frame)
+  const sec=Math.floor(sim.time);text('time',`${String(Math.floor(sec/60)).padStart(2,'0')}:${String(sec%60).padStart(2,'0')}`);text('threads',String(sim.threads));text('freezing',d.freezing===null?'—':`${d.freezing.toFixed(1)} км`);const sampled=timeline.record({t:sim.time,updraft:d.updraft,uh:d.updraftHelicity,rain:d.rain,rainTotal:d.rainTotal,rotationHeld:sim.model.rotation.persisted});if(frameCount++%20===0){drawSounding();drawHodograph()}if(sampled||frameCount%20===1){const{ctx,w,h}=prepareCanvas('timeline');timeline.draw(ctx,w,h)}updateCells();radar.refresh();requestAnimationFrame(frame)
 }
 showDomain()
 requestAnimationFrame(frame)
