@@ -247,6 +247,8 @@ export function weno(a: number, b: number, c: number, d: number, e: number) {
   const s0 = a - 2 * b + c, t0 = a - 4 * b + 3 * c, s1 = b - 2 * c + d, t1 = b - d, s2 = c - 2 * d + e, t2 = 3 * c - 4 * d + e
   const eps = 2e-7 * (a * a + b * b + c * c + d * d + e * e) + 1e-40
   const b0 = eps + 13 / 12 * s0 * s0 + .25 * t0 * t0, b1 = eps + 13 / 12 * s1 * s1 + .25 * t1 * t1, b2 = eps + 13 / 12 * s2 * s2 + .25 * t2 * t2
-  const w0 = .1 / (b0 * b0), w1 = .6 / (b1 * b1), w2 = .3 / (b2 * b2)
+  // Weights .1/b0², .6/b1², .3/b2², both sums multiplied by (b0 b1 b2)²: one division instead of four (b >= 1e-40,
+  // so the products stay far from underflow).
+  const c0 = b0 * b0, c1 = b1 * b1, c2 = b2 * b2, w0 = .1 * c1 * c2, w1 = .6 * c0 * c2, w2 = .3 * c0 * c1
   return (w0 * p0 + w1 * p1 + w2 * p2) / (w0 + w1 + w2)
 }

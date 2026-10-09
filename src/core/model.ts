@@ -16,7 +16,7 @@ import { dragCoefficient, surfaceFluxes } from './surface'
 import { computeSounding, type Sounding } from './sounding'
 import { type Memory, type Phase, PRIVATE_MEMORY, type StepRunner, type TaskModel } from './threads'
 
-/** One field a step transports: WENO (monotone) or linear upwind, with the positivity fix or not, and a decay factor. */
+/** One field a step transports: WENO (monotone) or linear upwind, with the positivity fix or not, and a decay factor per second. */
 interface Carried { field: Float32Array; monotone: boolean; conserve: boolean; decay: number }
 /** At most this many fields are transported (rain, snow, graupel, hail, u, v, w, theta, vapour, cloud, ice, cold pool). */
 const MAX_CARRIED = 12
@@ -247,6 +247,16 @@ export class AtmosphereModel implements TaskModel {
    */
   private sediment(rain: Float32Array, vt: Float32Array, dt: number) {
     const { nz, layer } = this.grid, rho = this.env.rho, lw = this.levelWeight, dz = this.grid.dz
+    // The explicit upwind fall is stable while a node loses at most all of its water in one go: large hail (30-40 m/s)
+    // through the 100 m levels at the ground needs sub-steps at dt = 3 s (fall speeds kept from the start of the step).
+    let courant = 0
+    for (let z = 0; z < nz; z++) { const c = dt * rho[z] / (lw[z] * dz); for (let i = z * layer; i < (z + 1) * layer; i++) if (rain[i] > 0) courant = Math.max(courant, c * vt[i]) }
+    const parts = Math.max(1, Math.ceil(courant / .8))
+    for (let p = 0; p < parts; p++) this.sedimentPart(rain, vt, dt / parts)
+  }
+
+  private sedimentPart(rain: Float32Array, vt: Float32Array, dt: number) {
+    const { nz, layer } = this.grid, rho = this.env.rho, lw = this.levelWeight, dz = this.grid.dz
     for (let i = 0; i < layer; i++) this.deposit(i, rho[0] * rain[i] * vt[i] * dt)
     // Level weight lw = rho0 h / dz, so dq = dt (F_in - F_out) / (lw dz). Bottom-up, so each face uses pre-step values above.
     for (let z = 0; z < nz; z++) {
@@ -424,7 +434,7 @@ export class AtmosphereModel implements TaskModel {
       }
       this.computeBacktrace(dt)
       const carry = (a: Float32Array, decay: number, conserve = false) => { this.advectBacktrace(a); this.commit(a, decay, conserve) }
-      carry(this.u, 1); carry(this.v, 1); carry(this.w, 1); carry(this.theta, 1); carry(this.q, 1, true); carry(this.cloud, 1, true); if (withIce) carry(this.ice, 1, true); carry(this.cold, .9992)
+      carry(this.u, 1); carry(this.v, 1); carry(this.w, 1); carry(this.theta, 1); carry(this.q, 1, true); carry(this.cloud, 1, true); if (withIce) carry(this.ice, 1, true); carry(this.cold, .9992 ** dt)
     }
     // Microphysics, buoyancy, Coriolis, surface fluxes and the sponge: node by node, one task per level.
     this.runner.run('physics', nz, dt)
@@ -472,7 +482,7 @@ export class AtmosphereModel implements TaskModel {
       case 'finish': {
         const c = this.carried()[k], a = c.field
         this.taskNegative[k] = c.conserve ? this.fillNegative(a) : 0
-        if (c.decay !== 1) for (let i = 0; i < a.length; i++) a[i] *= c.decay
+        if (c.decay !== 1) { const keep = c.decay ** dt; for (let i = 0; i < a.length; i++) a[i] *= keep }
         break
       }
       case 'physics': this.physics(k, dt); break

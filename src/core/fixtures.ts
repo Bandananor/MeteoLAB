@@ -1,5 +1,6 @@
 // Shared configurations and helpers for the core tests.
 import type { SimConfig } from './config'
+import { DT } from './constants'
 import type { AtmosphereModel } from './model'
 
 export const SUMMER_DAY: SimConfig = {
@@ -25,7 +26,7 @@ export const QUIET: SimConfig = {
 }
 
 export function run(model: AtmosphereModel, seconds: number) {
-  for (let k = 0; k < seconds; k++) { model.step(1); model.time += 1 }
+  for (let k = 0; k < seconds; k += DT) { model.step(DT); model.time += DT }
 }
 
 /** Horizontal mean of a field at level z. */

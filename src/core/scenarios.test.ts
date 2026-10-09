@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { AtmosphereModel, createGrid, Environment, MESO_PERSISTENCE, parcelIndices, SCENARIOS, type SimConfig } from '.'
+import { AtmosphereModel, createGrid, DT, Environment, MESO_PERSISTENCE, parcelIndices, SCENARIOS, type SimConfig } from '.'
 import { SUMMER_DAY } from './fixtures'
 
 // STORMLAB_MICRO=warm runs the scenarios with Kessler warm rain; STORMLAB_SCENARIO=<index> runs only that scenario of
@@ -33,8 +33,8 @@ describe('scenarios: rotation only where a supercell is intended (calibration)',
     let longest = 0, maxW = 0, maxUH = 0, gust = 0
     // Strongest wind over the ground at the 100 m level (outflow, microburst gusts).
     const { layer, zs } = model.grid, near = zs.findIndex(z => z >= 100) * layer, [fu, fv] = model.frame
-    for (let t = 0; t < 40 * 60; t++) {
-      model.step(1); model.time += 1; longest = Math.max(longest, model.rotation.persisted); maxUH = Math.max(maxUH, model.rotation.uh)
+    for (let t = 0; t < 40 * 60; t += DT) {
+      model.step(DT); model.time += DT; longest = Math.max(longest, model.rotation.persisted); maxUH = Math.max(maxUH, model.rotation.uh)
       if (t % 60 === 0) maxW = Math.max(maxW, model.diagnostics().updraft)
       if (t % 30 === 0) for (let c = 0; c < layer; c++) gust = Math.max(gust, Math.hypot(model.u[near + c] + fu, model.v[near + c] + fv))
     }
