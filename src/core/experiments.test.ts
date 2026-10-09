@@ -45,7 +45,7 @@ describe('experiments', () => {
     const [th0, q0] = surfaceAir()
     const gust = () => { let g = 0; const [fu, fv] = model.frame; for (let c = 0; c < layer; c++) g = Math.max(g, Math.hypot(model.u[c + level * layer] + fu, model.v[c + level * layer] + fv)); return g }
     const held = ZETAS.map(() => 0), heldMax = ZETAS.map(() => 0)
-    for (let t = 1; t <= Number(env.STORMLAB_MINUTES ?? 40) * 60; t += DT) {
+    for (let t = DT; t <= Number(env.STORMLAB_MINUTES ?? 40) * 60; t += DT) {
       model.step(DT); model.time += DT; longest = Math.max(longest, model.rotation.persisted); peakUH = Math.max(peakUH, model.rotation.uh)
       // How long the updraught-core vorticity stays above each candidate threshold (a mesocyclone criterion to calibrate).
       // Strongest wind over the ground at 100 m (outflow and microburst gusts), every 30 s.
