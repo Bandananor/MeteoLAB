@@ -18,7 +18,8 @@ export interface ParcelOptions {
   /** Mix the parcel with the environment at PARCEL_ENTRAINMENT. */ entrain?: boolean
 }
 
-interface Ascent { profile: ParcelPoint[]; cape: number; cin: number; lcl: number | null; lfc: number | null; el: number | null }
+/** A lifted parcel: its path (heights in km, temperatures in °C) and indices. */
+export interface Ascent { profile: ParcelPoint[]; cape: number; cin: number; lcl: number | null; lfc: number | null; el: number | null }
 
 // Lifts a parcel from height z0 (m) with temperature temp (°C) and mixing ratio q through the environment, 25 m steps.
 // `mix` is the fraction replaced by environmental air per step; below `countFrom` buoyancy is not integrated (the
@@ -59,7 +60,7 @@ function ascend(env: Environment, height: number, z0: number, temp: number, q: n
 }
 
 /** One pseudo-adiabatic step of a saturated parcel from pressure p0 to p1 (either direction), midpoint rule. */
-function moistStep(env: Environment, temp: number, p0: number, p1: number) {
+export function moistStep(env: Environment, temp: number, p0: number, p1: number) {
   const dTdp = (t: number, p: number) => { const tk = t + 273.15, rs = env.qsatP(t, p); return (RD * tk + LV * rs) / (CP + LV * LV * rs * EPS / (RD * tk * tk)) / p }
   const mid = temp + dTdp(temp, p0) * (p1 - p0) / 2
   return temp + dTdp(mid, (p0 + p1) / 2) * (p1 - p0)
@@ -90,7 +91,7 @@ export interface ParcelIndices {
 }
 
 /** Height (m) where the environment's pressure falls to p, 10 m resolution. */
-function heightOf(env: Environment, p: number, top: number) { let z = 0; while (z < top && env.pressureAt(z) > p) z += 10; return z }
+export function heightOf(env: Environment, p: number, top: number) { let z = 0; while (z < top && env.pressureAt(z) > p) z += 10; return z }
 
 /** Equivalent potential temperature (Bolton 1980), K; t in °C, q mixing ratio, p in Pa. */
 export function thetaE(t: number, q: number, p: number) {
@@ -106,21 +107,37 @@ function wetBulb(env: Environment, t: number, q: number, p: number) {
   return (lo + hi) / 2
 }
 
+/** The standard parcels: surface-based, mixed-layer (lowest 100 hPa), most unstable (lowest 300 hPa). */
+export type ParcelKind = 'sb' | 'ml' | 'mu'
+
+/**
+ * Lifts a standard parcel (no temperature excess, no entrainment) through the environment, as MetPy / SHARPpy do; `start`
+ * is the height it starts from, km (the most-unstable parcel may start above the ground).
+ */
+export function liftParcel(env: Environment, height: number, kind: ParcelKind): Ascent & { start: number } {
+  const p0 = env.pressureAt(0)
+  if (kind === 'ml') {
+    // Mixed layer: pressure-weighted means of theta and q over the lowest 100 hPa.
+    const mlTop = heightOf(env, p0 - 10000, height)
+    let thetaSum = 0, qSum = 0, weight = 0
+    for (let z = 0; z < mlTop; z += 10) { const dp = env.pressureAt(z) - env.pressureAt(z + 10); thetaSum += env.thetaEnv(z + 5) * dp; qSum += env.qEnv(z + 5) * dp; weight += dp }
+    return { ...ascend(env, height, 0, thetaSum / weight * (p0 / 100000) ** KAPPA - 273.15, qSum / weight, 0, mlTop), start: 0 }
+  }
+  let z0 = 0
+  if (kind === 'mu') {
+    // Most unstable: the highest theta-e in the lowest 300 hPa.
+    const muTop = heightOf(env, p0 - 30000, height)
+    let best = -Infinity
+    for (let z = 0; z <= muTop; z += 25) { const te = thetaE(env.temperatureEnv(z), env.qEnv(z), env.pressureAt(z)); if (te > best) { best = te; z0 = z } }
+  }
+  return { ...ascend(env, height, z0, env.temperatureEnv(z0), env.qEnv(z0), 0), start: z0 / 1000 }
+}
+
 /** Standard parcel indices (no temperature excess, no entrainment), comparable with MetPy / SHARPpy. */
 export function parcelIndices(env: Environment, height: number): ParcelIndices {
   const strip = ({ cape, cin, lcl, lfc, el }: Ascent): ParcelIndex => ({ cape, cin, lcl, lfc, el })
-  const p0 = env.pressureAt(0)
-  const sb = strip(ascend(env, height, 0, env.temperatureEnv(0), env.qEnv(0), 0))
-  // Mixed layer: pressure-weighted means of theta and q over the lowest 100 hPa.
-  const mlTop = heightOf(env, p0 - 10000, height)
-  let thetaSum = 0, qSum = 0, weight = 0
-  for (let z = 0; z < mlTop; z += 10) { const dp = env.pressureAt(z) - env.pressureAt(z + 10); thetaSum += env.thetaEnv(z + 5) * dp; qSum += env.qEnv(z + 5) * dp; weight += dp }
-  const ml = strip(ascend(env, height, 0, thetaSum / weight * (p0 / 100000) ** KAPPA - 273.15, qSum / weight, 0, mlTop))
-  // Most unstable: the highest theta-e in the lowest 300 hPa.
-  const muTop = heightOf(env, p0 - 30000, height)
-  let muZ = 0, best = -Infinity
-  for (let z = 0; z <= muTop; z += 25) { const te = thetaE(env.temperatureEnv(z), env.qEnv(z), env.pressureAt(z)); if (te > best) { best = te; muZ = z } }
-  const mu = { ...strip(ascend(env, height, muZ, env.temperatureEnv(muZ), env.qEnv(muZ), 0)), start: muZ / 1000 }
+  const sb = strip(liftParcel(env, height, 'sb')), ml = strip(liftParcel(env, height, 'ml'))
+  const lifted = liftParcel(env, height, 'mu'), mu = { ...strip(lifted), start: lifted.start }
   // Downdraft: the lowest theta-e between 700 and 500 hPa, lowered to the ground along the pseudo-adiabat.
   let start = heightOf(env, 70000, height), worst = Infinity
   for (let z = start, top = heightOf(env, 50000, height); z <= top; z += 25) { const te = thetaE(env.temperatureEnv(z), env.qEnv(z), env.pressureAt(z)); if (te < worst) { worst = te; start = z } }

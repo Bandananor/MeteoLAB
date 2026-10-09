@@ -47,3 +47,4 @@ main{display:grid;grid-template-columns:310px minmax(650px,1fr) 270px;flex:1;min
 .radar-hook{color:#ffffff;letter-spacing:.6px}
 .controls label.check{display:flex;gap:7px;align-items:center;cursor:pointer}
 .timeline{margin-top:12px;border:1px solid #c8d2d6;background:#e7ecee}.timeline h3{padding:6px 7px 0;font-size:9px;font-weight:600;color:#526771}.timeline canvas{width:100%;height:210px;display:block}
+.skewt-screen{cursor:crosshair}.skewt-probe{margin-top:6px;font-size:9.5px;color:#9fb6bd}
