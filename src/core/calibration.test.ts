@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { AtmosphereModel, createGrid, levelAt, weismanKlemp } from '.'
+import { AtmosphereModel, createGrid, LARGE_GRID, levelAt, weismanKlemp } from '.'
 import { run, SUMMER_DAY } from './fixtures'
 
 /** Local maxima of w at a level (w above `minW`, strongest within ±2 nodes), strongest first. */
@@ -15,7 +15,7 @@ function updraftCores(model: AtmosphereModel, height: number, minW: number) {
   return cores.sort((a, b) => b.w - a.w)
 }
 
-// Slow (~7 min with WENO transport): run with `npm run test:slow` (vitest --mode slow); skipped by `npm test`.
+// Slow (~15 min on the large domain at the 3 s step): run with `npm run test:slow` (vitest --mode slow); skipped by `npm test`.
 const slow = (import.meta as { env?: { MODE?: string } }).env?.MODE === 'slow'
 
 describe('Weisman-Klemp supercell (calibration)', () => {
@@ -27,7 +27,10 @@ describe('Weisman-Klemp supercell (calibration)', () => {
   it.runIf(slow)('splits into a dominant cyclonic right mover and an anticyclonic left mover (WENO transport)', () => {
     // With ice (the default since 2026-10-03; was warm rain): in a fixed domain the right mover crossed the periodic east
     // edge at ~52 min into its own cold pool and dropped to 13 m/s by 60 min. The domain now follows the right mover.
-    const model = new AtmosphereModel({ ...SUMMER_DAY, solarMax: 0, bubble: 0 }, createGrid(), weismanKlemp({ qvMax: .016 }))
+    // The 96 x 72 km domain since 2026-10-09: on 48 x 36 km the cold pool (theta' ~ -9.5 K at the ground) covered 91 % of
+    // the periodic domain by 60 min and the cell, breathing its own outflow, fell to 13 m/s (16 with the old turbulence
+    // width); on the large domain it covers 22 % and the cell is still at ~41 m/s.
+    const model = new AtmosphereModel({ ...SUMMER_DAY, solarMax: 0, bubble: 0 }, createGrid(LARGE_GRID), weismanKlemp({ qvMax: .016 }))
     model.transport = 'weno'
     // STORMLAB_TURBULENCE=cube: the old cube-root filter width for the horizontal mixing (anisotropic is the default).
     if ((globalThis as { process?: { env: Record<string, string | undefined> } }).process?.env.STORMLAB_TURBULENCE === 'cube') model.turbulenceWidth = 'cube'
@@ -43,5 +46,5 @@ describe('Weisman-Klemp supercell (calibration)', () => {
     // The right mover is long-lived.
     run(model, 25 * 60)
     expect(updraftCores(model, 4500, 15).length).toBeGreaterThanOrEqual(1)
-  }, 1_200_000)
+  }, 3_000_000)
 })

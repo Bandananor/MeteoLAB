@@ -1,5 +1,5 @@
 import { describe, it } from 'vitest'
-import { AtmosphereModel, createGrid, DEFAULT_GRID, DT, SCENARIOS, type SimConfig } from '.'
+import { AtmosphereModel, createGrid, DEFAULT_GRID, DT, LARGE_GRID, SCENARIOS, type SimConfig } from '.'
 import { SUMMER_DAY } from './fixtures'
 
 /**
@@ -9,7 +9,8 @@ import { SUMMER_DAY } from './fixtures'
  * Variants undo what changed after the realistic scenarios were calibrated on 2026-09-29 (updraughts then ~45-54 m/s):
  * `uniform` — the old 30 uniform 652 m levels instead of 50 stretched (2026-10-01); `warm` — Kessler warm rain instead
  * of ice (2026-10-03); `fixed` — no storm-following domain (2026-10-03); `old` — all three, the 2026-09-29 setup; `base`.
- * `cube` — horizontal mixing with the old cube-root filter width (anisotropic is the default since 2026-10-09); wind controls: `calm` (no wind),
+ * `cube` — horizontal mixing with the old cube-root filter width (anisotropic is the default since 2026-10-09); `large`
+ * — the 96 x 72 km domain; `edges` — relaxed side boundaries (SimConfig.edges); wind controls: `calm` (no wind),
  * `calm-eq` (no wind, no Coriolis), `half` and `double` (the wind profile x0.5, x2); `narrow` (2.5 km thermal), `nosun`
  * (no solar heating), `narrow-nosun`. STORMLAB_MINUTES sets the
  * model time (default 40).
@@ -32,7 +33,8 @@ describe('experiments', () => {
     if (variant === 'nosun' || variant === 'narrow-nosun') config.solarMax = 0
     if (variant === 'warm' || old) config.microphysics = 'warm'
     if (variant === 'fixed' || old) config.followStorm = false
-    const model = new AtmosphereModel(config, createGrid(variant === 'uniform' || old ? UNIFORM : DEFAULT_GRID))
+    if (variant === 'edges') config.edges = 'relaxed'
+    const model = new AtmosphereModel(config, createGrid(variant === 'uniform' || old ? UNIFORM : variant === 'large' ? LARGE_GRID : DEFAULT_GRID))
     if (variant === 'cube') model.turbulenceWidth = 'cube'
     const { layer, zs } = model.grid, rows: string[] = []
     let longest = 0, peakW = 0, peakUH = 0, peakGust = 0
@@ -62,8 +64,12 @@ describe('experiments', () => {
         const zeta = model.zeta(x, y, z); zMax = Math.max(zMax, zeta); zMin = Math.min(zMin, zeta)
       }
       const d = model.diagnostics(), r = model.rotation, g = gust()
+      // The real cold pool at the ground node: coldest theta' (the `cold` indicator is capped at 15 K) and the share of
+      // the domain at least 1 K colder than the environment (does the outflow fill the periodic domain?).
+      let thMin = 0, pooled = 0
+      for (let c = 0; c < layer; c++) { const dth = model.theta[c] - model.env.thetaEnv(zs[0]); thMin = Math.min(thMin, dth); if (dth <= -1) pooled++ }
       rows.push(`${String(t / 60).padStart(2)} min  w ${w.toFixed(1).padStart(5)} at ${(zs[at] / 1000).toFixed(1)} km  UH ${r.uh.toFixed(0).padStart(4)} anti ${r.anticyclonic.toFixed(0).padStart(4)}` +
-        ` gust ${g.toFixed(1)}  zeta ${(zMax * 1000).toFixed(1)}/${(zMin * 1000).toFixed(1)}e-3  held ${String(r.persisted).padStart(4)} s  coreZ ${(r.coreZeta * 1000).toFixed(1).padStart(4)}e-3 coreUH ${r.coreUH.toFixed(0).padStart(4)}  UH03 ${r.uh03.toFixed(0).padStart(4)}  down ${d.downdraft.toFixed(1)}  cold ${d.coldMax.toFixed(1)} K  cores ${d.cores}  top ${d.cloudTop.toFixed(1)} km  rain ${d.rainTotal.toFixed(1)} mm  at x${r.x} y${r.y}`)
+        ` gust ${g.toFixed(1)}  zeta ${(zMax * 1000).toFixed(1)}/${(zMin * 1000).toFixed(1)}e-3  held ${String(r.persisted).padStart(4)} s  coreZ ${(r.coreZeta * 1000).toFixed(1).padStart(4)}e-3 coreUH ${r.coreUH.toFixed(0).padStart(4)}  UH03 ${r.uh03.toFixed(0).padStart(4)}  down ${d.downdraft.toFixed(1)}  cold ${d.coldMax.toFixed(1)} K  th' ${thMin.toFixed(1)} K pool ${(100 * pooled / layer).toFixed(0)} %  cores ${d.cores}  top ${d.cloudTop.toFixed(1)} km  rain ${d.rainTotal.toFixed(1)} mm  at x${r.x} y${r.y}`)
     }
     const [th1, q1] = surfaceAir()
     const lines = [`EXPERIMENT ${s.name} / ${variant}: max w ${peakW.toFixed(1)} m/s, max UH ${peakUH.toFixed(0)}, mesocyclone ${longest} s, wind at 100 m ${peakGust.toFixed(1)} m/s, clipped ${model.clipped}`,
