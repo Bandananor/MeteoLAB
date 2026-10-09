@@ -38,6 +38,10 @@ export interface ModelOptions {
 // MESO_CORE_ZETA (UH also counts vortex pairs of both signs: up to ~400-600 in weak shear; supercells 700-1900; 3-km NWP
 // uses ~75).
 export const UH_ROTATING = 200, UH_MESOCYCLONE = 400, MESO_PERSISTENCE = 600
+/** Width of the relaxed side-boundary zone (m) and the relaxation time at the domain edge (s); see SimConfig.edges. */
+export const EDGE_ZONE = 12_000, EDGE_TIME = 300
+/** The maintained front (SimConfig.front): depth (m), half-width of the transitions (m), relaxation time on the cold side (s), eastern end (share of the width). */
+export const FRONT_DEPTH = 1500, FRONT_WIDTH = 1500, FRONT_TIME = 1800, FRONT_END = .6
 /** Condensate below this mixing ratio (kg/kg, 1e-7 g/kg) is set to zero by the WENO positivity fix, conservatively. */
 const TINY_WATER = 1e-10
 /** Safety limits of the horizontal and vertical velocity, m/s (see AtmosphereModel.clipped). */
@@ -186,7 +190,11 @@ export class AtmosphereModel implements TaskModel {
       this.cloud[i] = this.rain[i] = this.cold[i] = this.ice[i] = this.snow[i] = this.graupel[i] = this.hail[i] = 0
     }
     // The Weisman-Klemp case starts from a single thermal, as in the calibration test.
-    if (this.config.profile === 'weisman-klemp') this.injectBubble(W * .3, D * .5, this.config.bubble)
+    if (this.config.front) {
+      for (let z = 0, i = 0; z < nz; z++) for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++, i++) this.theta[i] -= this.frontDeficit(x, y, zs[z])
+      // Weak thermals on the warm side, 3 km from the front, between the western zone and the front's end.
+      for (let k = 0; k < 5; k++) this.injectBubble(W * (.18 + .09 * k), D / 2 - 3000, this.config.bubble)
+    } else if (this.config.profile === 'weisman-klemp') this.injectBubble(W * .3, D * .5, this.config.bubble)
     else { this.injectBubble(W * .38, D * .45, this.config.bubble); this.injectBubble(W * .61, D * .57, .72 * this.config.bubble) }
   }
 
@@ -204,6 +212,14 @@ export class AtmosphereModel implements TaskModel {
       const d2 = (ddx / radius) ** 2 + (ddy / radius) ** 2 + (zs[z] / 1800) ** 2, a = Math.exp(-d2) * strength, i = x + nx * (y + ny * z)
       this.theta[i] += 3.2 * a; this.w[i] += 1.1 * a
     }
+  }
+
+  /** How much colder the maintained front (SimConfig.front) keeps the air at node column (x, y) and height alt, K. */
+  frontDeficit(x: number, y: number, alt: number) {
+    const front = this.config.front ?? 0
+    if (!front || alt >= FRONT_DEPTH) return 0
+    const { dx, dy, width, depth } = this.grid
+    return front * (1 - alt / FRONT_DEPTH) * .25 * (1 + Math.tanh((y * dy - depth / 2) / FRONT_WIDTH)) * (1 - Math.tanh((x * dx - FRONT_END * width) / FRONT_WIDTH))
   }
 
   /** Trilinear sample at fractional grid coordinates (periodic in x, y; clamped in z). */
@@ -382,6 +398,7 @@ export class AtmosphereModel implements TaskModel {
   private readonly memory: Memory
   /** Mass the positivity fix moved in each transport task of this step (summed in task order into negativeFilled). */
   private readonly taskNegative: Float64Array
+  private edgeX?: Float64Array; private edgeY?: Float64Array
   /** Per transported field: its value at the start of the step and the tendency of the current Runge-Kutta stage. */
   private readonly stageStart: Float32Array[]; private readonly stageTend: Float64Array[]
   /** Cloud water plus ice (the saturated stability of the eddy viscosity), filled by the physics. */
@@ -537,6 +554,10 @@ export class AtmosphereModel implements TaskModel {
     const ice = this.ice, snow = this.snow, graupel = this.graupel, hail = this.hail, rhoGround = e.rho[0]
     const flux = surfaceFluxes(cfg, this.time), f = 2 * OMEGA * Math.sin(cfg.latitude * Math.PI / 180)
     const spongeStart = Math.max(cfg.tropopause * 1000 + 2500, 14_000), keep = Math.exp(-this.windRelaxation * dt)
+    // Distance of each column from the nearest domain edge (the seam between the last and the first node), m.
+    const relaxed = cfg.edges === 'relaxed', front = cfg.front ?? 0, { dx, dy } = this.grid
+    const edgeX = this.edgeX ??= Float64Array.from({ length: nx }, (_, x) => Math.min(x + .5, nx - .5 - x) * dx)
+    const edgeY = this.edgeY ??= Float64Array.from({ length: ny }, (_, y) => Math.min(y + .5, ny - .5 - y) * dy)
     {
       let i = z * layer
       const alt = zs[z], p = e.p[z], rhoZ = e.rho[z], exner = e.exner[z], thEnv = e.theta[z], qEnv = e.q[z], thvEnv = thEnv * (1 + .61 * qEnv), ue = this.uEnv[z], ve = this.vEnv[z]
@@ -570,6 +591,17 @@ export class AtmosphereModel implements TaskModel {
           // Below 0.001 K the indicator is noise from the transport tails: zero, so the transport can skip it.
           cold[i] = cold[i] < 1e-3 ? 0 : Math.min(cold[i], 15)
           if (alt > spongeStart) { const s = clamp((alt - spongeStart) / (H - spongeStart)) * .06 * dt; w[i] *= 1 - s; u[i] = lerp(u[i], ue, s); v[i] = lerp(v[i], ve, s); theta[i] = lerp(theta[i], thEnv, s) }
+          // The maintained front: the cold side is pulled to its colder profile (the warm side is left alone).
+          if (front && alt < FRONT_DEPTH) { const d = this.frontDeficit(x, y, alt), s = 1 - Math.exp(-dt / FRONT_TIME * d / front / (1 - alt / FRONT_DEPTH)); theta[i] = lerp(theta[i], thEnv - d, s) }
+          // Relaxed side boundaries: the pull grows as (1 - d / zone)^2 from the inner edge of the zone to the domain edge.
+          if (relaxed) {
+            const d = Math.min(edgeX[x], edgeY[y])
+            if (d < EDGE_ZONE) {
+              const s = 1 - Math.exp(-dt / EDGE_TIME * (1 - d / EDGE_ZONE) ** 2), k = 1 - s
+              u[i] = lerp(u[i], ue, s); v[i] = lerp(v[i], ve, s); w[i] *= k; theta[i] = lerp(theta[i], thEnv - this.frontDeficit(x, y, alt), s); q[i] = lerp(q[i], qEnv, s)
+              cloud[i] *= k; rain[i] *= k; ice[i] *= k; snow[i] *= k; graupel[i] *= k; hail[i] *= k; cold[i] *= k
+            }
+          }
         }
       }
     }

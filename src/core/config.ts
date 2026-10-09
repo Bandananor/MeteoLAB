@@ -31,6 +31,21 @@ export interface SimConfig {
   speed: number; seed: number; bubble: number
   /** Horizontal e-folding radius of the starting thermals, km (absent = 4.2: a broad thermal, ~8 km across). */
   bubbleRadius?: number
+  /**
+   * A maintained stationary front (K; 0 or absent = none): north of the domain's middle line, from the western edge to
+   * 60 % of the width (it ends there over ~3 km), the air near the ground is kept this much colder (fading out by 1.5 km, a 3 km transition), by relaxation with a 30 min time scale on the cold
+   * side only — large-scale forcing standing in for the synoptic flow that holds a real front in place. The storm's own
+   * outflow still spreads freely. The front ends inside the domain so the cells that train along it leave its end and
+   * decay there, not in the side zone (with a front through the whole domain the rain piled up at the eastern zone). Replaces the starting thermals by a row of weak ones on the warm side of the front.
+   */
+  front?: number
+  /**
+   * Side boundaries (absent = 'periodic'): what leaves on one side comes back on the other; or 'relaxed': in a 12 km
+   * zone along the domain's edges the air is pulled back to the environment (theta — with the front, if any —, vapour and wind to the profile,
+   * w, cloud and precipitation to zero), so the storm takes in fresh environmental air instead of its own outflow and
+   * anvil coming round — for long runs of large systems (the quasi-stationary MCS).
+   */
+  edges?: 'periodic' | 'relaxed'
 }
 
 /**
