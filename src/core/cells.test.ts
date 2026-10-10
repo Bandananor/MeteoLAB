@@ -4,13 +4,13 @@ import { QUIET } from './fixtures'
 
 const small = () => new AtmosphereModel({ ...QUIET }, createGrid({ nx: 16, ny: 12, nz: 20, width: 19_200, depth: 13_500, height: 15_000, bottomSpacing: 100 }))
 
-/** Clears the fields, then puts cloudy updraught cores (w at 2-8 km) on the given columns. */
-function cores(m: AtmosphereModel, list: { x: number; y: number; w: number; r?: number; uh?: number; zeta?: number }[]) {
+/** Clears the fields, then puts cloudy updraught cores (w from 2 km up to `top`, default 8 km) on the given columns. */
+function cores(m: AtmosphereModel, list: { x: number; y: number; w: number; r?: number; uh?: number; zeta?: number; top?: number }[]) {
   const { nx, ny, nz, layer, zs } = m.grid
   m.w.fill(0); m.cloud.fill(0); m.uhColumn.fill(0); m.coreW.fill(0); m.coreWZ.fill(0)
   for (const c of list) for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++) {
     if (Math.hypot(x - c.x, y - c.y) > (c.r ?? 1.5)) continue
-    for (let z = 0; z < nz; z++) if (zs[z] > 2000 && zs[z] < 8000) { m.w[x + nx * y + z * layer] = c.w; m.cloud[x + nx * y + z * layer] = 1e-3 }
+    for (let z = 0; z < nz; z++) if (zs[z] > 2000 && zs[z] < (c.top ?? 8000)) { m.w[x + nx * y + z * layer] = c.w; m.cloud[x + nx * y + z * layer] = 1e-3 }
     m.uhColumn[x + nx * y] = c.uh ?? 0
     // The 2-5 km core sums of AtmosphereModel.updateRotation, as if the core rotated at zeta (s-1).
     m.coreW[x + nx * y] = c.w; m.coreWZ[x + nx * y] = c.w * (c.zeta ?? 0)
@@ -72,6 +72,16 @@ describe('cell tracking', () => {
       if (t.ended.length) { expect(t.ended).toEqual([{ id: 2, into: 1 }]); merged = true }
     }
     expect(merged).toBe(true); expect(t.cells.map(c => c.id)).toEqual([1])
+  })
+})
+
+describe('cell numbers: deep convection only', () => {
+  it('numbers a thunderstorm, not a long-lived cumulus or a weak core beside it', () => {
+    const m = small(), t = new CellTracker()
+    // A deep 20 m/s storm, a cumulus whose 8 m/s updraught tops out at 4 km, a deep but weak (7 m/s) core.
+    for (let s = 0; s <= 900; s += 12) { m.time = s; cores(m, [{ x: 3, y: 3, w: 20 }, { x: 12, y: 3, w: 8, top: 4000 }, { x: 8, y: 9, w: 7 }]); t.update(m) }
+    expect(t.cells.length).toBe(1); expect(t.cells[0].x).toBeLessThan(6000)
+    expect(t.unnumbered).toBe(2)
   })
 })
 

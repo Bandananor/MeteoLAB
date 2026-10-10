@@ -302,12 +302,12 @@ function updateCells() {
   }
   const cell = tracker.find(selectedCell)
   sim.setSelection(cell ? { x: cell.x, y: cell.y } : null)
-  const key = tracker.cells.map(c => `${c.id}:${c.stage}`).join() + `|${selectedCell}`
+  const cumulus = tracker.unnumbered, key = tracker.cells.map(c => `${c.id}:${c.stage}`).join() + `|${selectedCell}|${cumulus}`
   if (key !== cellListKey) {
     cellListKey = key
-    document.querySelector('#cellList')!.innerHTML = tracker.cells.length
+    document.querySelector('#cellList')!.innerHTML = (tracker.cells.length
       ? tracker.cells.map(c => `<button class="cell-chip${c.id === selectedCell ? ' active' : ''}${c.supercell || c.leftMover ? ' super' : ''}" data-cell="${c.id}" title="${CELL_STAGES[c.stage].hint}"><b>№${c.id}</b> ${CELL_STAGES[c.stage].name}</button>`).join('')
-      : '<small>ячеек пока нет</small>'
+      : '<small>ячеек пока нет</small>') + (cumulus ? `<small title="Восходящие ядра, ещё не ставшие грозой: номер получает ядро, чей поток поднялся выше 6 км и окреп до 10 м/с">+ ${cumulus} кучевых без номера</small>` : '')
     document.querySelector('#cellAll')!.classList.toggle('active', selectedCell === null)
   }
   // Labels over the cloud tops.

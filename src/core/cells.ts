@@ -19,6 +19,13 @@ export const OCCLUSION_COLD = 2
 export const STAGE_HOLD = 60
 /** A core gets a number once it has lasted this long, s: fragments that split off a storm and merge back within a minute or two do not. */
 export const CELL_CONFIRM = 120
+/**
+ * And only if it is deep convection, a thunderstorm rather than a cumulus (2026-10-10): its own updraught core (w >=
+ * CELL_W in cloud) has reached CELL_NUMBER_TOP (m) and its updraught CELL_NUMBER_W (m/s). Before, any core of 6 m/s that
+ * lasted 2 min got a number, and the cumulus that grow on the gust front of a decaying storm filled the list with dozens
+ * of numbers. Shallower cores are still followed, without a number (CellTracker.unnumbered).
+ */
+export const CELL_NUMBER_TOP = 6000, CELL_NUMBER_W = 10
 /** Motion is the displacement of the centre over this window, s. */
 const MOTION_WINDOW = 300
 
@@ -65,6 +72,7 @@ export interface Cell {
   stage: CellStage; /** Model time the stage began, s. */ since: number
   peakW: number; peakUH: number
   /** Time the cyclonic (anticyclonic) mesocyclone criterion has held without a break, s. */ meso: number; antiMeso: number
+  /** Highest level its own updraught core has reached, m (see CELL_NUMBER_TOP). */ peakTop: number
   /** Has been a supercell (the mesocyclone held MESO_PERSISTENCE), a left mover, has gone through an occlusion. */
   supercell: boolean; leftMover: boolean; occluded: boolean
   /** Grid columns of the updraught core. */ columns: Int32Array
@@ -88,7 +96,7 @@ export function cellStage(c: Pick<Cell, 'supercell' | 'leftMover' | 'occluded' |
   return s.rainRate >= MATURE_RAIN ? 'mature' : 'growing'
 }
 
-interface Region { cols: number[]; x: number; y: number; peak: number; uh: number }
+interface Region { cols: number[]; x: number; y: number; peak: number; uh: number; top: number }
 
 /**
  * Finds the convective cells (connected updraught cores) in every snapshot and follows them in time, so that a cell keeps
@@ -102,6 +110,8 @@ export class CellTracker {
   private tracks: Cell[] = []
   /** The confirmed cells: cores that have lasted CELL_CONFIRM, in the order of their numbers. */
   get cells() { return this.tracks.filter(c => c.id > 0) }
+  /** Cores followed without a number: young ones, and cumulus that are not (yet) deep convection. */
+  get unnumbered() { return this.tracks.filter(c => !c.id).length }
   /** Cells that ended at the last update: merged into another (`into`) or decayed (null). */
   ended: { id: number; into: number | null }[] = []
   time = NaN
@@ -123,7 +133,7 @@ export class CellTracker {
     const dt = Number.isNaN(this.time) || !(time > this.time) ? 0 : time - this.time
     this.time = time; this.ended = []
     // Per column: the updraught core, the strongest up/downdraught, cloud top, ground rain, cold pool and low-level UH.
-    const core = new Float32Array(layer), up = new Float32Array(layer), down = new Float32Array(layer), top = new Float32Array(layer)
+    const core = new Float32Array(layer), coreTop = new Float32Array(layer), up = new Float32Array(layer), down = new Float32Array(layer), top = new Float32Array(layer)
     const rain = new Float32Array(layer), cold = new Float32Array(layer), uh01 = new Float32Array(layer), uh03 = new Float32Array(layer)
     const rho0 = m.env.rho[0], top1 = zs.findLastIndex(z => z <= 1000), top3 = zs.findLastIndex(z => z <= 3000)
     for (let c = 0; c < layer; c++) {
@@ -138,6 +148,7 @@ export class CellTracker {
         if (-w > down[c]) down[c] = -w
         if (condensate > 7e-5) top[c] = alt / 1000
         if (inCore && condensate > 1e-5 && w > core[c]) core[c] = w
+        if (condensate > 1e-5 && w >= CELL_W) coreTop[c] = alt
         if (alt < 1500 && m.cold[i] > cold[c]) cold[c] = m.cold[i]
       }
     }
@@ -153,17 +164,17 @@ export class CellTracker {
       if (core[start] < CELL_W || label[start] >= 0) continue
       const id = regions.length, cols: number[] = [], stack = [start]
       label[start] = id; ux[start] = start % nx; uy[start] = Math.floor(start / nx)
-      let sw = 0, sx = 0, sy = 0, peak = 0, uh = 0
+      let sw = 0, sx = 0, sy = 0, peak = 0, uh = 0, regionTop = 0
       while (stack.length) {
         const a = stack.pop()!, x = a % nx, y = Math.floor(a / nx), wt = core[a] - CELL_W + .5
-        cols.push(a); sw += wt; sx += wt * ux[a]; sy += wt * uy[a]; peak = Math.max(peak, core[a]); uh = Math.max(uh, m.uhColumn[a])
+        cols.push(a); sw += wt; sx += wt * ux[a]; sy += wt * uy[a]; peak = Math.max(peak, core[a]); uh = Math.max(uh, m.uhColumn[a]); regionTop = Math.max(regionTop, coreTop[a])
         for (let oy = -1; oy <= 1; oy++) for (let ox = -1; ox <= 1; ox++) {
           const b = mod(x + ox, nx) + nx * mod(y + oy, ny)
           if (label[b] >= 0 || core[b] < CELL_W) continue
           label[b] = id; ux[b] = ux[a] + ox; uy[b] = uy[a] + oy; stack.push(b)
         }
       }
-      regions.push({ cols, x: mod(sx / sw, nx) * dx, y: mod(sy / sw, ny) * dy, peak, uh })
+      regions.push({ cols, x: mod(sx / sw, nx) * dx, y: mod(sy / sw, ny) * dy, peak, uh, top: regionTop })
     }
 
     // Each old cell, shifted by its motion, claims the new core it overlaps most (the most cyclonic one after a split).
@@ -192,7 +203,7 @@ export class CellTracker {
       // Merger: a confirmed cell, then the supercell, then the older cell keeps its number.
       const [winner, ...losers] = ks.sort((a, b) => Number(this.tracks[b].id > 0) - Number(this.tracks[a].id > 0) || Number(this.tracks[b].supercell) - Number(this.tracks[a].supercell) || this.tracks[a].born - this.tracks[b].born)
       const c = this.tracks[winner]
-      c.columns = Int32Array.from(regions[r].cols); this.move(c, m, regions[r], time, losers.some(k => this.tracks[k].id > 0))
+      c.columns = Int32Array.from(regions[r].cols); c.peakTop = Math.max(c.peakTop, regions[r].top); this.move(c, m, regions[r], time, losers.some(k => this.tracks[k].id > 0))
       next.push(c); taken.add(winner)
       for (const k of losers) { if (this.tracks[k].id) this.ended.push({ id: this.tracks[k].id, into: c.id }); taken.add(k) }
     }
@@ -209,7 +220,7 @@ export class CellTracker {
       const c: Cell = {
         id: 0, parent: p ? p.id || p.parent : null, origin: p ? 'split' : onGust ? 'gust-front' : 'thermal', born: time,
         x: r.x, y: r.y, u: p?.u ?? 0, v: p?.v ?? 0, stats: emptyStats(), stage: 'growing', since: time, pending: 'growing', pendingSince: time,
-        peakW: 0, peakUH: 0, meso: 0, antiMeso: 0, supercell: false, leftMover: false, occluded: false, columns: Int32Array.from(r.cols), trail: [{ t: time, x: r.x, y: r.y }],
+        peakW: 0, peakUH: 0, peakTop: r.top, meso: 0, antiMeso: 0, supercell: false, leftMover: false, occluded: false, columns: Int32Array.from(r.cols), trail: [{ t: time, x: r.x, y: r.y }],
       }
       next.push(c)
     })
@@ -241,7 +252,7 @@ export class CellTracker {
       for (const c of cell.columns) { sw += m.coreW[c]; swz += m.coreWZ[c] }
       s.coreZeta = sw > 0 ? swz / sw : 0
       this.advance(cell, s, time, dt)
-      if (!cell.id && time - cell.born >= CELL_CONFIRM && cell.peakW >= CELL_START_W) cell.id = this.nextId++
+      if (!cell.id && time - cell.born >= CELL_CONFIRM && cell.peakW >= CELL_NUMBER_W && cell.peakTop >= CELL_NUMBER_TOP) cell.id = this.nextId++
     })
   }
 
