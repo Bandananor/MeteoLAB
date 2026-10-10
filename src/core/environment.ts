@@ -7,6 +7,8 @@ import { qsatP } from './microphysics'
 const SURFACE_PRESSURE = 101325, PRESSURE_STEP = 10
 /** The inversion of the capping layer is CAP_DEPTH thick; above it the extra warmth fades out over CAP_FADE (an elevated mixed layer). */
 const CAP_DEPTH = 300, CAP_FADE = 2000
+/** The night (radiation) inversion is NIGHT_DEPTH m deep; above it the residual layer is RESIDUAL_COOLING of it colder (see nightDeficit). */
+export const NIGHT_DEPTH = 400, RESIDUAL_COOLING = .25
 
 /**
  * An analytic environment (for idealised test cases such as Weisman-Klemp) that replaces the slider profile:
@@ -70,8 +72,25 @@ export class Environment {
   /** Temperature at height z and pressure p, °C (the pressure matters only for a profile given in theta). */
   private temperatureAt(z: number, p: number) { return this.profile ? this.profile.theta(z) * (p / 100000) ** KAPPA - 273.15 : this.sliderTemperature(z) }
 
+  /** The day profile below minus the night inversion (if any). */
+  private sliderTemperature(z: number) { return this.dayTemperature(z) - this.nightDeficit(z) }
+
+  /**
+   * How much colder the night leaves the air at height z, K: nightInversion at the ground, falling linearly to
+   * RESIDUAL_COOLING of it at NIGHT_DEPTH; that cooling of the residual layer (yesterday's mixed layer) holds up to the
+   * lid (capHeight, 1.5 km without one) and fades out over the next NIGHT_DEPTH. Without it a parcel from the moist
+   * residual layer has no CIN at all and the noise alone grows cumulus at dawn, before the sun.
+   */
+  nightDeficit(z: number) {
+    const n = this.profile ? 0 : this.config.nightInversion ?? 0
+    if (!(n > 0)) return 0
+    const top = Math.max(NIGHT_DEPTH, (this.config.capHeight ?? 1.5) * 1000)
+    if (z < NIGHT_DEPTH) return n * (1 - (1 - RESIDUAL_COOLING) * z / NIGHT_DEPTH)
+    return n * RESIDUAL_COOLING * Math.max(0, Math.min(1, 1 - (z - top) / NIGHT_DEPTH))
+  }
+
   /** Lapse-rate profile plus the capping inversion (if any): the air warms by capStrength across CAP_DEPTH at capHeight. */
-  private sliderTemperature(z: number) {
+  private dayTemperature(z: number) {
     const c = this.config, strength = c.capStrength ?? 0
     if (!(strength > 0)) return this.lapseTemperature(z)
     const base = (c.capHeight ?? 1.5) * 1000, top = base + CAP_DEPTH
@@ -103,7 +122,14 @@ export class Environment {
     return c.rhUpper / 100 * .7
   }
 
-  qEnv(z: number) { return this.mixingRatio(z, this.temperatureEnv(z), this.pressureAt(z)) }
+  qEnv(z: number) {
+    const t = this.temperatureEnv(z), p = this.pressureAt(z), d = this.nightDeficit(z)
+    if (!d) return this.mixingRatio(z, t, p)
+    // The night's cooling of the whole residual layer keeps its relative humidity (otherwise the moist layer's top would
+    // saturate); the inversion's extra cooling near the ground keeps the vapour (bar what settles as dew), up to 97 %.
+    const residual = Math.min(d, (this.config.nightInversion ?? 0) * RESIDUAL_COOLING), day = t + d
+    return Math.min(this.mixingRatio(z, day, p) * this.qsatP(day - residual, p) / this.qsatP(day, p), .97 * this.qsatP(t, p))
+  }
 
   /** Vapour mixing ratio of air at height z with temperature t (°C) and pressure p: RH r_s, capped by the profile. */
   mixingRatio(z: number, t: number, p: number) {

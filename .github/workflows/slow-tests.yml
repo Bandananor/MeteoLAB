@@ -1,5 +1,5 @@
-# Fast tests, the Weisman-Klemp calibration and every scenario (9), each in its own job (in parallel): about 20 min
-# instead of ~2 h on one laptop core. Results: the run's summary page and one annotation per job.
+# Fast tests, the Weisman-Klemp calibration, the diurnal cycle and every scenario (9), each in its own job (in parallel):
+# about 20-30 min instead of ~3 h on one laptop core. Results: the run's summary page and one annotation per job.
 name: Tests
 
 on:
@@ -81,6 +81,29 @@ jobs:
           result=$(cat reference.txt 2>/dev/null | paste -sd ';' -)
           echo "### Reference: ${line:-no result} ${fail} ${result}" >> "$GITHUB_STEP_SUMMARY"
           echo "::notice title=Reference::${line:-no result} ${fail} ${result}"
+
+  diurnal:
+    name: Diurnal cycle (06:00 to the first storm)
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 24, cache: npm }
+      - run: npm ci
+      - name: npm run test:diurnal
+        run: |
+          set -o pipefail
+          npm run test:diurnal 2>&1 | tee test.log
+      - name: Report
+        if: always()
+        run: |
+          sed -i 's/\x1b\[[0-9;]*m//g' test.log
+          result=$(grep -E 'first thunderstorm' test.log | tail -1 | sed 's/^ *//')
+          line=$(grep -E '^\s+Tests ' test.log | tail -1 | sed 's/^ *//')
+          fail=$(grep -E 'AssertionError' test.log | head -1 | sed 's/^ *//')
+          echo "### ${result:-Diurnal cycle: no result} — ${line} ${fail}" >> "$GITHUB_STEP_SUMMARY"
+          echo "::notice title=Diurnal cycle::${result:-no result} | ${line} ${fail}"
 
   scenario:
     name: Scenario ${{ matrix.index }}

@@ -30,7 +30,7 @@ const slow = (import.meta as { env?: { MODE?: string } }).env?.MODE === 'slow'
 const MAX_ORDINARY_W = 55
 
 describe('scenarios: rotation only where a supercell is intended (calibration)', () => {
-  for (const s of selected) it.runIf(slow)(`${s.name}: ${s.mesocyclone === undefined ? 'no limiter hits' : s.mesocyclone ? 'a mesocyclone persists' : 'no mesocyclone'}`, () => {
+  for (const s of selected.filter(s => !s.values.nightInversion)) it.runIf(slow)(`${s.name}: ${s.mesocyclone === undefined ? 'no limiter hits' : s.mesocyclone ? 'a mesocyclone persists' : 'no mesocyclone'}`, () => {
     const model = new AtmosphereModel(config(s.values))
     let longest = 0, maxW = 0, maxUH = 0, gust = 0
     // Strongest wind over the ground at the 100 m level (outflow, microburst gusts).

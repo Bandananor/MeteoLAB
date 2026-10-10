@@ -60,4 +60,11 @@ export const SCENARIOS: Scenario[] = [
     values: { bubbleRadius: NARROW, bubble: 1.2, top: 22, surfaceTemp: 28, lapseLow: 6.3, lapseMid: 5.6, lapseUpper: 7.5, tropopause: 16, stratoWarming: 1.5,
       rhSurface: 80, rhLow: 80, rhMid: 75, rhUpper: 50, moistLayer: .5, capStrength: 0, surfaceType: 'water', latitude: 15,
       wind0: 4, windDir0: 90, wind3: 6, windDir3: 100, wind6: 7, windDir6: 110, wind10: 9, windDir10: 120 } },
+  { name: 'Суточный ход', mesocyclone: false,
+    hint: 'Старт на рассвете, в 06:00: у земли ночная инверсия (на 6 K холоднее, чем станет днём), термика нет. Сначала солнце съедает инверсию (до ~10 ч), потом перемешанный слой растёт до ~2 км, около полудня появляются кучевые, а через полчаса — первые грозы с ливнем и холодными оттоками. Ждать долго: поставьте скорость побольше',
+    // Calibration (2026-10-10): nothing until 10:00, first cumulus 11:57, first thunderstorm 12:31, ~8 mm by 13:30. No
+    // lid: under the 1 K one of «Летний день» the mixed layer stops at 1.6 km and no cloud forms all day. No moist layer:
+    // the vapour dropping off at its top makes that top unstable in virtual temperature, and the eddies it stirs up before
+    // sunrise lift wisps of cloud by 07:30.
+    values: { ...SUMMER_AIR, ...LIGHT_WIND, capStrength: 0, moistLayer: 0, bubble: 0, hour: 6, nightInversion: 6 } },
 ]

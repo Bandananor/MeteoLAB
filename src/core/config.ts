@@ -12,6 +12,12 @@ export interface SimConfig {
    * lapse rate of an elevated mixed layer.
    */
   capHeight?: number; capStrength?: number
+  /**
+   * Optional night inversion, K (0 or absent = none) for a run that starts at dawn: the ground air is this much colder
+   * than the day profile, the deficit falling linearly to 0 at 400 m (NIGHT_DEPTH); the vapour is the day profile's (up
+   * to 97 % humidity). Without a thermal the sun has to burn the inversion off before anything grows.
+   */
+  nightInversion?: number
   /** Optional depth of a well-mixed moist boundary layer, km: the surface mixing ratio holds up to it (0 or absent = off). */
   moistLayer?: number
   /** Microphysics; overrides AtmosphereModel.microphysics (default with ice) when set (the UI switch). */

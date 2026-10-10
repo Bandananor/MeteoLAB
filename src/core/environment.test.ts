@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createGrid, Environment } from '.'
+import { createGrid, Environment, NIGHT_DEPTH, parcelIndices, SCENARIOS } from '.'
 import { SUMMER_DAY } from './fixtures'
 
 describe('wind profile', () => {
@@ -26,5 +26,25 @@ describe('wind profile', () => {
   it('keeps profiles that do not cross north unchanged', () => {
     expect(at(160, 185).windDirection(1500)).toBe(172.5)
     expect(at(140, 200).windDirection(3000)).toBe(200)
+  })
+})
+
+describe('night inversion (the dawn sounding)', () => {
+  const grid = createGrid(), day = new Environment({ ...SUMMER_DAY, moistLayer: 1 }, grid), dawn = new Environment({ ...SUMMER_DAY, moistLayer: 1, nightInversion: 6 }, grid)
+
+  it('cools the ground air by nightInversion, the residual layer by a quarter of it, and nothing above the lid', () => {
+    expect(day.temperatureEnv(0) - dawn.temperatureEnv(0)).toBeCloseTo(6, 6)
+    expect(day.temperatureEnv(NIGHT_DEPTH) - dawn.temperatureEnv(NIGHT_DEPTH)).toBeCloseTo(1.5, 6)
+    expect(day.temperatureEnv(1200) - dawn.temperatureEnv(1200)).toBeCloseTo(1.5, 6)
+    expect(dawn.temperatureEnv(3000)).toBe(day.temperatureEnv(3000))
+  })
+
+  it('keeps the inversion moist but not saturated, and caps the surface parcel of «Суточный ход» until the sun', () => {
+    const values = { ...SUMMER_DAY, ...SCENARIOS.find(s => s.name === 'Суточный ход')!.values }, morning = new Environment(values, grid)
+    const t = morning.temperatureEnv(0), td = morning.dewpoint(morning.qEnv(0), 0)
+    expect(td).toBeLessThan(t)
+    expect(t - td).toBeLessThan(6)
+    expect(parcelIndices(morning, grid.height).sb.cin).toBeGreaterThan(100)
+    expect(parcelIndices(new Environment({ ...values, nightInversion: 0 }, grid), grid.height).sb.cin).toBeLessThan(10)
   })
 })
