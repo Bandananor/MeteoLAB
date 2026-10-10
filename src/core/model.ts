@@ -144,7 +144,7 @@ export class AtmosphereModel implements TaskModel {
     this.config = config; this.grid = grid; this.memory = options.memory ?? PRIVATE_MEMORY
     const shared = (name: string, length = grid.n) => this.memory.f32(name, length)
     this.env = new Environment(config, grid, profile ?? (config.profile === 'weisman-klemp' ? weismanKlemp({ qvMax: .016 }) : undefined))
-    this.frame = config.followStorm === false ? [0, 0] : domainMotion(this.env)
+    this.frame = config.followStorm === false ? [0, 0] : config.frameMotion ?? domainMotion(this.env)
     this.uEnv = this.env.u.map(u => u - this.frame[0]); this.vEnv = this.env.v.map(v => v - this.frame[1])
     this.patternNow = shared('patternNow', grid.layer); this.groundCell = new Int32Array(grid.layer * 4); this.groundWeight = new Float64Array(grid.layer * 4)
     const f = () => new Float32Array(grid.n)
@@ -190,7 +190,10 @@ export class AtmosphereModel implements TaskModel {
       this.cloud[i] = this.rain[i] = this.cold[i] = this.ice[i] = this.snow[i] = this.graupel[i] = this.hail[i] = 0
     }
     // The Weisman-Klemp case starts from a single thermal, as in the calibration test.
-    if (this.config.front) {
+    if (this.config.start === 'line') {
+      // Thermals every 6 km along y (periodic: the line has no ends), strength x (0.85-1.15).
+      for (let y = 3000; y < D; y += 6000) this.injectBubble(W * .5, y, this.config.bubble * (.85 + .3 * this.rng()))
+    } else if (this.config.front) {
       for (let z = 0, i = 0; z < nz; z++) for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++, i++) this.theta[i] -= this.frontDeficit(x, y, zs[z])
       // Weak thermals on the warm side, 3 km from the front, between the western zone and the front's end.
       for (let k = 0; k < 5; k++) this.injectBubble(W * (.18 + .09 * k), D / 2 - 3000, this.config.bubble)
@@ -559,7 +562,7 @@ export class AtmosphereModel implements TaskModel {
     const flux = surfaceFluxes(cfg, this.time), f = 2 * OMEGA * Math.sin(cfg.latitude * Math.PI / 180)
     const spongeStart = Math.max(cfg.tropopause * 1000 + 2500, 14_000), keep = Math.exp(-this.windRelaxation * dt)
     // Distance of each column from the nearest domain edge (the seam between the last and the first node), m.
-    const relaxed = cfg.edges === 'relaxed', front = cfg.front ?? 0, { dx, dy } = this.grid
+    const relaxed = cfg.edges === 'relaxed' || cfg.edges === 'relaxed-x', onlyX = cfg.edges === 'relaxed-x', front = cfg.front ?? 0, { dx, dy } = this.grid
     const edgeX = this.edgeX ??= Float64Array.from({ length: nx }, (_, x) => Math.min(x + .5, nx - .5 - x) * dx)
     const edgeY = this.edgeY ??= Float64Array.from({ length: ny }, (_, y) => Math.min(y + .5, ny - .5 - y) * dy)
     {
@@ -599,7 +602,7 @@ export class AtmosphereModel implements TaskModel {
           if (front && alt < FRONT_DEPTH) { const d = this.frontDeficit(x, y, alt), s = 1 - Math.exp(-dt / FRONT_TIME * d / front / (1 - alt / FRONT_DEPTH)); theta[i] = lerp(theta[i], thEnv - d, s) }
           // Relaxed side boundaries: the pull grows as (1 - d / zone)^2 from the inner edge of the zone to the domain edge.
           if (relaxed) {
-            const d = Math.min(edgeX[x], edgeY[y])
+            const d = onlyX ? edgeX[x] : Math.min(edgeX[x], edgeY[y])
             if (d < EDGE_ZONE) {
               const s = 1 - Math.exp(-dt / EDGE_TIME * (1 - d / EDGE_ZONE) ** 2), k = 1 - s
               u[i] = lerp(u[i], ue, s); v[i] = lerp(v[i], ve, s); w[i] *= k; theta[i] = lerp(theta[i], thEnv - this.frontDeficit(x, y, alt), s); q[i] = lerp(q[i], qEnv, s)
