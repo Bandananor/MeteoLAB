@@ -32,6 +32,12 @@ export interface SimConfig {
   frameMotion?: readonly [number, number]
   /** Domain size (absent = 'standard'): 48 x 36 km, or 96 x 72 km at the same resolution (about 4x slower). */
   domain?: 'standard' | 'large'
+  /**
+   * Height of the domain's top, km (absent = 18.9): the same 50 levels stretched from 100 m at the ground. The tropics
+   * need ~22 km, so the sponge (from 2.5 km above the tropopause, see AtmosphereModel.physics) still has room over a
+   * ~16 km tropopause.
+   */
+  top?: number
   latitude: number; turbulence: number; hour: number; solarMax: number; soilMoisture: number; surfaceType: SurfaceType
   speed: number; seed: number; bubble: number
   /** Horizontal e-folding radius of the starting thermals, km (absent = 4.2: a broad thermal, ~8 km across). */

@@ -26,7 +26,7 @@ function start(config: SimConfig, limit?: number) {
   pool?.stop(); pool = null
   const threads = threadCount(limit), id = ++generation
   if (threads === 1) { model = new AtmosphereModel(config); ready = true; send(); return }
-  const memory = new SharedMemory(), grid = domainGrid(config.domain), control = controlBuffer()
+  const memory = new SharedMemory(), grid = domainGrid(config.domain, config.top), control = controlBuffer()
   model = new AtmosphereModel(config, createGrid(grid), undefined, { memory })
   const runner = new ThreadRunner(model, control, threads - 1), started: Promise<unknown>[] = []
   for (let k = 0; k < threads - 1; k++) {

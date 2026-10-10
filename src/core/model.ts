@@ -140,7 +140,7 @@ export class AtmosphereModel implements TaskModel {
   private readonly patternNow: Float32Array; private readonly groundCell: Int32Array; private readonly groundWeight: Float64Array
 
   /** `profile` replaces the slider environment with an analytic one (idealised test cases). */
-  constructor(config: SimConfig, grid: Grid = createGrid(domainGrid(config.domain)), profile?: EnvironmentProfile, options: ModelOptions = {}) {
+  constructor(config: SimConfig, grid: Grid = createGrid(domainGrid(config.domain, config.top)), profile?: EnvironmentProfile, options: ModelOptions = {}) {
     this.config = config; this.grid = grid; this.memory = options.memory ?? PRIVATE_MEMORY
     const shared = (name: string, length = grid.n) => this.memory.f32(name, length)
     this.env = new Environment(config, grid, profile ?? (config.profile === 'weisman-klemp' ? weismanKlemp({ qvMax: .016 }) : undefined))

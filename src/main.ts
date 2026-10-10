@@ -40,7 +40,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
         ${slider('lapseLow','Градиент 0–3 км',3,11,.1,8.4,' K/км',1)}
         ${slider('lapseMid','Градиент 3–8 км',3,11,.1,7.2,' K/км',1)}
         ${slider('lapseUpper','Градиент 8 км–TP',3,11,.1,6.5,' K/км',1)}
-        ${slider('tropopause','Тропопауза',8,14,.5,11,' км',1)}
+        ${slider('tropopause','Тропопауза',8,17,.5,11,' км',1)}
         ${slider('stratoWarming','Стратосферный градиент',-1,4,.1,1.2,' K/км',1)}
         ${slider('capStrength','Задерживающий слой (инверсия)',0,6,.25,0,' K',2)}
         ${slider('capHeight','Высота инверсии',.5,4,.1,1.5,' км',1)}
@@ -205,7 +205,7 @@ surfaceSelect.addEventListener('change', () => {
 })
 document.querySelectorAll<HTMLButtonElement>('[data-preset]').forEach(button => button.addEventListener('click', () => {
   const index = Number(button.dataset.preset)
-  Object.assign(config, defaults, { speed: config.speed, followStorm: config.followStorm, domain: config.domain, wind05: undefined, wind1: undefined, windDir05: undefined, windDir1: undefined, profile: undefined, bubbleRadius: undefined, front: undefined, edges: undefined, start: undefined, frameMotion: undefined, transport: 'weno' }, presets[index].values)
+  Object.assign(config, defaults, { speed: config.speed, followStorm: config.followStorm, domain: config.domain, wind05: undefined, wind1: undefined, windDir05: undefined, windDir1: undefined, profile: undefined, bubbleRadius: undefined, front: undefined, edges: undefined, start: undefined, frameMotion: undefined, top: undefined, transport: 'weno' }, presets[index].values)
   fillLowWind(config)
   syncControls()
   markPreset(index)

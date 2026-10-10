@@ -33,8 +33,11 @@ export const DEFAULT_GRID: GridOptions = { nx: 40, ny: 32, nz: 50, width: 48_000
 /** The large domain (SimConfig.domain): 96 x 72 km at the same 1.2 x 1.125 km spacing, as in standard supercell experiments. */
 export const LARGE_GRID: GridOptions = { ...DEFAULT_GRID, nx: 80, ny: 64, width: 96_000, depth: 72_000 }
 
-/** Grid options for a domain size setting. */
-export const domainGrid = (domain: 'standard' | 'large' | undefined) => domain === 'large' ? LARGE_GRID : DEFAULT_GRID
+/** Grid options for a domain size setting and, optionally, the height of the top (km). */
+export const domainGrid = (domain: 'standard' | 'large' | undefined, top?: number): GridOptions => {
+  const base = domain === 'large' ? LARGE_GRID : DEFAULT_GRID
+  return top === undefined ? base : { ...base, height: top * 1000 }
+}
 
 /** Geometric stretching ratio r with bottom * (r^m - 1) / (r - 1) = height for m = nz - 1 intervals (bisection). */
 function stretchRatio(bottom: number, height: number, intervals: number) {
