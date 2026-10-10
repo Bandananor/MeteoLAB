@@ -25,6 +25,11 @@ export interface SimConfig {
    * the storm stays inside instead of leaving on one side and coming back on the other into its own cold pool.
    */
   followStorm?: boolean
+  /**
+   * The domain's velocity over the ground (u, v, m/s) when it follows the storm, instead of domainMotion(env) (the Bunkers
+   * right mover or the mean wind): for a squall line, whose gust front runs well ahead of any single-cell motion.
+   */
+  frameMotion?: readonly [number, number]
   /** Domain size (absent = 'standard'): 48 x 36 km, or 96 x 72 km at the same resolution (about 4x slower). */
   domain?: 'standard' | 'large'
   latitude: number; turbulence: number; hour: number; solarMax: number; soilMoisture: number; surfaceType: SurfaceType
@@ -43,9 +48,16 @@ export interface SimConfig {
    * Side boundaries (absent = 'periodic'): what leaves on one side comes back on the other; or 'relaxed': in a 12 km
    * zone along the domain's edges the air is pulled back to the environment (theta — with the front, if any —, vapour and wind to the profile,
    * w, cloud and precipitation to zero), so the storm takes in fresh environmental air instead of its own outflow and
-   * anvil coming round — for long runs of large systems (the quasi-stationary MCS).
+   * anvil coming round — for long runs of large systems (the quasi-stationary MCS). 'relaxed-x': only the western and
+   * eastern edges (a squall line along y stays infinite, periodic in y).
    */
-  edges?: 'periodic' | 'relaxed'
+  edges?: 'periodic' | 'relaxed' | 'relaxed-x'
+  /**
+   * How convection starts (absent = 'thermals': one or two warm thermals): 'line' — a north-south row of thermals across
+   * the whole domain through its middle, each a little stronger or weaker at random (so the line breaks into cells), as
+   * in the idealised squall lines of Rotunno, Klemp and Weisman (1988).
+   */
+  start?: 'thermals' | 'line'
 }
 
 /**
