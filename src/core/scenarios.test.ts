@@ -26,6 +26,8 @@ describe('scenarios: realistic environments', () => {
 // Slow (~10 min per scenario on a laptop: 40 simulated minutes each): `npm run test:scenarios`, or in the cloud
 // (.github/workflows/slow-tests.yml, all scenarios in parallel).
 const slow = (import.meta as { env?: { MODE?: string } }).env?.MODE === 'slow'
+/** Strongest updraught allowed in the scenarios not meant to be supercells, m/s (cloud run 10.10.2026: 20-50 m/s). */
+const MAX_ORDINARY_W = 55
 
 describe('scenarios: rotation only where a supercell is intended (calibration)', () => {
   for (const s of selected) it.runIf(slow)(`${s.name}: ${s.mesocyclone === undefined ? 'no limiter hits' : s.mesocyclone ? 'a mesocyclone persists' : 'no mesocyclone'}`, () => {
@@ -40,6 +42,9 @@ describe('scenarios: rotation only where a supercell is intended (calibration)',
     }
     console.log(`${s.name}: max w ${maxW.toFixed(1)} m/s, max UH ${maxUH.toFixed(0)}, mesocyclone ${longest} s, wind at 100 m ${gust.toFixed(1)} m/s, rain ${Math.max(...model.precipitation).toFixed(1)} mm, hail ${(Math.max(...model.hailSize) / 10).toFixed(1)} cm / ${Math.max(...model.hailGround).toFixed(1)} mm, clipped ${model.clipped}`)
     expect(model.clipped).toBe(0)
+    // Release 2.0 calibration: ordinary storms stay below ~55 m/s (the ~1 km model nears parcel theory; observed
+    // storms reach 0.5-0.6 sqrt(2 CAPE)); only the supercell scenarios may go beyond.
+    if (s.mesocyclone !== true) expect(maxW).toBeLessThanOrEqual(MAX_ORDINARY_W)
     if (s.mesocyclone === true) expect(longest).toBeGreaterThanOrEqual(MESO_PERSISTENCE)
     if (s.mesocyclone === false) expect(longest).toBeLessThan(MESO_PERSISTENCE)
   }, 900_000)
