@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { AtmosphereModel, CellTracker, DT, SCENARIOS, type SimConfig } from '.'
+import { AtmosphereModel, CellTracker, DT, liveSounding, parcelIndices, SCENARIOS, type SimConfig } from '.'
 import { SUMMER_DAY } from './fixtures'
 
 // The release 2.0 diurnal-cycle minimum: the «Суточный ход» scenario starts at dawn (06:00) under a night inversion
@@ -14,20 +14,25 @@ describe('diurnal cycle', () => {
   it.runIf(slow)('nothing before the sun burns the inversion off, then cumulus and a thunderstorm at sensible hours', () => {
     const scenario = SCENARIOS.find(s => s.name === 'Суточный ход')!, config: SimConfig = { ...SUMMER_DAY, ...scenario.values }
     const model = new AtmosphereModel(config), cells = new CellTracker()
-    let firstCloud = NaN, firstStorm = NaN, quietW = 0
+    const cinAt = () => parcelIndices(liveSounding(model).env, model.grid.height).sb.cin, dawnCin = cinAt()
+    let firstCloud = NaN, firstStorm = NaN, quietW = 0, lateCin = NaN
     for (let t = DT; t <= 9 * 3600 && Number.isNaN(firstStorm); t += DT) {
       model.step(DT); model.time += DT
       if (t % 60) continue
       const d = model.diagnostics(), hour = hourOf(config, t)
       if (hour < 10) quietW = Math.max(quietW, d.updraft)
+      // The live sounding: by 11:00 the sun has removed the dawn's CIN (calibration run: 119 J/kg at dawn, 8 at 11:15).
+      if (t === 5 * 3600) lateCin = cinAt()
       if (Number.isNaN(firstCloud) && d.maxCloud > 1e-4) firstCloud = hour
       cells.update(model)
       if (cells.cells.length) firstStorm = hour
     }
-    console.log(`Суточный ход: strongest updraught before 10:00 ${quietW.toFixed(1)} m/s, first cumulus ${firstCloud.toFixed(2)} h, first thunderstorm ${firstStorm.toFixed(2)} h, clipped ${model.clipped}`)
+    console.log(`Суточный ход: SB CIN of the live sounding ${dawnCin.toFixed(0)} J/kg at dawn, ${lateCin.toFixed(0)} at 11:00, strongest updraught before 10:00 ${quietW.toFixed(1)} m/s, first cumulus ${firstCloud.toFixed(2)} h, first thunderstorm ${firstStorm.toFixed(2)} h, clipped ${model.clipped}`)
     expect(model.clipped).toBe(0)
     // Before 10:00 only the dry eddies of the growing mixed layer (a few m/s), no cloud.
     expect(quietW).toBeLessThan(6)
+    expect(dawnCin).toBeGreaterThan(100)
+    expect(lateCin).toBeLessThan(25)
     expect(firstCloud).toBeGreaterThanOrEqual(10)
     expect(firstCloud).toBeLessThan(13)
     expect(firstStorm).toBeGreaterThanOrEqual(11)

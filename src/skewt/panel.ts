@@ -1,4 +1,4 @@
-import { type AtmosphereModel, columnLevels, dryAdiabat, environmentLevels, mixingRatioTemperature, moistAdiabat, type ParcelKind, type ParcelPath, parcelIndices, parcelPath, type SkewIndices, skewIndices, type SkewLevel } from '../core'
+import { type AtmosphereModel, columnLevels, type Environment, dryAdiabat, environmentLevels, mixingRatioTemperature, moistAdiabat, type ParcelKind, type ParcelPath, parcelIndices, parcelPath, type SkewIndices, skewIndices, type SkewLevel } from '../core'
 
 /** Pressure range of the diagram, hPa, and the temperature range along its bottom edge, °C. */
 const P_BOTTOM = 1050, P_TOP = 100, T_LEFT = -40, T_RIGHT = 50
@@ -13,6 +13,9 @@ type Probe = 'none' | 'core' | 'inflow'
 /** Distance of the inflow probe from the cell centre, m. */
 const INFLOW_DISTANCE = 8000
 
+/** Which live sounding the diagram shows: its model time (s), the share of quiet columns it averages, or all of them. */
+export interface LiveInfo { time: number; quiet: number; all: boolean }
+
 /** Where the model's virtual radiosonde goes: the selected cell (centre, motion) or nothing. */
 export interface ProbeCell { id: number; x: number; y: number; u: number; v: number }
 
@@ -20,12 +23,13 @@ export interface ProbeCell { id: number; x: number; y: number; u: number; v: num
  * The Skew-T log-p diagram: a separate screen like the radar. Temperature falls along lines skewed 45°, pressure on a
  * log scale; dry adiabats, pseudo-adiabats and saturation mixing-ratio lines behind. The environment (temperature red,
  * dewpoint green) with wind barbs, one standard parcel (SB/ML/MU) with its CAPE and CIN shaded and LCL, LFC, EL marked,
- * and optionally a virtual radiosonde of the running model at the selected cell's core or in its inflow.
+ * and optionally a virtual radiosonde of the running model at the selected cell's core or in its inflow. The environment
+ * is the live sounding (src/core/live.ts: the model now, away from the storms), the starting one faint behind it.
  */
 export class SkewTPanel {
   private readonly root: HTMLDivElement; private readonly canvas: HTMLCanvasElement; private readonly ctx: CanvasRenderingContext2D
   private model: AtmosphereModel | null = null
-  private env: SkewLevel[] = []; private parcels: Partial<Record<ParcelKind, ParcelPath>> = {}; private summary: SkewIndices | null = null; private dcape = 0
+  private env: SkewLevel[] = []; private start: SkewLevel[] = []; private live: LiveInfo = { time: 0, quiet: 1, all: false }; private parcels: Partial<Record<ParcelKind, ParcelPath>> = {}; private summary: SkewIndices | null = null; private dcape = 0
   private kind: ParcelKind = 'ml'; private probe: Probe = 'inflow'; private cell: ProbeCell | null = null
   private column: SkewLevel[] = []
   private hover: { x: number; y: number } | null = null; private lastDraw = 0; private lastTime = -1
@@ -38,7 +42,7 @@ export class SkewTPanel {
     this.root.innerHTML = `
       <div class="radar-bar">
         <span class="radar-name">STORMLAB · SKEW-T LOG-P</span>
-        <span>ЧАСТИЦА <b id="skewKind">ML</b></span><span>ЗОНД <b id="skewProbe">—</b></span><span>T+ <b id="skewTime">00:00</b></span>
+        <span>ЧАСТИЦА <b id="skewKind">ML</b></span><span>ЗОНД <b id="skewProbe">—</b></span><span>СРЕДА <b id="skewLive">ИСХОДНАЯ</b></span><span>T+ <b id="skewTime">00:00</b></span>
         <button class="radar-close" title="Вернуться к 3D (Esc)">× ЗАКРЫТЬ</button>
       </div>
       <div class="radar-body">
@@ -53,7 +57,7 @@ export class SkewTPanel {
             <button data-probe="none">не показывать</button></div>
           <div class="radar-readout skewt-probe" id="skewProbeInfo">—</div>
           <h3>Курсор</h3><div class="radar-readout" id="skewCursor">—</div>
-          <p class="radar-help">Изотермы наклонены на 45°, давление — в логарифмическом масштабе. Сплошные коричневые — сухие адиабаты, пунктирные зелёные — влажные, точечные — отношение смеси насыщения (г/кг). Красное — CAPE, синее — CIN. Ветер — флажки в м/с: полное перо 5, половина 2,5, флаг 25. Зонд в модели (оранжевое и голубое) показывает, как гроза изменила воздух.</p>
+          <p class="radar-help">Изотермы наклонены на 45°, давление — в логарифмическом масштабе. Сплошные коричневые — сухие адиабаты, пунктирные зелёные — влажные, точечные — отношение смеси насыщения (г/кг). Красное — CAPE, синее — CIN. Ветер — флажки в м/с: полное перо 5, половина 2,5, флаг 25. Среда — живое зондирование: профиль модели сейчас, средний по столбцам без облаков, осадков и холодного купола (раз в модельную минуту); бледный пунктир — исходная среда. Зонд в модели (оранжевое и голубое) показывает, как гроза изменила воздух.</p>
         </aside>
       </div>`
     host.appendChild(this.root)
@@ -68,14 +72,23 @@ export class SkewTPanel {
     this.mark()
   }
 
-  /** Binds the diagram to a (new) model: the environment and the parcels are computed once per model. */
+  /** Binds the diagram to a (new) model, starting from its starting environment. */
   attach(model: AtmosphereModel) {
     this.model = model
-    const env = model.env, height = model.grid.height
+    this.start = environmentLevels(model.env, model.grid.height)
+    this.column = []; this.lastTime = -1
+    this.setLive(model.env, { time: 0, quiet: 1, all: false })
+  }
+
+  /** A new live sounding (src/core/live.ts): the environment, its parcels and indices. */
+  setLive(env: Environment, info: LiveInfo) {
+    const height = this.model!.grid.height
+    this.live = info
     this.env = environmentLevels(env, height)
     this.parcels = { sb: parcelPath(env, height, 'sb'), ml: parcelPath(env, height, 'ml'), mu: parcelPath(env, height, 'mu') }
     this.summary = skewIndices(env, height); this.dcape = parcelIndices(env, height).dcape
-    this.column = []; this.lastTime = -1
+    const t = Math.floor(info.time / 60), label = info.time <= 0 ? 'ИСХОДНАЯ' : `T+${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}, ${info.all ? 'ВСЯ ОБЛАСТЬ' : `${Math.round(info.quiet * 100)} % ОБЛАСТИ`}`
+    ;(this.root.querySelector('#skewLive') as HTMLElement).textContent = label
     if (this.open) this.draw()
   }
 
@@ -111,7 +124,7 @@ export class SkewTPanel {
     const { nx, ny, dx, dy } = m.grid, i = ((Math.round(x / dx) % nx) + nx) % nx, j = ((Math.round(y / dy) % ny) + ny) % ny
     this.column = columnLevels(m, i, j)
     label.textContent = `№${cell.id} ${this.probe === 'inflow' ? 'ПРИТОК' : 'ЯДРО'}`
-    const ground = this.column[0], base = this.env[0]
+    const ground = this.column[0], base = this.start[0]
     info.innerHTML = `ячейка №${cell.id}, точка ${(i * dx / 1000).toFixed(1)}, ${(j * dy / 1000).toFixed(1)} км<br>у земли <b>${ground.t.toFixed(1)}°</b> / Td <b>${ground.td.toFixed(1)}°</b> (было ${base.t.toFixed(1)}° / ${base.td.toFixed(1)}°)`
   }
 
@@ -163,6 +176,7 @@ export class SkewTPanel {
     }
     // The model column (thinner), the environment, the parcel.
     if (this.column.length) { line(this.column.map(l => ({ p: l.p, t: l.td })), '#4fc3e6', 1.6); line(this.column.map(l => ({ p: l.p, t: l.t })), '#ffa040', 1.6) }
+    if (this.live.time > 0) { line(this.start.map(l => ({ p: l.p, t: l.td })), '#3f8a55', 1.3, [4, 3]); line(this.start.map(l => ({ p: l.p, t: l.t })), '#b04a3f', 1.3, [4, 3]) }
     line(this.env.map(l => ({ p: l.p, t: l.td })), '#3ecf6a', 2.2); line(this.env.map(l => ({ p: l.p, t: l.t })), '#ff4a3d', 2.2)
     if (parcel) line(parcel.path, '#e9eef0', 1.4, [6, 4])
     ctx.restore()
@@ -187,7 +201,7 @@ export class SkewTPanel {
     }
     this.barbs(this.env, right + 34, '#cfe0e5')
     if (this.column.length) this.barbs(this.column.filter((_, k) => k % 3 === 1), right + 84, '#ffa040')
-    ctx.fillStyle = '#6f8b94'; ctx.fillText('среда', right + 22, top - 4); if (this.column.length) { ctx.fillStyle = '#ffa040'; ctx.fillText('зонд', right + 72, top - 4) }
+    ctx.fillStyle = '#6f8b94'; ctx.fillText('среда', right + 22, top - 4); if (this.live.time > 0) { ctx.fillStyle = '#b04a3f'; ctx.fillText('- - исходная', left + 6, top + 12) } if (this.column.length) { ctx.fillStyle = '#ffa040'; ctx.fillText('зонд', right + 72, top - 4) }
     this.cursor(); this.side()
   }
 
@@ -239,7 +253,8 @@ export class SkewTPanel {
     const km = (z: number | null, pr: number | null) => z === null ? '—' : `${z.toFixed(1)} км (${pr!.toFixed(0)} гПа)`
     if (p) (this.root.querySelector('#skewParcel') as HTMLElement).innerHTML =
       `CAPE <b>${p.cape.toFixed(0)}</b> Дж/кг, CIN <b>${p.cin.toFixed(0)}</b><br>LI <b>${p.li === null ? '—' : p.li.toFixed(1)}</b> K${p.start > 0 ? `, старт <b>${p.start.toFixed(1)} км</b>` : ''}<br>LCL <b>${km(p.lcl, p.pLcl)}</b><br>LFC <b>${km(p.lfc, p.pLfc)}</b><br>EL <b>${km(p.el, p.pEl)}</b>`
+    const live = this.live.time <= 0 ? 'исходная (расчёт ещё не шёл)' : this.live.all ? 'вся область: столбцов без облаков и оттока меньше 5 %' : `модель сейчас, ${Math.round(this.live.quiet * 100)} % области без облаков и оттока`
     if (s) (this.root.querySelector('#skewEnv') as HTMLElement).innerHTML =
-      `влагосодержание <b>${s.pw.toFixed(0)} мм</b><br>γ 0–3 км <b>${s.lapse03.toFixed(1)}</b>, 700–500 гПа <b>${s.lapse75.toFixed(1)}</b> K/км<br>0 °C <b>${s.freezing === null ? '—' : `${s.freezing.toFixed(1)} км`}</b>, DCAPE <b>${this.dcape.toFixed(0)}</b> Дж/кг<br>сдвиг 0–6 км <b>${s.shear06.toFixed(0)} м/с</b>`
+      `<span class="skewt-probe">${live}</span><br>влагосодержание <b>${s.pw.toFixed(0)} мм</b><br>γ 0–3 км <b>${s.lapse03.toFixed(1)}</b>, 700–500 гПа <b>${s.lapse75.toFixed(1)}</b> K/км<br>0 °C <b>${s.freezing === null ? '—' : `${s.freezing.toFixed(1)} км`}</b>, DCAPE <b>${this.dcape.toFixed(0)}</b> Дж/кг<br>сдвиг 0–6 км <b>${s.shear06.toFixed(0)} м/с</b>`
   }
 }

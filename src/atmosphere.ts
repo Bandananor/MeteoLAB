@@ -1,8 +1,14 @@
-import { AtmosphereModel, CellTracker, insolation, type ModelDiagnostics, parcelIndices, type ParcelIndices, type SimConfig, stormIndices, type StormIndices, sunDirection } from './core'
+import { AtmosphereModel, CellTracker, computeSounding, type Environment, insolation, liveSounding, type ModelDiagnostics, parcelIndices, type ParcelIndices, type SimConfig, type Sounding, stormIndices, type StormIndices, sunDirection } from './core'
 import { describeConvection } from './describe'
 import type { FieldMode } from './render/fields'
 import { type LayerMode, StormView, type ViewSettings } from './render/view'
 import { SNAPSHOT_COLUMNS, SNAPSHOT_FIELDS, type Snapshot, type WorkerRequest } from './simulation'
+
+/** How often the live sounding (src/core/live.ts) and everything derived from it is recomputed, s of model time. */
+export const LIVE_EVERY = 60
+
+/** The live sounding and what the panels show from it. */
+export interface Live { time: number; quiet: number; all: boolean; env: Environment; sounding: Sounding; indices: ParcelIndices; storm: StormIndices }
 
 /**
  * Couples the physics with its 3D view; the UI talks only to this class. The physics runs in a Web Worker; here a
@@ -20,10 +26,11 @@ export class Atmosphere implements ViewSettings {
    * worker ran the whole queue and the model time jumped minutes ahead (seen with ice, as the anvil grew).
    */
   private inFlight = false; private waiting = 0
-  /** Standard parcel indices of the environment (it does not change during a run). */
-  private readonly indices: ParcelIndices
-  /** Bunkers motion, SRH, SCP and STP of the environment. */
-  readonly storm: StormIndices
+  /**
+   * The environment now (src/core/live.ts): the sounding, the standard parcels, Bunkers motion, SRH, SCP and STP,
+   * recomputed every LIVE_EVERY s of model time; at the start, the starting environment.
+   */
+  live: Live
   /** Convective cells found and followed in every snapshot (src/core/cells.ts). */
   readonly cells = new CellTracker()
   /** Threads the physics runs on (see simulation.worker.ts). */
@@ -33,8 +40,7 @@ export class Atmosphere implements ViewSettings {
     this.config = config; this.sentConfig = JSON.stringify(config)
     this.mirror = new AtmosphereModel({ ...config })
     this.latest = this.mirror.diagnostics()
-    this.indices = parcelIndices(this.mirror.env, this.mirror.grid.height)
-    this.storm = stormIndices(this.mirror.env, this.indices)
+    this.live = this.derive(this.mirror.env, 0, 1, false)
     this.view = new StormView(canvas, this.mirror, this)
     this.worker = new Worker(new URL('./simulation.worker.ts', import.meta.url), { type: 'module' })
     this.worker.addEventListener('message', (event: MessageEvent<Snapshot>) => this.receive(event.data))
@@ -45,6 +51,8 @@ export class Atmosphere implements ViewSettings {
   get time() { return this.mirror.time }
   /** The model as last received from the worker (read-only use: the radar display samples it). */
   get model() { return this.mirror }
+  /** Bunkers motion, SRH, SCP and STP of the live sounding. */
+  get storm() { return this.live.storm }
 
   /** Sends the real elapsed time (and any slider change) to the worker; the fields arrive with the next snapshot. */
   advance(realDt: number) {
@@ -58,7 +66,12 @@ export class Atmosphere implements ViewSettings {
   }
   render() { this.view.render() }
   dispose() { this.worker.terminate(); this.view.dispose() }
-  sounding() { return this.mirror.sounding }
+  sounding() { return this.live.sounding }
+
+  private derive(env: Environment, time: number, quiet: number, all: boolean): Live {
+    const h = this.mirror.grid.height, indices = parcelIndices(env, h)
+    return { time, quiet, all, env, sounding: computeSounding(this.mirror.config, env, h), indices, storm: stormIndices(env, indices) }
+  }
 
   /** Double-click: warm moist thermal under the given normalised screen point. */
   /** Ground point (m) under normalised screen coordinates. */
@@ -71,9 +84,9 @@ export class Atmosphere implements ViewSettings {
   perturb(nx: number, ny: number, strength = 1) { const p = this.view.groundPoint(nx, ny); this.post({ type: 'perturb', x: p.x, y: p.y, strength }) }
 
   diagnostics() {
-    const m = this.mirror, d = this.latest, text = describeConvection(d, m.sounding, m.rotation)
+    const m = this.mirror, d = this.latest, live = this.live, text = describeConvection(d, live.sounding, m.rotation)
     return {
-      ...m.sounding, ...text, indices: this.indices, storm: this.storm,
+      ...live.sounding, ...text, indices: live.indices, storm: live.storm,
       updraft: d.updraft, downdraft: d.downdraft, rain: d.rainRate, rainTotal: d.rainTotal, cloudTop: d.cloudTop, thermalTop: d.thermalTop,
       cloudWater: d.maxCloud * 1000, coldPool: d.coldMax, gust: d.gust, hail: d.hail, hailSwath: m.hailSize.reduce((a, b) => Math.max(a, b), 0), clipped: d.clipped, updraftHelicity: m.rotation.uh, uh01: m.rotation.uh01, uh03: m.rotation.uh03,
       insolation: insolation(m.config, m.time), sunElevation: Math.asin(Math.max(-1, Math.min(1, sunDirection(m.config, m.time).y))) * 180 / Math.PI,
@@ -92,6 +105,7 @@ export class Atmosphere implements ViewSettings {
     this.inFlight = false
     // Cells move about a grid column a minute: every 6 s of model time is plenty.
     if (!(m.time - this.cells.time < 6)) this.cells.update(m)
+    if (!(m.time - this.live.time < LIVE_EVERY && m.time >= this.live.time)) { const l = liveSounding(m); this.live = this.derive(l.env, m.time, l.quiet, l.all) }
     this.view.afterAdvance(s.steps)
   }
 }

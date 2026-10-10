@@ -20,6 +20,8 @@ export interface EnvironmentProfile {
   wind(z: number): readonly [number, number]
   /** Upper limit of the vapour mixing ratio, kg/kg (the Weisman-Klemp boundary layer is capped at 14 g/kg). */
   qvMax?: number
+  /** The vapour mixing ratio itself, kg/kg, instead of rh (a measured profile: the live sounding, live.ts); capped at saturation. */
+  qv?(z: number): number
 }
 
 /** The horizontally uniform environment (base state) the model starts from and relaxes towards. */
@@ -133,6 +135,7 @@ export class Environment {
 
   /** Vapour mixing ratio of air at height z with temperature t (°C) and pressure p: RH r_s, capped by the profile. */
   mixingRatio(z: number, t: number, p: number) {
+    if (this.profile?.qv) return Math.min(this.profile.qv(z), this.qsatP(t, p))
     const r = Math.min(this.rhEnv(z) * this.qsatP(t, p), this.profile?.qvMax ?? Infinity), top = (this.config.moistLayer ?? 0) * 1000
     if (this.profile || z >= top) return r
     // Well-mixed boundary layer: the surface mixing ratio holds up to its top (never supersaturated).

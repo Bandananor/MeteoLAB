@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { SAMPLE, Timeline } from './timeline'
 
-const at = (t: number) => ({ t, updraft: t / 60, uh: 0, rain: 0, rainTotal: 0, rotationHeld: 0 })
+const at = (t: number) => ({ t, cape: 0, cin: 0, updraft: t / 60, uh: 0, rain: 0, rainTotal: 0, rotationHeld: 0 })
 
 describe('storm timeline (src/timeline.ts)', () => {
   it('keeps one point per 30 model seconds and starts over after a restart', () => {

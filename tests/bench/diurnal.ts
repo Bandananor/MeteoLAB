@@ -4,7 +4,7 @@
 // surface sensible flux, the near-ground air against the day profile, how strong the inversion still is, the mixed
 // layer top, cloud cover, the strongest updraught and cloud top, rain and the cells (numbered = deep convection).
 //   npx vite build --ssr tests/bench/diurnal.ts --outDir .bench/diurnal && node .bench/diurnal/diurnal.js <variant> [hours=9] [env]
-import { AtmosphereModel, CellTracker, createGrid, DEFAULT_GRID, DT, Environment, parcelIndices, surfaceFluxes } from '../../src/core'
+import { AtmosphereModel, CellTracker, createGrid, DEFAULT_GRID, DT, Environment, liveSounding, parcelIndices, surfaceFluxes } from '../../src/core'
 import { SUMMER_DAY } from '../../src/core/fixtures'
 import { SCENARIOS } from '../../src/core/scenarios'
 
@@ -35,7 +35,8 @@ if (!envOnly) {
     let cover = 0
     for (let c = 0; c < layer; c++) for (let k = 0; k < nz; k++) if (model.cloud[c + k * layer] + model.ice[c + k * layer] > 1e-5) { cover++; break }
     const hour = config.hour + t / 3600, hh = Math.floor(hour), mm = Math.round((hour - hh) * 60), flux = surfaceFluxes(config, model.time)
-    console.log(`${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')} H ${flux.sensible.toFixed(0)} W/m2, ground theta ${(th0 - day.thetaEnv(zs[0])).toFixed(1)} K vs day, theta(400 m) - ground ${(mean(model.theta, k400) - th0).toFixed(1)} K, mixed to ${(top / 1000).toFixed(1)} km, cover ${(100 * cover / layer).toFixed(0)} %, w ${diag.updraft.toFixed(1)}, top ${diag.cloudTop.toFixed(1)} km, rain ${diag.rainTotal.toFixed(1)} mm, cells ${cells.cells.length} (+${cells.unnumbered}), ${((performance.now() - t0) / 1000).toFixed(0)} s`)
+    const live = liveSounding(model), li = parcelIndices(live.env, grid.height)
+    console.log(`${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')} live SB CAPE ${li.sb.cape.toFixed(0)} CIN ${li.sb.cin.toFixed(0)} ML ${li.ml.cape.toFixed(0)}/${li.ml.cin.toFixed(0)} (quiet ${(100 * live.quiet).toFixed(0)} %${live.all ? ', all' : ''}), H ${flux.sensible.toFixed(0)} W/m2, ground theta ${(th0 - day.thetaEnv(zs[0])).toFixed(1)} K vs day, theta(400 m) - ground ${(mean(model.theta, k400) - th0).toFixed(1)} K, mixed to ${(top / 1000).toFixed(1)} km, cover ${(100 * cover / layer).toFixed(0)} %, w ${diag.updraft.toFixed(1)}, top ${diag.cloudTop.toFixed(1)} km, rain ${diag.rainTotal.toFixed(1)} mm, cells ${cells.cells.length} (+${cells.unnumbered}), ${((performance.now() - t0) / 1000).toFixed(0)} s`)
   }
   const at = s => Number.isNaN(s) ? 'never' : `${(config.hour + s / 3600).toFixed(2)} h`
   console.log(`first cloud ${at(firstCloud)}, first thunderstorm ${at(firstCell)}`)
