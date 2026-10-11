@@ -1,4 +1,4 @@
-import { AtmosphereModel, CellTracker, computeSounding, domainPoint, groundPoint, Station, type Environment, insolation, liveSounding, type ModelDiagnostics, parcelIndices, type ParcelIndices, type SimConfig, type Sounding, stormIndices, type StormIndices, sunDirection } from './core'
+import { AtmosphereModel, CellTracker, coldPoolBalance, type ColdPoolBalance, computeSounding, domainPoint, groundPoint, Station, type Environment, insolation, liveSounding, type ModelDiagnostics, parcelIndices, type ParcelIndices, type SimConfig, type Sounding, stormIndices, type StormIndices, sunDirection } from './core'
 import { describeConvection } from './describe'
 import type { FieldMode } from './render/fields'
 import { type LayerMode, StormView, type ViewSettings } from './render/view'
@@ -33,6 +33,8 @@ export class Atmosphere implements ViewSettings {
   live: Live
   /** Convective cells found and followed in every snapshot (src/core/cells.ts). */
   readonly cells = new CellTracker()
+  /** The cold pool against the low-level shear (RKW, src/core/rkw.ts) at the last snapshot; null without a cold pool. */
+  balance: ColdPoolBalance | null = null
   /** The virtual weather station (src/core/station.ts), if one is placed; it records with every snapshot. */
   station: Station | null = null
   /** Threads the physics runs on (see simulation.worker.ts). */
@@ -113,6 +115,7 @@ export class Atmosphere implements ViewSettings {
     // Cells move about a grid column a minute: every 6 s of model time is plenty.
     if (!(m.time - this.cells.time < 6)) this.cells.update(m)
     if (this.station) { this.station.observe(m); this.markStation() }
+    this.balance = coldPoolBalance(m)
     if (!(m.time - this.live.time < LIVE_EVERY && m.time >= this.live.time)) { const l = liveSounding(m); this.live = this.derive(l.env, m.time, l.quiet, l.all) }
     this.view.afterAdvance(s.steps)
   }
