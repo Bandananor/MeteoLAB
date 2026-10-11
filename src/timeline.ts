@@ -13,10 +13,10 @@ type Key = 'cape' | 'cin' | 'updraft' | 'uh' | 'rain'
 interface Series { key: Key; label: string; unit: string; color: string; floor: number; rotation?: boolean; second?: { key: Key; label: string; color: string } }
 
 const SERIES: Series[] = [
-  { key: 'cape', label: 'Неустойчивость (SB, среда сейчас)', unit: 'Дж/кг', color: '#c97a2a', floor: 500, second: { key: 'cin', label: 'CIN', color: '#4d86b3' } },
+  { key: 'cape', label: 'CAPE / CIN от земли', unit: 'Дж/кг', color: '#c97a2a', floor: 500, second: { key: 'cin', label: 'CIN', color: '#4d86b3' } },
   { key: 'updraft', label: 'Макс. восходящий поток', unit: 'м/с', color: '#c4553a', floor: 10 },
   { key: 'uh', label: 'Вращение потока, UH 2–5 км', unit: 'м²/с²', color: '#7b3fa0', floor: 200, rotation: true },
-  { key: 'rain', label: 'Интенсивность дождя', unit: 'мм/ч', color: '#3f6fa3', floor: 10 },
+  { key: 'rain', label: 'Дождь', unit: 'мм/ч', color: '#3f6fa3', floor: 10 },
 ]
 
 /** Samples every SAMPLE seconds of model time; a restart (time going back) starts a new record. */
@@ -50,7 +50,7 @@ export class Timeline {
       ctx.fillStyle = '#5f7079'; ctx.fillText(`${s.label}, ${s.unit}`, left, top - 3)
       ctx.fillStyle = '#253943'
       const extra = s.key === 'rain' && pts.length ? `  сумма ${pts[pts.length - 1].rainTotal.toFixed(1)} мм` : ''
-      const readout = s.second ? `CAPE ${format(now)} / ${s.second.label} ${format(second[second.length - 1] ?? 0)}` : `${format(now)} (макс. ${format(peak)})${extra}`
+      const readout = s.second ? `${format(now)} / ${format(second[second.length - 1] ?? 0)}` : `${format(now)} (макс. ${format(peak)})${extra}`
       ctx.fillText(readout, right - ctx.measureText(readout).width, top - 3)
       ctx.fillStyle = '#8a9aa2'; ctx.fillText(String(max), left + 1, top + 7)
       if (s.rotation) {

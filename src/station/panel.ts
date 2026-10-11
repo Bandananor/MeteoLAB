@@ -1,4 +1,5 @@
 import type { Station, StationRecord } from '../core'
+import { download, toCsv } from '../share'
 
 type Key = keyof Omit<StationRecord, 't'>
 /** One plot of the meteogram: its values (the first is the main line), units and the floor of its scale. */
@@ -35,7 +36,8 @@ export class StationPanel {
         <aside class="radar-side">
           <h3>Станция</h3><div class="radar-products">
             <button data-station="place" title="Закрыть экран и щёлкнуть по земле на 3D-виде: туда встанет станция">поставить щелчком на 3D</button>
-            <button data-station="remove">убрать</button></div>
+            <button data-station="remove">убрать</button>
+            <button data-station="csv" title="Записи станции в CSV: время, температура, точка росы, давление, ветер, порыв, направление, осадки">выгрузить CSV</button></div>
           <div class="radar-readout skewt-probe" id="stationHint">Станции нет. Поставьте её щелчком по 3D-виду — лучше на пути грозы.</div>
           <h3>Сейчас</h3><div class="radar-readout" id="stationNow">—</div>
           <p class="radar-help">Станция стоит на земле: область модели движется с грозой, а станция — нет, и гроза проходит над ней, как над настоящей. Запись раз в модельную минуту: температура и точка росы у земли, ветер (средний за минуту) и порыв (самый сильный за минуту), осадки (интенсивность — по приросту суммы). Давление — гидростатическая оценка по плавучести столбца, относительно среднего по области: холодный купол даёт мезомаксимум в 1–4 гПа, а понижение давления под вращающимся потоком (динамическая часть) сюда не входит. Прохождение фронта порывов — скачок давления, резкое падение температуры и порыв.</p>
@@ -46,6 +48,13 @@ export class StationPanel {
     this.root.querySelector('.radar-close')!.addEventListener('click', () => this.toggle(false))
     this.root.querySelector('[data-station="place"]')!.addEventListener('click', () => { this.toggle(false); this.onPlace(true) })
     this.root.querySelector('[data-station="remove"]')!.addEventListener('click', () => this.onPlace(false))
+    this.root.querySelector('[data-station="csv"]')!.addEventListener('click', () => {
+      const s = this.station
+      if (s?.records.length) download(`meteolab-stanciya-${(s.x / 1000).toFixed(1)}-${(s.y / 1000).toFixed(1)}km.csv`, toCsv(s.records, [
+        ['time_s', r => r.t], ['temperature_c', r => r.temp], ['dewpoint_c', r => r.dew], ['pressure_hpa', r => r.pressure], ['wind_ms', r => r.wind],
+        ['gust_ms', r => r.gust], ['wind_from_deg', r => r.dir], ['rain_rate_mmh', r => r.rainRate], ['rain_total_mm', r => r.rainTotal], ['hail_mm', r => r.hail],
+      ]))
+    })
     addEventListener('keydown', e => { if (e.key === 'Escape' && this.open) this.toggle(false) })
     addEventListener('resize', () => this.open && this.draw())
   }

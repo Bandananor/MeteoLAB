@@ -6,6 +6,7 @@ import { StationPanel } from './station/panel'
 import { CELL_STAGES, createGrid, DT, Environment, parcelIndices, SCENARIOS, type SimConfig, stormIndices, weismanKlemp } from './core'
 import { FIELDS, type FieldMode } from './render/fields'
 import type { LayerMode } from './render/view'
+import { decodeSettings, download, encodeSettings, toCsv } from './share'
 import { Timeline } from './timeline'
 
 const slider = (key: keyof SimConfig, label: string, min: number, max: number, step: number, value: number, suffix: string, digits = 0) => `
@@ -87,7 +88,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
         ${slider('bubble','Сила начального термика (0 — без термика)',0,2.5,.05,1,'×',2)}
       </div></details>
       <p class="hint">Двойной клик по поверхности создаёт локальный 3D-термик. Изменение профиля перезапускает эксперимент.</p>
-      <div class="actions"><button id="restart">Перезапустить</button><button id="pause" class="secondary">Пауза</button></div>
+      <div class="actions"><button id="restart">Перезапустить</button><button id="pause" class="secondary">Пауза</button><button id="share" class="secondary share" title="Скопировать ссылку на этот опыт: все настройки и сид, так что по ней откроется тот же расчёт">Ссылка на опыт</button></div>
     </aside>
 
     <section class="workspace">
@@ -142,13 +143,23 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
       <div class="metric" title="Сколько раз скорость упёрлась в предохранитель (|u|,|v| ≤ 120, |w| ≤ 100 м/с — заметно выше любых реальных гроз). Не ноль — расчёт пошёл вразнос, цифрам доверять нельзя."><span>Срабатывания ограничителей</span><strong id="clipped">—</strong><small>с начала расчёта</small></div>
       <div class="metric" title="Самый сильный дождь у земли сейчас: поток ρ·q_r·V_t"><span>Интенсивность дождя</span><strong id="rain">—</strong><small>мм/ч</small></div>
       <div class="metric" title="Наибольшая сумма дождя на земле с начала расчёта"><span>Сумма осадков, макс.</span><strong id="rainTotal">—</strong><small>мм</small></div>
-      <div class="timeline" title="Ход грозы по модельному времени (вся область, точка каждые 30 с): неустойчивость среды сейчас (CAPE и CIN частицы от земли по живому зондированию — вдали от гроз, раз в модельную минуту), самый сильный восходящий поток, вращение потока и дождь у земли. Перезапуск начинает графики заново"><h3>Ход грозы</h3><canvas id="timeline"></canvas></div>
+      <div class="timeline"><h3>Ход грозы <button id="timelineCsv" class="csv" title="Выгрузить ряды «Хода грозы» в CSV (таблица или скрипт): время, CAPE и CIN, поток, UH, дождь">CSV</button></h3><div title="Ход грозы по модельному времени (вся область, точка каждые 30 с): неустойчивость среды сейчас (CAPE и CIN частицы от земли по живому зондированию — вдали от гроз, раз в модельную минуту), самый сильный восходящий поток, вращение потока и дождь у земли. Перезапуск начинает графики заново"><canvas id="timeline"></canvas></div></div>
       <div class="note"><b>Логика</b><p id="logicText">Частица ещё не достигла уровня свободной конвекции.</p></div>
     </aside>
   </main>`
 
 // The page opens on the first scenario ("Летний день"); the controls are synced to it below.
 const config: SimConfig = { ...defaults, ...SCENARIOS[0].values }
+// A shared link (?cfg=..., see share.ts) brings its scenario and settings; it is applied once and leaves the address.
+let initialPreset: number | null = 0, baseScenario: number | null = 0
+{
+  const url = new URL(location.href), shared = url.searchParams.get('cfg'), link = shared === null ? null : decodeSettings(shared, SCENARIOS.length)
+  if (link) {
+    Object.assign(config, defaults, link.scenario === null ? {} : SCENARIOS[link.scenario].values, link.values)
+    baseScenario = link.scenario; initialPreset = Object.keys(link.values).length ? null : link.scenario
+  }
+  if (shared !== null) { url.searchParams.delete('cfg'); history.replaceState(null, '', url) }
+}
 // Scenarios without the 0.5 and 1 km wind nodes get them on the straight 0-3 km line, so their hodograph is unchanged
 // and the sliders show where the nodes are.
 const fillLowWind = (c: SimConfig) => {
@@ -215,7 +226,7 @@ document.querySelectorAll<HTMLButtonElement>('[data-preset]').forEach(button => 
   Object.assign(config, defaults, { speed: config.speed, followStorm: config.followStorm, domain: config.domain, wind05: undefined, wind1: undefined, windDir05: undefined, windDir1: undefined, profile: undefined, bubbleRadius: undefined, front: undefined, edges: undefined, start: undefined, frameMotion: undefined, top: undefined, nightInversion: undefined, transport: 'weno' }, presets[index].values)
   fillLowWind(config)
   syncControls()
-  markPreset(index)
+  markPreset(index); baseScenario = index
   recreate(); running = true; updatePause()
 }))
 function syncControls() {
@@ -230,8 +241,22 @@ function syncControls() {
   markProfileGroups()
 }
 syncControls()
-markPreset(0)
+markPreset(initialPreset)
 document.querySelector('#restart')!.addEventListener('click', () => { recreate(); running = true; updatePause() })
+// The link to this run: the settings that differ from the scenario (or the defaults) and the run's seed.
+const shareButton = document.querySelector<HTMLButtonElement>('#share')!
+shareButton.addEventListener('click', () => {
+  // Relative to the scenario last chosen (changed sliders unmark it but it is still the starting point).
+  const base: SimConfig = { ...defaults, ...(baseScenario === null ? {} : SCENARIOS[baseScenario].values) }, url = new URL(location.href)
+  fillLowWind(base)
+  url.searchParams.set('cfg', encodeSettings(config, base, baseScenario)); url.searchParams.set('seed', String(config.seed))
+  const done = (text: string) => { shareButton.textContent = text; setTimeout(() => { shareButton.textContent = 'Ссылка на опыт' }, 2500) }
+  navigator.clipboard.writeText(url.href).then(() => done('Ссылка скопирована ✓'), () => { history.replaceState(null, '', url); done('Ссылка — в адресной строке') })
+})
+document.querySelector('#timelineCsv')!.addEventListener('click', () => download(`meteolab-hod-grozy-seed${config.seed}.csv`, toCsv(timeline.points, [
+  ['time_s', p => p.t], ['sb_cape_jkg', p => p.cape], ['sb_cin_jkg', p => p.cin], ['max_updraft_ms', p => p.updraft], ['uh_2_5km_m2s2', p => p.uh],
+  ['rain_rate_mmh', p => p.rain], ['rain_total_mm', p => p.rainTotal], ['core_rotation_held_s', p => p.rotationHeld],
+])))
 document.querySelector('#pause')!.addEventListener('click', () => { running = !running; updatePause() })
 const updatePause = () => {
   document.querySelector('#pause')!.textContent = running ? 'Пауза' : 'Продолжить'
