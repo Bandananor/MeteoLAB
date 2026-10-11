@@ -1,7 +1,7 @@
 # Журнал изменений MeteoLab
 
 Подробный журнал по дням — в [README](README.md#журнал-изменений), полная история первых версий —
-в [PROJECT_HISTORY.md](PROJECT_HISTORY.md), план — в [roadmap.markdown](roadmap.markdown).
+в [PROJECT_HISTORY.md](PROJECT_HISTORY.md), план дальше — в [roadmap.markdown](roadmap.markdown), план 2.0 — в [roadmap-2.0.markdown](roadmap-2.0.markdown).
 
 ## 2.0.0 — 11.10.2026
 
