@@ -15,9 +15,11 @@ function stepTime(model: AtmosphereModel, steps = 6) {
 describe('large domain (96 x 72 km)', () => {
   it('costs about 4x the standard domain per step: nothing in the step grows faster than the area', () => {
     const standard = new AtmosphereModel({ ...SUMMER_DAY }, createGrid(DEFAULT_GRID)), large = new AtmosphereModel({ ...SUMMER_DAY }, createGrid(LARGE_GRID))
-    // The standard domain is timed before and after the large one (the faster of the two): timed only first, before the
-    // JIT had warmed up, it once came out slow on a cloud runner and the ratio fell to 2.3.
-    const first = stepTime(standard), big = stepTime(large), ratio = big / Math.min(first, stepTime(standard))
+    // Three alternating rounds, the fastest step of each domain: timed once, first, before the JIT had warmed up, the
+    // standard one came out slow on a cloud runner (ratio 2.3), and other test files running alongside disturb any one timing.
+    let small = Infinity, big = Infinity
+    for (let round = 0; round < 3; round++) { small = Math.min(small, stepTime(standard, 4)); big = Math.min(big, stepTime(large, 4)) }
+    const ratio = big / small
     const area = (LARGE_GRID.nx * LARGE_GRID.ny) / (DEFAULT_GRID.nx * DEFAULT_GRID.ny)
     // 4x the columns. The old O(n^2) Fourier transform made it ~6x: the upper bound is what matters; the lower one only
     // catches a broken measurement (allow 2-5.5x for timing noise).

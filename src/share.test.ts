@@ -21,7 +21,8 @@ describe('shared links and CSV (src/share.ts)', () => {
 
   it('drops whatever is unknown or of the wrong kind, and refuses a broken link', () => {
     const back = decodeSettings(encode({ s: 99, c: { surfaceTemp: '30', surfaceType: 'lava', wind0: 1e9, hour: 7, frameMotion: [1, 'x'], constructor: 1, seed: 5 } }), SCENARIOS.length)!
-    expect(back).toEqual({ scenario: null, values: { hour: 7 } })
+    // A whole positive seed is a known setting too (files carry it; a link has it as ?seed= as well).
+    expect(back).toEqual({ scenario: null, values: { hour: 7, seed: 5 } })
     // A "__proto__" key in the JSON itself is dropped and pollutes nothing.
     expect(decodeSettings(encodeText('{"c":{"__proto__":{"polluted":1},"hour":8}}'), SCENARIOS.length)!.values).toEqual({ hour: 8 })
     expect(({} as Record<string, unknown>).polluted).toBeUndefined()
