@@ -1,4 +1,4 @@
-/* MeteoLab 2.0 design tokens (Claude Design, direction "Рабочая станция синоптика", stage 2, 2026-10-11).
+/* MeteoLab 2.0 design tokens (Claude Design, direction "Рабочая станция синоптика", stages 2-3, 2026-10-11).
    Light by default; dark with [data-theme="dark"] on <html> or the system setting (theme.ts switches it).
    Components use only the names. Fonts are self-hosted (@fontsource, imported in main.ts). */
 
@@ -45,7 +45,7 @@
   --surface-2: #F3F3F0;
   --surface-3: #E4E4DF;
   --line: #D3D3CC;
-  --line-strong: #A9A9A0;
+  --line-strong: #85857D;
   --text: #1B1C1A;
   --text-2: #474843;
   --text-3: #63645D;
@@ -66,7 +66,7 @@
   --shadow-pop: 0 8px 24px rgba(27,28,26,.14), 0 1px 3px rgba(27,28,26,.10);
   --chart-bg: var(--surface-1);
   --chart-grid: #E4E4DF;
-  --chart-axis: #A9A9A0;
+  --chart-axis: #85857D;
   --chart-label: var(--text-3);
 }
 
@@ -77,10 +77,10 @@
   --surface-2: #252B31;
   --surface-3: #2D343B;
   --line: #343C44;
-  --line-strong: #4B555F;
+  --line-strong: #6F7983;
   --text: #E4E5E1;
-  --text-2: #ADB0AA;
-  --text-3: #8C9089;
+  --text-2: #B9BCB6;
+  --text-3: #A0A49D;
   --accent: #A6C27D;
   --accent-hover: #B7D191;
   --accent-press: #95B06C;
@@ -98,7 +98,7 @@
   --shadow-pop: 0 10px 28px rgba(0,0,0,.45), 0 0 0 1px #343C44;
   --chart-bg: var(--surface-1);
   --chart-grid: #2D343B;
-  --chart-axis: #4B555F;
+  --chart-axis: #6F7983;
   --chart-label: var(--text-3);
 }
 
@@ -110,10 +110,10 @@
     --surface-2: #252B31;
     --surface-3: #2D343B;
     --line: #343C44;
-    --line-strong: #4B555F;
+    --line-strong: #6F7983;
     --text: #E4E5E1;
-    --text-2: #ADB0AA;
-    --text-3: #8C9089;
+    --text-2: #B9BCB6;
+    --text-3: #A0A49D;
     --accent: #A6C27D;
     --accent-hover: #B7D191;
     --accent-press: #95B06C;
@@ -131,7 +131,7 @@
     --shadow-pop: 0 10px 28px rgba(0,0,0,.45), 0 0 0 1px #343C44;
     --chart-bg: var(--surface-1);
     --chart-grid: #2D343B;
-    --chart-axis: #4B555F;
+    --chart-axis: #6F7983;
     --chart-label: var(--text-3);
   }
 }
