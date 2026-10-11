@@ -63,21 +63,22 @@ app.innerHTML = `<div class="app">
   <header class="topbar">
     <span class="logo"><span class="logo__mark"></span>MeteoLab</span>
     <span class="topbar__sep"></span>
-    <span class="status" id="statusText">Идёт расчёт</span>
+    <span class="status" id="statusText">Идёт расчёт</span><span class="num faint m-only" data-hud="speed">×8</span>
     <span class="topbar__stats"><span>T+<b id="time">00:00</b></span><span title="Потоки расчёта физики"><b id="threads">—</b> потоков</span><span class="faint" id="domainSize">48 × 36 × 19 км</span></span>
     <span class="topbar__spacer"></span>
     <span class="topbar__group"><button class="btn" id="radarOpen" title="Доплеровский радар: отражаемость на выбранном угле наклона луча">Радар <span class="kbd">R</span></button><button class="btn" id="skewOpen" title="Аэрологическая диаграмма Skew-T log-p: профиль среды, частица, CAPE/CIN, ветер и зонд в модели у выбранной ячейки">Skew-T <span class="kbd">S</span></button><button class="btn" id="stationOpen" title="Виртуальная метеостанция: поставьте её щелчком на земле и смотрите метеограмму — температуру, давление, ветер с порывами и осадки, когда гроза проходит над ней">Станция <span class="kbd">M</span></button></span>
     <span class="topbar__sep"></span>
     <button class="btn btn--quiet" id="layoutToggle" title="Телефонный вид: 3D во весь экран, крупные цифры, панель под палец. Выбор запоминается">Телефонный вид</button>
-    <div class="seg seg--text" role="group" aria-label="Тема" id="themeSwitch"><button data-theme-set="auto" title="Как в системе">Авто</button><button data-theme-set="light">Светлая</button><button data-theme-set="dark">Тёмная</button></div>
+    <div class="seg seg--text" role="group" aria-label="Тема"><button data-theme-set="auto" title="Как в системе">Авто</button><button data-theme-set="light">Светлая</button><button data-theme-set="dark">Тёмная</button></div>
   </header>
   <main class="app__main">
     <aside class="side side--left" aria-label="Обстановка">
       <div class="side__scroll">
         <div class="side__block">
-          <h2 class="side__title">Сценарии</h2>
-          <div class="scenarios">${presets.map((p, i) => `<button class="btn${p.name.length > 16 ? ' is-wide' : ''}" data-preset="${i}" aria-pressed="false">${p.name}</button>`).join('')}</div>
-          <div class="scenario-note" id="scenarioNote">
+          <h2 class="side__title d-only">Сценарии</h2>
+          <div class="scenarios d-only">${presets.map((p, i) => `<button class="btn${p.name.length > 16 ? ' is-wide' : ''}" data-preset="${i}" aria-pressed="false">${p.name}</button>`).join('')}</div>
+          <div class="scards m-only">${presets.map((p, i) => `<button class="scard" data-preset="${i}" aria-pressed="false"><span class="scard__name">${p.name}</span><span class="scard__desc">${p.summary}</span><span class="scard__nums">${p.nums}</span></button>`).join('')}</div>
+          <div class="scenario-note d-only" id="scenarioNote">
             <div class="scenario-note__head"><span class="scenario-note__name" id="scenarioName"></span><button class="btn btn--quiet btn--xs" id="scenarioMore">Подробнее</button></div>
             <div class="scenario-note__text" id="scenarioText"></div>
             <div class="scenario-note__nums" id="scenarioNums"></div>
@@ -228,9 +229,9 @@ const text = (id: string, value: string) => { document.querySelector(`#${id}`)!.
 applyLayout(savedLayout() ?? suggestedLayout(), false)
 if (!savedLayout()) askLayout()
 document.querySelector('#layoutToggle')!.addEventListener('click', () => applyLayout(isPhone() ? 'desktop' : 'phone'))
-// Theme: Авто (the system's) / Светлая / Тёмная in the header.
-const themeSwitch = document.querySelector<HTMLElement>('#themeSwitch')!, showThemeChoice = () => themeSwitch.querySelectorAll<HTMLButtonElement>('[data-theme-set]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.themeSet === themeChoice())))
-themeSwitch.addEventListener('click', e => { const b = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-theme-set]'); if (b) applyTheme(b.dataset.themeSet as ThemeChoice) })
+// Theme: Авто (the system's) / Светлая / Тёмная, in the header and in the phone's instruments menu.
+const showThemeChoice = () => document.querySelectorAll<HTMLButtonElement>('[data-theme-set]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.themeSet === themeChoice())))
+document.addEventListener('click', e => { const b = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-theme-set]'); if (b) applyTheme(b.dataset.themeSet as ThemeChoice) })
 addEventListener('themechange', showThemeChoice); showThemeChoice()
 // The side charts redraw every 20 frames; a new theme, or a group opened, repaints them at once.
 const drawCharts = () => { drawSounding(); drawHodograph(); drawSpin(); const { ctx, w, h } = prepareCanvas('timeline'); timeline.draw(ctx, w, h) }
@@ -257,7 +258,9 @@ document.querySelectorAll<HTMLElement>('.popover[popover]').forEach(pop => pop.a
   if (!open || !button) return
   const r = button.getBoundingClientRect(), w = pop.offsetWidth, h = pop.offsetHeight
   let left = r.left - w - 10, top = r.top - 12
-  if (left < 8) { left = Math.min(r.left, innerWidth - w - 8); top = r.bottom + 8 }
+  // On a phone (screen-wide) or wherever it does not fit on the left: under the button.
+  if (isPhone()) { left = (innerWidth - w) / 2; top = r.bottom + 8 }
+  else if (left < 8) { left = Math.max(8, Math.min(r.left, innerWidth - w - 8)); top = r.bottom + 8 }
   Object.assign(pop.style, { position: 'fixed', left: `${left}px`, top: `${Math.max(8, Math.min(top, innerHeight - h - 8))}px` })
 }))
 // R, S, M open and close the instruments (not while typing, not with a modifier).
@@ -612,7 +615,18 @@ function showDomain() {
   text('domainSize', `${width / 1000} × ${depth / 1000} × ${Math.round(height / 1000)} км`); text('gridSize', `${nx} × ${ny} × ${nz}`)
   text('frameMotion', speed < .1 ? 'неподвижна' : `движется на ${heading(fu, fv)}, ${speed.toFixed(1)} м/с`)
 }
-canvas.addEventListener('dblclick', event => { const r=canvas.getBoundingClientRect(); sim.perturb((event.clientX-r.left)/r.width,(event.clientY-r.top)/r.height,1.25) })
+// A thermal where the surface is double-clicked, or double-tapped on a touch screen: the taps are matched here, since
+// mobile browsers (iOS above all) do not reliably send dblclick; the dblclick that may still follow a double tap is
+// ignored.
+const thermalAt = (x: number, y: number) => { const r = canvas.getBoundingClientRect(); sim.perturb((x - r.left) / r.width, (y - r.top) / r.height, 1.25) }
+let lastTap: { x: number; y: number; t: number } | null = null, tappedAt = -Infinity
+canvas.addEventListener('pointerup', event => {
+  if (event.pointerType !== 'touch') return
+  const now = performance.now()
+  if (lastTap && now - lastTap.t < 350 && Math.hypot(event.clientX - lastTap.x, event.clientY - lastTap.y) < 30) { thermalAt(event.clientX, event.clientY); lastTap = null; tappedAt = now; return }
+  lastTap = { x: event.clientX, y: event.clientY, t: now }
+})
+canvas.addEventListener('dblclick', event => { if (performance.now() - tappedAt > 600) thermalAt(event.clientX, event.clientY) })
 
 const prepareCanvas = (id: string) => {
   const c = document.querySelector<HTMLCanvasElement>(`#${id}`)!, dpr = Math.min(devicePixelRatio, 2), w = c.clientWidth, h = c.clientHeight
@@ -693,7 +707,8 @@ function drawHodograph(){
 const timeline = new Timeline()
 // The phone layout's overlay and bottom bar (hud.ts; hidden on a desktop by CSS).
 const speedInput = document.querySelector<HTMLInputElement>('input[data-key="speed"]')!
-const hud = new Hud(document.querySelector<HTMLElement>('.viewport')!, document.querySelector<HTMLElement>('#app')!, speed => { speedInput.value = String(speed); speedInput.dispatchEvent(new Event('input')) })
+const hud = new Hud(document.querySelector<HTMLElement>('.viewport')!, document.querySelector<HTMLElement>('.app')!, speed => { speedInput.value = String(speed); speedInput.dispatchEvent(new Event('input')) })
+showThemeChoice()
 /** The live sounding last handed to the Skew-T screen (a new one every LIVE_EVERY s of model time). */
 let shownLive: Live | null = null
 function frame(now:number){

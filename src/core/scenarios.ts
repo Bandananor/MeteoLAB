@@ -5,7 +5,8 @@ import type { SimConfig } from './config'
  * to give a persistent mesocyclone (true), must not give one (false), or may go either way (undefined); the slow
  * scenario test checks it.
  */
-export interface Scenario { name: string; hint: string; values: Partial<SimConfig>; mesocyclone?: boolean }
+/** `summary`: one line for the phone's scenario cards; `hint`: the full note. */
+export interface Scenario { name: string; summary: string; hint: string; values: Partial<SimConfig>; mesocyclone?: boolean }
 
 /**
  * Starting-thermal radius (km) of the ordinary storms (2026-10-08). The default broad thermal (4.2 km, ~8 km across)
@@ -31,34 +32,43 @@ const SUMMER_AIR: Partial<SimConfig> = {
 // profile above its lid was superadiabatic (fixed by Environment.neutralise); stable, it never fired in 40 min.
 export const SCENARIOS: Scenario[] = [
   { name: 'Летний день', mesocyclone: false,
+    summary: 'Одиночная гроза с ливнем, без мезоциклона',
     hint: 'Обычный жаркий летний день: влажный перемешанный слой у земли под слабой инверсией, ветер слабый. Одиночная гроза с ливнем и холодным оттоком',
     values: { bubbleRadius: NARROW, ...SUMMER_AIR, ...LIGHT_WIND } },
   { name: 'Сухой воздух', mesocyclone: false,
+    summary: 'Сухая середина (15 %): дождя на треть меньше',
     hint: 'Умеренная CAPE и очень сухой средний слой (15 %). Сухой воздух, вовлекаясь в облако, испаряет капли: дождя на треть меньше, чем при влажной середине. Сам поток почти не слабеет — широкий термик (~8 км) на сетке ~1 км вовлекает мало; тонкие струи, которые в природе душит сухой воздух, сетка не разрешает',
     values: { bubbleRadius: NARROW, ...SUMMER_AIR, ...LIGHT_WIND, surfaceTemp: 25.5, rhLow: 35, rhMid: 15, rhUpper: 10 } },
   { name: 'Сдвиг ветра',
+    summary: 'Наклонённое облако, новые ячейки на оттоке',
     hint: 'Западный ветер усиливается с высотой (сдвиг 0–6 км ~13 м/с): облако наклоняется, дождь выпадает в стороне от потока, по оттоку растут новые ячейки — многоячейковая гроза',
     values: { bubbleRadius: NARROW, ...SUMMER_AIR, rhSurface: 57, rhLow: 55, rhMid: 50, wind0: 3, wind3: 10, wind6: 16, wind10: 22, windDir0: 250, windDir3: 265, windDir6: 270, windDir10: 270 } },
   { name: 'Микропорыв', mesocyclone: false,
+    summary: 'Дождь испаряется, порыв у земли ~20 м/с',
     hint: 'Жара и сухой воздух до 3 км («перевёрнутое V»), влажная середина: облако с базой ~2,8 км, дождь испаряется по пути вниз, охлаждённый воздух ударяет в землю порывом до ~20 м/с',
     values: { bubbleRadius: NARROW, surfaceTemp: 34, rhSurface: 25, rhLow: 25, rhMid: 70, rhUpper: 35, lapseLow: 9.7, lapseMid: 7.2, lapseUpper: 6.5, tropopause: 12, ...LIGHT_WIND } },
   { name: 'HSLC', mesocyclone: true,
+    summary: 'Низкая мини-суперячейка при малой CAPE',
     hint: 'Сильный сдвиг при малой CAPE (~1,3 кДж/кг — верхний край HSLC: на сетке ~1 км при меньшей CAPE вращение не держится), прохладно и влажно, как осенью или зимой: низкие мини-суперячейки с сильным вращением у земли (SRH 0–1 км ~300 м²/с²). Малая CAPE — нужен сильный начальный термик (2,5). На сетке ~1 км на грани разрешения',
     values: { surfaceTemp: 20.5, rhSurface: 85, rhLow: 80, rhMid: 55, rhUpper: 40, lapseLow: 6.5, lapseMid: 6.8, lapseUpper: 6.5, tropopause: 10, moistLayer: .8, bubble: 2.5,
       wind0: 10, wind05: 20, wind1: 25, wind3: 30, wind6: 35, wind10: 45, windDir0: 150, windDir05: 170, windDir1: 185, windDir3: 210, windDir6: 230, windDir10: 240 } },
   { name: 'Жаркий город', mesocyclone: false,
+    summary: 'Город и сухая почва греют воздух у земли',
     hint: 'Городская застройка и сухая почва сильно греют воздух у земли; воздух суше, чем за городом',
     values: { bubbleRadius: NARROW, ...SUMMER_AIR, ...LIGHT_WIND, surfaceTemp: 29, rhSurface: 45, rhLow: 45, lapseLow: 9.5, surfaceType: 'urban', soilMoisture: 15, solarMax: 1100 } },
   { name: 'Суперячейка WK', mesocyclone: true,
+    summary: 'Мезоциклон, расщепление на правую и левую',
     hint: 'Классический опыт Weisman–Klemp: реалистичная CAPE ~2,3 кДж/кг, годограф «четверть окружности», один термик, точный перенос. Ячейка расщепляется на правую (циклоническую) и левую. На стандартной области (48 × 36 км) после ~50-й минуты холодный отток заполняет почти всю область, ячейке нечем дышать и она гаснет; чтобы она жила больше часа, выберите «Размер области: Большая — 96 × 72 км». Профиль задан формулами — ползунки температуры, влажности и ветра не действуют',
     values: { profile: 'weisman-klemp', solarMax: 0, bubble: 1.5 } },
   { name: 'Тропическая конвекция', mesocyclone: false,
+    summary: 'Сильный ливень над океаном, вращения нет',
     hint: 'Тёплый океан (28 °C), влажно до 5–6 км (влагосодержание ~57 мм), тропопауза на 16 км, слабый пассат. CAPE ~2,7 кДж/кг растянута на всю тропосферу, поэтому поток слабее, чем над сушей при той же CAPE (~25 м/с), зато облако растёт до 14–16 км, а ливень из тёплого дождя доходит до 150 мм/ч. Вращения нет. Область — до 22 км (у остальных сценариев 18,9), чтобы над тропопаузой оставалось место для губки',
     // Calibration (2026-10-10, 40 min): w 22-25 m/s, tops 14-15.6 km, rain 140-160 mm/h and ~20 mm, no rotation.
     values: { bubbleRadius: NARROW, bubble: 1.2, top: 22, surfaceTemp: 28, lapseLow: 6.3, lapseMid: 5.6, lapseUpper: 7.5, tropopause: 16, stratoWarming: 1.5,
       rhSurface: 80, rhLow: 80, rhMid: 75, rhUpper: 50, moistLayer: .5, capStrength: 0, surfaceType: 'water', latitude: 15,
       wind0: 4, windDir0: 90, wind3: 6, windDir3: 100, wind6: 7, windDir6: 110, wind10: 9, windDir10: 120 } },
   { name: 'Суточный ход', mesocyclone: false,
+    summary: 'С рассвета: солнце доводит до грозы после полудня',
     hint: 'Старт на рассвете, в 06:00: у земли ночная инверсия (на 6 K холоднее, чем станет днём), термика нет. Сначала солнце съедает инверсию (до ~10 ч), потом перемешанный слой растёт до ~2 км, около полудня появляются кучевые, а через полчаса — первые грозы с ливнем и холодными оттоками. Ждать долго: поставьте скорость побольше',
     // Calibration (2026-10-10): nothing until 10:00, first cumulus 11:57, first thunderstorm 12:31, ~8 mm by 13:30. No
     // lid: under the 1 K one of «Летний день» the mixed layer stops at 1.6 km and no cloud forms all day. No moist layer:

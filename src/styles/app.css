@@ -28,8 +28,10 @@
 /* The left column's notice under the actions. */
 #stateNote .notice__text { min-width: 0; }
 
-/* Shown on the phone only (hud.ts). */
-.hud, .hud-bar, .hud-tools, .sheet-close { display: none; }
+
+/* Shown in one layout only (hud.ts switches the class on <html>). */
+html:not(.layout-phone) .m-only { display: none !important; }
+.layout-phone .d-only { display: none !important; }
 
 /* ---- Instrument screens (radar, Skew-T, station): earlier look until their design step. ---- */
 .radar-app{position:fixed;inset:0;z-index:50;display:flex;flex-direction:column;background:#05080a;color:#b9cdd3;font:11px var(--font-mono)}
@@ -54,37 +56,46 @@
 .radar-hook{color:#ffffff;letter-spacing:.6px}
 .radar-app input[type=range] { accent-color: #2f7d86; }
 .skewt-screen { cursor: crosshair; } .station-screen { cursor: default; } .skewt-probe { margin-top: 6px; font-size: 9.5px; color: #9fb6bd; }
+.layout-phone .radar-bar{gap:10px;flex-wrap:wrap;padding:8px 10px;font-size:9.5px}
+.layout-phone .radar-body{display:flex;flex-direction:column;overflow-y:auto}
+.layout-phone .radar-screen{flex:none;height:62dvh;position:relative}
+.layout-phone .radar-side{border-left:0;border-top:1px solid #1d2c32;overflow:visible}
 
 /* ---- First-visit layout question: earlier look until its design step. ---- */
 .layout-ask{position:fixed;inset:0;z-index:100;display:grid;place-items:center;background:var(--scrim);padding:16px}.layout-ask div{max-width:420px;background:var(--surface-1);border-radius:var(--r-2);box-shadow:var(--shadow-pop);padding:20px;font:14px var(--font-text);color:var(--text)}.layout-ask h3{margin:0 0 6px;font-size:17px}.layout-ask p{margin:0 0 14px;color:var(--text-2);font-size:13px;line-height:1.45}.layout-ask button{display:block;width:100%;margin-top:8px;padding:14px;font:600 14px var(--font-text);text-align:left;border-radius:var(--r-2);background:var(--surface-2);color:var(--text);border:0}.layout-ask button small{display:block;font-weight:400;font-size:12px;color:var(--text-2);margin-top:2px}.layout-ask button.recommended{background:var(--accent-soft);box-shadow:inset 0 0 0 1.5px var(--accent)}
 
-/* ---- Phone layout (hud.ts, <html class="phone">): the desktop page rearranged, until its design step. ---- */
-.phone .app { padding-bottom: 58px; }
-.phone .app__main { display: block; position: relative; min-height: 0; }
-.phone .topbar { gap: 10px; }
-.phone .topbar > :not(.logo):not(.status) { display: none; }
-.phone .workspace { height: 100%; }
-.phone .tabs { padding: 0 8px; }
-.phone .readout, .phone .ov-bl, .phone .ov-br, .phone .ov-tl { display: none !important; }
-.phone .ov-tr { left: 8px; right: 8px; top: auto; bottom: 8px; } .phone .field-panel { width: auto; max-height: 42dvh; }
-.phone .side { position: fixed; left: 0; right: 0; bottom: 58px; height: 74dvh; z-index: 40; border: 0; border-top: 1px solid var(--line); box-shadow: var(--shadow-pop); transform: translateY(110%); transition: transform .22s ease; display: flex; overflow: auto; }
-.phone body.sheet-controls .side--left, .phone body.sheet-data .side--right { transform: none; }
-.phone .sheet-close { display: block; position: sticky; top: 0; z-index: 2; flex: none; width: 100%; padding: 12px; border: 0; border-bottom: 1px solid var(--line); background: var(--surface-1); font: var(--fw-medium) var(--fs-body-s) var(--font-text); color: var(--text-2); }
-.phone .side__scroll { overflow: visible; flex: none; }
-.phone .hud { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; position: absolute; left: 8px; right: 8px; top: 8px; pointer-events: none; }
-.phone .hud div { background: var(--overlay); box-shadow: inset 0 0 0 1px var(--overlay-line); border-radius: var(--r-2); padding: 5px 7px; color: var(--overlay-text); }
-.phone .hud span { display: block; font: 11px var(--font-mono); color: var(--overlay-text-2); }
-.phone .hud b { font: var(--fw-medium) 20px var(--font-mono); }
-.phone .hud p { grid-column: 1/-1; margin: 0; justify-self: start; background: var(--overlay); box-shadow: inset 0 0 0 1px var(--overlay-line); border-radius: var(--r-2); padding: 4px 8px; font: 12px var(--font-text); color: var(--overlay-text); }
-.phone .hud.meso p { background: var(--overlay-danger); box-shadow: inset 0 0 0 1px var(--overlay-danger-line); color: var(--overlay-danger-text); }
-.phone .hud-bar { display: grid; grid-template-columns: repeat(6, 1fr); position: fixed; left: 0; right: 0; bottom: 0; height: 58px; z-index: 45; background: var(--surface-1); border-top: 1px solid var(--line); }
-.phone .hud-bar button { border: 0; background: transparent; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; font: 12px var(--font-text); color: var(--text-2); padding: 0; }
-.phone .hud-bar i { font: var(--fw-medium) 16px var(--font-mono); font-style: normal; color: var(--text); }
-.phone .hud-tools { display: grid; gap: 2px; position: fixed; right: 8px; bottom: 66px; z-index: 46; padding: 4px; background: var(--surface-1); border-radius: var(--r-2); box-shadow: var(--shadow-pop); }
-.phone .hud-tools[hidden] { display: none; }
-.phone .hud-tools button { padding: 12px 16px; border: 0; border-radius: 3px; background: none; font: var(--fw-medium) 14px var(--font-text); text-align: left; color: var(--text); }
-.phone .hud-tools button:hover { background: var(--hover); }
-.phone .radar-bar{gap:10px;flex-wrap:wrap;padding:8px 10px;font-size:9.5px}
-.phone .radar-body{display:flex;flex-direction:column;overflow-y:auto}
-.phone .radar-screen{flex:none;height:62dvh;position:relative}
-.phone .radar-side{border-left:0;border-top:1px solid #1d2c32;overflow:visible}
+/* ---- Phone layout (hud.ts, <html class="layout-phone">; the page root also gets layout.css's .phone frame): the 3D view
+   between the header and the bottom bar, numbers and the storm mode over it, the side columns as sheets over the bar. ---- */
+/* The bar: 6 + 56 + 6 px and the border, plus the home indicator (layout.css guesses 88). */
+.layout-phone .app { --bar-h: calc(69px + env(safe-area-inset-bottom)); }
+.layout-phone .topbar { flex: none; height: 52px; } .layout-phone .tabs { flex: none; }
+.layout-phone .ov-num__value { font-size: clamp(20px, 6.2vw, 26px); }
+.layout-phone .app__main { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.layout-phone .topbar { gap: 8px; }
+.layout-phone .topbar > :not(.logo):not(.status):not([data-hud]) { display: none; }
+.layout-phone .topbar .logo { margin-right: auto; font-size: 18px; } .layout-phone .topbar .logo__mark { width: 18px; height: 18px; }
+.layout-phone .workspace { flex: 1; }
+.layout-phone .tabs { -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 48px), transparent); mask-image: linear-gradient(90deg, #000 calc(100% - 48px), transparent); }
+.layout-phone .tab { height: var(--h-touch); font-size: var(--fs-body); }
+.layout-phone .readout, .layout-phone .ov-tl, .layout-phone .ov-bl, .layout-phone .ov-br { display: none !important; }
+.layout-phone .ov-tr { left: 12px; right: 12px; top: auto; bottom: 12px; } .layout-phone .field-panel { width: auto; max-height: 42dvh; }
+.layout-phone .bottombar { flex: none; }
+/* Sheets: the side columns slide up over the bar; one open at a time, the scrim behind. */
+.layout-phone .side { position: fixed; left: 0; right: 0; bottom: var(--bar-h); height: calc(75dvh - var(--bar-h)); z-index: 21; display: block; overflow: auto; overscroll-behavior: contain; border: 0; border-radius: var(--r-2) var(--r-2) 0 0; background: var(--surface-1); box-shadow: var(--shadow-pop); transform: translateY(calc(100% + var(--bar-h))); visibility: hidden; transition: transform .22s ease, visibility 0s .22s; }
+.layout-phone .side.is-open { transform: none; visibility: visible; transition: transform .22s ease; }
+.sheet-top { position: sticky; top: 0; z-index: 2; display: flex; flex-direction: column; background: var(--surface-1); }
+.layout-phone .side__scroll { overflow: visible; }
+.layout-phone .side__block { padding-top: 4px; }
+.layout-phone .side__actions .side__row:first-child { display: none; } /* pause and restart are on the bar */
+.layout-phone .diag { padding: 4px 16px 24px; }
+.layout-phone .diag__groups { margin: 0 -16px; }
+.scards { display: flex; flex-direction: column; gap: 6px; }
+/* Touch sizes: rows and buttons 44 px. */
+.layout-phone .group > summary { height: 48px; font-size: var(--fs-body); }
+.layout-phone .side .btn:not(.btn--xs), .layout-phone .select > select { height: var(--h-touch); font-size: var(--fs-body); }
+.layout-phone .cell { height: var(--h-touch); }
+.layout-phone .check { min-height: var(--h-touch); font-size: var(--fs-body); }
+.layout-phone .range { height: 28px; }
+.layout-phone .metric { padding: 12px; } .layout-phone .metric__num { font-size: 26px; }
+.layout-phone .t-caption, .layout-phone .unit { font-size: var(--fs-label); }
+.layout-phone .popover { width: calc(100vw - 32px); }
