@@ -7,8 +7,9 @@
     <meta name="description" content="MeteoLab: численная лаборатория атмосферы — гроза, посчитанная по физике, в браузере">
     <title>MeteoLab — численная лаборатория атмосферы</title>
     <script>
-      // Links to a run from before the simulator had its own address (?cfg=..., ?seed=...) open the simulator.
-      if (/[?&](cfg|seed)=/.test(location.search)) location.replace('simulator/' + location.search + location.hash)
+      // A shared run from before the simulator had its own address (?cfg=...) opens the simulator. A bare ?seed=... does
+      // not: the old page wrote it into every address, so the browser suggests it when the site is typed in.
+      if (/[?&]cfg=/.test(location.search)) location.replace('simulator/' + location.search + location.hash)
       try { const t = localStorage.getItem('meteolab-theme'); if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t } catch {}
     </script>
   </head>

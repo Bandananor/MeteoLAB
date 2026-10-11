@@ -142,9 +142,11 @@ export class SkewTPanel {
     const ctx = this.ctx
     const pal = instrumentPalette(this.root)
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.fillStyle = pal.bg; ctx.fillRect(0, 0, w, h); ctx.font = `11px ${MONO}`
-    // Square-ish plot (the 45° skew needs equal scales), wind barbs to its right.
-    const size = Math.max(200, Math.min(h - 50, w - 160))
-    this.box = { left: 56, right: 56 + size, top: 18, bottom: 18 + size }
+    // Square-ish plot (the 45° skew needs equal scales), wind barbs to its right. On a narrow screen (a phone) the plot
+    // takes the whole width: no heights next to the isobars and the barbs close to its edge.
+    const narrow = w < 600, probe = this.column.length > 0, reserve = narrow ? (probe ? 80 : 50) : 160, margin = narrow ? 40 : 56
+    const size = Math.max(200, Math.min(h - (narrow ? 40 : 50), w - margin - reserve))
+    this.box = { left: margin, right: margin + size, top: 18, bottom: 18 + size }
     const { left, right, top, bottom } = this.box, parcel = this.parcels[this.kind]
     ctx.save(); ctx.beginPath(); ctx.rect(left, top, right - left, bottom - top); ctx.clip()
     const line = (pts: { p: number; t: number }[], color: string, width = 1, dash: number[] = []) => {
@@ -178,7 +180,7 @@ export class SkewTPanel {
     ctx.fillStyle = pal.label
     for (const p of ISOBARS) {
       const z = this.heightAt(p); ctx.fillText(`${p}`, left - 34, this.Y(p) + 3)
-      if (z !== null) { ctx.fillStyle = '#4b6670'; ctx.fillText(`${z.toFixed(1)}км`, left - 52, this.Y(p) + 15); ctx.fillStyle = pal.label }
+      if (z !== null && !narrow) { ctx.fillStyle = '#4b6670'; ctx.fillText(`${z.toFixed(1)}км`, left - 52, this.Y(p) + 15); ctx.fillStyle = pal.label }
     }
     for (let t = T_LEFT; t <= T_RIGHT; t += 10) ctx.fillText(`${t}°`, this.X(t, P_BOTTOM) - 8, bottom + 13)
     ctx.fillStyle = '#4f6b55'
@@ -192,9 +194,9 @@ export class SkewTPanel {
       const y = this.Y(p); ctx.strokeStyle = color; ctx.beginPath(); ctx.moveTo(right - 26, y); ctx.lineTo(right, y); ctx.stroke()
       ctx.fillStyle = color; ctx.fillText(name, right - 28 - ctx.measureText(name).width, y + 3)
     }
-    this.barbs(this.env, right + 34, '#cfe0e5')
-    if (this.column.length) this.barbs(this.column.filter((_, k) => k % 3 === 1), right + 84, '#ffa040')
-    ctx.fillStyle = pal.label; ctx.fillText('среда', right + 22, top - 4); if (this.live.time > 0) { ctx.fillStyle = '#b04a3f'; ctx.fillText('- - исходная', left + 6, top + 12) } if (this.column.length) { ctx.fillStyle = '#ffa040'; ctx.fillText('зонд', right + 72, top - 4) }
+    this.barbs(this.env, right + (narrow ? 26 : 34), '#cfe0e5')
+    if (probe) this.barbs(this.column.filter((_, k) => k % 3 === 1), right + (narrow ? 58 : 84), '#ffa040')
+    ctx.fillStyle = pal.label; ctx.fillText('среда', right + (narrow ? 8 : 22), top - 4); if (this.live.time > 0) { ctx.fillStyle = '#b04a3f'; ctx.fillText('- - исходная', left + 6, top + 12) } if (this.column.length) { ctx.fillStyle = '#ffa040'; ctx.fillText('зонд', right + (narrow ? 48 : 72), top - 4) }
     this.cursor(); this.side()
   }
 
