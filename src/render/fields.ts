@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import type { ScalarField } from '../core'
+import { type ScalarField, UH_LAYERS, type UhLayer } from '../core'
 
 export type FieldMode = 'composite' | ScalarField
 
@@ -14,6 +14,14 @@ export const FIELDS: Record<ScalarField, FieldInfo> = {
   vorticity: { title: 'Вертикальная завихренность', units: '10⁻³ с⁻¹', min: -4, max: 4, diverging: true, threshold: .3, stops: DIVERGING },
   helicity: { title: 'Вращение восходящего потока UH (слой 2–5 км)', units: 'м²/с²', min: -300, max: 300, diverging: true, threshold: .3, stops: DIVERGING },
   coldpool: { title: 'Охлаждение от испарения осадков', units: 'K', min: 0, max: 8, diverging: false, threshold: .15, stops: ['#f1efe9', '#b9d7e6', '#6ea6cc', '#3769a0', '#1d3565'] },
+}
+
+/** A field's description, with the title and colour scale of the chosen UH layer for the helicity map. */
+export function fieldInfo(field: ScalarField, uhLayer: UhLayer = '2-5'): FieldInfo {
+  const info = FIELDS[field]
+  if (field !== 'helicity') return info
+  const l = UH_LAYERS[uhLayer]
+  return { ...info, title: `Вращение восходящего потока UH, ${l.label}`, min: -l.scale, max: l.scale }
 }
 
 export function colormapTexture(stops: string[]) {

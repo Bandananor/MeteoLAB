@@ -1,8 +1,8 @@
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
-import { type AtmosphereModel, computeScalarField, heightAt, levelAt, MESO_PERSISTENCE, sunDirection, UH_ROTATING } from '../core'
+import { type AtmosphereModel, computeScalarField, heightAt, levelAt, MESO_PERSISTENCE, sunDirection, UH_ROTATING, type UhLayer } from '../core'
 import { clamp, lerp, mod, mulberry32 } from '../core/math'
-import { colormapTexture, FIELDS, type FieldMode } from './fields'
+import { colormapTexture, type FieldMode, fieldInfo } from './fields'
 import { fieldVolumeFragment, groundShadowPars, precipFragment, precipVertex, sliceFragment, volumeFragment, volumeVertex } from './shaders'
 
 /** How a field layer is drawn: opaque slices with a volume of strong deviations, slices only, or the whole field as a volume. */
@@ -16,6 +16,7 @@ export interface ViewSettings {
   /** 'volume' mode: opacity multiplier of the field volume. */ volumeDensity: number
   /** Horizontal slice height, km. */ sliceHeight: number
   /** Vertical north-south slice position, km north of the domain centre. */ sliceNorth: number
+  /** Layer of the updraft helicity map. */ uhLayer: UhLayer
 }
 
 /** Rain-total colour steps: [upper limit mm, rgb]. */
@@ -304,12 +305,12 @@ export class StormView {
   }
 
   private updateFieldTexture(field: Exclude<FieldMode, 'composite'>) {
-    const info = FIELDS[field]
+    const info = fieldInfo(field, this.settings.uhLayer)
     if (this.colormapField !== field) {
       this.colormap?.dispose(); this.colormap = colormapTexture(info.stops); this.colormapField = field
       this.fieldUniforms.uColormap.value = this.colormap; this.fieldUniforms.uDiverging.value = info.diverging ? 1 : 0
     }
-    computeScalarField(this.model, field, this.fieldValues)
+    computeScalarField(this.model, field, this.fieldValues, this.settings.uhLayer)
     const span = info.max - info.min
     const tl = this.texLevels, v = this.fieldValues
     if (!tl) for (let i = 0; i < v.length; i++) this.fieldData[i] = clamp((v[i] - info.min) / span) * 255
@@ -350,7 +351,7 @@ export class StormView {
     const slices = !!field && s.layerMode !== 'volume', wholeVolume = s.layerMode === 'volume'
     this.fieldMesh.visible = !!field && s.layerMode !== 'slices'; this.sliceH.visible = this.sliceV.visible = slices
     // With slices the volume shows only strong deviations (the field's own threshold); alone it can show weak structure too.
-    this.fieldUniforms.uThreshold.value = field ? wholeVolume ? s.volumeThreshold : FIELDS[field].threshold : 1
+    this.fieldUniforms.uThreshold.value = field ? wholeVolume ? s.volumeThreshold : fieldInfo(field, s.uhLayer).threshold : 1
     this.fieldUniforms.uDensity.value = wholeVolume ? s.volumeDensity : 1
     this.shared.uSliceOn.value = slices ? 1 : 0; this.shared.uSliceH.value = this.sliceH.position.y = s.sliceHeight; this.shared.uSliceZ.value = this.sliceV.position.z = -s.sliceNorth
     this.flowPoints.visible = s.showVectors; this.vectorLines.visible = s.showVectors

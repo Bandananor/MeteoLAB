@@ -1,6 +1,7 @@
 import { AtmosphereModel, CellTracker, coldPoolBalance, type ColdPoolBalance, computeSounding, domainPoint, groundPoint, Station, type Environment, insolation, liveSounding, type ModelDiagnostics, parcelIndices, type ParcelIndices, type SimConfig, type Sounding, stormIndices, type StormIndices, sunDirection } from './core'
 import { describeConvection } from './describe'
 import type { FieldMode } from './render/fields'
+import type { UhLayer } from './core'
 import { type LayerMode, StormView, type ViewSettings } from './render/view'
 import { SNAPSHOT_COLUMNS, SNAPSHOT_FIELDS, type Snapshot, type WorkerRequest } from './simulation'
 
@@ -16,7 +17,7 @@ export interface Live { time: number; quiet: number; all: boolean; env: Environm
  * of every snapshot, so the view and the field slices read it exactly as they would read the live model.
  */
 export class Atmosphere implements ViewSettings {
-  field: FieldMode = 'composite'; showVectors = false; showPrecip = false; layerMode: LayerMode = 'both'; showRainTotal = false; showMesocyclone = true; volumeThreshold = .1; volumeDensity = 1; sliceHeight = 2; sliceNorth = 0
+  field: FieldMode = 'composite'; uhLayer: UhLayer = '2-5'; showVectors = false; showPrecip = false; layerMode: LayerMode = 'both'; showRainTotal = false; showMesocyclone = true; volumeThreshold = .1; volumeDensity = 1; sliceHeight = 2; sliceNorth = 0
   private readonly mirror: AtmosphereModel; private readonly view: StormView; private readonly worker: Worker
   private readonly config: SimConfig; private sentConfig: string
   private latest: ModelDiagnostics

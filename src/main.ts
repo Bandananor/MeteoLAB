@@ -3,8 +3,8 @@ import { Atmosphere, type Live } from './atmosphere'
 import { RadarPanel } from './radar/panel'
 import { SkewTPanel } from './skewt/panel'
 import { StationPanel } from './station/panel'
-import { CELL_STAGES, describeBalance, createGrid, DT, Environment, parcelIndices, SCENARIOS, type SimConfig, stormIndices, weismanKlemp } from './core'
-import { FIELDS, type FieldMode } from './render/fields'
+import { CELL_STAGES, createGrid, describeBalance, DT, Environment, parcelIndices, SCENARIOS, type SimConfig, stormIndices, UH_LAYERS, type UhLayer, weismanKlemp } from './core'
+import { type FieldMode, fieldInfo } from './render/fields'
 import type { LayerMode } from './render/view'
 import { decodeSettings, download, encodeSettings, toCsv } from './share'
 import { Timeline } from './timeline'
@@ -110,6 +110,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
           <b id="fieldTitle"></b>
           <div class="colorbar" id="colorbar"></div>
           <div class="colorbar-labels"><span id="fieldMin"></span><span id="fieldMid"></span><span id="fieldMax"></span></div>
+          <label id="uhLayerRow" hidden title="UH = Σ w·ζ·Δz по слою: насколько поднимающийся воздух вращается. 2–5 км — средний мезоциклон (как в цифрах модели); 0–1 и 0–3 км — нижний, главный признак опасности смерча; весь поток — вращается ли он целиком или только середина">Слой вращения<select id="uhLayer">${(Object.keys(UH_LAYERS) as UhLayer[]).map(k => `<option value="${k}">${UH_LAYERS[k].label}</option>`).join('')}</select></label>
           <label>Высота горизонтального среза<output id="sliceHeightOut">2.0 км</output><input id="sliceHeight" type="range" min="0.1" max="18.5" step="0.1" value="2"></label>
           <label>Вертикальный разрез, север ↔ юг<output id="sliceNorthOut">0 км</output><input id="sliceNorth" type="range" min="-17.5" max="17.5" step="0.5" value="0"></label>
           <label>Отображение<select id="layerMode"><option value="both">Срезы + объём сильных отклонений</option><option value="slices">Только срезы</option><option value="volume">Только объём (всё поле)</option></select></label>
@@ -181,7 +182,7 @@ const nextSeed = () => { const [x] = crypto.getRandomValues(new Uint32Array(1));
 const useSeed = (seed: number) => { config.seed = seed; const url = new URL(location.href); url.searchParams.set('seed', String(seed)); history.replaceState(null, '', url) }
 useSeed(Number.isInteger(urlSeed) && urlSeed > 0 ? urlSeed : nextSeed())
 const canvas = document.querySelector<HTMLCanvasElement>('#sim')!
-const view = { field: 'composite' as FieldMode, showVectors: false, showPrecip: false, showRainTotal: false, showMesocyclone: true, layerMode: 'both' as LayerMode, volumeThreshold: .1, volumeDensity: 1, sliceHeight: 2, sliceNorth: 0 }
+const view = { field: 'composite' as FieldMode, uhLayer: '2-5' as UhLayer, showVectors: false, showPrecip: false, showRainTotal: false, showMesocyclone: true, layerMode: 'both' as LayerMode, volumeThreshold: .1, volumeDensity: 1, sliceHeight: 2, sliceNorth: 0 }
 let sim = new Atmosphere(canvas, config)
 const radar = new RadarPanel(document.body); radar.attach(sim.model, sim.storm.rightMover)
 document.querySelector('#radarOpen')!.addEventListener('click', () => radar.toggle())
@@ -279,16 +280,27 @@ document.querySelectorAll<HTMLButtonElement>('[data-field]').forEach(button => b
   fieldPanel.hidden = field === 'composite'
   document.querySelector<HTMLDivElement>('#cloudLegend')!.hidden = field !== 'composite'
   if (field === 'composite') return
-  if (field === 'helicity' && (view.sliceHeight < 2.6 || view.sliceHeight > 4.6)) {
-    sliceHeight.value = '3.5'; sliceHeight.dispatchEvent(new Event('input'))
-  }
-  const info = FIELDS[field], signed = info.diverging
+  document.querySelector<HTMLElement>('#uhLayerRow')!.hidden = field !== 'helicity'
+  if (field === 'helicity') aimSliceAtUhLayer()
+  showFieldScale(field)
+}))
+/** The colour bar and title of a field (the helicity map's follow its layer). */
+function showFieldScale(field: Exclude<FieldMode, 'composite'>) {
+  const info = fieldInfo(field, view.uhLayer), signed = info.diverging
   text('fieldTitle', `${info.title}, ${info.units}`)
   document.querySelector<HTMLDivElement>('#colorbar')!.style.background = `linear-gradient(to right, ${info.stops.join(',')})`
   text('fieldMin', signed ? formatValue(info.min) : String(info.min))
   text('fieldMid', signed ? '0' : String((info.min + info.max) / 2))
   text('fieldMax', signed ? formatValue(info.max) : String(info.max))
-}))
+}
+/** Puts the horizontal slice inside the chosen UH layer (the map is drawn only there). */
+function aimSliceAtUhLayer() {
+  const l = UH_LAYERS[view.uhLayer], mid = view.uhLayer === 'deep' ? 3.5 : (l.from + l.to) / 2000
+  if (view.uhLayer === 'deep' || view.sliceHeight < l.from / 1000 + .1 || view.sliceHeight > l.to / 1000 - .1) { sliceHeight.value = String(Math.max(.3, mid)); sliceHeight.dispatchEvent(new Event('input')) }
+}
+document.querySelector<HTMLSelectElement>('#uhLayer')!.addEventListener('change', event => {
+  setView({ uhLayer: (event.target as HTMLSelectElement).value as UhLayer }); aimSliceAtUhLayer(); showFieldScale('helicity')
+})
 document.querySelector<HTMLButtonElement>('#flowToggle')!.addEventListener('click', event => {
   const button=event.currentTarget as HTMLButtonElement;setView({ showVectors: !view.showVectors });button.classList.toggle('active',view.showVectors);button.setAttribute('aria-pressed',String(view.showVectors))
 })
