@@ -14,8 +14,8 @@ interface Series { key: Key; label: string; unit: string; color: string; floor: 
 
 const SERIES: Series[] = [
   { key: 'cape', label: 'CAPE / CIN от земли', unit: 'Дж/кг', color: '#c97a2a', floor: 500, second: { key: 'cin', label: 'CIN', color: '#4d86b3' } },
-  { key: 'updraft', label: 'Макс. восходящий поток', unit: 'м/с', color: '#c4553a', floor: 10 },
-  { key: 'uh', label: 'Вращение потока, UH 2–5 км', unit: 'м²/с²', color: '#7b3fa0', floor: 200, rotation: true },
+  { key: 'updraft', label: 'Восходящий поток', unit: 'м/с', color: '#c4553a', floor: 10 },
+  { key: 'uh', label: 'UH 2–5 км', unit: 'м²/с²', color: '#7b3fa0', floor: 200, rotation: true },
   { key: 'rain', label: 'Дождь', unit: 'мм/ч', color: '#3f6fa3', floor: 10 },
 ]
 

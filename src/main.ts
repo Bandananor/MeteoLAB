@@ -3,7 +3,7 @@ import { Atmosphere, type Live } from './atmosphere'
 import { RadarPanel } from './radar/panel'
 import { SkewTPanel } from './skewt/panel'
 import { StationPanel } from './station/panel'
-import { CELL_STAGES, createGrid, describeBalance, DT, Environment, parcelIndices, SCENARIOS, type SimConfig, stormIndices, UH_LAYERS, type UhLayer, weismanKlemp } from './core'
+import { CELL_STAGES, createGrid, describeBalance, DT, Environment, parcelIndices, SCENARIOS, type SimConfig, SPIN_SUPERCELL, spinProfile, stormIndices, UH_LAYERS, type UhLayer, weismanKlemp } from './core'
 import { type FieldMode, fieldInfo } from './render/fields'
 import type { LayerMode } from './render/view'
 import { decodeSettings, download, encodeSettings, toCsv } from './share'
@@ -140,6 +140,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
       <div class="metric"><span>Макс. downdraft</span><strong id="downdraft">—</strong><small>м/с</small></div>
       <div class="metric" title="Спиральность восходящего потока: насколько поднимающийся воздух вращается циклонически в слое 2–5 км"><span>Вращение потока (UH 2–5 км)</span><strong id="uh">—</strong><small>м²/с²</small></div>
       <div class="metric" title="Вращение восходящего потока у земли: низкоуровневый мезоциклон — признак ячейки, опасной по смерчам. На сетке ~0,65 км слой 0–1 км — один уровень, 0–3 км — четыре"><span>Низкое вращение (UH 0–1 / 0–3 км)</span><strong id="uhLow">—</strong><small>м²/с²</small></div>
+      <div class="spin" title="Профиль w·ζ по высоте в ядре с наибольшим UH (среднее по 3×3 столбцам): на какой высоте и как глубоко вращается восходящий поток. Ниже — корреляция w и ζ по всей области на 2–6 км: в суперячейке поток и циклоническое вращение совпадают (на сетке ~1 км у WK 0,15–0,25), в обычной грозе они рядом, а не вместе (около 0)"><span>Вращение по высоте (ядро с макс. UH)</span><canvas id="spin"></canvas><small id="spinNote">—</small></div>
       <div class="metric"><span>Вершина облака</span><strong id="cloudTop">—</strong><small>км</small></div>
       <div class="metric"><span>Вершина термика</span><strong id="thermalTop">—</strong><small>км</small></div>
       <div class="metric"><span>Макс. облачная вода</span><strong id="cloudWater">—</strong><small>г/кг</small></div>
@@ -435,6 +436,18 @@ function drawSounding(){
     ctx.fillStyle = color; ctx.fillText(name, R + 3, Y(z) + 3)
   }
 }
+/** The rotation profile of the most rotating core (spin.ts) and the w-ζ correlation. */
+function drawSpin(){
+  const { ctx, w, h } = prepareCanvas('spin'), p = spinProfile(sim.model), top = 14, L = 22, R = w - 6, T = 4, B = h - 12
+  const peak = Math.max(50, ...p.wz), X = (v: number) => L + (R - L) * Math.max(0, v) / peak, Y = (z: number) => B - (B - T) * z / top
+  ctx.strokeStyle = '#d2dade'; ctx.fillStyle = '#7c8c94'; ctx.lineWidth = 1
+  for (let z = 0; z <= top; z += 2) { ctx.beginPath(); ctx.moveTo(L, Y(z)); ctx.lineTo(R, Y(z)); ctx.stroke(); if (z % 4 === 0) ctx.fillText(`${z}`, 4, Y(z) + 3) }
+  ctx.fillText(`w·ζ до ${peak.toFixed(0)}·10⁻³ м/с²`, R - 92, h - 2)
+  ctx.fillStyle = 'rgba(123, 63, 160, .55)'
+  for (let k = 1; k + 1 < p.z.length && p.z[k] <= top; k++) if (p.wz[k] > 0) ctx.fillRect(L, Y(p.z[k + 1]), X(p.wz[k]) - L, Y(p.z[k]) - Y(p.z[k + 1]))
+  const c = p.correlation, layer = p.bottom === null ? 'ядро не вращается' : `ядро вращается ${p.bottom.toFixed(1)}–${p.top!.toFixed(1)} км`
+  text('spinNote', c === null ? layer : `${layer}; корреляция w–ζ 2–6 км ${c.toFixed(2)}: ${c >= SPIN_SUPERCELL ? 'поток и вращение совпадают, как в суперячейке' : 'вращение рядом с потоком, не в нём'}`)
+}
 function drawHodograph(){
   const { ctx, w, h } = prepareCanvas('hodograph'), wind = sim.sounding().wind
   const maxSpeed = Math.max(...wind.map(p => Math.hypot(p.u, p.v))), maxRing = Math.max(20, Math.ceil(maxSpeed / 10) * 10)
@@ -467,7 +480,7 @@ function frame(now:number){
   text('cape',d.cape.toFixed(0));text('mlcape',d.indices.ml.cape.toFixed(0));text('mlcin',d.indices.ml.cin.toFixed(0));text('mucape',d.indices.mu.cape.toFixed(0));text('dcape',d.indices.dcape.toFixed(0));text('srh01',d.storm.srh01.toFixed(0));text('srh03',d.storm.srh03.toFixed(0));text('scp',d.storm.scp.toFixed(1));text('stp',d.storm.stp.toFixed(1));text('cin',d.cin.toFixed(0));text('updraft',d.updraft.toFixed(1));text('downdraft',d.downdraft.toFixed(1));text('uh',d.updraftHelicity.toFixed(0));text('uhLow',`${d.uh01.toFixed(0)} / ${d.uh03.toFixed(0)}`);text('cloudTop',d.cloudTop.toFixed(1));text('thermalTop',d.thermalTop.toFixed(1));text('cloudWater',d.cloudWater.toFixed(2));text('coldPool',d.coldPool.toFixed(1));text('gust',d.gust.toFixed(1));text('hail',d.hail>=1?(d.hail/10).toFixed(1):'нет');text('hailSwath',d.hailSwath>=1?`крупнейшие, см; за прогон до ${(d.hailSwath/10).toFixed(1)}`:'крупнейшие градины, см');text('clipped',String(d.clipped));text('rain',d.rain.toFixed(1));text('rainTotal',d.rainTotal.toFixed(1));text('lcl',d.lcl===null?'—':`${d.lcl.toFixed(1)} км`);text('lfc',d.lfc===null?'—':`${d.lfc.toFixed(1)} км`);text('el',d.el===null?'—':`${d.el.toFixed(1)} км`);text('cellType',d.cellType);text('cellReason',d.cellReason);text('logicText',d.logic);text('sun',`${d.insolation.toFixed(0)} Вт/м²`);text('sunElevation',d.sunElevation>0?`${d.sunElevation.toFixed(0)}° над горизонтом`:'ночь')
   text('surfaceReadout',({grass:'ТРАВА',dry:'СУХАЯ ПОЧВА',water:'ВОДА',urban:'ГОРОД'} as const)[config.surfaceType])
   const b=sim.balance;text('rkw',b?b.ratio.toFixed(1):'—');text('rkwNote',b?`C ${b.c.toFixed(0)} / Δu ${b.deltaU.toFixed(0)} м/с`:'купола нет');const card=document.querySelector<HTMLElement>('#rkwCard')!;card.dataset.base??=card.title;card.title=b?`${card.dataset.base}\n\nСейчас: ${describeBalance(b)}.`:card.dataset.base
-  const sec=Math.floor(sim.time);text('time',`${String(Math.floor(sec/60)).padStart(2,'0')}:${String(sec%60).padStart(2,'0')}`);text('threads',String(sim.threads));text('freezing',d.freezing===null?'—':`${d.freezing.toFixed(1)} км`);if(sim.live!==shownLive){shownLive=sim.live;skewt.setLive(shownLive.env,shownLive)}const sampled=timeline.record({t:sim.time,cape:sim.live.indices.sb.cape,cin:sim.live.indices.sb.cin,updraft:d.updraft,uh:d.updraftHelicity,rain:d.rain,rainTotal:d.rainTotal,rotationHeld:sim.model.rotation.persisted});if(frameCount++%20===0){drawSounding();drawHodograph()}if(sampled||frameCount%20===1){const{ctx,w,h}=prepareCanvas('timeline');timeline.draw(ctx,w,h)}updateCells();radar.refresh();const probe=sim.cells.find(selectedCell);skewt.refresh(probe?{id:probe.id,x:probe.x,y:probe.y,u:probe.u+sim.model.frame[0],v:probe.v+sim.model.frame[1]}:null);station.refresh(sim.station,placingStation);canvas.style.cursor=placingStation?'crosshair':'';requestAnimationFrame(frame)
+  const sec=Math.floor(sim.time);text('time',`${String(Math.floor(sec/60)).padStart(2,'0')}:${String(sec%60).padStart(2,'0')}`);text('threads',String(sim.threads));text('freezing',d.freezing===null?'—':`${d.freezing.toFixed(1)} км`);if(sim.live!==shownLive){shownLive=sim.live;skewt.setLive(shownLive.env,shownLive)}const sampled=timeline.record({t:sim.time,cape:sim.live.indices.sb.cape,cin:sim.live.indices.sb.cin,updraft:d.updraft,uh:d.updraftHelicity,rain:d.rain,rainTotal:d.rainTotal,rotationHeld:sim.model.rotation.persisted});if(frameCount++%20===0){drawSounding();drawHodograph();drawSpin()}if(sampled||frameCount%20===1){const{ctx,w,h}=prepareCanvas('timeline');timeline.draw(ctx,w,h)}updateCells();radar.refresh();const probe=sim.cells.find(selectedCell);skewt.refresh(probe?{id:probe.id,x:probe.x,y:probe.y,u:probe.u+sim.model.frame[0],v:probe.v+sim.model.frame[1]}:null);station.refresh(sim.station,placingStation);canvas.style.cursor=placingStation?'crosshair':'';requestAnimationFrame(frame)
 }
 showDomain()
 requestAnimationFrame(frame)
