@@ -1,0 +1,144 @@
+/* MeteoLab 2.0 design tokens (Claude Design, direction "Рабочая станция синоптика", stage 2, 2026-10-11).
+   Light by default; dark with [data-theme="dark"] on <html> or the system setting (theme.ts switches it).
+   Components use only the names. Fonts are self-hosted (@fontsource, imported in main.ts). */
+
+:root {
+  /* шрифты (OFL, разместить у себя) */
+  --font-text: 'Onest', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+
+  /* типографика: размер / высота строки */
+  --fs-display: 56px;  --lh-display: 60px;
+  --fs-h1: 40px;       --lh-h1: 46px;
+  --fs-h2: 28px;       --lh-h2: 34px;
+  --fs-h3: 22px;       --lh-h3: 28px;
+  --fs-h4: 18px;       --lh-h4: 24px;
+  --fs-body-l: 16px;   --lh-body-l: 26px;
+  --fs-body: 14px;     --lh-body: 20px;
+  --fs-body-s: 13px;   --lh-body-s: 18px;
+  --fs-label: 12px;    --lh-label: 16px;
+  --fs-caption: 11px;  --lh-caption: 16px;
+  --fs-num-xl: 40px;   --lh-num-xl: 44px;
+  --fs-num-l: 28px;    --lh-num-l: 32px;
+  --fs-num-m: 18px;    --lh-num-m: 24px;
+  --fs-num-s: 13px;    --lh-num-s: 18px;
+  --fs-num-xs: 11px;   --lh-num-xs: 16px;
+  --fw-regular: 400; --fw-medium: 500; --fw-semibold: 600;
+
+  /* отступы, шаг 4 px */
+  --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px; --sp-5: 20px;
+  --sp-6: 24px; --sp-7: 32px; --sp-8: 40px; --sp-9: 48px; --sp-10: 64px;
+
+  /* скругления, линии, высоты */
+  --r-1: 2px; --r-2: 4px; --r-round: 50%;
+  --lw-1: 1px; --lw-2: 2px;
+  --h-s: 28px; --h-m: 32px; --h-l: 36px; --h-touch: 44px;
+
+  /* наложения поверх 3D — одинаковы в обеих темах */
+  --overlay: rgba(12,18,24,.74);
+  --overlay-text: #E6EDF2;
+  --overlay-line: rgba(230,237,242,.4);
+
+  color-scheme: light;
+  --bg: #EDEDEA;
+  --surface-1: #FBFBF9;
+  --surface-2: #F3F3F0;
+  --surface-3: #E4E4DF;
+  --line: #D3D3CC;
+  --line-strong: #A9A9A0;
+  --text: #1B1C1A;
+  --text-2: #474843;
+  --text-3: #63645D;
+  --accent: #4D6A2D;
+  --accent-hover: #425C25;
+  --accent-press: #374D1E;
+  --on-accent: #FFFFFF;
+  --accent-soft: #E2E9D6;
+  --ok: var(--accent);
+  --warn: #975800;
+  --warn-soft: #F6E8CF;
+  --danger: #B03A22;
+  --danger-soft: #F5DFD8;
+  --focus: #2F66C8;
+  --hover: rgba(27,28,26,.06);
+  --press: rgba(27,28,26,.12);
+  --scrim: rgba(27,28,26,.42);
+  --shadow-pop: 0 8px 24px rgba(27,28,26,.14), 0 1px 3px rgba(27,28,26,.10);
+  --chart-bg: var(--surface-1);
+  --chart-grid: #E4E4DF;
+  --chart-axis: #A9A9A0;
+  --chart-label: var(--text-3);
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #171B1F;
+  --surface-1: #1E2328;
+  --surface-2: #252B31;
+  --surface-3: #2D343B;
+  --line: #343C44;
+  --line-strong: #4B555F;
+  --text: #E4E5E1;
+  --text-2: #ADB0AA;
+  --text-3: #8C9089;
+  --accent: #A6C27D;
+  --accent-hover: #B7D191;
+  --accent-press: #95B06C;
+  --on-accent: #141712;
+  --accent-soft: #2D3624;
+  --ok: var(--accent);
+  --warn: #E4A84A;
+  --warn-soft: #362C1B;
+  --danger: #EC7A5E;
+  --danger-soft: #3B2520;
+  --focus: #8DB4FF;
+  --hover: rgba(228,229,225,.06);
+  --press: rgba(228,229,225,.12);
+  --scrim: rgba(0,0,0,.56);
+  --shadow-pop: 0 10px 28px rgba(0,0,0,.45), 0 0 0 1px #343C44;
+  --chart-bg: var(--surface-1);
+  --chart-grid: #2D343B;
+  --chart-axis: #4B555F;
+  --chart-label: var(--text-3);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #171B1F;
+    --surface-1: #1E2328;
+    --surface-2: #252B31;
+    --surface-3: #2D343B;
+    --line: #343C44;
+    --line-strong: #4B555F;
+    --text: #E4E5E1;
+    --text-2: #ADB0AA;
+    --text-3: #8C9089;
+    --accent: #A6C27D;
+    --accent-hover: #B7D191;
+    --accent-press: #95B06C;
+    --on-accent: #141712;
+    --accent-soft: #2D3624;
+    --ok: var(--accent);
+    --warn: #E4A84A;
+    --warn-soft: #362C1B;
+    --danger: #EC7A5E;
+    --danger-soft: #3B2520;
+    --focus: #8DB4FF;
+    --hover: rgba(228,229,225,.06);
+    --press: rgba(228,229,225,.12);
+    --scrim: rgba(0,0,0,.56);
+    --shadow-pop: 0 10px 28px rgba(0,0,0,.45), 0 0 0 1px #343C44;
+    --chart-bg: var(--surface-1);
+    --chart-grid: #2D343B;
+    --chart-axis: #4B555F;
+    --chart-label: var(--text-3);
+  }
+}
+
+
+/* Numbers do not jump. */
+.num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+
+/* Focus ring, visible on any background. */
+:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--focus); }

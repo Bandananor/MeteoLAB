@@ -1,4 +1,11 @@
+import '@fontsource/onest/400.css'
+import '@fontsource/onest/500.css'
+import '@fontsource/onest/600.css'
+import '@fontsource/jetbrains-mono/400.css'
+import '@fontsource/jetbrains-mono/500.css'
+import './tokens.css'
 import './style.css'
+import { chartPalette, currentTheme, MONO, toggleTheme } from './theme'
 import { Atmosphere, type Live } from './atmosphere'
 import { RadarPanel } from './radar/panel'
 import { SkewTPanel } from './skewt/panel'
@@ -33,7 +40,7 @@ const presets = SCENARIOS.map(s => {
 document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
   <header>
     <div><span class="eyebrow">ЧИСЛЕННАЯ ЛАБОРАТОРИЯ АТМОСФЕРЫ · МОДЕЛЬ ГРОЗЫ STORMLAB</span><h1>MeteoLab</h1></div>
-    <div class="header-stats"><span>3D non-hydrostatic</span><span id="domainSize">48 × 36 × 19 км</span><button id="radarOpen" class="radar-open" title="Доплеровский радар: отражаемость на выбранном угле наклона луча">◉ Радар</button><button id="skewOpen" class="radar-open" title="Аэрологическая диаграмма Skew-T log-p: профиль среды, частица, CAPE/CIN, ветер и зонд в модели у выбранной ячейки">⟋ Skew-T</button><button id="stationOpen" class="radar-open" title="Виртуальная метеостанция: поставьте её щелчком на земле и смотрите метеограмму — температуру, давление, ветер с порывами и осадки, когда гроза проходит над ней">⌂ Станция</button><button id="layoutToggle" class="radar-open" title="Переключить вид: телефонный (3D во весь экран, крупные цифры, панель под палец) или компьютерный (три колонки). Выбор запоминается">📱 Телефонный вид</button><div class="status"><i></i><span id="statusText">РАСЧЁТ ИДЁТ</span></div></div>
+    <div class="header-stats"><span>3D non-hydrostatic</span><span id="domainSize">48 × 36 × 19 км</span><button id="radarOpen" class="radar-open" title="Доплеровский радар: отражаемость на выбранном угле наклона луча">◉ Радар</button><button id="skewOpen" class="radar-open" title="Аэрологическая диаграмма Skew-T log-p: профиль среды, частица, CAPE/CIN, ветер и зонд в модели у выбранной ячейки">⟋ Skew-T</button><button id="stationOpen" class="radar-open" title="Виртуальная метеостанция: поставьте её щелчком на земле и смотрите метеограмму — температуру, давление, ветер с порывами и осадки, когда гроза проходит над ней">⌂ Станция</button><button id="themeToggle" class="radar-open" title="Светлая или тёмная тема (сначала — как в системе). Выбор запоминается">◐ Тема</button><button id="layoutToggle" class="radar-open" title="Переключить вид: телефонный (3D во весь экран, крупные цифры, панель под палец) или компьютерный (три колонки). Выбор запоминается">📱 Телефонный вид</button><div class="status"><i></i><span id="statusText">РАСЧЁТ ИДЁТ</span></div></div>
   </header>
   <main>
     <aside class="controls">
@@ -163,6 +170,10 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
 applyLayout(savedLayout() ?? suggestedLayout(), false)
 if (!savedLayout()) askLayout()
 document.querySelector('#layoutToggle')!.addEventListener('click', () => applyLayout(isPhone() ? 'desktop' : 'phone'))
+const themeToggle = document.querySelector<HTMLButtonElement>('#themeToggle')!, themeLabel = () => { themeToggle.textContent = currentTheme() === 'dark' ? '☀ Светлая тема' : '◐ Тёмная тема' }
+themeToggle.addEventListener('click', toggleTheme); addEventListener('themechange', themeLabel); themeLabel()
+// The side charts redraw every 20 frames; a new theme repaints them at once.
+addEventListener('themechange', () => { drawSounding(); drawHodograph(); drawSpin(); const { ctx, w, h } = prepareCanvas('timeline'); timeline.draw(ctx, w, h) })
 const config: SimConfig = { ...defaults, ...SCENARIOS[0].values }
 // A shared link (?cfg=..., see share.ts) brings its scenario and settings; it is applied once and leaves the address.
 let initialPreset: number | null = 0, baseScenario: number | null = 0
@@ -447,7 +458,7 @@ const prepareCanvas = (id: string) => {
   const c = document.querySelector<HTMLCanvasElement>(`#${id}`)!, dpr = Math.min(devicePixelRatio, 2), w = c.clientWidth, h = c.clientHeight
   if (c.width !== Math.round(w * dpr) || c.height !== Math.round(h * dpr)) { c.width = Math.round(w * dpr); c.height = Math.round(h * dpr) }
   const ctx = c.getContext('2d')!
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, w, h); ctx.font = '8px IBM Plex Mono'
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, w, h); ctx.font = `8px ${MONO}`
   return { ctx, w, h }
 }
 const T_MIN = -75, T_MAX = 45, Z_MAX = 18
@@ -455,7 +466,8 @@ function drawSounding(){
   const { ctx, w, h } = prepareCanvas('sounding'), s = sim.sounding()
   const L = 22, R = w - 30, T = 6, B = h - 14
   const X = (t: number) => L + (t - T_MIN) / (T_MAX - T_MIN) * (R - L), Y = (z: number) => T + (1 - z / Z_MAX) * (B - T)
-  ctx.strokeStyle = '#d2dade'; ctx.lineWidth = 1; ctx.fillStyle = '#7c8c94'
+  const c = chartPalette()
+  ctx.strokeStyle = c.grid; ctx.lineWidth = 1; ctx.fillStyle = c.label
   for (let z = 0; z <= Z_MAX; z += 5) { ctx.beginPath(); ctx.moveTo(L, Y(z)); ctx.lineTo(R, Y(z)); ctx.stroke(); ctx.fillText(`${z}`, 4, Y(z) + 3) }
   for (let t = -60; t <= 40; t += 20) { ctx.beginPath(); ctx.moveTo(X(t), T); ctx.lineTo(X(t), B); ctx.stroke(); ctx.fillText(`${t}°`, X(t) - 8, h - 3) }
   ctx.strokeStyle = '#8fbcd4'; ctx.setLineDash([3, 3]); ctx.beginPath(); ctx.moveTo(X(0), T); ctx.lineTo(X(0), B); ctx.stroke(); ctx.setLineDash([])
@@ -484,7 +496,8 @@ function drawSounding(){
 function drawSpin(){
   const { ctx, w, h } = prepareCanvas('spin'), p = spinProfile(sim.model), top = 14, L = 22, R = w - 6, T = 4, B = h - 12
   const peak = Math.max(50, ...p.wz), X = (v: number) => L + (R - L) * Math.max(0, v) / peak, Y = (z: number) => B - (B - T) * z / top
-  ctx.strokeStyle = '#d2dade'; ctx.fillStyle = '#7c8c94'; ctx.lineWidth = 1
+  const colors = chartPalette()
+  ctx.strokeStyle = colors.grid; ctx.fillStyle = colors.label; ctx.lineWidth = 1
   for (let z = 0; z <= top; z += 2) { ctx.beginPath(); ctx.moveTo(L, Y(z)); ctx.lineTo(R, Y(z)); ctx.stroke(); if (z % 4 === 0) ctx.fillText(`${z}`, 4, Y(z) + 3) }
   ctx.fillText(`w·ζ до ${peak.toFixed(0)}·10⁻³ м/с²`, R - 92, h - 2)
   ctx.fillStyle = 'rgba(123, 63, 160, .55)'
@@ -496,21 +509,22 @@ function drawHodograph(){
   const { ctx, w, h } = prepareCanvas('hodograph'), wind = sim.sounding().wind
   const maxSpeed = Math.max(...wind.map(p => Math.hypot(p.u, p.v))), maxRing = Math.max(20, Math.ceil(maxSpeed / 10) * 10)
   const cx = w / 2, cy = h / 2, scale = (Math.min(w, h) / 2 - 12) / maxRing
-  ctx.strokeStyle = '#d2dade'; ctx.fillStyle = '#8a9aa2'; ctx.lineWidth = 1
+  const c = chartPalette()
+  ctx.strokeStyle = c.grid; ctx.fillStyle = c.label; ctx.lineWidth = 1
   ctx.beginPath(); ctx.moveTo(cx - maxRing * scale, cy); ctx.lineTo(cx + maxRing * scale, cy); ctx.moveTo(cx, cy - maxRing * scale); ctx.lineTo(cx, cy + maxRing * scale); ctx.stroke()
   for (let r = 10; r <= maxRing; r += 10) { ctx.beginPath(); ctx.arc(cx, cy, r * scale, 0, Math.PI * 2); ctx.stroke(); ctx.fillText(`${r}`, cx + r * scale * .71 + 2, cy - r * scale * .71 - 2) }
   ctx.fillText('С', cx + 3, 10); ctx.fillText('В', w - 10, cy - 3)
   const P = (p: { u: number, v: number }) => [cx + p.u * scale, cy - p.v * scale] as const
   // Bunkers right (RM) and left (LM) movers.
   for (const [label, [u, v]] of [['RM', sim.storm.rightMover], ['LM', sim.storm.leftMover]] as const) { const [x, y] = P({ u, v }); ctx.fillStyle = '#7b3fa0'; ctx.beginPath(); ctx.arc(x, y, 2.6, 0, Math.PI * 2); ctx.fill(); ctx.fillText(label, x + 4, y + 9) }
-  ctx.fillStyle = '#8a9aa2'
+  ctx.fillStyle = c.label
   ctx.lineWidth = 2.2; ctx.lineCap = 'round'
   for (let i = 0; i + 1 < wind.length; i++) {
     const a = wind[i], b = wind[i + 1]
     ctx.strokeStyle = a.z < 3 ? '#c4553a' : a.z < 6 ? '#4f8f5b' : '#3f6fa3'
     ctx.beginPath(); ctx.moveTo(...P(a)); ctx.lineTo(...P(b)); ctx.stroke()
   }
-  ctx.fillStyle = '#24323d'
+  ctx.fillStyle = c.text
   for (const z of [0, 1, 3, 6, 10]) { const p = wind.find(q => Math.abs(q.z - z) < 1e-6); if (!p) continue; const [x, y] = P(p); ctx.beginPath(); ctx.arc(x, y, 2.4, 0, Math.PI * 2); ctx.fill(); ctx.fillText(`${z}`, x + 4, y - 3) }
   const w0 = wind[0], w6 = wind.find(p => Math.abs(p.z - 6) < 1e-6)!, shear = Math.hypot(w6.u - w0.u, w6.v - w0.v)
   text('shear', `${shear.toFixed(0)} м/с`)

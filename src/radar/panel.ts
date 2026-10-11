@@ -1,4 +1,5 @@
 import { type AtmosphereModel, beamHeight, type Circulation, MESO_STRENGTH, MesocycloneDetector, PPI, RADAR_TILTS } from '../core'
+import { MONO } from '../theme'
 
 type Product = 'Z' | 'V' | 'SRV' | 'CR' | 'RHI'
 type Table = [number, string][]
@@ -227,7 +228,7 @@ export class RadarPanel {
     const range = s.gates * RHI_STEP, top = s.rows * RHI_DZ, X = (r: number) => b.left + r / range * (b.right - b.left), Y = (h: number) => b.bottom - h / top * (b.bottom - b.top)
     ctx.fillStyle = '#0b1418'; ctx.fillRect(b.left, b.top, b.right - b.left, b.bottom - b.top)
     ctx.imageSmoothingEnabled = false; ctx.drawImage(this.rhiRaster, b.left, b.top, b.right - b.left, b.bottom - b.top)
-    ctx.font = '10px IBM Plex Mono, monospace'; ctx.lineWidth = 1
+    ctx.font = `10px ${MONO}`; ctx.lineWidth = 1
     // Grid: range every 5 km, height every 2 km; the beams of the volume scan.
     ctx.strokeStyle = 'rgba(160, 190, 200, .18)'; ctx.fillStyle = 'rgba(180, 205, 215, .75)'
     for (let km = 0; km * 1000 <= range; km += 5) { ctx.beginPath(); ctx.moveTo(X(km * 1000), b.top); ctx.lineTo(X(km * 1000), b.bottom); ctx.stroke(); ctx.fillText(`${km}`, X(km * 1000) - 4, b.bottom + 14) }
@@ -301,7 +302,7 @@ export class RadarPanel {
     // Range rings every 5 km, azimuth spokes every 30°, clipped to the domain.
     ctx.save(); ctx.beginPath(); ctx.rect(f.x, f.y, ppi.w * f.scale, ppi.h * f.scale); ctx.clip()
     const [sx, sy] = toScreen(ppi.site.x, ppi.site.y), kmPx = ppi.w * f.scale / (width / 1000)
-    ctx.strokeStyle = 'rgba(160, 190, 200, .35)'; ctx.lineWidth = 1; ctx.font = '10px IBM Plex Mono, monospace'; ctx.fillStyle = 'rgba(180, 205, 215, .75)'
+    ctx.strokeStyle = 'rgba(160, 190, 200, .35)'; ctx.lineWidth = 1; ctx.font = `10px ${MONO}`; ctx.fillStyle = 'rgba(180, 205, 215, .75)'
     for (let km = 5; km <= 60; km += 5) { ctx.beginPath(); ctx.arc(sx, sy, km * kmPx, 0, Math.PI * 2); ctx.stroke(); if (km % 10 === 0) ctx.fillText(`${km}`, sx + 3, sy - km * kmPx - 3) }
     ctx.strokeStyle = 'rgba(160, 190, 200, .2)'
     for (let a = 0; a < 360; a += 30) { const r = a * Math.PI / 180; ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(sx + Math.sin(r) * 80 * kmPx, sy - Math.cos(r) * 80 * kmPx); ctx.stroke() }
@@ -311,7 +312,7 @@ export class RadarPanel {
     ctx.restore()
     ctx.strokeStyle = '#3c5560'; ctx.strokeRect(f.x, f.y, ppi.w * f.scale, ppi.h * f.scale)
     ctx.fillStyle = '#e8f0f2'; ctx.beginPath(); ctx.arc(sx, sy, 3.5, 0, Math.PI * 2); ctx.fill()
-    ctx.font = '11px IBM Plex Mono, monospace'; ctx.fillText('N ▲', f.x + ppi.w * f.scale - 34, f.y + 16)
+    ctx.font = `11px ${MONO}`; ctx.fillText('N ▲', f.x + ppi.w * f.scale - 34, f.y + 16)
     // MDA detections: a circle of the circulation's diameter (at least 3 km, to stay visible), coloured by strength.
     if (this.showMda) for (const d of this.shown()) {
       const [cx, cy] = toScreen(d.x, d.y), r = Math.max(1.5, d.diameter / 2000) * kmPx, color = MDA_COLORS[d.strength]

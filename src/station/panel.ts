@@ -1,4 +1,5 @@
 import type { Station, StationRecord } from '../core'
+import { MONO } from '../theme'
 import { download, toCsv } from '../share'
 
 type Key = keyof Omit<StationRecord, 't'>
@@ -76,7 +77,7 @@ export class StationPanel {
     const c = this.canvas, host = c.parentElement!, dpr = Math.min(devicePixelRatio, 2), w = host.clientWidth, h = host.clientHeight, ctx = this.ctx
     c.style.width = `${w}px`; c.style.height = `${h}px`
     if (c.width !== Math.round(w * dpr) || c.height !== Math.round(h * dpr)) { c.width = Math.round(w * dpr); c.height = Math.round(h * dpr) }
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.fillStyle = '#05080a'; ctx.fillRect(0, 0, w, h); ctx.font = '10px IBM Plex Mono, monospace'
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.fillStyle = '#05080a'; ctx.fillRect(0, 0, w, h); ctx.font = `10px ${MONO}`
     const s = this.station, recs = s?.records ?? [], text = (id: string, v: string) => { (this.root.querySelector(`#${id}`) as HTMLElement).innerHTML = v }
     text('stationWhere', s ? `${(s.x / 1000).toFixed(1)}, ${(s.y / 1000).toFixed(1)} КМ` : this.placing ? 'ЖДЁТ ЩЕЛЧКА' : 'НЕТ'); text('stationCount', String(recs.length))
     text('stationHint', s ? `Станция в ${(s.x / 1000).toFixed(1)} км к востоку и ${(s.y / 1000).toFixed(1)} км к северу от начала координат земли (отмечена на 3D-виде). Перезапуск начинает запись заново.` : this.placing ? 'Щёлкните по земле на 3D-виде.' : 'Станции нет. Поставьте её щелчком по 3D-виду — лучше на пути грозы.')

@@ -74,7 +74,7 @@ export class Hud {
       <button data-act="tools"><i>◉</i>Приборы</button>`
     app.appendChild(this.bar)
     this.tools = document.createElement('div'); this.tools.className = 'hud-tools'; this.tools.hidden = true
-    this.tools.innerHTML = '<button data-tool="#radarOpen">◉ Радар</button><button data-tool="#skewOpen">⟋ Skew-T</button><button data-tool="#stationOpen">⌂ Станция</button><button data-tool="#layoutToggle">🖥 Компьютерный вид</button>'
+    this.tools.innerHTML = '<button data-tool="#radarOpen">◉ Радар</button><button data-tool="#skewOpen">⟋ Skew-T</button><button data-tool="#stationOpen">⌂ Станция</button><button data-tool="#themeToggle">◐ Тема: светлая / тёмная</button><button data-tool="#layoutToggle">🖥 Компьютерный вид</button>'
     app.appendChild(this.tools)
     // A close handle on top of each sheet (hidden on a desktop).
     for (const panel of document.querySelectorAll<HTMLElement>('.controls, .diagnostics')) {

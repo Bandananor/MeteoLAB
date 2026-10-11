@@ -1,4 +1,5 @@
 import { type AtmosphereModel, columnLevels, type Environment, dryAdiabat, environmentLevels, mixingRatioTemperature, moistAdiabat, type ParcelKind, type ParcelPath, parcelIndices, parcelPath, type SkewIndices, skewIndices, type SkewLevel } from '../core'
+import { MONO } from '../theme'
 
 /** Pressure range of the diagram, hPa, and the temperature range along its bottom edge, °C. */
 const P_BOTTOM = 1050, P_TOP = 100, T_LEFT = -40, T_RIGHT = 50
@@ -148,7 +149,7 @@ export class SkewTPanel {
     c.style.width = `${w}px`; c.style.height = `${h}px`
     if (c.width !== Math.round(w * dpr) || c.height !== Math.round(h * dpr)) { c.width = Math.round(w * dpr); c.height = Math.round(h * dpr) }
     const ctx = this.ctx
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.fillStyle = '#05080a'; ctx.fillRect(0, 0, w, h); ctx.font = '10px IBM Plex Mono, monospace'
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.fillStyle = '#05080a'; ctx.fillRect(0, 0, w, h); ctx.font = `10px ${MONO}`
     // Square-ish plot (the 45° skew needs equal scales), wind barbs to its right.
     const size = Math.max(200, Math.min(h - 50, w - 160))
     this.box = { left: 56, right: 56 + size, top: 18, bottom: 18 + size }
