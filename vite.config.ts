@@ -12,4 +12,6 @@ export default defineConfig({
   preview: { headers: isolation },
   // The physics worker starts the helper workers itself: module workers inside a module worker.
   worker: { format: 'es' },
+  // Three pages: the home page, the simulator and the article about the model.
+  build: { rolldownOptions: { input: { home: 'index.html', simulator: 'simulator/index.html', about: 'about/index.html' } } },
 })

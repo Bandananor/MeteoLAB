@@ -4,13 +4,53 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="description" content="MeteoLab: интерактивная численная лаборатория атмосферы — 3D-модель грозы StormLab в браузере">
+    <meta name="description" content="MeteoLab: численная лаборатория атмосферы — гроза, посчитанная по физике, в браузере">
     <title>MeteoLab — численная лаборатория атмосферы</title>
-    <script>try { const t = localStorage.getItem('meteolab-theme'); if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t } catch {}</script>
+    <script>
+      // Links to a run from before the simulator had its own address (?cfg=..., ?seed=...) open the simulator.
+      if (/[?&](cfg|seed)=/.test(location.search)) location.replace('simulator/' + location.search + location.hash)
+      try { const t = localStorage.getItem('meteolab-theme'); if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t } catch {}
+    </script>
   </head>
-  <body>
-    <div id="app"></div>
-    <script type="module" src="/src/isolation.ts"></script>
-    <script type="module" src="/src/main.ts"></script>
+  <body class="site">
+    <header class="site-header"><div class="container site-header__in">
+      <a class="logo" href="./" style="font-size:19px"><span class="logo__mark" style="width:22px;height:22px"></span>MeteoLab</a>
+      <nav class="site-nav"><a href="simulator/">Симулятор</a><a href="#scenarios">Сценарии</a><a href="about/">О модели</a><a href="https://github.com/Bandananor/MeteoLAB">GitHub</a></nav>
+      <div class="seg seg--text" role="group" aria-label="Тема"><button data-theme-set="auto" title="Как в системе">Авто</button><button data-theme-set="light">Светлая</button><button data-theme-set="dark">Тёмная</button></div>
+      <div class="site-header__menu"><button class="btn btn--quiet btn--icon btn--touch" data-theme-toggle aria-label="Светлая или тёмная тема">◐</button><button class="btn btn--quiet btn--icon btn--touch" data-menu-toggle aria-expanded="false" aria-label="Меню" style="color:var(--text)">☰</button></div>
+      <div class="menu menu--touch site-menu" id="siteMenu" hidden><a class="menu__item" href="simulator/">Симулятор</a><a class="menu__item" href="#scenarios">Сценарии</a><a class="menu__item" href="about/">О модели</a><a class="menu__item" href="https://github.com/Bandananor/MeteoLAB">GitHub</a></div>
+    </div></header>
+    <main class="container">
+      <section class="hero">
+        <div class="hero__text">
+          <div class="t-eyebrow">Численная лаборатория атмосферы · модель StormLab</div>
+          <h1 class="t-display" style="margin:0">Гроза, посчитанная по физике — в браузере</h1>
+          <p class="hero__lead">Задайте температуру, влажность и ветер по высоте — и смотрите, как вырастает гроза: от одиночной ячейки до суперячейки с мезоциклоном. Для уроков, учёбы и тех, кто следит за грозами.</p>
+          <div class="hero__actions"><a class="btn btn--primary btn--hero" href="simulator/">Запустить симулятор</a><a class="btn btn--hero" href="about/">Как это устроено</a></div>
+        </div>
+        <figure class="media" style="margin:0;aspect-ratio:1179/591"><img src="./src/site/hero-wk.jpg" alt="Суперячейка в модели: облако с наковальней над зелёной равниной" width="1179" height="591"><figcaption class="media__caption ov-badge" style="letter-spacing:0">Суперячейка WK · кадр модели</figcaption></figure>
+      </section>
+      <div class="facts"><div><b data-fact="domain">48 × 36 × 18,9 км</b><span>область</span></div><div><b data-fact="grid">~1,2 км</b><span>шаг сетки</span></div><div><b data-fact="dt">3 с</b><span>шаг по времени</span></div><div><b data-fact="scenarios">9</b><span>сценариев</span></div></div>
+      <section class="section" id="scenarios">
+        <div class="section__head"><div class="section__title"><span class="t-eyebrow">01</span><h2 data-fact="scenarioTitle">Девять сценариев</h2><p>Готовые обстановки, проверенные прогонами в облаке. Нажмите — симулятор откроется сразу с этим сценарием.</p></div><a class="btn btn--quiet" href="simulator/">Все настройки — в симуляторе →</a></div>
+        <div class="grid-3" id="scenarioCards"></div>
+        <button class="btn btn--touch btn--block only-phone" id="moreScenarios">Ещё сценарии</button>
+      </section>
+      <section class="section"><div class="section__title"><span class="t-eyebrow">02</span><h2>Что внутри</h2></div><ol class="features">
+        <li><div><h3>Настоящая 3D-модель</h3><p>Уравнения движения, давление, плавучесть, облака, дождь, снег, крупа и град на сетке ~1 км. Не анимация — каждый кадр посчитан.</p></div></li>
+        <li><div><h3>Радар, Skew-T, станция</h3><p>Три прибора на отдельных экранах: доплеровский радар с разрезом и мезоциклонами, аэрологическая диаграмма, метеограмма.</p></div></li>
+        <li><div><h3>Суточный ход от рассвета</h3><p>Солнце греет землю, съедает ночную инверсию — и после полудня из прогрева вырастают первые грозы.</p></div></li>
+        <li><div><h3>Работает на телефоне</h3><p>3D во весь экран, крупные цифры, панель под большой палец.</p></div></li>
+        <li><div><h3>Ссылка и файл расчёта</h3><p>Ссылка открывает тот же опыт с теми же настройками. Расчёт можно сохранить в файл и продолжить с той же минуты.</p></div></li>
+        <li><div><h3>Сверено с литературой</h3><p>Эталонные тесты: тёплый пузырь Брайана–Фрича, холодный пузырь Страки; частица — с MetPy; калибровка по опыту Weisman–Klemp.</p></div></li>
+      </ol></section>
+      <section class="study"><div class="section__title"><span class="t-eyebrow">03</span><h2>Для учёбы</h2><p>Опыт открывается по ссылке с теми же настройками — раздайте её классу или покажите на проекторе в светлой теме.</p></div><div class="grid-3">
+        <article class="task"><span class="t-eyebrow">Задание 1</span><h3>Куда делся дождь?</h3><span class="task__scen">«Летний день» и «Сухой воздух»</span><p>Сравните сумму осадков через 40 минут — в сухом воздухе её заметно меньше. По тексту «Что происходит» и влажности по слоям объясните, куда делась вода. Одинаковые цифры у всего класса — по ссылке на опыт.</p><span class="task__meta">20 мин · 8–9 класс</span></article>
+        <article class="task"><span class="t-eyebrow">Задание 2</span><h3>Откуда берётся вращение</h3><span class="task__scen">«Сдвиг ветра» и «Суперячейка WK»</span><p>В обоих опытах вихри есть, а мезоциклон — только в одном. Сравните годографы и сдвиг ветра 0–6 км, найдите на радаре отметку мезоциклона.</p><span class="task__meta">30 мин · 10–11 класс</span></article>
+        <article class="task"><span class="t-eyebrow">Задание 3</span><h3>Когда начнётся гроза</h3><span class="task__scen">«Суточный ход»</span><p>По Skew-T проследите, как солнце съедает ночную инверсию. Запишите время первых кучевых и первой грозы, сравните с прогнозом по уровню свободной конвекции.</p><span class="task__meta">45 мин · кружок, вуз</span></article>
+      </div></section>
+    </main>
+    <footer class="site-footer"><div class="container site-footer__in"><div><a class="logo" href="./"><span class="logo__mark"></span>MeteoLab</a><p>Численная лаборатория атмосферы на модели грозы StormLab. Лицензия MIT · © 2026 Bandananor</p></div><nav><a href="simulator/">Симулятор</a><a href="#scenarios">Сценарии</a><a href="about/">О модели</a><a href="about/#changelog">Журнал изменений</a><a href="https://github.com/Bandananor/MeteoLAB">GitHub</a><span class="num faint" style="font-size:12px">v2.0 · в работе</span></nav></div></footer>
+    <script type="module" src="/src/site/landing.ts"></script>
   </body>
 </html>

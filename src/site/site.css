@@ -1,0 +1,12 @@
+/* What the site pages add to the design system (styles/layout.css): the header menu on a narrow screen, the hero
+   frame, the full scenario list on a phone, the article's small pieces. */
+.site-header { position: relative; }
+.site-menu { position: absolute; right: 12px; top: calc(100% + 6px); z-index: 30; }
+.site-menu .menu__item { height: 44px; }
+.media > img { display: block; }
+@media (max-width: 900px) { .grid-3.is-all .scenario-card:nth-child(n+5) { display: flex; } }
+.prose .num-sub { font: var(--fs-body-s) var(--font-mono); color: var(--text-3); }
+.prose .eq + p, .prose p + .eq { margin-top: -4px; }
+.prose dl.terms { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 6px 16px; margin: 0; font-size: var(--fs-body); line-height: 22px; }
+.prose dl.terms dt { font-family: var(--font-mono); color: var(--text); white-space: nowrap; }
+.prose dl.terms dd { margin: 0; color: var(--text-2); }

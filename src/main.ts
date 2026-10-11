@@ -19,6 +19,7 @@ import type { LayerMode } from './render/view'
 import { cleanSettings, decodeSettings, download, encodeSettings, toCsv } from './share'
 import { applyLayout, askLayout, Hud, isPhone, savedLayout, suggestedLayout } from './hud'
 import { Timeline } from './timeline'
+import { DEFAULTS as defaults } from './defaults'
 
 // Settings whose change restarts the run (the rest act on the running model): marked ↻ at their label.
 const resetKeys = new Set<keyof SimConfig>(['surfaceTemp','lapseLow','lapseMid','lapseUpper','tropopause','stratoWarming','capStrength','capHeight','rhSurface','rhLow','rhMid','rhUpper','moistLayer','wind0','wind05','wind1','wind3','wind6','wind10','windDir0','windDir05','windDir1','windDir3','windDir6','windDir10','latitude','bubble','surfaceType'])
@@ -42,14 +43,6 @@ const stat = (id: string, label: string, unit: string, title?: string) =>
 const tip = (id: string, title: string, text: string, scale = '', foot = '') =>
   `<div id="${id}" popover class="popover"><div class="popover__title">${title}</div><div class="popover__text">${text}</div>${scale}${foot ? `<div class="popover__foot">${foot}</div>` : ''}</div>`
 
-const defaults: SimConfig = {
-  surfaceTemp:30,lapseLow:8.4,lapseMid:7.2,lapseUpper:6.5,tropopause:11,stratoWarming:1.2,capHeight:1.5,capStrength:0,moistLayer:0,
-  rhSurface:72,rhLow:60,rhMid:42,rhUpper:28,
-  wind0:2,wind3:10,wind6:20,wind10:28,windDir0:160,windDir3:185,windDir6:215,windDir10:235,
-  latitude:45,turbulence:.55,
-  hour:13.5,dayOfYear:80,solarMax:1000,soilMoisture:45,surfaceType:'grass',
-  speed:8,seed:42,bubble:1
-}
 // The scenario note under the buttons ends with the environment's own numbers (standard parcels, MetPy conventions).
 const presets = SCENARIOS.map(s => {
   const c: SimConfig = { ...defaults, ...s.values }, grid = createGrid()
@@ -61,7 +54,7 @@ const presets = SCENARIOS.map(s => {
 const app = document.querySelector<HTMLDivElement>('#app')!
 app.innerHTML = `<div class="app">
   <header class="topbar">
-    <span class="logo"><span class="logo__mark"></span>MeteoLab</span>
+    <a class="logo" href="../" title="На главную"><span class="logo__mark"></span>MeteoLab</a>
     <span class="topbar__sep"></span>
     <span class="status" id="statusText">Идёт расчёт</span><span class="num faint m-only" data-hud="speed">×8</span>
     <span class="topbar__stats"><span>T+<b id="time">00:00</b></span><span title="Потоки расчёта физики"><b id="threads">—</b> потоков</span><span class="faint" id="domainSize">48 × 36 × 19 км</span></span>
@@ -279,6 +272,10 @@ let initialPreset: number | null = 0, baseScenario: number | null = 0
     baseScenario = link.scenario; initialPreset = Object.keys(link.values).length ? null : link.scenario
   }
   if (shared !== null) { url.searchParams.delete('cfg'); history.replaceState(null, '', url) }
+  // A scenario card on the home page opens it by name (?scenario=...).
+  const named = url.searchParams.get('scenario'), index = named === null ? -1 : SCENARIOS.findIndex(s => s.name === named)
+  if (!link && index >= 0) { Object.assign(config, defaults, SCENARIOS[index].values); initialPreset = baseScenario = index }
+  if (named !== null) { url.searchParams.delete('scenario'); history.replaceState(null, '', url) }
 }
 // Scenarios without the 0.5 and 1 km wind nodes get them on the straight 0-3 km line, so their hodograph is unchanged
 // and the sliders show where the nodes are.
