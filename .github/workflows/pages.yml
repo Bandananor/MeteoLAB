@@ -1,0 +1,42 @@
+# The site on GitHub Pages: https://bandananor.github.io/MeteoLAB/. Started by hand (Actions → Pages → Run workflow)
+# until the release; needs Settings → Pages → Source: «GitHub Actions». Pages cannot send the COOP/COEP headers the
+# threads need: public/coi-serviceworker.js adds them in the browser (src/isolation.ts registers it).
+name: Pages
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 24, cache: npm }
+      - run: npm ci
+      - name: Build for /MeteoLAB/
+        env: { BASE_PATH: /MeteoLAB/ }
+        run: npm run build
+      - uses: actions/upload-pages-artifact@v3
+        with: { path: dist }
+
+  deploy:
+    name: Deploy
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

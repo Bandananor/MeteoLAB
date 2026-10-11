@@ -35,7 +35,7 @@
 **Сайт (пункт уровня 4 «Новый дизайн и сайт»):**
 - [x] (сделано 11.10.2026: заголовок страницы и шапка — MeteoLab, подзаголовок «модель грозы StormLab», экраны инструментов METEOLAB; `lang="ru"`) Переименование в интерфейсе и `index.html`: MeteoLab (StormLab — имя симулятора внутри).
 - [ ] Дизайн (Claude Design) и сайт: домашняя страница, симулятор в новом оформлении, страницы о модели.
-- [ ] GitHub Pages через Actions. Pages не ставит заголовки COOP/COEP (см. `vite.config.ts`), без них нет
+- [ ] (подготовлено 11.10.2026: `.github/workflows/pages.yml` — запуск вручную, `public/coi-serviceworker.js` + `src/isolation.ts`, `base` из `BASE_PATH`; проверено на сервере без заголовков — изоляция есть, 6 потоков. Осталось владельцу: Settings → Pages → Source «GitHub Actions» и запуск) GitHub Pages через Actions. Pages не ставит заголовки COOP/COEP (см. `vite.config.ts`), без них нет
       SharedArrayBuffer и физика идёт в один поток — подключить `coi-serviceworker`.
 
 **Релиз:**

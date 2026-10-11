@@ -21,7 +21,8 @@ npm install
 npm run dev      # приложение: http://localhost:5173
 npm test         # тесты расчётного ядра (Node, без браузера)
 npm run test:slow  # калибровочный тест Weisman–Klemp (~15 мин)
-npm run test:scenarios  # все 8 сценариев по 40 мин модели (~1,5 ч)
+npm run test:scenarios  # сценарии по 40 мин модели (~1,5 ч)
+npm run test:diurnal    # суточный ход: от 06:00 до первой грозы (~10 мин)
 npm run test:reference  # эталоны из литературы: Straka, Bryan & Fritsch (~5 мин)
 npm run build    # проверка типов и сборка в dist/
 npm run bench -- 6 large  # скорость шага на N потоках в Node и отпечаток полей (одинаков при любом N)
@@ -269,6 +270,13 @@ CIN, сдвиг и SRH. Поведение — 40 минут расчёта, о�
 ## Журнал изменений
 
 ### 2.0 (в работе)
+
+- **11.10.2026 — сайт на GitHub Pages подготовлен.** Workflow `.github/workflows/pages.yml` (запуск вручную: Actions →
+  Pages → Run workflow; в настройках репозитория Pages → Source «GitHub Actions») собирает приложение для
+  `/MeteoLAB/` (`BASE_PATH` → `base` в `vite.config.ts`). Pages не ставит заголовки COOP/COEP, без них нет
+  SharedArrayBuffer и физика идёт в один поток: их добавляет свой маленький service worker
+  `public/coi-serviceworker.js` (по образцу coi-serviceworker), `src/isolation.ts` регистрирует его и один раз
+  перезагружает страницу. Проверено на статическом сервере без заголовков: `crossOriginIsolated`, 6 потоков.
 
 - **11.10.2026 — интерфейс называется MeteoLab.** Заголовок страницы, шапка («MeteoLab», подзаголовок «модель грозы
   StormLab») и экраны радара, Skew-T и станции; StormLab остаётся именем самой модели. Пункт «Релиз 2.0».
