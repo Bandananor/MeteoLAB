@@ -7,7 +7,7 @@ import { CELL_STAGES, MESO_PERSISTENCE, readState, createGrid, describeBalance, 
 import { type FieldMode, fieldInfo } from './render/fields'
 import type { LayerMode } from './render/view'
 import { cleanSettings, decodeSettings, download, encodeSettings, toCsv } from './share'
-import { Hud } from './hud'
+import { applyLayout, askLayout, Hud, isPhone, savedLayout, suggestedLayout } from './hud'
 import { Timeline } from './timeline'
 
 const slider = (key: keyof SimConfig, label: string, min: number, max: number, step: number, value: number, suffix: string, digits = 0) => `
@@ -33,7 +33,7 @@ const presets = SCENARIOS.map(s => {
 document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
   <header>
     <div><span class="eyebrow">ЧИСЛЕННАЯ ЛАБОРАТОРИЯ АТМОСФЕРЫ · МОДЕЛЬ ГРОЗЫ STORMLAB</span><h1>MeteoLab</h1></div>
-    <div class="header-stats"><span>3D non-hydrostatic</span><span id="domainSize">48 × 36 × 19 км</span><button id="radarOpen" class="radar-open" title="Доплеровский радар: отражаемость на выбранном угле наклона луча">◉ Радар</button><button id="skewOpen" class="radar-open" title="Аэрологическая диаграмма Skew-T log-p: профиль среды, частица, CAPE/CIN, ветер и зонд в модели у выбранной ячейки">⟋ Skew-T</button><button id="stationOpen" class="radar-open" title="Виртуальная метеостанция: поставьте её щелчком на земле и смотрите метеограмму — температуру, давление, ветер с порывами и осадки, когда гроза проходит над ней">⌂ Станция</button><div class="status"><i></i><span id="statusText">РАСЧЁТ ИДЁТ</span></div></div>
+    <div class="header-stats"><span>3D non-hydrostatic</span><span id="domainSize">48 × 36 × 19 км</span><button id="radarOpen" class="radar-open" title="Доплеровский радар: отражаемость на выбранном угле наклона луча">◉ Радар</button><button id="skewOpen" class="radar-open" title="Аэрологическая диаграмма Skew-T log-p: профиль среды, частица, CAPE/CIN, ветер и зонд в модели у выбранной ячейки">⟋ Skew-T</button><button id="stationOpen" class="radar-open" title="Виртуальная метеостанция: поставьте её щелчком на земле и смотрите метеограмму — температуру, давление, ветер с порывами и осадки, когда гроза проходит над ней">⌂ Станция</button><button id="layoutToggle" class="radar-open" title="Переключить вид: телефонный (3D во весь экран, крупные цифры, панель под палец) или компьютерный (три колонки). Выбор запоминается">📱 Телефонный вид</button><div class="status"><i></i><span id="statusText">РАСЧЁТ ИДЁТ</span></div></div>
   </header>
   <main>
     <aside class="controls">
@@ -158,6 +158,11 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
   </main>`
 
 // The page opens on the first scenario ("Летний день"); the controls are synced to it below.
+// The layout before the physics starts (its thread count depends on it): the remembered choice, else the screen's
+// suggestion, with the question shown at the first visit.
+applyLayout(savedLayout() ?? suggestedLayout(), false)
+if (!savedLayout()) askLayout()
+document.querySelector('#layoutToggle')!.addEventListener('click', () => applyLayout(isPhone() ? 'desktop' : 'phone'))
 const config: SimConfig = { ...defaults, ...SCENARIOS[0].values }
 // A shared link (?cfg=..., see share.ts) brings its scenario and settings; it is applied once and leaves the address.
 let initialPreset: number | null = 0, baseScenario: number | null = 0

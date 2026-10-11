@@ -1,11 +1,44 @@
-// The phone layout (release 2.0): on a narrow screen the 3D view fills the screen, a few large numbers sit over it, a
+// The phone layout (release 2.0): the 3D view fills the screen, a few large numbers sit over it, a
 // bar at the bottom holds what a thumb needs (scenarios, pause, restart, speed, data, instruments), and the two side
 // panels become sheets that slide up. Everything else is the desktop page itself, rearranged by CSS (style.css,
-// "phone"); this module only adds the overlay, the bar and the sheets' switches.
+// the .phone block); this module adds the overlay, the bar and the sheets' switches, and chooses the layout: the class
+// "phone" on <html>, asked at the first visit (the screen width only suggests it) and switched by hand, remembered in
+// localStorage — a wrong guess from the width (a small laptop window, a large tablet) is then one tap away from fixed.
 
-/** Where the phone layout starts (CSS uses the same width). */
+/** The screen width the phone layout is suggested for. */
 export const PHONE_QUERY = '(max-width: 760px)'
-export const isPhone = () => typeof matchMedia === 'function' && matchMedia(PHONE_QUERY).matches
+export type Layout = 'phone' | 'desktop'
+const LAYOUT_KEY = 'meteolab-layout'
+
+/** Whether the page shows the phone layout now. */
+export const isPhone = () => typeof document !== 'undefined' && document.documentElement.classList.contains('phone')
+/** The layout the screen suggests. */
+export const suggestedLayout = (): Layout => typeof matchMedia === 'function' && matchMedia(PHONE_QUERY).matches ? 'phone' : 'desktop'
+/** The layout chosen before (null at the first visit, or where the browser keeps nothing). */
+export function savedLayout(): Layout | null {
+  try { const v = localStorage.getItem(LAYOUT_KEY); return v === 'phone' || v === 'desktop' ? v : null } catch { return null }
+}
+/** Shows a layout and remembers the choice; the canvases follow their new size. */
+export function applyLayout(layout: Layout, remember = true) {
+  document.documentElement.classList.toggle('phone', layout === 'phone')
+  if (remember) try { localStorage.setItem(LAYOUT_KEY, layout) } catch { /* private mode: for this visit only */ }
+  document.body.classList.remove('sheet-controls', 'sheet-data')
+  dispatchEvent(new Event('resize'))
+}
+
+/** The first visit: which layout, with the one the screen suggests marked. */
+export function askLayout() {
+  const suggested = suggestedLayout(), box = document.createElement('div')
+  box.className = 'layout-ask'
+  box.innerHTML = `<div><h3>Как показывать MeteoLab?</h3><p>Выбор запомнится; переключить можно в любой момент — кнопкой в шапке или в меню «Приборы» на телефоне.</p>
+    <button data-layout="phone" class="${suggested === 'phone' ? 'recommended' : ''}">📱 Телефон<small>3D во весь экран, крупные цифры, панель под палец${suggested === 'phone' ? ' — подходит этому экрану' : ''}</small></button>
+    <button data-layout="desktop" class="${suggested === 'desktop' ? 'recommended' : ''}">🖥 Компьютер<small>три колонки: настройки, 3D, данные${suggested === 'desktop' ? ' — подходит этому экрану' : ''}</small></button></div>`
+  box.addEventListener('click', e => {
+    const layout = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-layout]')?.dataset.layout as Layout | undefined
+    if (layout) { applyLayout(layout); box.remove() }
+  })
+  document.body.appendChild(box)
+}
 /** Physics threads on a phone unless the address asks otherwise: fewer, so it does not overheat. */
 export const PHONE_THREADS = 3
 /** Speed steps of the speed button. */
@@ -41,7 +74,7 @@ export class Hud {
       <button data-act="tools"><i>◉</i>Приборы</button>`
     app.appendChild(this.bar)
     this.tools = document.createElement('div'); this.tools.className = 'hud-tools'; this.tools.hidden = true
-    this.tools.innerHTML = '<button data-tool="#radarOpen">◉ Радар</button><button data-tool="#skewOpen">⟋ Skew-T</button><button data-tool="#stationOpen">⌂ Станция</button>'
+    this.tools.innerHTML = '<button data-tool="#radarOpen">◉ Радар</button><button data-tool="#skewOpen">⟋ Skew-T</button><button data-tool="#stationOpen">⌂ Станция</button><button data-tool="#layoutToggle">🖥 Компьютерный вид</button>'
     app.appendChild(this.tools)
     // A close handle on top of each sheet (hidden on a desktop).
     for (const panel of document.querySelectorAll<HTMLElement>('.controls, .diagnostics')) {
