@@ -26,7 +26,7 @@ export class StationPanel {
     this.root = document.createElement('div'); this.root.className = 'radar-app station-app'; this.root.hidden = true
     this.root.innerHTML = `
       <div class="radar-bar">
-        <span class="radar-name">STORMLAB · МЕТЕОСТАНЦИЯ</span>
+        <span class="radar-name">METEOLAB · МЕТЕОСТАНЦИЯ</span>
         <span>ТОЧКА <b id="stationWhere">НЕТ</b></span><span>ЗАПИСЕЙ <b id="stationCount">0</b></span>
         <button class="radar-close" title="Вернуться к 3D (Esc)">× ЗАКРЫТЬ</button>
       </div>

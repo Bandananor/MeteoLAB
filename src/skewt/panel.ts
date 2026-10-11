@@ -41,7 +41,7 @@ export class SkewTPanel {
     this.root = document.createElement('div'); this.root.className = 'radar-app skewt-app'; this.root.hidden = true
     this.root.innerHTML = `
       <div class="radar-bar">
-        <span class="radar-name">STORMLAB · SKEW-T LOG-P</span>
+        <span class="radar-name">METEOLAB · SKEW-T LOG-P</span>
         <span>ЧАСТИЦА <b id="skewKind">ML</b></span><span>ЗОНД <b id="skewProbe">—</b></span><span>СРЕДА <b id="skewLive">ИСХОДНАЯ</b></span><span>T+ <b id="skewTime">00:00</b></span>
         <button class="radar-close" title="Вернуться к 3D (Esc)">× ЗАКРЫТЬ</button>
       </div>

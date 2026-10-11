@@ -48,7 +48,7 @@ export class RadarPanel {
     this.root = document.createElement('div'); this.root.className = 'radar-app'; this.root.hidden = true
     this.root.innerHTML = `
       <div class="radar-bar">
-        <span class="radar-name">STORMLAB DOPPLER · S-BAND</span>
+        <span class="radar-name">METEOLAB DOPPLER · S-BAND</span>
         <span>ПРОДУКТ <b id="radarProduct">Z · ОТРАЖАЕМОСТЬ</b></span><span>НАКЛОН <b id="radarTilt">0.5°</b></span><span>T+ <b id="radarTime">00:00</b></span>
         <button class="radar-close" title="Вернуться к 3D (Esc)">× ЗАКРЫТЬ</button>
       </div>
