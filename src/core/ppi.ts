@@ -132,6 +132,32 @@ export class PPI {
     }
   }
 
+  /**
+   * Vertical section from the site along `azimuth` (degrees clockwise from north), like an RHI scan through the full
+   * volume (call prepare() first): reflectivity and radial velocity at `gates` ranges `step` m apart (gate g at
+   * (g + 0.5) step) and `rows` heights `dz` m apart (row k at (k + 0.5) dz), row-major from the ground up. The radial
+   * velocity is along the ray from the radar to the point (elevation atan(h / r)): ground-relative wind, minus the fall
+   * speed, minus `stormMotion` if set; NaN without echo. Periodic like the model; above the model top: no echo.
+   */
+  section(azimuth: number, step: number, gates: number, dz: number, rows: number) {
+    const m = this.model, grid = m.grid, { dx, dy } = grid, a = azimuth * Math.PI / 180, sa = Math.sin(a), ca = Math.cos(a), [ox, oy] = this.shift()
+    const [fu, fv] = m.frame, [su, sv] = this.stormMotion ?? [0, 0], cu = fu - su, cv = fv - sv
+    const dbz = new Float32Array(gates * rows).fill(DBZ_FLOOR), velocity = new Float32Array(gates * rows).fill(NaN)
+    for (let k = 0; k < rows; k++) {
+      const h = (k + .5) * dz
+      if (h > grid.height) break
+      const z = levelAt(grid, h)
+      for (let g = 0; g < gates; g++) {
+        const r = (g + .5) * step, gx = (this.site.x + r * sa) / dx - ox, gy = (this.site.y + r * ca) / dy - oy, i = k * gates + g, d = m.sample(this.nodeDbz, gx, gy, z)
+        dbz[i] = d
+        if (d < VELOCITY_MIN_DBZ) continue
+        const el = Math.atan2(h, r)
+        velocity[i] = ((m.sample(m.u, gx, gy, z) + cu) * sa + (m.sample(m.v, gx, gy, z) + cv) * ca) * Math.cos(el) + (m.sample(m.w, gx, gy, z) - m.sample(this.nodeFall, gx, gy, z)) * Math.sin(el)
+      }
+    }
+    return { dbz, velocity }
+  }
+
   /** Reflectivity (dBZ) the beam of `tilt` sees over a ground point, m (call prepare() first; periodic like the model). */
   dbzAt(x: number, y: number, tilt: number) {
     const m = this.model, grid = m.grid, h = beamHeight(Math.hypot(x - this.site.x, y - this.site.y), tilt)

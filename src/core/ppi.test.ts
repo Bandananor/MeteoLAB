@@ -32,4 +32,23 @@ describe('radar PPI', () => {
     // Clear air elsewhere: the noise floor.
     expect(Math.min(...ppi.dbz)).toBe(-20)
   })
+
+  it('cuts a vertical section (RHI) through a rain shaft at its range and up to its top', () => {
+    const model = new AtmosphereModel({ ...QUIET }, createGrid({ nx: 16, ny: 12, nz: 20, width: 19_200, depth: 13_500, height: 15_000, bottomSpacing: 100 }))
+    const { layer, nx, dx } = model.grid
+    // Rain below 3 km, 4.8 km east of the radar (the domain centre), and the radial wind: 10 m/s from the west (outbound).
+    const cx = 8 + Math.round(4800 / dx), cy = 6
+    for (let z = 0; z < model.grid.nz; z++) { if (model.grid.zs[z] < 3000) model.rain[cx + nx * cy + z * layer] = 1e-3; for (let c = 0; c < layer; c++) model.u[c + z * layer] = 10 }
+    const ppi = new PPI(model, 64, 45), step = 300, gates = 30, dz = 250, rows = 40
+    ppi.prepare()
+    const east = ppi.section(90, step, gates, dz, rows), north = ppi.section(0, step, gates, dz, rows)
+    const at = (s: Float32Array, range: number, height: number) => s[Math.floor(height / dz) * gates + Math.floor(range / step)]
+    expect(at(east.dbz, 4800, 1000)).toBeGreaterThan(35)
+    expect(at(east.dbz, 4800, 5000)).toBeLessThan(5)
+    expect(at(east.dbz, 1500, 1000)).toBeLessThan(5)
+    // Outbound wind along the eastward ray, minus a little fall speed seen at the low elevation.
+    expect(at(east.velocity, 4800, 500)).toBeGreaterThan(8)
+    // Northward there is no rain at all.
+    expect(Math.max(...north.dbz)).toBeLessThan(5)
+  })
 })

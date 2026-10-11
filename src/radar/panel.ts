@@ -1,6 +1,6 @@
-import { type AtmosphereModel, type Circulation, MESO_STRENGTH, MesocycloneDetector, PPI, RADAR_TILTS } from '../core'
+import { type AtmosphereModel, beamHeight, type Circulation, MESO_STRENGTH, MesocycloneDetector, PPI, RADAR_TILTS } from '../core'
 
-type Product = 'Z' | 'V' | 'SRV' | 'CR'
+type Product = 'Z' | 'V' | 'SRV' | 'CR' | 'RHI'
 type Table = [number, string][]
 
 /** NWS reflectivity colour table: 5 dBZ bins from 5 to 75 dBZ (below 5: no echo). */
@@ -11,6 +11,8 @@ const rgb = (t: Table) => t.map(([, c]) => [1, 3, 5].map(k => parseInt(c.slice(k
 const REFLECTIVITY_RGB = rgb(REFLECTIVITY), VELOCITY_RGB = rgb(VELOCITY)
 /** Raster resolution of the scan, m per pixel. */
 const PIXEL = 150
+/** The vertical section (RHI): gate and row spacing, m, and the highest level shown. */
+const RHI_STEP = 250, RHI_DZ = 250, RHI_TOP = 18_000
 /** Real time between two runs of the mesocyclone detection (all 14 tilts), ms. */
 const MDA_EVERY = 2000
 /** Shortest signed periodic difference. */
@@ -23,6 +25,7 @@ const PRODUCTS: Record<Product, { label: string; title: string; units: string }>
   V: { label: 'V — радиальная скорость', title: 'V · СКОРОСТЬ', units: 'м/с' },
   SRV: { label: 'SRV — относительно грозы', title: 'SRV · СКОРОСТЬ ОТНОСИТЕЛЬНО ГРОЗЫ', units: 'м/с' },
   CR: { label: 'CR — составная', title: 'CR · СОСТАВНАЯ ОТРАЖАЕМОСТЬ', units: 'dBZ' },
+  RHI: { label: 'RHI — вертикальный разрез', title: 'RHI · ВЕРТИКАЛЬНЫЙ РАЗРЕЗ', units: 'dBZ' },
 }
 
 /**
@@ -42,6 +45,10 @@ export class RadarPanel {
   private detector = new MesocycloneDetector(); private detections: Circulation[] = []; private lastScan = 0; private scanTime = -1; private showMda = true; private showWeak = false
   /** Storm motion for SRV (the Bunkers right mover of the environment), m/s. */
   private motion: readonly [number, number] = [0, 0]
+  /** The RHI: its azimuth (degrees from north), whether it shows storm-relative velocity instead of reflectivity, its raster. */
+  private rhiAzimuth = 90; private rhiVelocity = false
+  private readonly rhiRaster: HTMLCanvasElement; private readonly rhiCtx: CanvasRenderingContext2D
+  private rhi: { dbz: Float32Array; velocity: Float32Array; gates: number; rows: number } | null = null
   open = false
 
   constructor(host: HTMLElement) {
@@ -58,6 +65,10 @@ export class RadarPanel {
           <h3>Продукт</h3><div class="radar-products">${(Object.keys(PRODUCTS) as Product[]).map(p => `<button data-product="${p}">${PRODUCTS[p].label}</button>`).join('')}</div>
           <h3>Угол наклона</h3><div class="radar-tilts">${RADAR_TILTS.map(t => `<button data-tilt="${t}">${t.toFixed(1)}°</button>`).join('')}</div>
           <h3 id="radarUnits">dBZ</h3><div class="radar-legend" id="radarLegend"></div>
+          <h3>Разрез RHI</h3><div class="radar-rhi"><label class="radar-check">азимут <input type="range" id="rhiAz" min="0" max="359" step="1" value="90"><b id="rhiAzOut">90°</b></label>
+            <div class="radar-products"><button id="rhiStrongest" title="Повернуть разрез к самому сильному эху объёмного скана">через самое сильное эхо</button></div>
+            <label class="radar-check" title="Вместо отражаемости — радиальная скорость относительно грозы"><input type="checkbox" id="rhiV"> скорость (SRV) вместо Z</label>
+            <span class="radar-dim">Shift + щелчок по карте — разрез через эту точку</span></div>
           <h3>Мезоциклоны (MDA)</h3><label class="radar-check"><input type="checkbox" id="radarMda" checked> отмечать на экране</label><label class="radar-check" title="Вращение слабее порога мезоциклона (Vrot < 12,5 м/с): на сетке ~1 км их много в любой сильной грозе"><input type="checkbox" id="radarWeak"> и слабые циркуляции</label><div class="radar-mda" id="radarMdaList">—</div>
           <h3>Курсор</h3><div class="radar-readout" id="radarReadout">—</div>
           <p class="radar-help" id="radarHelp"></p>
@@ -66,14 +77,24 @@ export class RadarPanel {
     host.appendChild(this.root)
     this.canvas = this.root.querySelector('canvas')!; this.ctx = this.canvas.getContext('2d')!
     this.raster = document.createElement('canvas'); this.rasterCtx = this.raster.getContext('2d')!
+    this.rhiRaster = document.createElement('canvas'); this.rhiCtx = this.rhiRaster.getContext('2d')!
+    const az = this.root.querySelector<HTMLInputElement>('#rhiAz')!
+    az.addEventListener('input', () => this.setAzimuth(Number(az.value)))
+    this.root.querySelector<HTMLInputElement>('#rhiV')!.addEventListener('change', e => { this.rhiVelocity = (e.target as HTMLInputElement).checked; this.setProduct('RHI') })
+    this.root.querySelector('#rhiStrongest')!.addEventListener('click', () => this.aimAtStrongest())
     this.root.querySelector<HTMLInputElement>('#radarMda')!.addEventListener('change', e => { this.showMda = (e.target as HTMLInputElement).checked; this.draw() })
     this.root.querySelector<HTMLInputElement>('#radarWeak')!.addEventListener('change', e => { this.showWeak = (e.target as HTMLInputElement).checked; this.listMda(); this.draw() })
     this.root.querySelector('.radar-close')!.addEventListener('click', () => this.toggle(false))
     this.root.querySelectorAll<HTMLButtonElement>('[data-tilt]').forEach(b => b.addEventListener('click', () => this.setTilt(Number(b.dataset.tilt))))
     this.root.querySelectorAll<HTMLButtonElement>('[data-product]').forEach(b => b.addEventListener('click', () => this.setProduct(b.dataset.product as Product)))
-    this.canvas.addEventListener('mousemove', e => { this.hover = this.toGround(e); this.draw() })
+    this.canvas.addEventListener('mousemove', e => { this.hover = this.product === 'RHI' ? this.toSection(e) : this.toGround(e); this.draw() })
     this.canvas.addEventListener('mouseleave', () => { this.hover = null; this.draw() })
-    this.canvas.addEventListener('click', e => { const g = this.toGround(e); if (!g || !this.ppi) return; this.ppi.site = g; this.ppi.layout(); this.lastComposite = 0; this.scanTime = -1; this.refresh(true) })
+    this.canvas.addEventListener('click', e => {
+      if (this.product === 'RHI') return
+      const g = this.toGround(e); if (!g || !this.ppi) return
+      if (e.shiftKey) { this.setAzimuth(this.ppi.beamAt(g.x, g.y).azimuth); this.setProduct('RHI'); return }
+      this.ppi.site = g; this.ppi.layout(); this.lastComposite = 0; this.scanTime = -1; this.refresh(true)
+    })
     addEventListener('keydown', e => { if (e.key === 'Escape' && this.open) this.toggle(false) })
     addEventListener('resize', () => this.open && this.draw())
     this.setProduct('Z')
@@ -98,12 +119,33 @@ export class RadarPanel {
     const now = performance.now(), time = ppi.model.time, every = this.product === 'CR' ? 1000 : 200
     if (!force && (time === this.lastTime || now - (this.product === 'CR' ? this.lastComposite : this.lastDraw) < every)) return
     this.lastTime = time; this.lastDraw = now
-    ppi.stormMotion = this.product === 'SRV' ? this.motion : null
-    if (this.product === 'CR') { ppi.composite(); this.lastComposite = now } else ppi.sample()
+    ppi.stormMotion = this.product === 'SRV' || (this.product === 'RHI' && this.rhiVelocity) ? this.motion : null
+    if (this.product === 'RHI') {
+      const { width, depth, height } = ppi.model.grid, gates = Math.ceil(Math.hypot(width, depth) / 2 / RHI_STEP), rows = Math.ceil(Math.min(height, RHI_TOP) / RHI_DZ)
+      ppi.prepare(); this.rhi = { ...ppi.section(this.rhiAzimuth, RHI_STEP, gates, RHI_DZ, rows), gates, rows }
+    } else if (this.product === 'CR') { ppi.composite(); this.lastComposite = now } else ppi.sample()
     // New model time (or a new radar site): rescan, at most every MDA_EVERY ms.
     if (this.scanTime < 0 || (time !== this.scanTime && now - this.lastScan >= MDA_EVERY)) { this.detections = this.detector.scan(ppi, time, this.motion); this.lastScan = now; this.scanTime = time; this.listMda() }
     this.paint(); this.draw()
     const s = Math.floor(time); (this.root.querySelector('#radarTime') as HTMLElement).textContent = `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`
+  }
+
+  private setAzimuth(azimuth: number) {
+    this.rhiAzimuth = Math.round((azimuth % 360 + 360) % 360) % 360
+    ;(this.root.querySelector('#rhiAz') as HTMLInputElement).value = String(this.rhiAzimuth)
+    ;(this.root.querySelector('#rhiAzOut') as HTMLElement).textContent = `${this.rhiAzimuth}°`
+    this.markTilt(); this.refresh(true)
+  }
+
+  /** Turns the RHI towards the strongest echo of the volume scan. */
+  private aimAtStrongest() {
+    const ppi = this.ppi
+    if (!ppi) return
+    ppi.composite()
+    let best = 0
+    for (let i = 1; i < ppi.compositeDbz.length; i++) if (ppi.compositeDbz[i] > ppi.compositeDbz[best]) best = i
+    const g = ppi.ground(best % ppi.w, Math.floor(best / ppi.w))
+    this.setAzimuth(ppi.beamAt(g.x, g.y).azimuth); this.setProduct('RHI')
   }
 
   private setTilt(tilt: number) { if (!this.ppi) return; this.ppi.tilt = tilt; if (this.product === 'CR') this.setProduct('Z'); this.markTilt(); this.refresh(true) }
@@ -113,24 +155,27 @@ export class RadarPanel {
     this.root.querySelectorAll<HTMLButtonElement>('[data-product]').forEach(b => b.classList.toggle('active', b.dataset.product === product))
     ;(this.root.querySelector('#radarProduct') as HTMLElement).textContent = PRODUCTS[product].title
     ;(this.root.querySelector('#radarUnits') as HTMLElement).textContent = PRODUCTS[product].units
-    const velocity = product === 'V' || product === 'SRV', table = velocity ? VELOCITY : REFLECTIVITY
+    const velocity = product === 'V' || product === 'SRV' || (product === 'RHI' && this.rhiVelocity), table = velocity ? VELOCITY : REFLECTIVITY
+    ;(this.root.querySelector('#radarUnits') as HTMLElement).textContent = velocity ? 'м/с' : 'dBZ'
     ;(this.root.querySelector('#radarLegend') as HTMLElement).innerHTML = table.map(([v, c]) => `<span style="background:${c};color:${velocity && Math.abs(v) < 20 ? '#e9f0f2' : '#05080a'}">${v}</span>`).join('')
     ;(this.root.querySelector('#radarHelp') as HTMLElement).textContent = product === 'V'
       ? 'Скорость вдоль луча: зелёное — к радару, красное — от радара. Видна только там, где есть эхо. Движение самой грозы часто маскирует вращение — для мезоциклона смотрите SRV.'
       : product === 'SRV' ? `То же, но за вычетом движения грозы (по Банкерсу: ${Math.hypot(...this.motion).toFixed(0)} м/с на ${((Math.atan2(this.motion[0], this.motion[1]) * 180 / Math.PI + 360) % 360).toFixed(0)}°). Мезоциклон — пара «зелёное рядом с красным» поперёк луча на высоте 1–6 км.`
       : product === 'CR' ? 'Сильнейшее эхо по всем 14 наклонам объёмного скана над каждой точкой — как обычная радарная карта.'
+      : product === 'RHI' ? 'Вертикальный разрез от радара вдоль азимута по всему объёму: видно, как высоко поднимается эхо, свод слабого эха (BWER) над восходящим потоком, нависающее эхо, ядро града, наковальню. Тонкие линии — лучи 14 наклонов: так их видит настоящий радар. По вертикали масштаб растянут.'
         : 'Луч идёт под углом к горизонту и с дальностью поднимается выше: низкий наклон видит осадки у земли, высокий — ядро грозы и наковальню. Щелчок по экрану переносит радар.'
     this.markTilt(); this.lastComposite = 0; this.refresh(true)
   }
 
   private markTilt() {
-    const t = this.ppi?.tilt ?? RADAR_TILTS[0], all = this.product === 'CR'
+    const t = this.ppi?.tilt ?? RADAR_TILTS[0], all = this.product === 'CR' || this.product === 'RHI'
     this.root.querySelectorAll<HTMLButtonElement>('[data-tilt]').forEach(b => b.classList.toggle('active', !all && Number(b.dataset.tilt) === t))
-    ;(this.root.querySelector('#radarTilt') as HTMLElement).textContent = all ? 'ВСЕ' : `${t.toFixed(1)}°`
+    ;(this.root.querySelector('#radarTilt') as HTMLElement).textContent = this.product === 'RHI' ? `АЗИМУТ ${this.rhiAzimuth}°` : all ? 'ВСЕ' : `${t.toFixed(1)}°`
   }
 
   /** The product raster into its colour table (no echo: transparent). */
   private paint() {
+    if (this.product === 'RHI') { this.paintRhi(); return }
     const ppi = this.ppi!, data = this.image!.data, velocity = this.product === 'V' || this.product === 'SRV', values = velocity ? ppi.velocity : this.product === 'CR' ? ppi.compositeDbz : ppi.dbz
     for (let i = 0; i < values.length; i++) {
       const v = values[i], o = i * 4
@@ -141,6 +186,65 @@ export class RadarPanel {
       data[o] = c[0]; data[o + 1] = c[1]; data[o + 2] = c[2]; data[o + 3] = 255
     }
     this.rasterCtx.putImageData(this.image!, 0, 0)
+  }
+
+  /** The RHI raster: gates across, rows from the top of the section down. */
+  private paintRhi() {
+    const s = this.rhi!, velocity = this.rhiVelocity, values = velocity ? s.velocity : s.dbz
+    if (this.rhiRaster.width !== s.gates || this.rhiRaster.height !== s.rows) { this.rhiRaster.width = s.gates; this.rhiRaster.height = s.rows }
+    const image = this.rhiCtx.createImageData(s.gates, s.rows), data = image.data
+    for (let k = 0; k < s.rows; k++) for (let g = 0; g < s.gates; g++) {
+      const v = values[k * s.gates + g], o = ((s.rows - 1 - k) * s.gates + g) * 4
+      let c: number[] | null = null
+      if (velocity) { if (!Number.isNaN(v)) c = VELOCITY_RGB[Math.max(0, Math.min(VELOCITY_RGB.length - 1, Math.floor((v + 40) / 5)))] }
+      else if (v >= 5) c = REFLECTIVITY_RGB[Math.min(REFLECTIVITY_RGB.length - 1, Math.floor((v - 5) / 5))]
+      if (!c) continue
+      data[o] = c[0]; data[o + 1] = c[1]; data[o + 2] = c[2]; data[o + 3] = 255
+    }
+    this.rhiCtx.putImageData(image, 0, 0)
+  }
+
+  /** The RHI plot rectangle in CSS pixels. */
+  private sectionBox() {
+    const box = this.canvas.parentElement!.getBoundingClientRect(), ratio = devicePixelRatio || 1, cw = Math.max(200, box.width), ch = Math.max(150, box.height)
+    if (this.canvas.width !== Math.round(cw * ratio) || this.canvas.height !== Math.round(ch * ratio)) { this.canvas.width = Math.round(cw * ratio); this.canvas.height = Math.round(ch * ratio); this.canvas.style.width = `${cw}px`; this.canvas.style.height = `${ch}px` }
+    return { left: 56, top: 20, right: cw - 24, bottom: ch - 36, ratio }
+  }
+
+  private toSection(e: MouseEvent) {
+    const s = this.rhi
+    if (!s) return null
+    const b = this.sectionBox(), r = this.canvas.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top
+    if (x < b.left || x > b.right || y < b.top || y > b.bottom) return null
+    return { x: (x - b.left) / (b.right - b.left) * s.gates * RHI_STEP, y: (b.bottom - y) / (b.bottom - b.top) * s.rows * RHI_DZ }
+  }
+
+  private drawSection() {
+    const s = this.rhi, ctx = this.ctx, b = this.sectionBox()
+    ctx.setTransform(b.ratio, 0, 0, b.ratio, 0, 0)
+    ctx.fillStyle = '#05080a'; ctx.fillRect(0, 0, this.canvas.width, this.canvas.height)
+    if (!s) return
+    const range = s.gates * RHI_STEP, top = s.rows * RHI_DZ, X = (r: number) => b.left + r / range * (b.right - b.left), Y = (h: number) => b.bottom - h / top * (b.bottom - b.top)
+    ctx.fillStyle = '#0b1418'; ctx.fillRect(b.left, b.top, b.right - b.left, b.bottom - b.top)
+    ctx.imageSmoothingEnabled = false; ctx.drawImage(this.rhiRaster, b.left, b.top, b.right - b.left, b.bottom - b.top)
+    ctx.font = '10px IBM Plex Mono, monospace'; ctx.lineWidth = 1
+    // Grid: range every 5 km, height every 2 km; the beams of the volume scan.
+    ctx.strokeStyle = 'rgba(160, 190, 200, .18)'; ctx.fillStyle = 'rgba(180, 205, 215, .75)'
+    for (let km = 0; km * 1000 <= range; km += 5) { ctx.beginPath(); ctx.moveTo(X(km * 1000), b.top); ctx.lineTo(X(km * 1000), b.bottom); ctx.stroke(); ctx.fillText(`${km}`, X(km * 1000) - 4, b.bottom + 14) }
+    for (let km = 0; km * 1000 <= top; km += 2) { ctx.beginPath(); ctx.moveTo(b.left, Y(km * 1000)); ctx.lineTo(b.right, Y(km * 1000)); ctx.stroke(); ctx.fillText(`${km}`, b.left - 22, Y(km * 1000) + 3) }
+    ctx.fillText('дальность, км', b.right - 90, b.bottom + 28); ctx.save(); ctx.translate(14, b.top + 70); ctx.rotate(-Math.PI / 2); ctx.fillText('высота, км', 0, 0); ctx.restore()
+    ctx.save(); ctx.beginPath(); ctx.rect(b.left, b.top, b.right - b.left, b.bottom - b.top); ctx.clip()
+    ctx.strokeStyle = 'rgba(232, 240, 242, .22)'
+    for (const tilt of RADAR_TILTS) { ctx.beginPath(); for (let r = 0; r <= range; r += 500) { const x = X(r), y = Y(beamHeight(r, tilt)); if (r) ctx.lineTo(x, y); else ctx.moveTo(x, y) } ctx.stroke() }
+    ctx.restore()
+    ctx.strokeStyle = '#3c5560'; ctx.strokeRect(b.left, b.top, b.right - b.left, b.bottom - b.top)
+    ctx.fillStyle = '#9fb6bd'; ctx.fillText(`азимут ${this.rhiAzimuth}° · ${this.rhiVelocity ? 'скорость относительно грозы' : 'отражаемость'} · масштаб по вертикали ×${((range / (b.right - b.left)) / (top / (b.bottom - b.top))).toFixed(1)}`, b.left + 6, b.top + 14)
+    const out = this.root.querySelector('#radarReadout') as HTMLElement, hv = this.hover
+    if (!hv) { out.textContent = '—'; return }
+    const g = Math.min(s.gates - 1, Math.floor(hv.x / RHI_STEP)), k = Math.min(s.rows - 1, Math.floor(hv.y / RHI_DZ)), i = k * s.gates + g
+    const value = this.rhiVelocity ? (Number.isNaN(s.velocity[i]) ? 'нет эха' : `${s.velocity[i] > 0 ? '+' : ''}${s.velocity[i].toFixed(1)} м/с`) : (s.dbz[i] < 5 ? 'нет эха' : `${s.dbz[i].toFixed(0)} dBZ`)
+    ctx.strokeStyle = '#2f7d86'; ctx.setLineDash([2, 3]); ctx.beginPath(); ctx.moveTo(X(hv.x), b.top); ctx.lineTo(X(hv.x), b.bottom); ctx.moveTo(b.left, Y(hv.y)); ctx.lineTo(b.right, Y(hv.y)); ctx.stroke(); ctx.setLineDash([])
+    out.innerHTML = `Дальность <b>${(hv.x / 1000).toFixed(1)} км</b><br>Высота <b>${(hv.y / 1000).toFixed(2)} км</b><br>${this.rhiVelocity ? 'Скорость' : 'Отражаемость'} <b>${value}</b>`
   }
 
   /** Detections on the screen and in the list: mesocyclones, and the weaker circulations if asked for. */
@@ -187,6 +291,7 @@ export class RadarPanel {
   private draw() {
     const ppi = this.ppi
     if (!this.open || !ppi) return
+    if (this.product === 'RHI') { this.drawSection(); return }
     const { width, depth } = ppi.model.grid, f = this.frame(), ctx = this.ctx
     const toScreen = (x: number, y: number) => [f.x + x / width * ppi.w * f.scale, f.y + (depth - y) / depth * ppi.h * f.scale]
     ctx.setTransform(f.ratio, 0, 0, f.ratio, 0, 0)
@@ -200,6 +305,9 @@ export class RadarPanel {
     for (let km = 5; km <= 60; km += 5) { ctx.beginPath(); ctx.arc(sx, sy, km * kmPx, 0, Math.PI * 2); ctx.stroke(); if (km % 10 === 0) ctx.fillText(`${km}`, sx + 3, sy - km * kmPx - 3) }
     ctx.strokeStyle = 'rgba(160, 190, 200, .2)'
     for (let a = 0; a < 360; a += 30) { const r = a * Math.PI / 180; ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(sx + Math.sin(r) * 80 * kmPx, sy - Math.cos(r) * 80 * kmPx); ctx.stroke() }
+    // The line of the RHI section.
+    const az = this.rhiAzimuth * Math.PI / 180
+    ctx.strokeStyle = 'rgba(255, 255, 255, .45)'; ctx.setLineDash([6, 5]); ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(sx + Math.sin(az) * 80 * kmPx, sy - Math.cos(az) * 80 * kmPx); ctx.stroke(); ctx.setLineDash([])
     ctx.restore()
     ctx.strokeStyle = '#3c5560'; ctx.strokeRect(f.x, f.y, ppi.w * f.scale, ppi.h * f.scale)
     ctx.fillStyle = '#e8f0f2'; ctx.beginPath(); ctx.arc(sx, sy, 3.5, 0, Math.PI * 2); ctx.fill()
