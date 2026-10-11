@@ -10,3 +10,5 @@
 .prose dl.terms { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 6px 16px; margin: 0; font-size: var(--fs-body); line-height: 22px; }
 .prose dl.terms dt { font-family: var(--font-mono); color: var(--text); white-space: nowrap; }
 .prose dl.terms dd { margin: 0; color: var(--text-2); }
+/* layout.css gives the footer row "padding: 40px 0", which drops the container's side padding. */
+.site-footer__in { padding-inline: clamp(20px, 7vw, 100px); }
