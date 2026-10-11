@@ -70,7 +70,9 @@ describe('water budget', () => {
     const before = totalWater(model)
     run(model, 3600)
     // Rain reaches the ground (sedimentation into rain-free air under the shaft once failed silently: water was conserved).
-    expect(Math.max(...model.precipitation)).toBeGreaterThan(1)
+    // (Over 1 mm before the profiles were neutralised, 2026-10-11, ~0.2 mm since: the plain profile overturned by itself
+    // too and fed this small box's storm.)
+    expect(Math.max(...model.precipitation)).toBeGreaterThan(.1)
     expect(Math.abs(totalWater(model) / before - 1)).toBeLessThan(.001)
   }, 300_000)
 

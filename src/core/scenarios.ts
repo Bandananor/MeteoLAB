@@ -27,6 +27,8 @@ const SUMMER_AIR: Partial<SimConfig> = {
  * ingests dry air and dies by 30-40 min) and a lid where nature has one. All use the default WENO transport: with the
  * semi-Lagrangian one the thermal is smeared out in strong wind before it can rise.
  */
+// «Заряженное ружьё» (a 3 K lid, CIN ~140 J/kg, no thermal) was removed on 2026-10-11: it fired only because the
+// profile above its lid was superadiabatic (fixed by Environment.neutralise); stable, it never fired in 40 min.
 export const SCENARIOS: Scenario[] = [
   { name: 'Летний день', mesocyclone: false,
     hint: 'Обычный жаркий летний день: влажный перемешанный слой у земли под слабой инверсией, ветер слабый. Одиночная гроза с ливнем и холодным оттоком',
@@ -40,10 +42,6 @@ export const SCENARIOS: Scenario[] = [
   { name: 'Микропорыв', mesocyclone: false,
     hint: 'Жара и сухой воздух до 3 км («перевёрнутое V»), влажная середина: облако с базой ~2,8 км, дождь испаряется по пути вниз, охлаждённый воздух ударяет в землю порывом до ~20 м/с',
     values: { bubbleRadius: NARROW, surfaceTemp: 34, rhSurface: 25, rhLow: 25, rhMid: 70, rhUpper: 35, lapseLow: 9.7, lapseMid: 7.2, lapseUpper: 6.5, tropopause: 12, ...LIGHT_WIND } },
-  { name: 'Заряженное ружьё',
-    hint: 'Тёплая сухая «крышка» (инверсия 3 K на 1 км, над ней крутой градиент) над влажным слоем: CIN ~140 Дж/кг. Термика нет — первые 20 минут ничего не происходит, потом нагрев у земли пробивает крышку сразу во многих местах',
-    values: { surfaceTemp: 30, rhSurface: 50, rhLow: 25, rhMid: 35, rhUpper: 30, lapseLow: 9.6, lapseMid: 6.8, lapseUpper: 6.5, capStrength: 3, capHeight: 1, bubble: 0,
-      wind0: 6, wind3: 15, wind6: 22, wind10: 28, windDir0: 170, windDir3: 220, windDir6: 245, windDir10: 255 } },
   { name: 'HSLC', mesocyclone: true,
     hint: 'Сильный сдвиг при малой CAPE (~1,3 кДж/кг — верхний край HSLC: на сетке ~1 км при меньшей CAPE вращение не держится), прохладно и влажно, как осенью или зимой: низкие мини-суперячейки с сильным вращением у земли (SRH 0–1 км ~300 м²/с²). Малая CAPE — нужен сильный начальный термик (2,5). На сетке ~1 км на грани разрешения',
     values: { surfaceTemp: 20.5, rhSurface: 85, rhLow: 80, rhMid: 55, rhUpper: 40, lapseLow: 6.5, lapseMid: 6.8, lapseUpper: 6.5, tropopause: 10, moistLayer: .8, bubble: 2.5,
@@ -64,7 +62,6 @@ export const SCENARIOS: Scenario[] = [
     hint: 'Старт на рассвете, в 06:00: у земли ночная инверсия (на 6 K холоднее, чем станет днём), термика нет. Сначала солнце съедает инверсию (до ~10 ч), потом перемешанный слой растёт до ~2 км, около полудня появляются кучевые, а через полчаса — первые грозы с ливнем и холодными оттоками. Ждать долго: поставьте скорость побольше',
     // Calibration (2026-10-10): nothing until 10:00, first cumulus 11:57, first thunderstorm 12:31, ~8 mm by 13:30. No
     // lid: under the 1 K one of «Летний день» the mixed layer stops at 1.6 km and no cloud forms all day. No moist layer:
-    // the vapour dropping off at its top makes that top unstable in virtual temperature, and the eddies it stirs up before
-    // sunrise lift wisps of cloud by 07:30.
+    // its top was unstable in virtual temperature (the profiles are neutralised since 2026-10-11, Environment.neutralise).
     values: { ...SUMMER_AIR, ...LIGHT_WIND, capStrength: 0, moistLayer: 0, bubble: 0, hour: 6, nightInversion: 6 } },
 ]

@@ -16,11 +16,6 @@ describe('scenarios: realistic environments', () => {
     const grid = createGrid(), i = parcelIndices(new Environment(config(s.values), grid), grid.height)
     expect(i.sb.cape).toBeLessThan(4000)
   })
-
-  it('Заряженное ружьё is capped: ML CIN over 100 J/kg', () => {
-    const s = SCENARIOS.find(s => s.name === 'Заряженное ружьё')!, grid = createGrid()
-    expect(parcelIndices(new Environment(config(s.values), grid), grid.height).ml.cin).toBeGreaterThan(100)
-  })
 })
 
 // Slow (~10 min per scenario on a laptop: 40 simulated minutes each): `npm run test:scenarios`, or in the cloud

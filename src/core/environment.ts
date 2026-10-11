@@ -9,6 +9,8 @@ const SURFACE_PRESSURE = 101325, PRESSURE_STEP = 10
 const CAP_DEPTH = 300, CAP_FADE = 2000
 /** The night (radiation) inversion is NIGHT_DEPTH m deep; above it the residual layer is RESIDUAL_COOLING of it colder (see nightDeficit). */
 export const NIGHT_DEPTH = 400, RESIDUAL_COOLING = .25
+/** Height step of the slider profile's neutralising warmth (see neutralise), m. */
+const NEUTRAL_STEP = 10
 
 /**
  * An analytic environment (for idealised test cases such as Weisman-Klemp) that replaces the slider profile:
@@ -35,10 +37,14 @@ export class Environment {
   private readonly profile?: EnvironmentProfile
   /** ln p every PRESSURE_STEP metres from the ground, integrated hydrostatically. */
   private readonly lnP: Float64Array
+  /** Warmth added to the slider profile every NEUTRAL_STEP metres so it is not unstable by itself, K (see neutralise). */
+  private readonly neutral?: Float32Array
 
   constructor(config: SimConfig, grid: Grid, profile?: EnvironmentProfile) {
     this.config = config; this.profile = profile
     this.lnP = this.integrateHydrostatic(grid.height + 2000)
+    // Twice: the warmth changes the pressure a little, and with it the potential temperature (a second pass settles it).
+    if (!profile) for (let pass = 0; pass < 2; pass++) { this.neutral = this.neutralise(grid.height + 2000); this.lnP = this.integrateHydrostatic(grid.height + 2000) }
     const f = () => new Float64Array(grid.nz)
     this.p = f(); this.exner = f(); this.theta = f(); this.q = f(); this.u = f(); this.v = f(); this.rho = f()
     for (let z = 0; z < grid.nz; z++) {
@@ -74,8 +80,36 @@ export class Environment {
   /** Temperature at height z and pressure p, °C (the pressure matters only for a profile given in theta). */
   private temperatureAt(z: number, p: number) { return this.profile ? this.profile.theta(z) * (p / 100000) ** KAPPA - 273.15 : this.sliderTemperature(z) }
 
-  /** The day profile below minus the night inversion (if any). */
-  private sliderTemperature(z: number) { return this.dayTemperature(z) - this.nightDeficit(z) }
+  /** The day profile below minus the night inversion (if any), plus the warmth that makes it stable (neutralise). */
+  private sliderTemperature(z: number) { return this.dayTemperature(z) - this.nightDeficit(z) + this.neutralWarmth(z) }
+
+  private neutralWarmth(z: number) {
+    const n = this.neutral
+    if (!n) return 0
+    const x = Math.min(Math.max(0, z) / NEUTRAL_STEP, n.length - 1.001), k = Math.floor(x)
+    return n[k] + (n[k + 1] - n[k]) * (x - k)
+  }
+
+  /**
+   * The slider profile made stable by itself, as a dry convective adjustment: wherever the virtual potential temperature
+   * would fall with height, the air is warmed just enough to keep it level (a neutral layer), up to where the profile
+   * itself is warm enough again. Two places of the plain profile were unstable and overturned in the first ~30 min
+   * with no sun and no thermal (2026-10-11): above the lid, whose warmth fades out over CAP_FADE, faster than the dry
+   * adiabat with a steep lapseLow (11-12.5 K/km), and the top of the moist layer, where the vapour drops off and the
+   * drier air above is heavier. A lapse rate steeper than the dry adiabat (lapseLow up to 11 K/km) becomes neutral too.
+   * The warming keeps the vapour of the plain profile (overturning air keeps its vapour; its relative humidity falls).
+   * Returns the warmth, K, every NEUTRAL_STEP m; uses the pressure of the plain profile (the warmth changes it by < 0.1 %).
+   */
+  private neutralise(top: number) {
+    const n = Math.ceil(top / NEUTRAL_STEP) + 2, warmth = new Float32Array(n)
+    let level = 0
+    for (let k = 0; k < n; k++) {
+      const z = k * NEUTRAL_STEP, p = this.pressureAt(z), pi = (100000 / p) ** KAPPA, plain = this.dayTemperature(z) - this.nightDeficit(z)
+      const moist = pi * (1 + .61 * this.qAt(z, plain, p)), thv = (plain + 273.15) * moist
+      warmth[k] = Math.max(0, (level - thv) / moist); level = Math.max(level, thv)
+    }
+    return warmth
+  }
 
   /**
    * How much colder the night leaves the air at height z, K: nightInversion at the ground, falling linearly to
@@ -124,8 +158,12 @@ export class Environment {
     return c.rhUpper / 100 * .7
   }
 
-  qEnv(z: number) {
-    const t = this.temperatureEnv(z), p = this.pressureAt(z), d = this.nightDeficit(z)
+  // The vapour of the plain profile: the neutralising warmth leaves it as it was (see neutralise).
+  qEnv(z: number) { return this.qAt(z, this.temperatureEnv(z) - this.neutralWarmth(z), this.pressureAt(z)) }
+
+  /** Vapour mixing ratio of the environment at height z if its temperature there were t (°C), at pressure p. */
+  private qAt(z: number, t: number, p: number) {
+    const d = this.nightDeficit(z)
     if (!d) return this.mixingRatio(z, t, p)
     // The night's cooling of the whole residual layer keeps its relative humidity (otherwise the moist layer's top would
     // saturate); the inversion's extra cooling near the ground keeps the vapour (bar what settles as dew), up to 97 %.

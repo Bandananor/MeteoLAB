@@ -167,7 +167,7 @@ const config: SimConfig = { ...defaults, ...SCENARIOS[0].values }
 // A shared link (?cfg=..., see share.ts) brings its scenario and settings; it is applied once and leaves the address.
 let initialPreset: number | null = 0, baseScenario: number | null = 0
 {
-  const url = new URL(location.href), shared = url.searchParams.get('cfg'), link = shared === null ? null : decodeSettings(shared, SCENARIOS.length)
+  const url = new URL(location.href), shared = url.searchParams.get('cfg'), link = shared === null ? null : decodeSettings(shared, SCENARIOS.map(s => s.name))
   if (link) {
     Object.assign(config, defaults, link.scenario === null ? {} : SCENARIOS[link.scenario].values, link.values)
     baseScenario = link.scenario; initialPreset = Object.keys(link.values).length ? null : link.scenario
@@ -263,7 +263,7 @@ shareButton.addEventListener('click', () => {
   // Relative to the scenario last chosen (changed sliders unmark it but it is still the starting point).
   const base: SimConfig = { ...defaults, ...(baseScenario === null ? {} : SCENARIOS[baseScenario].values) }, url = new URL(location.href)
   fillLowWind(base)
-  url.searchParams.set('cfg', encodeSettings(config, base, baseScenario)); url.searchParams.set('seed', String(config.seed))
+  url.searchParams.set('cfg', encodeSettings(config, base, baseScenario === null ? null : SCENARIOS[baseScenario].name)); url.searchParams.set('seed', String(config.seed))
   const done = (text: string) => { shareButton.textContent = text; setTimeout(() => { shareButton.textContent = 'Ссылка на опыт' }, 2500) }
   navigator.clipboard.writeText(url.href).then(() => done('Ссылка скопирована ✓'), () => { history.replaceState(null, '', url); done('Ссылка — в адресной строке') })
 })

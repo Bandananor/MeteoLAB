@@ -30,6 +30,8 @@ PROFILES = {
                   capStrength=1.0, moistLayer=1.0),
     'loaded': dict(surfaceTemp=32, rhSurface=50, rhLow=35, rhMid=40, lapseLow=9.5, lapseMid=8.0, capHeight=1.5, capStrength=3.0),
 }
+# The profiles go through the same dry convective adjustment as Environment.neutralise (2026-10-11): where the virtual
+# potential temperature would fall with height the air is warmed (its vapour kept) to hold it level.
 CAP_DEPTH, CAP_FADE = 300, 2000
 
 
@@ -101,12 +103,22 @@ def reference(c):
         rr = rh[k] * rs
         return min(max(rr, r_surface), rs) if z[k] < top else rr
 
-    for k in range(len(z)):
-        r[k] = mixing(k, p[k])
-        if k + 1 < len(z):
-            r_next = mixing(k + 1, p[k])
-            tv = [(t[k] + 273.15) * (1 + 0.61 * r[k]), (t[k + 1] + 273.15) * (1 + 0.61 * r_next)]
-            p[k + 1] = p[k] * np.exp(-9.80665 * dz / (287.05 * 0.5 * (tv[0] + tv[1])))
+    def integrate(tt):
+        for k in range(len(z)):
+            r[k] = mixing(k, p[k])
+            if k + 1 < len(z):
+                r_next = mixing(k + 1, p[k])
+                tv = [(tt[k] + 273.15) * (1 + 0.61 * r[k]), (tt[k + 1] + 273.15) * (1 + 0.61 * r_next)]
+                p[k + 1] = p[k] * np.exp(-9.80665 * dz / (287.05 * 0.5 * (tv[0] + tv[1])))
+
+    integrate(t)
+    # Neutralise on the plain profile's pressure, then integrate again with the warmed temperatures (the vapour stays).
+    pi = (100000.0 / p) ** 0.286
+    moist = pi * (1 + 0.61 * r)
+    thv = (t + 273.15) * moist
+    level = np.maximum.accumulate(thv)
+    t = t + (level - thv) / moist
+    integrate(t)
     P = p * units.Pa
     T = t * units.degC
     r_env = r * units('kg/kg')

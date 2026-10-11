@@ -31,24 +31,33 @@ const fromBase64Url = (text: string) => new TextDecoder().decode(Uint8Array.from
 /** Numbers to 4 decimals: no float noise like 4.166666666666667 in the link. */
 const round = (v: unknown): unknown => typeof v === 'number' ? Math.round(v * 1e4) / 1e4 : Array.isArray(v) ? v.map(round) : v
 
-/** The settings that differ from `base` (the defaults with the scenario laid over), with the scenario's index, as a URL-safe string. */
-export function encodeSettings(config: SimConfig, base: SimConfig, scenario: number | null) {
+/**
+ * The scenarios in the order the first links (2026-10-10) numbered them; links since carry the scenario's name, so
+ * adding, removing or reordering scenarios breaks none (one was removed on 2026-10-11).
+ */
+const NUMBERED = ['Летний день', 'Сухой воздух', 'Сдвиг ветра', 'Микропорыв', 'Заряженное ружьё', 'HSLC', 'Жаркий город', 'Суперячейка WK', 'Тропическая конвекция', 'Суточный ход']
+
+/** The settings that differ from `base` (the defaults with the scenario laid over), with the scenario's name, as a URL-safe string. */
+export function encodeSettings(config: SimConfig, base: SimConfig, scenario: string | null) {
   const values: Record<string, unknown> = {}
   for (const key of Object.keys(KINDS)) {
     const v = round((config as unknown as Record<string, unknown>)[key]), b = round((base as unknown as Record<string, unknown>)[key])
     if (v !== undefined && JSON.stringify(v) !== JSON.stringify(b)) values[key] = v
   }
-  return toBase64Url(JSON.stringify(scenario === null ? { c: values } : { s: scenario, c: values }))
+  return toBase64Url(JSON.stringify(scenario === null ? { c: values } : { n: scenario, c: values }))
 }
 
-/** Reads a link's settings back; anything unknown or of the wrong kind is dropped, a broken string gives null. */
-export function decodeSettings(text: string, scenarios: number): { scenario: number | null; values: Partial<SimConfig> } | null {
+/**
+ * Reads a link's settings back, with the index of its scenario in `names` (null if there is none or it no longer
+ * exists); anything unknown or of the wrong kind is dropped, a broken string gives null.
+ */
+export function decodeSettings(text: string, names: readonly string[]): { scenario: number | null; values: Partial<SimConfig> } | null {
   let data: unknown
   try { data = JSON.parse(fromBase64Url(text)) } catch { return null }
   if (!data || typeof data !== 'object') return null
-  const { s, c } = data as { s?: unknown; c?: unknown }
-  const scenario = Number.isInteger(s) && (s as number) >= 0 && (s as number) < scenarios ? s as number : null
-  return { scenario, values: cleanSettings(c) }
+  const { n, s, c } = data as { n?: unknown; s?: unknown; c?: unknown }
+  const name = typeof n === 'string' ? n : Number.isInteger(s) ? NUMBERED[s as number] : undefined, index = name === undefined ? -1 : names.indexOf(name)
+  return { scenario: index < 0 ? null : index, values: cleanSettings(c) }
 }
 
 /** Only the known settings of the right kind from outside data (a link, a saved file), and a whole positive seed. */
