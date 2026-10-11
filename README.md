@@ -12,6 +12,8 @@
 
 ## Быстрый старт
 
+Онлайн: **https://bandananor.github.io/MeteoLAB/** (выкладывается вручную: Actions → Pages → Run workflow).
+
 Нужны [Node.js](https://nodejs.org/) 20+ и браузер с WebGL 2.
 
 ```bash
