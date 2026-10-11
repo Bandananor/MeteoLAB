@@ -18,7 +18,7 @@ const defaults: SimConfig = {
   rhSurface:72,rhLow:60,rhMid:42,rhUpper:28,
   wind0:2,wind3:10,wind6:20,wind10:28,windDir0:160,windDir3:185,windDir6:215,windDir10:235,
   latitude:45,turbulence:.55,
-  hour:13.5,solarMax:1000,soilMoisture:45,surfaceType:'grass',
+  hour:13.5,dayOfYear:80,solarMax:1000,soilMoisture:45,surfaceType:'grass',
   speed:8,seed:42,bubble:1
 }
 // Scenario button tooltips end with the environment's own numbers (standard parcels, MetPy conventions).
@@ -74,6 +74,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
       <details><summary>Поверхность и радиация</summary><div class="group">
         <label>Тип поверхности<select id="surfaceType"><option value="grass">Трава</option><option value="dry">Сухая почва</option><option value="water">Вода</option><option value="urban">Город</option></select></label>
         ${slider('hour','Местное солнечное время',5,21,.25,13.5,' ч',2)}
+        ${slider('dayOfYear','День года (высота солнца): 80 — равноденствие, 172 — 21 июня, 355 — 21 декабря',1,365,1,80,'',0)}
         ${slider('solarMax','Солнце в зените',300,1200,25,1000,' Вт/м²')}
         ${slider('soilMoisture','Влажность почвы',0,100,1,45,' %')}
       </div></details>

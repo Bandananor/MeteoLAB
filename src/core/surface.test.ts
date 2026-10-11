@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { AtmosphereModel, CP, dragCoefficient, insolation, LONGWAVE_LOSS, LV, SURFACES, surfaceFluxes, type SimConfig } from '.'
+import { AtmosphereModel, CP, dragCoefficient, insolation, LONGWAVE_LOSS, sunDirection, LV, SURFACES, surfaceFluxes, type SimConfig } from '.'
 import { QUIET, SUMMER_DAY } from './fixtures'
 
 describe('surface energy balance', () => {
@@ -9,6 +9,19 @@ describe('surface energy balance', () => {
     expect(at(45, 12)).toBeCloseTo(1000 * Math.SQRT1_2, 6)
     expect(at(60, 12)).toBeCloseTo(500, 6)
     expect(at(45, 5)).toBe(0)
+  })
+
+  it('follows the season: the noon sun at 45° N stands 68° high on 21 June and 22° on 21 December', () => {
+    const elevation = (dayOfYear: number | undefined, hour = 12) => Math.asin(sunDirection({ ...SUMMER_DAY, latitude: 45, hour, dayOfYear }, 0).y) * 180 / Math.PI
+    expect(elevation(undefined)).toBeCloseTo(45, 6)
+    expect(elevation(172)).toBeCloseTo(68.4, 0)
+    expect(elevation(355)).toBeCloseTo(21.6, 0)
+    // In June the day is ~15.4 h long: the sun is up at 05:00 and 19:00, down at 04:00; in December it is down at 07:00.
+    expect(elevation(172, 5)).toBeGreaterThan(0); expect(elevation(172, 19)).toBeGreaterThan(0); expect(elevation(172, 4)).toBeLessThan(0)
+    expect(elevation(355, 7)).toBeLessThan(0)
+    // Still a unit vector, and the noon sun is due south (z > 0) north of the tropic.
+    const s = sunDirection({ ...SUMMER_DAY, latitude: 45, hour: 12, dayOfYear: 172 }, 0)
+    expect(Math.hypot(s.x, s.y, s.z)).toBeCloseTo(1, 9); expect(s.x).toBeCloseTo(0, 9); expect(s.z).toBeGreaterThan(0)
   })
 
   it('splits the absorbed shortwave into longwave loss, storage, H and LE', () => {

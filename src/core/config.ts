@@ -45,6 +45,8 @@ export interface SimConfig {
    */
   top?: number
   latitude: number; turbulence: number; hour: number; solarMax: number; soilMoisture: number; surfaceType: SurfaceType
+  /** Day of the year (1-365) for the sun's declination; absent = an equinox (sunrise 06:00, sunset 18:00). */
+  dayOfYear?: number
   speed: number; seed: number; bubble: number
   /** Horizontal e-folding radius of the starting thermals, km (absent = 4.2: a broad thermal, ~8 km across). */
   bubbleRadius?: number

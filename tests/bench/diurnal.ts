@@ -10,8 +10,8 @@ import { SCENARIOS } from '../../src/core/scenarios'
 
 const DAWN = SCENARIOS.find(s => s.name === 'Суточный ход').values
 // The scenario; with the moist layer (eddies at its top before sunrise, wisps of cloud by 07:30); with the 1 K lid of
-// «Летний день» (the mixed layer stops under it, no cloud all day); a stronger night inversion.
-export const VARIANTS = [DAWN, { ...DAWN, moistLayer: 1 }, { ...DAWN, capStrength: 1, capHeight: 1.4 }, { ...DAWN, nightInversion: 8 }]
+// «Летний день» (the mixed layer stops under it, no cloud all day); a stronger night inversion; the same on 21 June.
+export const VARIANTS = [DAWN, { ...DAWN, moistLayer: 1 }, { ...DAWN, capStrength: 1, capHeight: 1.4 }, { ...DAWN, nightInversion: 8 }, { ...DAWN, dayOfYear: 172 }]
 const [variant, hours = 9] = process.argv.slice(2).map(Number), envOnly = process.argv.includes('env')
 const config = { ...SUMMER_DAY, ...VARIANTS[variant] }, grid = createGrid(DEFAULT_GRID), env = new Environment(config, grid)
 const i = parcelIndices(env, grid.height), day = new Environment({ ...config, nightInversion: 0 }, grid), d = parcelIndices(day, grid.height)
