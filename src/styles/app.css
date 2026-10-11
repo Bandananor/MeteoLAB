@@ -97,3 +97,9 @@ html:not(.layout-phone) .m-only { display: none !important; }
 .layout-phone .metric { padding: 12px; } .layout-phone .metric__num { font-size: 26px; }
 .layout-phone .t-caption, .layout-phone .unit { font-size: var(--fs-label); }
 .layout-phone .popover { width: calc(100vw - 32px); }
+/* The field panel on a phone: title and colour bar over the view; the settings (slices, volume, UH layer) behind
+   «Настройки», scrolling within at most half the view. */
+.field-panel__settings { display: flex; flex-direction: column; gap: 12px; }
+.layout-phone .field-panel { padding: 8px 12px 10px; gap: 8px; }
+.layout-phone .ov-tr:not(.is-open) .field-panel__settings { display: none; }
+.layout-phone .ov-tr.is-open .field-panel { max-height: 50dvh; }

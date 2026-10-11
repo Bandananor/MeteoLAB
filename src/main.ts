@@ -147,15 +147,17 @@ app.innerHTML = `<div class="app">
         <div class="ov-bl"><span class="ov-badge" id="surfaceReadout">ТРАВА</span><span class="ov-chip">ЛКМ — вращение · ПКМ — сдвиг · колесо — масштаб · 2× клик — термик</span></div>
         <div class="ov-br"><div class="ov-legend" id="cloudLegend"><span><i style="--c:#d8e0e3"></i>облачная вода</span><span><i style="--c:#4e7692"></i>осадки</span><span><i style="--c:#b68b59"></i>восходящий</span><span><i style="--c:#7189a5"></i>нисходящий</span></div></div>
         <div class="ov-tr" id="fieldPanel" hidden><div class="field-panel">
-          <div class="field-panel__head"><span class="field-panel__title" id="fieldTitle"></span></div>
+          <div class="field-panel__head"><span class="field-panel__title" id="fieldTitle"></span><button class="btn btn--quiet btn--s m-only" id="fieldSettingsToggle" aria-expanded="false" aria-controls="fieldSettings">Настройки ▾</button></div>
           <div class="colorbar"><div class="colorbar__bar" id="colorbar"></div><div class="colorbar__ticks"><span id="fieldMin"></span><span id="fieldMid"></span><span id="fieldMax"></span></div></div>
-          <div class="field" id="uhLayerRow" hidden title="UH = Σ w·ζ·Δz по слою: насколько поднимающийся воздух вращается. 2–5 км — средний мезоциклон (как в цифрах модели); 0–1 и 0–3 км — нижний, главный признак опасности смерча; весь поток — вращается ли он целиком или только середина"><span class="field__label">Слой вращения</span><span class="select"><select id="uhLayer">${(Object.keys(UH_LAYERS) as UhLayer[]).map(k => `<option value="${k}">${UH_LAYERS[k].label}</option>`).join('')}</select></span></div>
-          <label class="field"><span class="field__head"><span class="field__label">Высота горизонтального среза</span><output class="field__value" id="sliceHeightOut">2.0 км</output></span><input class="range" id="sliceHeight" type="range" min="0.1" max="18.5" step="0.1" value="2"></label>
-          <label class="field"><span class="field__head"><span class="field__label">Разрез север ↔ юг</span><output class="field__value" id="sliceNorthOut">0 км</output></span><input class="range" id="sliceNorth" type="range" min="-17.5" max="17.5" step="0.5" value="0"></label>
-          <div class="field"><span class="field__label">Отображение</span><span class="select"><select id="layerMode"><option value="both">Срезы + объём сильных отклонений</option><option value="slices">Только срезы</option><option value="volume">Только объём (всё поле)</option></select></span></div>
-          <div id="volumeControls" hidden>
-            <label class="field"><span class="field__head"><span class="field__label">Порог прозрачности</span><output class="field__value" id="volumeThresholdOut">10 %</output></span><input class="range" id="volumeThreshold" type="range" min="0" max="0.8" step="0.02" value="0.1"></label>
-            <label class="field"><span class="field__head"><span class="field__label">Плотность объёма</span><output class="field__value" id="volumeDensityOut">1.0×</output></span><input class="range" id="volumeDensity" type="range" min="0.2" max="4" step="0.1" value="1"></label>
+          <div class="field-panel__settings" id="fieldSettings">
+            <div class="field" id="uhLayerRow" hidden title="UH = Σ w·ζ·Δz по слою: насколько поднимающийся воздух вращается. 2–5 км — средний мезоциклон (как в цифрах модели); 0–1 и 0–3 км — нижний, главный признак опасности смерча; весь поток — вращается ли он целиком или только середина"><span class="field__label">Слой вращения</span><span class="select"><select id="uhLayer">${(Object.keys(UH_LAYERS) as UhLayer[]).map(k => `<option value="${k}">${UH_LAYERS[k].label}</option>`).join('')}</select></span></div>
+            <label class="field"><span class="field__head"><span class="field__label">Высота горизонтального среза</span><output class="field__value" id="sliceHeightOut">2.0 км</output></span><input class="range" id="sliceHeight" type="range" min="0.1" max="18.5" step="0.1" value="2"></label>
+            <label class="field"><span class="field__head"><span class="field__label">Разрез север ↔ юг</span><output class="field__value" id="sliceNorthOut">0 км</output></span><input class="range" id="sliceNorth" type="range" min="-17.5" max="17.5" step="0.5" value="0"></label>
+            <div class="field"><span class="field__label">Отображение</span><span class="select"><select id="layerMode"><option value="both">Срезы + объём сильных отклонений</option><option value="slices">Только срезы</option><option value="volume">Только объём (всё поле)</option></select></span></div>
+            <div id="volumeControls" hidden>
+              <label class="field"><span class="field__head"><span class="field__label">Порог прозрачности</span><output class="field__value" id="volumeThresholdOut">10 %</output></span><input class="range" id="volumeThreshold" type="range" min="0" max="0.8" step="0.02" value="0.1"></label>
+              <label class="field"><span class="field__head"><span class="field__label">Плотность объёма</span><output class="field__value" id="volumeDensityOut">1.0×</output></span><input class="range" id="volumeDensity" type="range" min="0.2" max="4" step="0.1" value="1"></label>
+            </div>
           </div>
         </div></div>
       </div>
@@ -481,6 +483,10 @@ const updatePause = () => {
 }
 const setView = (patch: Partial<typeof view>) => { Object.assign(view, patch); Object.assign(sim, patch) }
 const fieldPanel = document.querySelector<HTMLDivElement>('#fieldPanel')!
+// On a phone the field panel shows only its title and colour bar over the view; the settings open on demand.
+const fieldSettingsToggle = document.querySelector<HTMLButtonElement>('#fieldSettingsToggle')!
+const showFieldSettings = (open: boolean) => { fieldPanel.classList.toggle('is-open', open); fieldSettingsToggle.setAttribute('aria-expanded', String(open)); fieldSettingsToggle.textContent = open ? 'Свернуть ▴' : 'Настройки ▾' }
+fieldSettingsToggle.addEventListener('click', () => showFieldSettings(!fieldPanel.classList.contains('is-open')))
 const formatValue = (v: number) => `${v > 0 ? '+' : ''}${Number.isInteger(v) ? v : v.toFixed(1)}`
 document.querySelectorAll<HTMLButtonElement>('[data-field]').forEach(button => button.addEventListener('click', () => {
   document.querySelectorAll('[data-field]').forEach(b => b.setAttribute('aria-selected', String(b === button)))
