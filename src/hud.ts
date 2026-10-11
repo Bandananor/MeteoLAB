@@ -30,18 +30,31 @@ export function applyLayout(layout: Layout, remember = true) {
   dispatchEvent(new Event('resize'))
 }
 
-/** The first visit: which layout, with the one the screen suggests marked. */
+/** The first visit: which layout. The one the screen suggests comes first and is marked; Esc or a tap beside the
+ *  window choose it too. */
 export function askLayout() {
-  const suggested = suggestedLayout(), box = document.createElement('div')
-  box.className = 'layout-ask'
-  box.innerHTML = `<div><h3>Как показывать MeteoLab?</h3><p>Выбор запомнится; переключить можно в любой момент — кнопкой в шапке или в меню «Приборы» на телефоне.</p>
-    <button data-layout="phone" class="${suggested === 'phone' ? 'recommended' : ''}">📱 Телефон<small>3D во весь экран, крупные цифры, панель под палец${suggested === 'phone' ? ' — подходит этому экрану' : ''}</small></button>
-    <button data-layout="desktop" class="${suggested === 'desktop' ? 'recommended' : ''}">🖥 Компьютер<small>три колонки: настройки, 3D, данные${suggested === 'desktop' ? ' — подходит этому экрану' : ''}</small></button></div>`
-  box.addEventListener('click', e => {
+  const suggested = suggestedLayout(), dialog = document.createElement('dialog')
+  const card = (layout: Layout) => {
+    const phone = layout === 'phone', recommended = layout === suggested
+    const pic = phone ? '<span class="layout-pic layout-pic--phone"><i></i><i class="v"></i><i></i></span>'
+      : '<span class="layout-pic layout-pic--desktop"><i></i><span class="layout-pic__cols"><i></i><i class="v"></i><i></i></span></span>'
+    return `<button class="choice${recommended ? ' is-recommended' : ''}" data-layout="${layout}"><span class="choice__pic">${pic}</span><span style="display:flex;flex-direction:column;gap:5px;min-width:0">`
+      + `<span class="choice__name">${phone ? 'Телефон' : 'Компьютер'}${recommended ? '<span class="choice__tag">подходит этому экрану</span>' : ''}</span>`
+      + `<span class="choice__desc">${phone ? '3D во весь экран, крупные цифры, панель под палец' : 'Три колонки: обстановка, 3D, данные'}</span></span></button>`
+  }
+  dialog.className = 'modal modal--wide'
+  dialog.innerHTML = `<h2 class="modal__title" style="font-size:24px;line-height:30px">Как показывать MeteoLab?</h2>
+    <div class="choice-list">${card(suggested)}${card(suggested === 'phone' ? 'desktop' : 'phone')}</div>
+    <p class="modal__text" style="color:var(--text-3)">Выбор запомнится. Переключить можно в любой момент — в шапке или в меню «Приборы» на телефоне.</p>`
+  const choose = (layout: Layout) => { applyLayout(layout); dialog.close(); dialog.remove() }
+  dialog.addEventListener('click', e => {
     const layout = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-layout]')?.dataset.layout as Layout | undefined
-    if (layout) { applyLayout(layout); box.remove() }
+    if (layout) choose(layout)
+    else if (e.target === dialog) choose(suggested)  // the backdrop: a click outside the window's box
   })
-  document.body.appendChild(box)
+  dialog.addEventListener('cancel', e => { e.preventDefault(); choose(suggested) })
+  document.body.appendChild(dialog)
+  dialog.showModal()
 }
 /** Physics threads on a phone unless the address asks otherwise: fewer, so it does not overheat. */
 export const PHONE_THREADS = 3

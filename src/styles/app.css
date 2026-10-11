@@ -1,6 +1,5 @@
 /* MeteoLab: what the design system (tokens, base, components, layout) leaves to the app — sizes of the canvases in the
-   right column, the 3D overlays this page adds, the instrument screens over the simulator, the phone layout, and, until
-   its design step, the first-visit layout question in its earlier look. */
+   right column, the 3D overlays this page adds, the instrument screens over the simulator and the phone layout. */
 
 #app { display: contents; }
 .app { grid-template-columns: minmax(0, 1fr); }
@@ -50,8 +49,6 @@ html:not(.layout-phone) .m-only { display: none !important; }
 .layout-phone .instrument__screen { aspect-ratio: 1; max-height: 70dvh; } .layout-phone .instrument__side { border-left: 0; overflow: visible; }
 
 
-/* ---- First-visit layout question: earlier look until its design step. ---- */
-.layout-ask{position:fixed;inset:0;z-index:100;display:grid;place-items:center;background:var(--scrim);padding:16px}.layout-ask div{max-width:420px;background:var(--surface-1);border-radius:var(--r-2);box-shadow:var(--shadow-pop);padding:20px;font:14px var(--font-text);color:var(--text)}.layout-ask h3{margin:0 0 6px;font-size:17px}.layout-ask p{margin:0 0 14px;color:var(--text-2);font-size:13px;line-height:1.45}.layout-ask button{display:block;width:100%;margin-top:8px;padding:14px;font:600 14px var(--font-text);text-align:left;border-radius:var(--r-2);background:var(--surface-2);color:var(--text);border:0}.layout-ask button small{display:block;font-weight:400;font-size:12px;color:var(--text-2);margin-top:2px}.layout-ask button.recommended{background:var(--accent-soft);box-shadow:inset 0 0 0 1.5px var(--accent)}
 
 /* ---- Phone layout (hud.ts, <html class="layout-phone">; the page root also gets layout.css's .phone frame): the 3D view
    between the header and the bottom bar, numbers and the storm mode over it, the side columns as sheets over the bar. ---- */
