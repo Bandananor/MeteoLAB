@@ -34,6 +34,9 @@ export class Timeline {
     return true
   }
 
+  /** Drops the points after model time t (a rewind). */
+  truncate(t: number) { while (this.points.length && this.points[this.points.length - 1].t > t) this.points.pop() }
+
   draw(ctx: CanvasRenderingContext2D, w: number, h: number) {
     const pts = this.points, rows = SERIES.length, rowH = h / rows, left = 4, right = w - 4
     // At least 30 minutes on the time axis, then the whole run.

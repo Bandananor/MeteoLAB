@@ -93,7 +93,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
         <p><b>Только картинка</b>, в расчёт не входит: мелкие детали облаков (фрактальный шум мельче сетки), частицы дождя и снега, тени облаков на земле. Радар, станция и индексы считаются по полям модели; давление станции — гидростатическая оценка.</p>
       </div></details>
       <p class="hint">Двойной клик по поверхности создаёт локальный 3D-термик. Изменение профиля перезапускает эксперимент.</p>
-      <div class="actions"><button id="restart">Перезапустить</button><button id="pause" class="secondary">Пауза</button><button id="share" class="secondary share" title="Скопировать ссылку на этот опыт: все настройки и сид, так что по ней откроется тот же расчёт">Ссылка на опыт</button><button id="saveState" class="secondary" title="Сохранить расчёт в файл .meteolab (все поля модели в этот момент, ~4 МБ): его можно открыть позже и продолжить с того же места">Сохранить</button><button id="loadState" class="secondary" title="Открыть сохранённый файл .meteolab и продолжить расчёт с сохранённого момента">Открыть…</button><input id="stateFile" type="file" accept=".meteolab" hidden><p class="state-note" id="stateNote" hidden></p></div>
+      <div class="actions"><button id="restart">Перезапустить</button><button id="pause" class="secondary">Пауза</button><button id="share" class="secondary share" title="Скопировать ссылку на этот опыт: все настройки и сид, так что по ней откроется тот же расчёт">Ссылка на опыт</button><button id="saveState" class="secondary" title="Сохранить расчёт в файл .meteolab (все поля модели в этот момент, ~4 МБ): его можно открыть позже и продолжить с того же места">Сохранить</button><button id="loadState" class="secondary" title="Открыть сохранённый файл .meteolab и продолжить расчёт с сохранённого момента">Открыть…</button><select id="rewind" class="rewind" title="Перемотка назад: состояние запоминается каждые 5 модельных минут (последние ~60 МБ). Выбранная минута — и расчёт идёт оттуда заново; более поздние точки забываются"><option value="">Вернуться к минуте…</option></select><input id="stateFile" type="file" accept=".meteolab" hidden><p class="state-note" id="stateNote" hidden></p></div>
     </aside>
 
     <section class="workspace">
@@ -270,6 +270,21 @@ document.querySelector('#saveState')!.addEventListener('click', () => {
   note(`Сохранено: ${minutes}-я минута расчёта`)
 })
 document.querySelector('#loadState')!.addEventListener('click', () => stateFile.click())
+// Rewind: the points the Atmosphere keeps, refreshed when their number changes.
+const rewindSelect = document.querySelector<HTMLSelectElement>('#rewind')!
+let rewindKey = ''
+const listRewind = () => {
+  const key = sim.history.map(h => h.time).join(',')
+  if (key === rewindKey) return
+  rewindKey = key
+  rewindSelect.innerHTML = '<option value="">Вернуться к минуте…</option>' + sim.history.map(h => `<option value="${h.time}">${Math.floor(h.time / 60)}-я минута${h.time === 0 ? ' (начало)' : ''}</option>`).join('')
+}
+rewindSelect.addEventListener('change', () => {
+  const time = Number(rewindSelect.value)
+  if (rewindSelect.value === '') return
+  sim.rewind(time); timeline.truncate(time); rewindSelect.value = ''; running = true; updatePause()
+  note(`Расчёт вернулся к ${Math.floor(time / 60)}-й минуте`)
+})
 stateFile.addEventListener('change', async () => {
   const file = stateFile.files?.[0]; stateFile.value = ''
   if (!file) return
@@ -503,7 +518,7 @@ function frame(now:number){
   text('cape',d.cape.toFixed(0));text('mlcape',d.indices.ml.cape.toFixed(0));text('mlcin',d.indices.ml.cin.toFixed(0));text('mucape',d.indices.mu.cape.toFixed(0));text('dcape',d.indices.dcape.toFixed(0));text('srh01',d.storm.srh01.toFixed(0));text('srh03',d.storm.srh03.toFixed(0));text('scp',d.storm.scp.toFixed(1));text('stp',d.storm.stp.toFixed(1));text('cin',d.cin.toFixed(0));text('updraft',d.updraft.toFixed(1));text('downdraft',d.downdraft.toFixed(1));text('uh',d.updraftHelicity.toFixed(0));text('uhLow',`${d.uh01.toFixed(0)} / ${d.uh03.toFixed(0)}`);text('cloudTop',d.cloudTop.toFixed(1));text('thermalTop',d.thermalTop.toFixed(1));text('cloudWater',d.cloudWater.toFixed(2));text('coldPool',d.coldPool.toFixed(1));text('gust',d.gust.toFixed(1));text('hail',d.hail>=1?(d.hail/10).toFixed(1):'нет');text('hailSwath',d.hailSwath>=1?`крупнейшие, см; за прогон до ${(d.hailSwath/10).toFixed(1)}`:'крупнейшие градины, см');text('clipped',String(d.clipped));text('rain',d.rain.toFixed(1));text('rainTotal',d.rainTotal.toFixed(1));text('lcl',d.lcl===null?'—':`${d.lcl.toFixed(1)} км`);text('lfc',d.lfc===null?'—':`${d.lfc.toFixed(1)} км`);text('el',d.el===null?'—':`${d.el.toFixed(1)} км`);text('cellType',d.cellType);text('cellReason',d.cellReason);text('logicText',d.logic);text('sun',`${d.insolation.toFixed(0)} Вт/м²`);text('sunElevation',d.sunElevation>0?`${d.sunElevation.toFixed(0)}° над горизонтом`:'ночь')
   text('surfaceReadout',({grass:'ТРАВА',dry:'СУХАЯ ПОЧВА',water:'ВОДА',urban:'ГОРОД'} as const)[config.surfaceType])
   const b=sim.balance;text('rkw',b?b.ratio.toFixed(1):'—');text('rkwNote',b?`C ${b.c.toFixed(0)} / Δu ${b.deltaU.toFixed(0)} м/с`:'купола нет');const card=document.querySelector<HTMLElement>('#rkwCard')!;card.dataset.base??=card.title;card.title=b?`${card.dataset.base}\n\nСейчас: ${describeBalance(b)}.`:card.dataset.base
-  const sec=Math.floor(sim.time);text('time',`${String(Math.floor(sec/60)).padStart(2,'0')}:${String(sec%60).padStart(2,'0')}`);text('threads',String(sim.threads));text('freezing',d.freezing===null?'—':`${d.freezing.toFixed(1)} км`);if(sim.live!==shownLive){shownLive=sim.live;skewt.setLive(shownLive.env,shownLive)}const sampled=timeline.record({t:sim.time,cape:sim.live.indices.sb.cape,cin:sim.live.indices.sb.cin,updraft:d.updraft,uh:d.updraftHelicity,rain:d.rain,rainTotal:d.rainTotal,rotationHeld:sim.model.rotation.persisted});if(frameCount++%20===0){drawSounding();drawHodograph();drawSpin()}if(sampled||frameCount%20===1){const{ctx,w,h}=prepareCanvas('timeline');timeline.draw(ctx,w,h)}updateCells();radar.refresh();const probe=sim.cells.find(selectedCell);skewt.refresh(probe?{id:probe.id,x:probe.x,y:probe.y,u:probe.u+sim.model.frame[0],v:probe.v+sim.model.frame[1]}:null);station.refresh(sim.station,placingStation);canvas.style.cursor=placingStation?'crosshair':'';requestAnimationFrame(frame)
+  const sec=Math.floor(sim.time);text('time',`${String(Math.floor(sec/60)).padStart(2,'0')}:${String(sec%60).padStart(2,'0')}`);text('threads',String(sim.threads));text('freezing',d.freezing===null?'—':`${d.freezing.toFixed(1)} км`);if(sim.live!==shownLive){shownLive=sim.live;skewt.setLive(shownLive.env,shownLive)}const sampled=timeline.record({t:sim.time,cape:sim.live.indices.sb.cape,cin:sim.live.indices.sb.cin,updraft:d.updraft,uh:d.updraftHelicity,rain:d.rain,rainTotal:d.rainTotal,rotationHeld:sim.model.rotation.persisted});if(frameCount++%20===0){drawSounding();drawHodograph();drawSpin()}if(sampled||frameCount%20===1){const{ctx,w,h}=prepareCanvas('timeline');timeline.draw(ctx,w,h)}updateCells();radar.refresh();const probe=sim.cells.find(selectedCell);skewt.refresh(probe?{id:probe.id,x:probe.x,y:probe.y,u:probe.u+sim.model.frame[0],v:probe.v+sim.model.frame[1]}:null);station.refresh(sim.station,placingStation);listRewind();canvas.style.cursor=placingStation?'crosshair':'';requestAnimationFrame(frame)
 }
 showDomain()
 requestAnimationFrame(frame)

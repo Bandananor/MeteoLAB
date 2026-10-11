@@ -1,4 +1,4 @@
-import { applyState, AtmosphereModel, CellTracker, coldPoolBalance, type SavedState, saveState, type ColdPoolBalance, computeSounding, domainPoint, groundPoint, Station, type Environment, insolation, liveSounding, type ModelDiagnostics, parcelIndices, type ParcelIndices, type SimConfig, type Sounding, stormIndices, type StormIndices, sunDirection } from './core'
+import { applyState, readState, AtmosphereModel, CellTracker, coldPoolBalance, type SavedState, saveState, type ColdPoolBalance, computeSounding, domainPoint, groundPoint, Station, type Environment, insolation, liveSounding, type ModelDiagnostics, parcelIndices, type ParcelIndices, type SimConfig, type Sounding, stormIndices, type StormIndices, sunDirection } from './core'
 import { describeConvection } from './describe'
 import type { FieldMode } from './render/fields'
 import type { UhLayer } from './core'
@@ -7,6 +7,9 @@ import { SNAPSHOT_COLUMNS, SNAPSHOT_FIELDS, type Snapshot, type WorkerRequest } 
 
 /** How often the live sounding (src/core/live.ts) and everything derived from it is recomputed, s of model time. */
 export const LIVE_EVERY = 60
+
+/** Rewind points: a saved state every HISTORY_EVERY s of model time, the oldest dropped beyond HISTORY_BYTES in all. */
+export const HISTORY_EVERY = 300, HISTORY_BYTES = 64 * 1024 * 1024
 
 /** The live sounding and what the panels show from it. */
 export interface Live { time: number; quiet: number; all: boolean; env: Environment; sounding: Sounding; indices: ParcelIndices; storm: StormIndices }
@@ -36,6 +39,10 @@ export class Atmosphere implements ViewSettings {
   readonly cells = new CellTracker()
   /** The cold pool against the low-level shear (RKW, src/core/rkw.ts) at the last snapshot; null without a cold pool. */
   balance: ColdPoolBalance | null = null
+  /** A state was sent to the worker: snapshots computed before it arrived are dropped until the one that says loaded. */
+  private awaitingLoad = false
+  /** Saved states to rewind to (src/core/state.ts), oldest first. */
+  readonly history: { time: number; buffer: ArrayBuffer }[] = []
   /** The virtual weather station (src/core/station.ts), if one is placed; it records with every snapshot. */
   station: Station | null = null
   /** Threads the physics runs on (see simulation.worker.ts). */
@@ -93,8 +100,17 @@ export class Atmosphere implements ViewSettings {
 
   /** The current state as a .meteolab file (src/core/state.ts), from the fields the page holds. */
   saveState() { return saveState(this.mirror, this.config) }
+  /** Goes back to a rewind point: the run continues from there and the later points are dropped (a new branch). */
+  rewind(time: number) {
+    const k = this.history.findIndex(h => h.time === time)
+    if (k < 0) return
+    const buffer = this.history[k].buffer.slice(0)
+    this.history.length = k + 1
+    this.loadState(readState(buffer), buffer)
+  }
+
   /** Continues from a saved state (this Atmosphere must have been built with its settings): the page and the worker. */
-  loadState(state: SavedState, buffer: ArrayBuffer) { applyState(this.mirror, state); this.live = this.derive(this.mirror.env, -LIVE_EVERY, 1, false); this.post({ type: 'load', buffer }, [buffer]) }
+  loadState(state: SavedState, buffer: ArrayBuffer) { applyState(this.mirror, state); this.awaitingLoad = true; this.live = this.derive(this.mirror.env, -LIVE_EVERY, 1, false); this.post({ type: 'load', buffer }, [buffer]) }
 
   perturb(nx: number, ny: number, strength = 1) { const p = this.view.groundPoint(nx, ny); this.post({ type: 'perturb', x: p.x, y: p.y, strength }) }
 
@@ -111,6 +127,8 @@ export class Atmosphere implements ViewSettings {
   private post(request: WorkerRequest, transfer: Transferable[] = []) { this.worker.postMessage(request, transfer) }
 
   private receive(s: Snapshot) {
+    if (this.awaitingLoad && !s.loaded) { this.post({ type: 'release', buffer: s.buffer }, [s.buffer]); this.inFlight = false; return }
+    this.awaitingLoad = false
     const m = this.mirror, { n, layer } = m.grid, data = new Float32Array(s.buffer)
     let offset = 0
     for (const key of SNAPSHOT_FIELDS) { m[key].set(data.subarray(offset, offset + n)); offset += n }
@@ -122,6 +140,13 @@ export class Atmosphere implements ViewSettings {
     if (!(m.time - this.cells.time < 6)) this.cells.update(m)
     if (this.station) { this.station.observe(m); this.markStation() }
     this.balance = coldPoolBalance(m)
+    // A rewind point every HISTORY_EVERY s (the first at the start), within HISTORY_BYTES.
+    const last = this.history[this.history.length - 1]
+    if (!last || m.time - last.time >= HISTORY_EVERY) {
+      this.history.push({ time: m.time, buffer: saveState(m, this.config) })
+      let bytes = this.history.reduce((sum, h) => sum + h.buffer.byteLength, 0)
+      while (bytes > HISTORY_BYTES && this.history.length > 2) bytes -= this.history.splice(1, 1)[0].buffer.byteLength
+    }
     if (!(m.time - this.live.time < LIVE_EVERY && m.time >= this.live.time)) { const l = liveSounding(m); this.live = this.derive(l.env, m.time, l.quiet, l.all) }
     this.view.afterAdvance(s.steps)
   }

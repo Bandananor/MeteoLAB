@@ -32,4 +32,6 @@ export interface Snapshot {
   rotation: RotationState; diagnostics: ModelDiagnostics
   /** Threads the physics runs on (1 without cross-origin isolation). */
   threads: number
+  /** The first snapshot after a 'load' request: the ones still on their way from before it are stale. */
+  loaded?: boolean
 }
