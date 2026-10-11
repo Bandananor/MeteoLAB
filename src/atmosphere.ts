@@ -1,4 +1,4 @@
-import { AtmosphereModel, CellTracker, coldPoolBalance, type ColdPoolBalance, computeSounding, domainPoint, groundPoint, Station, type Environment, insolation, liveSounding, type ModelDiagnostics, parcelIndices, type ParcelIndices, type SimConfig, type Sounding, stormIndices, type StormIndices, sunDirection } from './core'
+import { applyState, AtmosphereModel, CellTracker, coldPoolBalance, type SavedState, saveState, type ColdPoolBalance, computeSounding, domainPoint, groundPoint, Station, type Environment, insolation, liveSounding, type ModelDiagnostics, parcelIndices, type ParcelIndices, type SimConfig, type Sounding, stormIndices, type StormIndices, sunDirection } from './core'
 import { describeConvection } from './describe'
 import type { FieldMode } from './render/fields'
 import type { UhLayer } from './core'
@@ -90,6 +90,11 @@ export class Atmosphere implements ViewSettings {
   private markStation() { this.view.setStation(this.station && domainPoint(this.mirror, this.station.x, this.station.y)) }
   /** Rings the selected cell in the 3D view. */
   setSelection(p: { x: number; y: number } | null) { this.view.setSelection(p) }
+
+  /** The current state as a .meteolab file (src/core/state.ts), from the fields the page holds. */
+  saveState() { return saveState(this.mirror, this.config) }
+  /** Continues from a saved state (this Atmosphere must have been built with its settings): the page and the worker. */
+  loadState(state: SavedState, buffer: ArrayBuffer) { applyState(this.mirror, state); this.live = this.derive(this.mirror.env, -LIVE_EVERY, 1, false); this.post({ type: 'load', buffer }, [buffer]) }
 
   perturb(nx: number, ny: number, strength = 1) { const p = this.view.groundPoint(nx, ny); this.post({ type: 'perturb', x: p.x, y: p.y, strength }) }
 

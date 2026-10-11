@@ -46,10 +46,19 @@ export function decodeSettings(text: string, scenarios: number): { scenario: num
   let data: unknown
   try { data = JSON.parse(fromBase64Url(text)) } catch { return null }
   if (!data || typeof data !== 'object') return null
-  const { s, c } = data as { s?: unknown; c?: unknown }, values: Record<string, unknown> = {}
-  if (c && typeof c === 'object') for (const [key, v] of Object.entries(c)) if (Object.hasOwn(KINDS, key) && fits(KINDS[key], v)) values[key] = v
+  const { s, c } = data as { s?: unknown; c?: unknown }
   const scenario = Number.isInteger(s) && (s as number) >= 0 && (s as number) < scenarios ? s as number : null
-  return { scenario, values: values as Partial<SimConfig> }
+  return { scenario, values: cleanSettings(c) }
+}
+
+/** Only the known settings of the right kind from outside data (a link, a saved file), and a whole positive seed. */
+export function cleanSettings(data: unknown): Partial<SimConfig> {
+  const values: Record<string, unknown> = {}
+  if (data && typeof data === 'object') for (const [key, v] of Object.entries(data)) {
+    if (Object.hasOwn(KINDS, key) && fits(KINDS[key], v)) values[key] = v
+    else if (key === 'seed' && Number.isInteger(v) && (v as number) > 0 && (v as number) < 2 ** 32) values.seed = v
+  }
+  return values as Partial<SimConfig>
 }
 
 /** Rows as CSV with a header line (comma-separated, numbers as they are; for spreadsheets and scripts). */

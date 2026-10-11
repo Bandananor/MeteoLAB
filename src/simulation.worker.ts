@@ -1,7 +1,7 @@
 // Runs the physics off the main thread. The main thread sends real elapsed time, config changes and thermals; the worker
 // answers each batch of steps with a snapshot of the fields the view draws (see Atmosphere), in recycled buffers.
 // With cross-origin isolation the steps are shared with helper threads (step.worker.ts, src/core/threads.ts).
-import { AtmosphereModel, controlBuffer, createGrid, domainGrid, DT, type SimConfig, SharedMemory, ThreadRunner, TRANSPORT_SLABS } from './core'
+import { AtmosphereModel, controlBuffer, createGrid, domainGrid, DT, type SimConfig, SharedMemory, ThreadRunner, TRANSPORT_SLABS, applyState, readState } from './core'
 import { BATCH_BUDGET_MS, MAX_STEPS_PER_BATCH, MAX_THREADS, SNAPSHOT_COLUMNS, SNAPSHOT_FIELDS, type Snapshot, type WorkerRequest } from './simulation'
 import type { HelperStart } from './step.worker'
 
@@ -58,6 +58,7 @@ scope.addEventListener('message', ({ data }) => {
     case 'config': if (model) Object.assign(model.config, data.config); break
     case 'perturb': model?.injectBubble(data.x, data.y, data.strength); break
     case 'release': free.push(data.buffer); break
+    case 'load': if (model) { applyState(model, readState(data.buffer)); send() } break
     case 'advance': {
       if (!model || !ready) break
       accumulator = Math.min(accumulator + data.seconds * model.config.speed, MAX_STEPS_PER_BATCH * DT)

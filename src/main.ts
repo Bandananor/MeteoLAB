@@ -3,10 +3,10 @@ import { Atmosphere, type Live } from './atmosphere'
 import { RadarPanel } from './radar/panel'
 import { SkewTPanel } from './skewt/panel'
 import { StationPanel } from './station/panel'
-import { CELL_STAGES, createGrid, describeBalance, DT, Environment, parcelIndices, SCENARIOS, type SimConfig, SPIN_SUPERCELL, spinProfile, stormIndices, UH_LAYERS, type UhLayer, weismanKlemp } from './core'
+import { CELL_STAGES, readState, createGrid, describeBalance, DT, Environment, parcelIndices, SCENARIOS, type SimConfig, SPIN_SUPERCELL, spinProfile, stormIndices, UH_LAYERS, type UhLayer, weismanKlemp } from './core'
 import { type FieldMode, fieldInfo } from './render/fields'
 import type { LayerMode } from './render/view'
-import { decodeSettings, download, encodeSettings, toCsv } from './share'
+import { cleanSettings, decodeSettings, download, encodeSettings, toCsv } from './share'
 import { Timeline } from './timeline'
 
 const slider = (key: keyof SimConfig, label: string, min: number, max: number, step: number, value: number, suffix: string, digits = 0) => `
@@ -93,7 +93,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
         <p><b>Только картинка</b>, в расчёт не входит: мелкие детали облаков (фрактальный шум мельче сетки), частицы дождя и снега, тени облаков на земле. Радар, станция и индексы считаются по полям модели; давление станции — гидростатическая оценка.</p>
       </div></details>
       <p class="hint">Двойной клик по поверхности создаёт локальный 3D-термик. Изменение профиля перезапускает эксперимент.</p>
-      <div class="actions"><button id="restart">Перезапустить</button><button id="pause" class="secondary">Пауза</button><button id="share" class="secondary share" title="Скопировать ссылку на этот опыт: все настройки и сид, так что по ней откроется тот же расчёт">Ссылка на опыт</button></div>
+      <div class="actions"><button id="restart">Перезапустить</button><button id="pause" class="secondary">Пауза</button><button id="share" class="secondary share" title="Скопировать ссылку на этот опыт: все настройки и сид, так что по ней откроется тот же расчёт">Ссылка на опыт</button><button id="saveState" class="secondary" title="Сохранить расчёт в файл .meteolab (все поля модели в этот момент, ~4 МБ): его можно открыть позже и продолжить с того же места">Сохранить</button><button id="loadState" class="secondary" title="Открыть сохранённый файл .meteolab и продолжить расчёт с сохранённого момента">Открыть…</button><input id="stateFile" type="file" accept=".meteolab" hidden><p class="state-note" id="stateNote" hidden></p></div>
     </aside>
 
     <section class="workspace">
@@ -196,7 +196,7 @@ document.querySelector('#stationOpen')!.addEventListener('click', () => station.
 document.querySelector('#skewOpen')!.addEventListener('click', () => skewt.toggle())
 let running = true
 let last = performance.now(), frameCount = 0
-const recreate = () => { useSeed(nextSeed()); sim.dispose(); sim = Object.assign(new Atmosphere(canvas, config), view); radar.attach(sim.model, sim.storm.rightMover); skewt.attach(sim.model); sim.placeStationAt(stationGround); selectCell(null); showDomain() }
+const recreate = (seed?: number) => { useSeed(seed ?? nextSeed()); sim.dispose(); sim = Object.assign(new Atmosphere(canvas, config), view); radar.attach(sim.model, sim.storm.rightMover); skewt.attach(sim.model); sim.placeStationAt(stationGround); selectCell(null); showDomain() }
 
 const resetKeys = new Set<keyof SimConfig>(['surfaceTemp','lapseLow','lapseMid','lapseUpper','tropopause','stratoWarming','capStrength','capHeight','rhSurface','rhLow','rhMid','rhUpper','moistLayer','wind0','wind05','wind1','wind3','wind6','wind10','windDir0','windDir05','windDir1','windDir3','windDir6','windDir10','latitude','bubble','surfaceType'])
 const surfaceSelect = document.querySelector<HTMLSelectElement>('#surfaceType')!
@@ -260,6 +260,29 @@ shareButton.addEventListener('click', () => {
   url.searchParams.set('cfg', encodeSettings(config, base, baseScenario)); url.searchParams.set('seed', String(config.seed))
   const done = (text: string) => { shareButton.textContent = text; setTimeout(() => { shareButton.textContent = 'Ссылка на опыт' }, 2500) }
   navigator.clipboard.writeText(url.href).then(() => done('Ссылка скопирована ✓'), () => { history.replaceState(null, '', url); done('Ссылка — в адресной строке') })
+})
+// Saving and opening a run (.meteolab, src/core/state.ts). The file's settings are outside input: only the known ones.
+const stateNote = document.querySelector<HTMLParagraphElement>('#stateNote')!, stateFile = document.querySelector<HTMLInputElement>('#stateFile')!
+const note = (text: string) => { stateNote.textContent = text; stateNote.hidden = !text; if (text) setTimeout(() => { if (stateNote.textContent === text) stateNote.hidden = true }, 6000) }
+document.querySelector('#saveState')!.addEventListener('click', () => {
+  const minutes = Math.floor(sim.time / 60), blob = new Blob([sim.saveState()], { type: 'application/octet-stream' }), url = URL.createObjectURL(blob), a = document.createElement('a')
+  a.href = url; a.download = `meteolab-${minutes}min-seed${config.seed}.meteolab`; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000)
+  note(`Сохранено: ${minutes}-я минута расчёта`)
+})
+document.querySelector('#loadState')!.addEventListener('click', () => stateFile.click())
+stateFile.addEventListener('change', async () => {
+  const file = stateFile.files?.[0]; stateFile.value = ''
+  if (!file) return
+  try {
+    const buffer = await file.arrayBuffer(), state = readState(buffer)
+    Object.assign(config, defaults, { wind05: undefined, wind1: undefined, windDir05: undefined, windDir1: undefined, profile: undefined, bubbleRadius: undefined, front: undefined, edges: undefined, start: undefined, frameMotion: undefined, top: undefined, nightInversion: undefined }, cleanSettings(state.header.config))
+    fillLowWind(config); syncControls(); markPreset(null); baseScenario = null
+    // The file's seed: the surface pattern under the domain comes from it and is not in the file.
+    recreate(config.seed)
+    timeline.points.length = 0
+    sim.loadState(state, buffer); running = true; updatePause()
+    note(`Открыт расчёт с ${Math.floor(state.header.time / 60)}-й минуты`)
+  } catch (error) { note(`Не удалось открыть: ${(error as Error).message}`) }
 })
 document.querySelector('#timelineCsv')!.addEventListener('click', () => download(`meteolab-hod-grozy-seed${config.seed}.csv`, toCsv(timeline.points, [
   ['time_s', p => p.t], ['sb_cape_jkg', p => p.cape], ['sb_cin_jkg', p => p.cin], ['max_updraft_ms', p => p.updraft], ['uh_2_5km_m2s2', p => p.uh],

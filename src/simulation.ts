@@ -24,6 +24,8 @@ export type WorkerRequest =
   | { type: 'config'; config: SimConfig }
   | { type: 'perturb'; x: number; y: number; strength: number }
   | { type: 'release'; buffer: ArrayBuffer }
+  /** A saved state (src/core/state.ts) for the model just started with its settings. */
+  | { type: 'load'; buffer: ArrayBuffer }
 
 export interface Snapshot {
   type: 'snapshot'; buffer: ArrayBuffer; steps: number; time: number
