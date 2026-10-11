@@ -44,7 +44,7 @@
       масштаб). На слабом телефоне — меньше потоков и проще облака, чтобы не грелся.
 
 **Релиз:**
-- [ ] `package.json`: имя `meteolab`, версия `2.0.0`; README и CHANGELOG (из PROJECT_HISTORY.md).
+- [x] (сделано 11.10.2026: `CHANGELOG.md`, шапка README, версия в `package.json`) `package.json`: имя `meteolab`, версия `2.0.0`; README и CHANGELOG (из PROJECT_HISTORY.md).
 - [ ] Все медленные тесты (workflow «Tests») зелёные на main.
 - [ ] Тег `v2.0.0` и GitHub Release с заметками.
 
