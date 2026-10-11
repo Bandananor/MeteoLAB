@@ -1,0 +1,90 @@
+/* MeteoLab: what the design system (tokens, base, components, layout) leaves to the app — sizes of the canvases in the
+   right column, the 3D overlays this page adds, and, until their own design steps, the instrument screens, the phone
+   layout and the first-visit layout question in their earlier look. */
+
+#app { display: contents; }
+.app { grid-template-columns: minmax(0, 1fr); }
+
+/* Right column: canvases drawn by main.ts and timeline.ts. */
+#timeline { height: 280px; }
+.side-chart { width: 100%; height: 220px; border-radius: var(--r-1); background: var(--chart-bg); box-shadow: inset 0 0 0 1px var(--line); }
+.side-chart--square { height: auto; aspect-ratio: 1; }
+#spin { height: 96px; }
+.metric .t-caption { margin-top: -2px; }
+.mode__reason:empty, .mode__cell:empty { display: none; }
+.cells__list { display: flex; flex-direction: column; gap: 2px; }
+.cells__empty { padding: 4px 10px 0; font-size: var(--fs-label); color: var(--text-3); }
+.diag__note { font-size: var(--fs-label); line-height: 17px; color: var(--text-3); }
+.metric[title] .label, .pair [title] .label { text-decoration: underline dotted var(--line-strong); text-underline-offset: 3px; }
+
+/* 3D: the camera hint goes away while the field panel takes the top right; labels follow the cells. */
+.ov-tl { right: 290px; }
+.cell-labels { overflow: hidden; }
+.cell-labels .ov-cell { left: 0; top: 0; }
+.field-panel { max-height: calc(100% - 24px); overflow: auto; }
+#volumeControls { display: flex; flex-direction: column; gap: 12px; }
+#volumeControls[hidden] { display: none; }
+
+/* The left column's notice under the actions. */
+#stateNote .notice__text { min-width: 0; }
+
+/* Shown on the phone only (hud.ts). */
+.hud, .hud-bar, .hud-tools, .sheet-close { display: none; }
+
+/* ---- Instrument screens (radar, Skew-T, station): earlier look until their design step. ---- */
+.radar-app{position:fixed;inset:0;z-index:50;display:flex;flex-direction:column;background:#05080a;color:#b9cdd3;font:11px var(--font-mono)}
+.radar-app[hidden]{display:none}
+.radar-bar{display:flex;align-items:center;gap:22px;padding:10px 16px;border-bottom:1px solid #1d2c32;background:#081014;letter-spacing:.5px}
+.radar-bar b{color:#7fe3d6;font-weight:600}.radar-name{color:#e3ecee;font-weight:600}
+.radar-close{margin-left:auto;background:transparent;border:1px solid #2c444d;color:#b9cdd3;font:600 10px var(--font-mono);padding:5px 10px}
+.radar-body{flex:1;display:grid;grid-template-columns:1fr 240px;min-height:0}
+.radar-screen{position:relative;min-height:0;cursor:crosshair}.radar-screen canvas{position:absolute;inset:0}
+.radar-side{border-left:1px solid #1d2c32;background:#081014;padding:14px;overflow-y:auto}
+.radar-side h3{font-size:10px;font-weight:600;color:#6f8b94;letter-spacing:.8px;text-transform:uppercase;margin:14px 0 8px}
+.radar-tilts{display:grid;grid-template-columns:repeat(3,1fr);gap:4px}
+.radar-tilts button,.radar-products button{background:#0e1b20;border:1px solid #22363e;color:#b9cdd3;font:10px var(--font-mono);padding:5px 0}
+.radar-products{display:grid;gap:4px}.radar-products button{padding:6px}
+.radar-tilts button.active,.radar-products button.active{background:#13424a;border-color:#2f7d86;color:#e9fbf8}
+.radar-products button:disabled{opacity:.4;cursor:default}
+.radar-legend{display:grid;grid-template-columns:repeat(4,1fr);gap:2px}.radar-legend span{color:#05080a;font-size:9px;font-weight:600;text-align:center;padding:2px 0}
+.radar-readout{line-height:1.7}.radar-readout b{color:#e9fbf8}
+.radar-help{color:#6f8b94;font-size:9.5px;line-height:1.55;margin-top:16px}
+.radar-rhi{display:grid;gap:6px}.radar-rhi input[type=range]{flex:1}.radar-check{display:flex;gap:6px;align-items:center;font-size:10px;color:#9fb6bd;cursor:pointer}.radar-mda{margin-top:6px;display:flex;flex-direction:column;gap:6px;font-size:9.5px;line-height:1.55}.radar-dim{color:#6f8b94}
+.radar-meso{padding:6px 7px;border-left:3px solid #f3f0b0;background:#0d1a1f}.radar-meso b{color:#e9fbf8}.radar-meso.weak{border-color:#ffe23d}.radar-meso.moderate{border-color:#ff9a1f}.radar-meso.strong{border-color:#ff3df2}
+.radar-hook{color:#ffffff;letter-spacing:.6px}
+.radar-app input[type=range] { accent-color: #2f7d86; }
+.skewt-screen { cursor: crosshair; } .station-screen { cursor: default; } .skewt-probe { margin-top: 6px; font-size: 9.5px; color: #9fb6bd; }
+
+/* ---- First-visit layout question: earlier look until its design step. ---- */
+.layout-ask{position:fixed;inset:0;z-index:100;display:grid;place-items:center;background:var(--scrim);padding:16px}.layout-ask div{max-width:420px;background:var(--surface-1);border-radius:var(--r-2);box-shadow:var(--shadow-pop);padding:20px;font:14px var(--font-text);color:var(--text)}.layout-ask h3{margin:0 0 6px;font-size:17px}.layout-ask p{margin:0 0 14px;color:var(--text-2);font-size:13px;line-height:1.45}.layout-ask button{display:block;width:100%;margin-top:8px;padding:14px;font:600 14px var(--font-text);text-align:left;border-radius:var(--r-2);background:var(--surface-2);color:var(--text);border:0}.layout-ask button small{display:block;font-weight:400;font-size:12px;color:var(--text-2);margin-top:2px}.layout-ask button.recommended{background:var(--accent-soft);box-shadow:inset 0 0 0 1.5px var(--accent)}
+
+/* ---- Phone layout (hud.ts, <html class="phone">): the desktop page rearranged, until its design step. ---- */
+.phone .app { padding-bottom: 58px; }
+.phone .app__main { display: block; position: relative; min-height: 0; }
+.phone .topbar { gap: 10px; }
+.phone .topbar > :not(.logo):not(.status) { display: none; }
+.phone .workspace { height: 100%; }
+.phone .tabs { padding: 0 8px; }
+.phone .readout, .phone .ov-bl, .phone .ov-br, .phone .ov-tl { display: none !important; }
+.phone .ov-tr { left: 8px; right: 8px; top: auto; bottom: 8px; } .phone .field-panel { width: auto; max-height: 42dvh; }
+.phone .side { position: fixed; left: 0; right: 0; bottom: 58px; height: 74dvh; z-index: 40; border: 0; border-top: 1px solid var(--line); box-shadow: var(--shadow-pop); transform: translateY(110%); transition: transform .22s ease; display: flex; overflow: auto; }
+.phone body.sheet-controls .side--left, .phone body.sheet-data .side--right { transform: none; }
+.phone .sheet-close { display: block; position: sticky; top: 0; z-index: 2; flex: none; width: 100%; padding: 12px; border: 0; border-bottom: 1px solid var(--line); background: var(--surface-1); font: var(--fw-medium) var(--fs-body-s) var(--font-text); color: var(--text-2); }
+.phone .side__scroll { overflow: visible; flex: none; }
+.phone .hud { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; position: absolute; left: 8px; right: 8px; top: 8px; pointer-events: none; }
+.phone .hud div { background: var(--overlay); box-shadow: inset 0 0 0 1px var(--overlay-line); border-radius: var(--r-2); padding: 5px 7px; color: var(--overlay-text); }
+.phone .hud span { display: block; font: 11px var(--font-mono); color: var(--overlay-text-2); }
+.phone .hud b { font: var(--fw-medium) 20px var(--font-mono); }
+.phone .hud p { grid-column: 1/-1; margin: 0; justify-self: start; background: var(--overlay); box-shadow: inset 0 0 0 1px var(--overlay-line); border-radius: var(--r-2); padding: 4px 8px; font: 12px var(--font-text); color: var(--overlay-text); }
+.phone .hud.meso p { background: var(--overlay-danger); box-shadow: inset 0 0 0 1px var(--overlay-danger-line); color: var(--overlay-danger-text); }
+.phone .hud-bar { display: grid; grid-template-columns: repeat(6, 1fr); position: fixed; left: 0; right: 0; bottom: 0; height: 58px; z-index: 45; background: var(--surface-1); border-top: 1px solid var(--line); }
+.phone .hud-bar button { border: 0; background: transparent; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; font: 12px var(--font-text); color: var(--text-2); padding: 0; }
+.phone .hud-bar i { font: var(--fw-medium) 16px var(--font-mono); font-style: normal; color: var(--text); }
+.phone .hud-tools { display: grid; gap: 2px; position: fixed; right: 8px; bottom: 66px; z-index: 46; padding: 4px; background: var(--surface-1); border-radius: var(--r-2); box-shadow: var(--shadow-pop); }
+.phone .hud-tools[hidden] { display: none; }
+.phone .hud-tools button { padding: 12px 16px; border: 0; border-radius: 3px; background: none; font: var(--fw-medium) 14px var(--font-text); text-align: left; color: var(--text); }
+.phone .hud-tools button:hover { background: var(--hover); }
+.phone .radar-bar{gap:10px;flex-wrap:wrap;padding:8px 10px;font-size:9.5px}
+.phone .radar-body{display:flex;flex-direction:column;overflow-y:auto}
+.phone .radar-screen{flex:none;height:62dvh;position:relative}
+.phone .radar-side{border-left:0;border-top:1px solid #1d2c32;overflow:visible}

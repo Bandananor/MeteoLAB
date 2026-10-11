@@ -43,20 +43,19 @@ export class Timeline {
     // At least 30 minutes on the time axis, then the whole run.
     const span = Math.max(1800, pts.length ? pts[pts.length - 1].t : 0), X = (t: number) => left + (right - left) * t / span
     SERIES.forEach((s, r) => {
-      const top = r * rowH + 12, bottom = (r + 1) * rowH - 10, values = pts.map(p => p[s.key]), second = s.second ? pts.map(p => p[s.second!.key]) : []
+      const top = r * rowH + 19, bottom = (r + 1) * rowH - 14, values = pts.map(p => p[s.key]), second = s.second ? pts.map(p => p[s.second!.key]) : []
       const max = niceMax(Math.max(s.floor, ...values, ...second)), Y = (v: number) => bottom - (bottom - top) * Math.min(1, v / max)
       ctx.strokeStyle = c.grid; ctx.lineWidth = 1
       ctx.beginPath(); ctx.moveTo(left, bottom + .5); ctx.lineTo(right, bottom + .5); ctx.stroke()
       // Minute ticks every 10 min.
       ctx.fillStyle = c.label
-      for (let m = 10; m * 60 <= span; m += 10) { const x = X(m * 60); ctx.beginPath(); ctx.moveTo(x, bottom); ctx.lineTo(x, bottom + 3); ctx.stroke(); if (r === rows - 1) ctx.fillText(`${m}′`, x - 6, bottom + 9) }
+      for (let m = 10; m * 60 <= span; m += 10) { const x = X(m * 60); ctx.beginPath(); ctx.moveTo(x, bottom); ctx.lineTo(x, bottom + 3); ctx.stroke(); if (r === rows - 1) ctx.fillText(`${m}′`, x - 6, bottom + 12) }
       const now = values.length ? values[values.length - 1] : 0, peak = values.length ? Math.max(...values) : 0
-      ctx.fillStyle = c.text2; ctx.fillText(`${s.label}, ${s.unit}`, left, top - 3)
+      ctx.fillStyle = c.text2; ctx.fillText(`${s.label}, ${s.unit}`, left, top - 6)
       ctx.fillStyle = c.text
-      const extra = s.key === 'rain' && pts.length ? `  сумма ${pts[pts.length - 1].rainTotal.toFixed(1)} мм` : ''
-      const readout = s.second ? `${format(now)} / ${format(second[second.length - 1] ?? 0)}` : `${format(now)} (макс. ${format(peak)})${extra}`
-      ctx.fillText(readout, right - ctx.measureText(readout).width, top - 3)
-      ctx.fillStyle = c.label; ctx.fillText(String(max), left + 1, top + 7)
+      const readout = s.second ? `${format(now)} / ${format(second[second.length - 1] ?? 0)}` : `${format(now)} (макс. ${format(peak)})`
+      ctx.fillText(readout, right - ctx.measureText(readout).width, top - 6)
+      ctx.fillStyle = c.label; ctx.fillText(String(max), left + 1, top + 10)
       if (s.rotation) {
         // Shade each sample interval by the core rotation at its end: light while it holds, dark once a mesocyclone.
         for (let i = 1; i < pts.length; i++) {
@@ -65,7 +64,7 @@ export class Timeline {
           ctx.fillStyle = held >= MESO_PERSISTENCE ? '#cdb8dc' : '#e2d8ea'
           ctx.fillRect(X(pts[i - 1].t), top, X(pts[i].t) - X(pts[i - 1].t) + .5, bottom - top)
         }
-        if (pts.some(p => p.rotationHeld >= MESO_PERSISTENCE)) { ctx.fillStyle = '#8a6ea0'; const label = 'мезоциклон'; ctx.fillText(label, right - ctx.measureText(label).width, top + 7) }
+        if (pts.some(p => p.rotationHeld >= MESO_PERSISTENCE)) { ctx.fillStyle = '#8a6ea0'; const label = 'мезоциклон'; ctx.fillText(label, right - ctx.measureText(label).width, top + 10) }
       }
       if (pts.length < 2) return
       const curve = (key: Key, color: string) => {

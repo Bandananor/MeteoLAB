@@ -1,0 +1,39 @@
+/* MeteoLab 2.0 — база: сброс, типографика, ссылки, фокус */
+*, *::before, *::after { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body { margin: 0; background: var(--bg); color: var(--text); font: var(--fw-regular) var(--fs-body)/var(--lh-body) var(--font-text); -webkit-font-smoothing: antialiased; }
+button, input, select, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; }
+img, canvas, video { display: block; max-width: 100%; }
+a { color: var(--accent); text-underline-offset: 3px; }
+a:hover { color: var(--accent-hover); }
+:focus-visible { outline: none; box-shadow: var(--ring); }
+[hidden] { display: none !important; }
+
+/* цифры не прыгают: все значения, единицы, оси */
+.num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.unit { font-family: var(--font-mono); font-size: var(--fs-caption); color: var(--text-3); }
+
+/* шкала текста */
+.t-display { font: var(--fw-semibold) var(--fs-display)/var(--lh-display) var(--font-text); letter-spacing: -.025em; text-wrap: balance; }
+.t-h1 { font: var(--fw-semibold) var(--fs-h1)/var(--lh-h1) var(--font-text); letter-spacing: -.02em; text-wrap: balance; }
+.t-h2 { font: var(--fw-semibold) var(--fs-h2)/var(--lh-h2) var(--font-text); letter-spacing: -.015em; }
+.t-h3 { font: var(--fw-semibold) var(--fs-h3)/var(--lh-h3) var(--font-text); }
+.t-h4 { font: var(--fw-semibold) var(--fs-h4)/var(--lh-h4) var(--font-text); }
+.t-body-l { font-size: var(--fs-body-l); line-height: var(--lh-body-l); text-wrap: pretty; }
+.t-body { font-size: var(--fs-body); line-height: var(--lh-body); }
+.t-body-s { font-size: var(--fs-body-s); line-height: var(--lh-body-s); }
+.t-label, .label { font: var(--fw-medium) var(--fs-label)/var(--lh-label) var(--font-text); color: var(--text-2); }
+.t-caption { font-size: var(--fs-caption); line-height: var(--lh-caption); color: var(--text-3); }
+.t-eyebrow { font: var(--fs-label)/var(--lh-label) var(--font-mono); color: var(--text-3); }
+.muted { color: var(--text-2); } .faint { color: var(--text-3); }
+
+.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--line-strong); flex: none; display: inline-block; }
+.dot--accent { background: var(--accent); } .dot--warn { background: var(--warn); } .dot--danger { background: var(--danger); }
+
+/* знак: термик над линией земли */
+.logo { display: inline-flex; align-items: center; gap: 9px; color: var(--text); text-decoration: none; font: var(--fw-semibold) 17px/1 var(--font-text); letter-spacing: -.01em; }
+.logo:hover { color: var(--text); }
+.logo__mark { position: relative; width: 20px; height: 20px; flex: none; }
+.logo__mark::before { content: ""; position: absolute; left: 20%; top: 0; width: 60%; height: 60%; border-radius: 50%; background: var(--accent); }
+.logo__mark::after { content: ""; position: absolute; left: 0; right: 0; bottom: 8%; height: 2px; background: var(--text); }

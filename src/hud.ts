@@ -1,9 +1,11 @@
 // The phone layout (release 2.0): the 3D view fills the screen, a few large numbers sit over it, a
 // bar at the bottom holds what a thumb needs (scenarios, pause, restart, speed, data, instruments), and the two side
-// panels become sheets that slide up. Everything else is the desktop page itself, rearranged by CSS (style.css,
+// panels become sheets that slide up. Everything else is the desktop page itself, rearranged by CSS (styles/app.css,
 // the .phone block); this module adds the overlay, the bar and the sheets' switches, and chooses the layout: the class
 // "phone" on <html>, asked at the first visit (the screen width only suggests it) and switched by hand, remembered in
 // localStorage — a wrong guess from the width (a small laptop window, a large tablet) is then one tap away from fixed.
+
+import { toggleTheme } from './theme'
 
 /** The screen width the phone layout is suggested for. */
 export const PHONE_QUERY = '(max-width: 760px)'
@@ -74,10 +76,10 @@ export class Hud {
       <button data-act="tools"><i>◉</i>Приборы</button>`
     app.appendChild(this.bar)
     this.tools = document.createElement('div'); this.tools.className = 'hud-tools'; this.tools.hidden = true
-    this.tools.innerHTML = '<button data-tool="#radarOpen">◉ Радар</button><button data-tool="#skewOpen">⟋ Skew-T</button><button data-tool="#stationOpen">⌂ Станция</button><button data-tool="#themeToggle">◐ Тема: светлая / тёмная</button><button data-tool="#layoutToggle">🖥 Компьютерный вид</button>'
+    this.tools.innerHTML = '<button data-tool="#radarOpen">◉ Радар</button><button data-tool="#skewOpen">⟋ Skew-T</button><button data-tool="#stationOpen">⌂ Станция</button><button data-tool="theme">◐ Тема: светлая / тёмная</button><button data-tool="#layoutToggle">🖥 Компьютерный вид</button>'
     app.appendChild(this.tools)
     // A close handle on top of each sheet (hidden on a desktop).
-    for (const panel of document.querySelectorAll<HTMLElement>('.controls, .diagnostics')) {
+    for (const panel of document.querySelectorAll<HTMLElement>('.side--left, .side--right')) {
       const close = document.createElement('button'); close.className = 'sheet-close'; close.textContent = 'Свернуть ▾'
       close.addEventListener('click', () => this.open(null)); panel.prepend(close)
     }
@@ -94,7 +96,8 @@ export class Hud {
     this.tools.addEventListener('click', e => {
       const tool = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-tool]')?.dataset.tool
       if (!tool) return
-      this.tools.hidden = true; this.open(null); document.querySelector<HTMLButtonElement>(tool)!.click()
+      this.tools.hidden = true; this.open(null)
+      if (tool === 'theme') toggleTheme(); else document.querySelector<HTMLButtonElement>(tool)!.click()
     })
     // A scenario chosen on the sheet: back to the view.
     document.querySelectorAll('[data-preset]').forEach(b => b.addEventListener('click', () => { if (isPhone()) this.open(null) }))
@@ -103,7 +106,7 @@ export class Hud {
   private open(sheet: Sheet) {
     this.sheet = sheet
     document.body.classList.toggle('sheet-controls', sheet === 'controls'); document.body.classList.toggle('sheet-data', sheet === 'data')
-    if (sheet === 'controls') document.querySelector('.controls')!.scrollTop = 0
+    if (sheet === 'controls') document.querySelector('.side--left .side__scroll')!.scrollTop = 0
   }
 
   /** Called every frame; touches the page only when something shown changed. */

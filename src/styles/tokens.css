@@ -1,6 +1,8 @@
-/* MeteoLab 2.0 design tokens (Claude Design, direction "Рабочая станция синоптика", stages 2-3, 2026-10-11).
-   Light by default; dark with [data-theme="dark"] on <html> or the system setting (theme.ts switches it).
-   Components use only the names. Fonts are self-hosted (@fontsource, imported in main.ts). */
+/* MeteoLab 2.0 — токены дизайн-системы («Рабочая станция синоптика»), итоговая версия.
+   Тема: светлая по умолчанию; тёмная — <html data-theme="dark"> или системная настройка
+   (data-theme="light" принудительно включает светлую). Компоненты знают только имена переменных.
+   Шрифты: в проекте уже есть @fontsource/onest и @fontsource/jetbrains-mono —
+   import '@fontsource/onest/400.css', '/500.css', '/600.css'; '@fontsource/jetbrains-mono/400.css', '/500.css'. */
 
 :root {
   /* шрифты (OFL, разместить у себя) */
@@ -32,13 +34,52 @@
   /* скругления, линии, высоты */
   --r-1: 2px; --r-2: 4px; --r-round: 50%;
   --lw-1: 1px; --lw-2: 2px;
+  --ring: 0 0 0 2px var(--bg), 0 0 0 4px var(--focus);
   --h-s: 28px; --h-m: 32px; --h-l: 36px; --h-touch: 44px;
 
   /* наложения поверх 3D — одинаковы в обеих темах */
   --overlay: rgba(12,18,24,.74);
   --overlay-text: #E6EDF2;
   --overlay-line: rgba(230,237,242,.4);
+  --overlay-text-2: #B9C6CF;        /* второстепенный текст наложений */
+  --overlay-ink: #11161B;           /* текст на включённом переключателе / выбранной метке */
+  --viewport-bg: #0F1C27;           /* фон области 3D до первого кадра */
+  --overlay-danger: #4A2219;       /* фон строки режима при мезоциклоне */
+  --overlay-danger-line: #EC7A5E;
+  --overlay-danger-text: #FFD7CB;
 
+  color-scheme: light;
+  --bg: #EDEDEA;
+  --surface-1: #FBFBF9;
+  --surface-2: #F3F3F0;
+  --surface-3: #E4E4DF;
+  --line: #D3D3CC;
+  --line-strong: #85857D;
+  --text: #1B1C1A;
+  --text-2: #474843;
+  --text-3: #63645D;
+  --accent: #4D6A2D;
+  --accent-hover: #425C25;
+  --accent-press: #374D1E;
+  --on-accent: #FFFFFF;
+  --accent-soft: #E2E9D6;
+  --ok: var(--accent);
+  --warn: #975800;
+  --warn-soft: #F6E8CF;
+  --danger: #B03A22;
+  --danger-soft: #F5DFD8;
+  --focus: #2F66C8;
+  --hover: rgba(27,28,26,.06);
+  --press: rgba(27,28,26,.12);
+  --scrim: rgba(27,28,26,.42);
+  --shadow-pop: 0 8px 24px rgba(27,28,26,.14), 0 1px 3px rgba(27,28,26,.10);
+  --chart-bg: var(--surface-1);
+  --chart-grid: #E4E4DF;
+  --chart-axis: #85857D;
+  --chart-label: var(--text-3);
+}
+
+[data-theme="light"] {
   color-scheme: light;
   --bg: #EDEDEA;
   --surface-1: #FBFBF9;
@@ -136,9 +177,17 @@
   }
 }
 
+/* экраны приборов всегда тёмные: на корне экрана прибора — data-theme="dark" */
+:root {
+  --instrument-bg: #0F1317;
+  --instrument-bar: #11151A;
+  --instrument-grid: rgba(160,190,200,.14);
+  --instrument-grid-strong: rgba(160,190,200,.28);
+  --instrument-label: #9AABB3;
+  /* сила мезоциклона (MDA): карточка и метка на экране */
+  --meso-circulation: #CFC7A3; --meso-circulation-soft: #2A2922; /* метка — пунктир */
+  --meso-weak: #E3CF5E;        --meso-weak-soft: #33301A;
+  --meso-moderate: #EE9A4C;    --meso-moderate-soft: #3B2A1A;
+  --meso-strong: #D97FCB;      --meso-strong-soft: #3A2236;
+}
 
-/* Numbers do not jump. */
-.num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
-
-/* Focus ring, visible on any background. */
-:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--focus); }
