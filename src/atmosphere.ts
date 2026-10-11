@@ -1,5 +1,6 @@
 import { applyState, readState, AtmosphereModel, CellTracker, coldPoolBalance, type SavedState, saveState, type ColdPoolBalance, computeSounding, domainPoint, groundPoint, Station, type Environment, insolation, liveSounding, type ModelDiagnostics, parcelIndices, type ParcelIndices, type SimConfig, type Sounding, stormIndices, type StormIndices, sunDirection } from './core'
 import { describeConvection } from './describe'
+import { isPhone, PHONE_THREADS } from './hud'
 import type { FieldMode } from './render/fields'
 import type { UhLayer } from './core'
 import { type LayerMode, StormView, type ViewSettings } from './render/view'
@@ -56,7 +57,8 @@ export class Atmosphere implements ViewSettings {
     this.view = new StormView(canvas, this.mirror, this)
     this.worker = new Worker(new URL('./simulation.worker.ts', import.meta.url), { type: 'module' })
     this.worker.addEventListener('message', (event: MessageEvent<Snapshot>) => this.receive(event.data))
-    const threads = Number(new URLSearchParams(location.search).get('threads')) || undefined
+    // Fewer threads on a phone (it would overheat), unless the address asks for a number.
+    const threads = Number(new URLSearchParams(location.search).get('threads')) || (isPhone() ? PHONE_THREADS : undefined)
     this.post({ type: 'init', config: { ...config }, threads })
   }
 
