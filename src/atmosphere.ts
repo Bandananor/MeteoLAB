@@ -1,4 +1,4 @@
-import { AtmosphereModel, CellTracker, computeSounding, type Environment, insolation, liveSounding, type ModelDiagnostics, parcelIndices, type ParcelIndices, type SimConfig, type Sounding, stormIndices, type StormIndices, sunDirection } from './core'
+import { AtmosphereModel, CellTracker, computeSounding, domainPoint, groundPoint, Station, type Environment, insolation, liveSounding, type ModelDiagnostics, parcelIndices, type ParcelIndices, type SimConfig, type Sounding, stormIndices, type StormIndices, sunDirection } from './core'
 import { describeConvection } from './describe'
 import type { FieldMode } from './render/fields'
 import { type LayerMode, StormView, type ViewSettings } from './render/view'
@@ -33,6 +33,8 @@ export class Atmosphere implements ViewSettings {
   live: Live
   /** Convective cells found and followed in every snapshot (src/core/cells.ts). */
   readonly cells = new CellTracker()
+  /** The virtual weather station (src/core/station.ts), if one is placed; it records with every snapshot. */
+  station: Station | null = null
   /** Threads the physics runs on (see simulation.worker.ts). */
   threads = 1
 
@@ -78,6 +80,11 @@ export class Atmosphere implements ViewSettings {
   groundPoint(nx: number, ny: number) { return this.view.groundPoint(nx, ny) }
   /** Canvas position of a model point (m), or null behind the camera. */
   screenPoint(x: number, y: number, z: number) { return this.view.screenPoint(x, y, z) }
+  /** Places the weather station on the ground under normalised screen coordinates; returns its ground position (m). */
+  placeStation(nx: number, ny: number) { const p = this.view.groundPoint(nx, ny), g = groundPoint(this.mirror, p.x, p.y); this.placeStationAt(g); return g }
+  /** Places the weather station at a ground position (m), or removes it (null). */
+  placeStationAt(g: { x: number; y: number } | null) { this.station = g && new Station(g.x, g.y); if (this.station) this.station.observe(this.mirror); this.markStation() }
+  private markStation() { this.view.setStation(this.station && domainPoint(this.mirror, this.station.x, this.station.y)) }
   /** Rings the selected cell in the 3D view. */
   setSelection(p: { x: number; y: number } | null) { this.view.setSelection(p) }
 
@@ -105,6 +112,7 @@ export class Atmosphere implements ViewSettings {
     this.inFlight = false
     // Cells move about a grid column a minute: every 6 s of model time is plenty.
     if (!(m.time - this.cells.time < 6)) this.cells.update(m)
+    if (this.station) { this.station.observe(m); this.markStation() }
     if (!(m.time - this.live.time < LIVE_EVERY && m.time >= this.live.time)) { const l = liveSounding(m); this.live = this.derive(l.env, m.time, l.quiet, l.all) }
     this.view.afterAdvance(s.steps)
   }
