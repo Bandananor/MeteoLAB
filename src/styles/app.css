@@ -1,6 +1,6 @@
 /* MeteoLab: what the design system (tokens, base, components, layout) leaves to the app — sizes of the canvases in the
-   right column, the 3D overlays this page adds, and, until their own design steps, the instrument screens, the phone
-   layout and the first-visit layout question in their earlier look. */
+   right column, the 3D overlays this page adds, the instrument screens over the simulator, the phone layout, and, until
+   its design step, the first-visit layout question in its earlier look. */
 
 #app { display: contents; }
 .app { grid-template-columns: minmax(0, 1fr); }
@@ -33,33 +33,22 @@
 html:not(.layout-phone) .m-only { display: none !important; }
 .layout-phone .d-only { display: none !important; }
 
-/* ---- Instrument screens (radar, Skew-T, station): earlier look until their design step. ---- */
-.radar-app{position:fixed;inset:0;z-index:50;display:flex;flex-direction:column;background:#05080a;color:#b9cdd3;font:11px var(--font-mono)}
-.radar-app[hidden]{display:none}
-.radar-bar{display:flex;align-items:center;gap:22px;padding:10px 16px;border-bottom:1px solid #1d2c32;background:#081014;letter-spacing:.5px}
-.radar-bar b{color:#7fe3d6;font-weight:600}.radar-name{color:#e3ecee;font-weight:600}
-.radar-close{margin-left:auto;background:transparent;border:1px solid #2c444d;color:#b9cdd3;font:600 10px var(--font-mono);padding:5px 10px}
-.radar-body{flex:1;display:grid;grid-template-columns:1fr 240px;min-height:0}
-.radar-screen{position:relative;min-height:0;cursor:crosshair}.radar-screen canvas{position:absolute;inset:0}
-.radar-side{border-left:1px solid #1d2c32;background:#081014;padding:14px;overflow-y:auto}
-.radar-side h3{font-size:10px;font-weight:600;color:#6f8b94;letter-spacing:.8px;text-transform:uppercase;margin:14px 0 8px}
-.radar-tilts{display:grid;grid-template-columns:repeat(3,1fr);gap:4px}
-.radar-tilts button,.radar-products button{background:#0e1b20;border:1px solid #22363e;color:#b9cdd3;font:10px var(--font-mono);padding:5px 0}
-.radar-products{display:grid;gap:4px}.radar-products button{padding:6px}
-.radar-tilts button.active,.radar-products button.active{background:#13424a;border-color:#2f7d86;color:#e9fbf8}
-.radar-products button:disabled{opacity:.4;cursor:default}
-.radar-legend{display:grid;grid-template-columns:repeat(4,1fr);gap:2px}.radar-legend span{color:#05080a;font-size:9px;font-weight:600;text-align:center;padding:2px 0}
-.radar-readout{line-height:1.7}.radar-readout b{color:#e9fbf8}
-.radar-help{color:#6f8b94;font-size:9.5px;line-height:1.55;margin-top:16px}
-.radar-rhi{display:grid;gap:6px}.radar-rhi input[type=range]{flex:1}.radar-check{display:flex;gap:6px;align-items:center;font-size:10px;color:#9fb6bd;cursor:pointer}.radar-mda{margin-top:6px;display:flex;flex-direction:column;gap:6px;font-size:9.5px;line-height:1.55}.radar-dim{color:#6f8b94}
-.radar-meso{padding:6px 7px;border-left:3px solid #f3f0b0;background:#0d1a1f}.radar-meso b{color:#e9fbf8}.radar-meso.weak{border-color:#ffe23d}.radar-meso.moderate{border-color:#ff9a1f}.radar-meso.strong{border-color:#ff3df2}
-.radar-hook{color:#ffffff;letter-spacing:.6px}
-.radar-app input[type=range] { accent-color: #2f7d86; }
-.skewt-screen { cursor: crosshair; } .station-screen { cursor: default; } .skewt-probe { margin-top: 6px; font-size: 9.5px; color: #9fb6bd; }
-.layout-phone .radar-bar{gap:10px;flex-wrap:wrap;padding:8px 10px;font-size:9.5px}
-.layout-phone .radar-body{display:flex;flex-direction:column;overflow-y:auto}
-.layout-phone .radar-screen{flex:none;height:62dvh;position:relative}
-.layout-phone .radar-side{border-left:0;border-top:1px solid #1d2c32;overflow:visible}
+/* ---- Instrument screens (instrument.ts): the design's .instrument shell, always dark, over the simulator. ---- */
+.instrument-overlay { position: fixed; inset: 0; z-index: 50; grid-template-columns: minmax(0, 1fr); }
+.instrument-overlay .ibar { min-width: 0; } .instrument-overlay .ibar__name { flex: none; } .instrument-overlay .ibar__fields { flex: 0 1 auto; }
+.instrument-overlay .instrument__screen > canvas { inset: 0; width: 100%; height: 100%; }
+.radar-app .instrument__screen, .skewt-app .instrument__screen { cursor: crosshair; }
+.instrument .metric__num { font-size: 22px; }
+.instrument .psec__hint, .instrument .help { margin: 0; }
+.instrument .psec__hint b { font-weight: var(--fw-medium); color: var(--text); }
+.mda-list { display: flex; flex-direction: column; gap: 8px; }
+.mda--moderate { --c: var(--meso-moderate); --cs: var(--meso-moderate-soft); } /* the design sets it only as .mda's default */
+/* Below the design's 760 px instrument break the bar keeps only the name and «Закрыть». */
+@media (max-width: 760px) { .instrument-overlay .ibar__fields { display: none; } }
+/* The phone layout on a screen wider than the design's 760 px instrument break: the same stacked screen. */
+.layout-phone .instrument__body { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto; overflow: auto; }
+.layout-phone .instrument__screen { aspect-ratio: 1; max-height: 70dvh; } .layout-phone .instrument__side { border-left: 0; overflow: visible; }
+
 
 /* ---- First-visit layout question: earlier look until its design step. ---- */
 .layout-ask{position:fixed;inset:0;z-index:100;display:grid;place-items:center;background:var(--scrim);padding:16px}.layout-ask div{max-width:420px;background:var(--surface-1);border-radius:var(--r-2);box-shadow:var(--shadow-pop);padding:20px;font:14px var(--font-text);color:var(--text)}.layout-ask h3{margin:0 0 6px;font-size:17px}.layout-ask p{margin:0 0 14px;color:var(--text-2);font-size:13px;line-height:1.45}.layout-ask button{display:block;width:100%;margin-top:8px;padding:14px;font:600 14px var(--font-text);text-align:left;border-radius:var(--r-2);background:var(--surface-2);color:var(--text);border:0}.layout-ask button small{display:block;font-weight:400;font-size:12px;color:var(--text-2);margin-top:2px}.layout-ask button.recommended{background:var(--accent-soft);box-shadow:inset 0 0 0 1.5px var(--accent)}

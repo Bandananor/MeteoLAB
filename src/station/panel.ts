@@ -1,4 +1,5 @@
 import type { Station, StationRecord } from '../core'
+import { help, instrumentPalette, instrumentScreen, numbers, readings, section } from '../instrument'
 import { MONO } from '../theme'
 import { download, toCsv } from '../share'
 
@@ -25,28 +26,15 @@ export class StationPanel {
   onPlace: (place: boolean) => void = () => {}
 
   constructor(host: HTMLElement) {
-    this.root = document.createElement('div'); this.root.className = 'radar-app station-app'; this.root.hidden = true
-    this.root.innerHTML = `
-      <div class="radar-bar">
-        <span class="radar-name">METEOLAB · МЕТЕОСТАНЦИЯ</span>
-        <span>ТОЧКА <b id="stationWhere">НЕТ</b></span><span>ЗАПИСЕЙ <b id="stationCount">0</b></span>
-        <button class="radar-close" title="Вернуться к 3D (Esc)">× ЗАКРЫТЬ</button>
-      </div>
-      <div class="radar-body">
-        <div class="radar-screen station-screen"><canvas></canvas></div>
-        <aside class="radar-side">
-          <h3>Станция</h3><div class="radar-products">
-            <button data-station="place" title="Закрыть экран и щёлкнуть по земле на 3D-виде: туда встанет станция">поставить щелчком на 3D</button>
-            <button data-station="remove">убрать</button>
-            <button data-station="csv" title="Записи станции в CSV: время, температура, точка росы, давление, ветер, порыв, направление, осадки">выгрузить CSV</button></div>
-          <div class="radar-readout skewt-probe" id="stationHint">Станции нет. Поставьте её щелчком по 3D-виду — лучше на пути грозы.</div>
-          <h3>Сейчас</h3><div class="radar-readout" id="stationNow">—</div>
-          <p class="radar-help">Станция стоит на земле: область модели движется с грозой, а станция — нет, и гроза проходит над ней, как над настоящей. Запись раз в модельную минуту: температура и точка росы у земли, ветер (средний за минуту) и порыв (самый сильный за минуту), осадки (интенсивность — по приросту суммы). Давление — гидростатическая оценка по плавучести столбца, относительно среднего по области: холодный купол даёт мезомаксимум в 1–4 гПа, а понижение давления под вращающимся потоком (динамическая часть) сюда не входит. Прохождение фронта порывов — скачок давления, резкое падение температуры и порыв.</p>
-        </aside>
-      </div>`
-    host.appendChild(this.root)
+    this.root = instrumentScreen(host, 'station-app', 'METEOLAB · МЕТЕОСТАНЦИЯ',
+      '<span>ТОЧКА <b id="stationWhere">НЕТ</b></span><span>ЗАПИСЕЙ <b id="stationCount">0</b></span>',
+      section('Станция', `<button class="btn btn--block" data-station="place" title="Закрыть экран и щёлкнуть по земле на 3D-виде: туда встанет станция">Поставить щелчком на 3D</button>
+          <div class="side__row"><button class="btn" data-station="remove">Убрать</button><button class="btn" data-station="csv" title="Записи станции в CSV: время, температура, точка росы, давление, ветер, порыв, направление, осадки">Выгрузить CSV</button></div>
+          <p class="psec__hint" id="stationHint">Станции нет. Поставьте её щелчком по 3D-виду — лучше на пути грозы.</p>`)
+      + section('Сейчас', '<div id="stationNow"></div>')
+      + help('Станция стоит на земле: область модели движется с грозой, а станция — нет, и гроза проходит над ней, как над настоящей. Запись раз в модельную минуту: температура и точка росы у земли, ветер (средний за минуту) и порыв (самый сильный за минуту), осадки (интенсивность — по приросту суммы). Давление — гидростатическая оценка по плавучести столбца, относительно среднего по области: холодный купол даёт мезомаксимум в 1–4 гПа, а понижение давления под вращающимся потоком (динамическая часть) сюда не входит. Прохождение фронта порывов — скачок давления, резкое падение температуры и порыв.'))
     this.canvas = this.root.querySelector('canvas')!; this.ctx = this.canvas.getContext('2d')!
-    this.root.querySelector('.radar-close')!.addEventListener('click', () => this.toggle(false))
+    this.root.querySelector('.ibar__close')!.addEventListener('click', () => this.toggle(false))
     this.root.querySelector('[data-station="place"]')!.addEventListener('click', () => { this.toggle(false); this.onPlace(true) })
     this.root.querySelector('[data-station="remove"]')!.addEventListener('click', () => this.onPlace(false))
     this.root.querySelector('[data-station="csv"]')!.addEventListener('click', () => {
@@ -77,14 +65,16 @@ export class StationPanel {
     const c = this.canvas, host = c.parentElement!, dpr = Math.min(devicePixelRatio, 2), w = host.clientWidth, h = host.clientHeight, ctx = this.ctx
     c.style.width = `${w}px`; c.style.height = `${h}px`
     if (c.width !== Math.round(w * dpr) || c.height !== Math.round(h * dpr)) { c.width = Math.round(w * dpr); c.height = Math.round(h * dpr) }
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.fillStyle = '#05080a'; ctx.fillRect(0, 0, w, h); ctx.font = `10px ${MONO}`
+    const pal = instrumentPalette(this.root)
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.fillStyle = pal.bg; ctx.fillRect(0, 0, w, h); ctx.font = `11px ${MONO}`
     const s = this.station, recs = s?.records ?? [], text = (id: string, v: string) => { (this.root.querySelector(`#${id}`) as HTMLElement).innerHTML = v }
     text('stationWhere', s ? `${(s.x / 1000).toFixed(1)}, ${(s.y / 1000).toFixed(1)} КМ` : this.placing ? 'ЖДЁТ ЩЕЛЧКА' : 'НЕТ'); text('stationCount', String(recs.length))
     text('stationHint', s ? `Станция в ${(s.x / 1000).toFixed(1)} км к востоку и ${(s.y / 1000).toFixed(1)} км к северу от начала координат земли (отмечена на 3D-виде). Перезапуск начинает запись заново.` : this.placing ? 'Щёлкните по земле на 3D-виде.' : 'Станции нет. Поставьте её щелчком по 3D-виду — лучше на пути грозы.')
     const last = recs[recs.length - 1]
-    text('stationNow', last ? `T <b>${last.temp.toFixed(1)}°</b>, Td <b>${last.dew.toFixed(1)}°</b><br>давление <b>${last.pressure.toFixed(1)}</b> гПа<br>ветер <b>${last.wind.toFixed(1)}</b> м/с с ${last.dir.toFixed(0)}°, порыв <b>${last.gust.toFixed(1)}</b><br>осадки <b>${last.rainRate.toFixed(1)}</b> мм/ч, сумма <b>${last.rainTotal.toFixed(1)}</b> мм${last.hail > .05 ? `, град <b>${last.hail.toFixed(1)}</b> мм` : ''}` : '—')
+    text('stationNow', last ? numbers([['T', last.temp.toFixed(1), '°'], ['Td', last.dew.toFixed(1), '°'], ['порыв', last.gust.toFixed(1), 'м/с'], ['осадки', last.rainRate.toFixed(1), 'мм/ч']])
+      + `<dl class="kv">${readings([['давление', `${last.pressure > 0 ? '+' : ''}${last.pressure.toFixed(1)} гПа`], ['ветер', `${last.wind.toFixed(1)} м/с с ${last.dir.toFixed(0)}°`], ['сумма', `${last.rainTotal.toFixed(1)} мм`], ...(last.hail > .05 ? [['град', `${last.hail.toFixed(1)} мм`] as [string, string]] : [])])}</dl>` : '<span class="t-caption">записей пока нет</span>')
     const left = 64, right = w - 24, top = 16, bottom = h - 26
-    if (recs.length < 2) { ctx.fillStyle = '#6f8b94'; ctx.fillText(s ? 'Запись идёт: первая точка — через модельную минуту.' : 'Станции нет.', left, top + 20); return }
+    if (recs.length < 2) { ctx.fillStyle = pal.label; ctx.fillText(s ? 'Запись идёт: первая точка — через модельную минуту.' : 'Станции нет.', left, top + 20); return }
     const t0 = recs[0].t, span = Math.max(1800, recs[recs.length - 1].t - t0), X = (t: number) => left + (right - left) * (t - t0) / span
     const rowH = (bottom - top) / ROWS.length
     ROWS.forEach((row, r) => {
@@ -94,9 +84,9 @@ export class StationPanel {
       if (row.floor !== undefined) hi = Math.max(hi, row.floor)
       if (row.span !== undefined && hi - lo < row.span) { const mid = (hi + lo) / 2; lo = mid - row.span / 2; hi = mid + row.span / 2 }
       const Y = (v: number) => y1 - (y1 - y0) * (v - lo) / (hi - lo || 1)
-      ctx.strokeStyle = '#1d2c32'; ctx.lineWidth = 1
-      for (let k = 0; k <= 2; k++) { const y = y0 + (y1 - y0) * k / 2; ctx.beginPath(); ctx.moveTo(left, y); ctx.lineTo(right, y); ctx.stroke(); ctx.fillStyle = '#4b6670'; ctx.fillText((hi - (hi - lo) * k / 2).toFixed(hi - lo < 5 ? 1 : 0), 8, y + 3) }
-      ctx.fillStyle = '#9fb6bd'; ctx.fillText(`${row.title}, ${row.unit}`, left, y0 - 4)
+      ctx.strokeStyle = pal.grid; ctx.lineWidth = 1
+      for (let k = 0; k <= 2; k++) { const y = y0 + (y1 - y0) * k / 2; ctx.beginPath(); ctx.moveTo(left, y); ctx.lineTo(right, y); ctx.stroke(); ctx.fillStyle = pal.label; ctx.fillText((hi - (hi - lo) * k / 2).toFixed(hi - lo < 5 ? 1 : 0), 8, y + 3) }
+      ctx.fillStyle = pal.text; ctx.fillText(`${row.title}, ${row.unit}`, left, y0 - 4)
       let lx = right
       for (const l of [...row.lines].reverse()) { const label = `— ${l.label}`; lx -= ctx.measureText(label).width + 10; ctx.fillStyle = l.color; ctx.fillText(label, lx, y0 - 4) }
       for (const l of row.lines) {
@@ -112,7 +102,7 @@ export class StationPanel {
       }
     })
     // Time axis: model minutes, every 10.
-    ctx.fillStyle = '#6f8b94'; ctx.strokeStyle = '#2c444d'
+    ctx.fillStyle = pal.label; ctx.strokeStyle = pal.gridStrong
     for (let m = Math.ceil(t0 / 600) * 10; m * 60 <= t0 + span; m += 10) { const x = X(m * 60); ctx.beginPath(); ctx.moveTo(x, bottom - 6); ctx.lineTo(x, bottom); ctx.stroke(); ctx.fillText(`${m}′`, x - 8, bottom + 12) }
   }
 }
