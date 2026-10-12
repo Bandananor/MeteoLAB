@@ -136,6 +136,8 @@ export class AtmosphereModel implements TaskModel {
    */
   readonly frame: readonly [number, number]
   private readonly uEnv: Float64Array; private readonly vEnv: Float64Array
+  /** Share of each ground column covered by the city (SimConfig.city), and that share under each column this step. */
+  readonly cityGround: Float32Array; private readonly cityNow: Float32Array
   /** This step's surface pattern under each column (the ground moves under the domain) and where each column's rain lands. */
   private readonly patternNow: Float32Array; private readonly groundCell: Int32Array; private readonly groundWeight: Float64Array
 
@@ -146,7 +148,7 @@ export class AtmosphereModel implements TaskModel {
     this.env = new Environment(config, grid, profile ?? (config.profile === 'weisman-klemp' ? weismanKlemp({ qvMax: .016 }) : undefined))
     this.frame = config.followStorm === false ? [0, 0] : config.frameMotion ?? domainMotion(this.env)
     this.uEnv = this.env.u.map(u => u - this.frame[0]); this.vEnv = this.env.v.map(v => v - this.frame[1])
-    this.patternNow = shared('patternNow', grid.layer); this.groundCell = new Int32Array(grid.layer * 4); this.groundWeight = new Float64Array(grid.layer * 4)
+    this.patternNow = shared('patternNow', grid.layer); this.cityNow = shared('cityNow', grid.layer); this.groundCell = new Int32Array(grid.layer * 4); this.groundWeight = new Float64Array(grid.layer * 4)
     const f = () => new Float32Array(grid.n)
     this.u = shared('u'); this.v = shared('v'); this.w = shared('w'); this.theta = shared('theta'); this.q = shared('q'); this.cloud = shared('cloud'); this.rain = shared('rain'); this.cold = shared('cold')
     this.ice = shared('ice'); this.snow = shared('snow'); this.snowFall = shared('snowFall'); this.graupel = shared('graupel'); this.graupelFall = shared('graupelFall'); this.hail = shared('hail'); this.hailFall = shared('hailFall')
@@ -171,7 +173,7 @@ export class AtmosphereModel implements TaskModel {
     const low = Math.max(2, grid.zs.findIndex(z => z >= 500)), shape = Array.from({ length: low }, (_, z) => Math.exp(-grid.zs[z] / 300))
     const total = shape.reduce((sum, s, z) => sum + s * grid.hz[z], 0)
     this.surfaceShare = Float64Array.from(shape, s => s / total)
-    this.rng = mulberry32(config.seed)
+    this.rng = mulberry32(config.seed); this.cityGround = this.cityMap()
     if (!options.attach) this.initialize()
     this.sounding = computeSounding(config, this.env, grid.height)
   }
@@ -303,6 +305,17 @@ export class AtmosphereModel implements TaskModel {
     return negative
   }
 
+  /** The city's share of each ground column: 1 inside its radius, 0 outside, a 1 km linear transition (periodic distances). */
+  private cityMap() {
+    const { nx, ny, dx, dy, width: W, depth: D } = this.grid, r = (this.config.city ?? 0) * 1000, map = new Float32Array(nx * ny)
+    if (!(r > 0)) return map
+    for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++) {
+      const ex = Math.abs((x + .5) * dx - W / 2), ey = Math.abs((y + .5) * dy - D / 2)
+      map[x + nx * y] = Math.max(0, Math.min(1, .5 - (Math.hypot(Math.min(ex, W - ex), Math.min(ey, D - ey)) - r) / 1000))
+    }
+    return map
+  }
+
   /** Distance the domain has moved over the ground since the start (m east, m north). */
   frameOffset() { return [this.frame[0] * this.time, this.frame[1] * this.time] as const }
 
@@ -314,11 +327,13 @@ export class AtmosphereModel implements TaskModel {
   private updateGround() {
     const { nx, ny, dx, dy } = this.grid, [ox, oy] = this.frameOffset(), sx = mod(ox / dx, nx), sy = mod(oy / dy, ny)
     const x0 = Math.floor(sx), y0 = Math.floor(sy), fx = sx - x0, fy = sy - y0, c = this.groundCell, w = this.groundWeight, pattern = this.surfacePattern
+    const city = (this.config.city ?? 0) > 0 ? this.cityGround : null
     for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++) {
       const i = x + nx * y, ax = (x + x0) % nx, bx = (ax + 1) % nx, ay = (y + y0) % ny * nx, by = (ay / nx + 1) % ny * nx, k = i * 4
       c[k] = ax + ay; c[k + 1] = bx + ay; c[k + 2] = ax + by; c[k + 3] = bx + by
       w[k] = (1 - fx) * (1 - fy); w[k + 1] = fx * (1 - fy); w[k + 2] = (1 - fx) * fy; w[k + 3] = fx * fy
       this.patternNow[i] = w[k] * pattern[c[k]] + w[k + 1] * pattern[c[k + 1]] + w[k + 2] * pattern[c[k + 2]] + w[k + 3] * pattern[c[k + 3]]
+      if (city) this.cityNow[i] = w[k] * city[c[k]] + w[k + 1] * city[c[k + 1]] + w[k + 2] * city[c[k + 2]] + w[k + 3] * city[c[k + 3]]
     }
   }
 
@@ -559,7 +574,7 @@ export class AtmosphereModel implements TaskModel {
     const { nx, ny, zs, height: H, layer } = this.grid, withIce = this.withIce()
     const cfg = this.config, e = this.env, u = this.u, v = this.v, w = this.w, theta = this.theta, q = this.q, cloud = this.cloud, rain = this.rain, cold = this.cold
     const ice = this.ice, snow = this.snow, graupel = this.graupel, hail = this.hail, rhoGround = e.rho[0]
-    const flux = surfaceFluxes(cfg, this.time), f = 2 * OMEGA * Math.sin(cfg.latitude * Math.PI / 180)
+    const flux = surfaceFluxes(cfg, this.time), urban = (cfg.city ?? 0) > 0 ? surfaceFluxes(cfg, this.time, 'urban') : flux, f = 2 * OMEGA * Math.sin(cfg.latitude * Math.PI / 180)
     const spongeStart = Math.max(cfg.tropopause * 1000 + 2500, 14_000), keep = Math.exp(-this.windRelaxation * dt)
     // Distance of each column from the nearest domain edge (the seam between the last and the first node), m.
     const relaxed = cfg.edges === 'relaxed' || cfg.edges === 'relaxed-x', onlyX = cfg.edges === 'relaxed-x', front = cfg.front ?? 0, { dx, dy } = this.grid
@@ -594,7 +609,11 @@ export class AtmosphereModel implements TaskModel {
           // Damp and rotate only the departure from the environmental wind, so the imposed shear profile is not eroded.
           const du = (u[i] - ue) * keep, dv = (v[i] - ve) * keep; u[i] = ue + du + f * dv * dt; v[i] = ve + dv - f * du * dt
           // Surface fluxes enter the lowest levels with the shares in surfaceShare, so the column receives exactly H and LE.
-          if (z < this.surfaceShare.length) { const pattern = 1 + this.patternNow[x + row] * .32, per = pattern * this.surfaceShare[z] * dt / rhoZ; theta[i] += flux.sensible * per / (CP * exner); q[i] += flux.latent * per / LV }
+          if (z < this.surfaceShare.length) {
+            // The city (if any) blends in its own energy balance under the share of the column it covers.
+            const pattern = 1 + this.patternNow[x + row] * .32, per = pattern * this.surfaceShare[z] * dt / rhoZ, c = urban === flux ? 0 : this.cityNow[x + row]
+            theta[i] += (flux.sensible + c * (urban.sensible - flux.sensible)) * per / (CP * exner); q[i] += (flux.latent + c * (urban.latent - flux.latent)) * per / LV
+          }
           // Below 0.001 K the indicator is noise from the transport tails: zero, so the transport can skip it.
           cold[i] = cold[i] < 1e-3 ? 0 : Math.min(cold[i], 15)
           if (alt > spongeStart) { const s = clamp((alt - spongeStart) / (H - spongeStart)) * .06 * dt; w[i] *= 1 - s; u[i] = lerp(u[i], ue, s); v[i] = lerp(v[i], ve, s); theta[i] = lerp(theta[i], thEnv, s) }

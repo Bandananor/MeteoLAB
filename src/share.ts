@@ -10,7 +10,7 @@ const KINDS: Record<string, 'number' | 'boolean' | 'pair' | readonly string[]> =
   windDir0: 'number', windDir05: 'number', windDir1: 'number', windDir3: 'number', windDir6: 'number', windDir10: 'number',
   capHeight: 'number', capStrength: 'number', moistLayer: 'number', nightInversion: 'number', front: 'number', top: 'number',
   latitude: 'number', turbulence: 'number', hour: 'number', dayOfYear: 'number', solarMax: 'number', soilMoisture: 'number',
-  speed: 'number', bubble: 'number', bubbleRadius: 'number',
+  speed: 'number', bubble: 'number', bubbleRadius: 'number', city: 'number',
   surfaceType: ['grass', 'dry', 'water', 'urban'], microphysics: ['warm', 'ice'], transport: ['semi-lagrangian', 'weno'],
   profile: ['weisman-klemp'], domain: ['standard', 'large'], edges: ['periodic', 'relaxed', 'relaxed-x'], start: ['thermals', 'line'],
   followStorm: 'boolean', frameMotion: 'pair',
@@ -33,9 +33,24 @@ const round = (v: unknown): unknown => typeof v === 'number' ? Math.round(v * 1e
 
 /**
  * The scenarios in the order the first links (2026-10-10) numbered them; links since carry the scenario's name, so
- * adding, removing or reordering scenarios breaks none (one was removed on 2026-10-11).
+ * adding or reordering scenarios breaks none. The first «Заряженное ружьё» (removed 2026-10-11) has the key of its
+ * retired values: its name now belongs to the new scenario of 2026-10-12.
  */
-const NUMBERED = ['Летний день', 'Сухой воздух', 'Сдвиг ветра', 'Микропорыв', 'Заряженное ружьё', 'HSLC', 'Жаркий город', 'Суперячейка WK', 'Тропическая конвекция', 'Суточный ход']
+const NUMBERED = ['Летний день', 'Сухой воздух', 'Сдвиг ветра', 'Микропорыв', 'Заряженное ружьё (2026-10-10)', 'HSLC', 'Жаркий город', 'Суперячейка WK', 'Тропическая конвекция', 'Суточный ход']
+/** Renamed scenarios: a link with the old name opens the scenario under its new one. */
+const RENAMED: Record<string, string> = { 'Сдвиг ветра': 'Многоячейковая гроза' }
+const LIGHT_WIND = { wind0: 2, wind3: 5, wind6: 9, wind10: 14, windDir0: 200, windDir3: 230, windDir6: 250, windDir10: 260 }
+const SUMMER_AIR = { surfaceTemp: 28, rhSurface: 55, rhLow: 50, rhMid: 45, rhUpper: 30, lapseLow: 9.3, lapseMid: 6.3, lapseUpper: 6.5, capStrength: 1, capHeight: 1.4, moistLayer: 1 }
+/**
+ * Retired scenarios with their values as they were: a link to one opens the same experiment, its settings laid over
+ * these (without a scenario selected). Values copied from src/core/scenarios.ts at the time.
+ */
+const RETIRED: Record<string, Partial<SimConfig>> = {
+  'Сухой воздух': { bubbleRadius: 2.5, ...SUMMER_AIR, ...LIGHT_WIND, surfaceTemp: 25.5, rhLow: 35, rhMid: 15, rhUpper: 10 },
+  'Жаркий город': { bubbleRadius: 2.5, ...SUMMER_AIR, ...LIGHT_WIND, surfaceTemp: 29, rhSurface: 45, rhLow: 45, lapseLow: 9.5, surfaceType: 'urban', soilMoisture: 15, solarMax: 1100 },
+  'Заряженное ружьё (2026-10-10)': { surfaceTemp: 30, rhSurface: 50, rhLow: 25, rhMid: 35, rhUpper: 30, lapseLow: 9.6, lapseMid: 6.8, lapseUpper: 6.5, capStrength: 3, capHeight: 1, bubble: 0,
+    wind0: 6, wind3: 15, wind6: 22, wind10: 28, windDir0: 170, windDir3: 220, windDir6: 245, windDir10: 255 },
+}
 
 /** The settings that differ from `base` (the defaults with the scenario laid over), with the scenario's name, as a URL-safe string. */
 export function encodeSettings(config: SimConfig, base: SimConfig, scenario: string | null) {
@@ -49,15 +64,17 @@ export function encodeSettings(config: SimConfig, base: SimConfig, scenario: str
 
 /**
  * Reads a link's settings back, with the index of its scenario in `names` (null if there is none or it no longer
- * exists); anything unknown or of the wrong kind is dropped, a broken string gives null.
+ * exists; a retired scenario's values come with the link's own); anything unknown or of the wrong kind is dropped, a
+ * broken string gives null.
  */
 export function decodeSettings(text: string, names: readonly string[]): { scenario: number | null; values: Partial<SimConfig> } | null {
   let data: unknown
   try { data = JSON.parse(fromBase64Url(text)) } catch { return null }
   if (!data || typeof data !== 'object') return null
   const { n, s, c } = data as { n?: unknown; s?: unknown; c?: unknown }
-  const name = typeof n === 'string' ? n : Number.isInteger(s) ? NUMBERED[s as number] : undefined, index = name === undefined ? -1 : names.indexOf(name)
-  return { scenario: index < 0 ? null : index, values: cleanSettings(c) }
+  const old = typeof n === 'string' ? n : Number.isInteger(s) ? NUMBERED[s as number] : undefined, name = old === undefined ? undefined : RENAMED[old] ?? old
+  const index = name === undefined ? -1 : names.indexOf(name), retired = index < 0 && name !== undefined && Object.hasOwn(RETIRED, name) ? RETIRED[name] : {}
+  return { scenario: index < 0 ? null : index, values: { ...retired, ...cleanSettings(c) } }
 }
 
 /** Only the known settings of the right kind from outside data (a link, a saved file), and a whole positive seed. */

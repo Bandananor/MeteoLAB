@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { AtmosphereModel, createGrid, DEFAULT_GRID, SPIN_SUPERCELL, spinProfile } from '.'
+import { AtmosphereModel, createGrid, DEFAULT_GRID, rotationSummary, SPIN_SUPERCELL, spinProfile } from '.'
 import { QUIET } from './fixtures'
 
 const smallGrid = () => createGrid({ ...DEFAULT_GRID, nx: 16, ny: 12, width: 16 * 1200, depth: 12 * 1125 })
@@ -39,5 +39,16 @@ describe('rotation by height (spin.ts)', () => {
     const p = spinProfile(model)
     expect(Math.abs(p.correlation!)).toBeLessThan(SPIN_SUPERCELL)
     expect(spinProfile(new AtmosphereModel({ ...QUIET }, smallGrid())).correlation).toBeNull()
+  })
+
+  it('says in words at what height the updraught rotates', () => {
+    const none = { bottom: null, top: null }, deep = { bottom: .6, top: 9.8 }
+    expect(rotationSummary({ uh: 90, uh01: 3, uh03: 25, persisted: 0 }, none)).toBe('поток не вращается')
+    const mid = rotationSummary({ uh: 950, uh01: 8, uh03: 60, persisted: 720 }, deep)
+    expect(mid).toMatch(/^Средний мезоциклон 2–5 км держится 12 мин/); expect(mid).not.toMatch(/низкий/); expect(mid).toMatch(/0.6–9.8 км$/)
+    expect(rotationSummary({ uh: 950, uh01: 8, uh03: 190, persisted: 720 }, deep)).toMatch(/опускается ниже 3 км/)
+    const low = rotationSummary({ uh: 480, uh01: 36, uh03: 300, persisted: 900 }, deep)
+    expect(low).toMatch(/низкий мезоциклон/); expect(low).not.toMatch(/опускается/)
+    expect(rotationSummary({ uh: 450, uh01: 2, uh03: 30, persisted: 0 }, none)).toBe('Сильное вращение на 2–5 км (UH 450), мезоциклоном ещё не стало')
   })
 })

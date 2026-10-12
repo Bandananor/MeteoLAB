@@ -33,6 +33,23 @@ describe('radar PPI', () => {
     expect(Math.min(...ppi.dbz)).toBe(-20)
   })
 
+  it('with dual polarisation: rain has positive ZDR and rho_hv near 1; hail aloft ZDR near 0; nothing without echo', () => {
+    const model = new AtmosphereModel({ ...QUIET }, createGrid({ nx: 16, ny: 12, nz: 20, width: 19_200, depth: 13_500, height: 15_000, bottomSpacing: 100 }))
+    const { layer, nx, zs, nz } = model.grid, cx = 8 + Math.round(4000 / model.grid.dx), cy = 6
+    for (let z = 0; z < nz; z++) if (zs[z] < 3000) model.rain[cx + nx * cy + z * layer] = 2e-3
+    const ppi = new PPI(model, 64, 45)
+    ppi.dual = true; ppi.tilt = .5; ppi.layout(); ppi.sample()
+    let best = 0
+    for (let i = 1; i < ppi.dbz.length; i++) if (ppi.dbz[i] > ppi.dbz[best]) best = i
+    expect(ppi.zdr[best]).toBeGreaterThan(1); expect(ppi.rho[best]).toBeGreaterThan(.99); expect(ppi.kdp[best]).toBeGreaterThan(.3)
+    expect(ppi.zdr.filter((_, i) => ppi.dbz[i] < 10).every(Number.isNaN)).toBe(true)
+    // The same column with hail instead of rain: ZDR near zero under high reflectivity (the hail signature).
+    for (let z = 0; z < nz; z++) { const i = cx + nx * cy + z * layer; if (zs[z] < 3000) { model.hail[i] = model.rain[i]; model.rain[i] = 0 } }
+    model.theta.fill(260)
+    ppi.sample()
+    expect(ppi.dbz[best]).toBeGreaterThan(45); expect(Math.abs(ppi.zdr[best])).toBeLessThan(.5)
+  })
+
   it('cuts a vertical section (RHI) through a rain shaft at its range and up to its top', () => {
     const model = new AtmosphereModel({ ...QUIET }, createGrid({ nx: 16, ny: 12, nz: 20, width: 19_200, depth: 13_500, height: 15_000, bottomSpacing: 100 }))
     const { layer, nx, dx } = model.grid

@@ -1,7 +1,7 @@
 // How deep the updraught rotates: the profile of w ζ by height in the most rotating core, and the correlation of w and ζ
 // over the domain at 2-6 km. In a supercell the updraught and the cyclonic vorticity coincide (Clark 1979, Droegemeier
 // et al. 1993: correlations of 0.4 and more on finer grids); an ordinary storm has updraughts and vortices side by side (near 0).
-import type { AtmosphereModel } from './model'
+import { MESO_PERSISTENCE, UH_MESOCYCLONE, UH_ROTATING, type AtmosphereModel } from './model'
 
 /** Layer of the w-ζ correlation, m. */
 export const SPIN_FROM = 2000, SPIN_TO = 6000
@@ -47,4 +47,24 @@ export function spinProfile(m: Pick<AtmosphereModel, 'grid' | 'w' | 'zeta' | 'ro
   const vw = sww / n - (sw / n) ** 2, vz = szz / n - (sz / n) ** 2
   const correlation = vw > 1e-6 && vz > 1e-14 ? (swz / n - sw / n * sz / n) / Math.sqrt(vw * vz) : null
   return { z, wz, bottom, top, correlation }
+}
+
+/**
+ * Low-level rotation that counts, UH m²/s² (calibration 2026-10-12, tests/bench/scout.ts, 45 min): over 0-3 km the
+ * supercells reach 160-500 (HSLC, Weisman-Klemp, the plains supercell), ordinary storms at most ~50; over 0-1 km (one or
+ * two levels of the grid) HSLC 25-40, the plains supercell 16-43, Weisman-Klemp 5-36 (growing late), ordinary storms <10.
+ */
+export const UH03_ROTATING = 100, UH01_LOW_MESO = 20
+
+/** At what height the updraught rotates, in words: the mid-level mesocyclone (2-5 km), rotation reaching down, the low one. */
+export function rotationSummary(r: { uh: number; uh01: number; uh03: number; persisted: number }, p: Pick<SpinProfile, 'bottom' | 'top'>) {
+  const parts: string[] = []
+  if (r.persisted >= MESO_PERSISTENCE) parts.push(`средний мезоциклон 2–5 км держится ${Math.floor(r.persisted / 60)} мин (UH ${r.uh.toFixed(0)})`)
+  else if (r.uh >= UH_MESOCYCLONE) parts.push(`сильное вращение на 2–5 км (UH ${r.uh.toFixed(0)}), мезоциклоном ещё не стало`)
+  else if (r.uh >= UH_ROTATING) parts.push(`вращение на 2–5 км (UH ${r.uh.toFixed(0)})`)
+  if (r.uh01 >= UH01_LOW_MESO) parts.push(`низкий мезоциклон: поток вращается у самой земли (UH 0–1 км ${r.uh01.toFixed(0)}) — признак опасной по смерчам ячейки; сам смерч сетка ~1 км не разрешает`)
+  else if (r.uh03 >= UH03_ROTATING) parts.push(`вращение опускается ниже 3 км (UH 0–3 км ${r.uh03.toFixed(0)}), у земли пока слабое`)
+  if (!parts.length) return 'поток не вращается'
+  const text = parts.join('; ')
+  return (p.bottom !== null ? `${text}; ядро вращается ${p.bottom.toFixed(1)}–${p.top!.toFixed(1)} км` : text).replace(/^./, c => c.toUpperCase())
 }

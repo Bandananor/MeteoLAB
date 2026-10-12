@@ -38,4 +38,33 @@ describe('diurnal cycle', () => {
     expect(firstStorm).toBeGreaterThanOrEqual(11)
     expect(firstStorm).toBeLessThan(14)
   }, 3_600_000)
+
+  // The loaded gun (2.1): from 09:00 under a 3 K lid with ~3 kJ/kg of CAPE below it and no thermal. The towers that
+  // grow from midday die under the lid; only in the afternoon does the heating of the day break through, at once into a
+  // violent storm. Calibration run 2026-10-12 (tests/bench/scout.ts «gun4»): towers to 9-10 km at w 10-24 m/s from
+  // 12:10, w >= 30 m/s at 14:55, then 47-63 m/s, gusts 33 m/s, the first rain at the ground ~15:20. Slow (~30 min on a
+  // laptop: seven and a half simulated hours).
+  it.runIf(slow)('loaded gun: the lid holds through midday, then the heating breaks it into a violent storm in the afternoon', () => {
+    const scenario = SCENARIOS.find(s => s.name === 'Заряженное ружьё')!, config: SimConfig = { ...SUMMER_DAY, ...scenario.values }
+    const model = new AtmosphereModel(config)
+    let middayW = 0, fired = NaN, firstRain = NaN, maxW = 0, gust = 0
+    for (let t = DT; t <= 8 * 3600; t += DT) {
+      model.step(DT); model.time += DT
+      if (t % 60) continue
+      const d = model.diagnostics(), hour = hourOf(config, t)
+      if (hour < 13) middayW = Math.max(middayW, d.updraft)
+      if (Number.isNaN(fired) && d.updraft >= 30) fired = hour
+      if (Number.isNaN(firstRain) && d.rainTotal >= .5) firstRain = hour
+      if (!Number.isNaN(fired)) { maxW = Math.max(maxW, d.updraft); gust = Math.max(gust, d.gust) }
+      if (hour >= fired + 1) break
+    }
+    console.log(`Заряженное ружьё: strongest updraught before 13:00 ${middayW.toFixed(1)} m/s, w >= 30 m/s at ${fired.toFixed(2)} h, first rain ${firstRain.toFixed(2)} h, then w up to ${maxW.toFixed(1)} m/s, gusts ${gust.toFixed(1)} m/s, clipped ${model.clipped}`)
+    expect(model.clipped).toBe(0)
+    // Before 13:00 only towers dying under the lid.
+    expect(middayW).toBeLessThan(25)
+    expect(fired).toBeGreaterThanOrEqual(14); expect(fired).toBeLessThan(16.5)
+    expect(firstRain).toBeGreaterThan(fired - .5)
+    // The break-through is violent: the updraught near parcel theory and a gust front.
+    expect(maxW).toBeGreaterThan(40); expect(gust).toBeGreaterThan(20)
+  }, 5_400_000)
 })

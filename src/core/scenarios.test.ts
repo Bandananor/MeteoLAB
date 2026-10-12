@@ -3,10 +3,12 @@ import { AtmosphereModel, createGrid, DT, Environment, MESO_PERSISTENCE, parcelI
 import { SUMMER_DAY } from './fixtures'
 
 // STORMLAB_MICRO=warm runs the scenarios with Kessler warm rain; STORMLAB_SCENARIO=<index> runs only that scenario of
-// SCENARIOS (the CI workflow runs each in its own job, in parallel).
+// SHORT (the CI workflow runs each in its own job, in parallel). The scenarios without a thermal start from the morning
+// and take hours of heating (diurnal.test.ts checks them).
 const env = (globalThis as { process?: { env: Record<string, string | undefined> } }).process?.env ?? {}
 const micro = env.STORMLAB_MICRO as SimConfig['microphysics'], only = env.STORMLAB_SCENARIO
-const selected = only ? [SCENARIOS[Number(only)]] : SCENARIOS
+const SHORT = SCENARIOS.filter(s => s.values.bubble !== 0)
+const selected = only ? [SHORT[Number(only)]] : SHORT
 const config = (values: Partial<SimConfig>): SimConfig => ({ ...SUMMER_DAY, ...values, ...(micro ? { microphysics: micro } : {}) })
 
 describe('scenarios: realistic environments', () => {
@@ -25,7 +27,7 @@ const slow = (import.meta as { env?: { MODE?: string } }).env?.MODE === 'slow'
 const MAX_ORDINARY_W = 55
 
 describe('scenarios: rotation only where a supercell is intended (calibration)', () => {
-  for (const s of selected.filter(s => !s.values.nightInversion)) it.runIf(slow)(`${s.name}: ${s.mesocyclone === undefined ? 'no limiter hits' : s.mesocyclone ? 'a mesocyclone persists' : 'no mesocyclone'}`, () => {
+  for (const s of selected) it.runIf(slow)(`${s.name}: ${s.mesocyclone === undefined ? 'no limiter hits' : s.mesocyclone ? 'a mesocyclone persists' : 'no mesocyclone'}`, () => {
     const model = new AtmosphereModel(config(s.values))
     let longest = 0, maxW = 0, maxUH = 0, gust = 0
     // Strongest wind over the ground at the 100 m level (outflow, microburst gusts).

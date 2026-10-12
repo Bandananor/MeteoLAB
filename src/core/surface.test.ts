@@ -64,4 +64,20 @@ describe('surface energy balance', () => {
     expect(heat / layer / f.sensible).toBeCloseTo(1, 2)
     expect(moisture / layer / f.latent).toBeCloseTo(1, 2)
   })
+
+  it('a city in the middle heats its own columns with the urban balance, fixed to the ground', () => {
+    const config = { ...QUIET, solarMax: 1000, hour: 12, city: 6, wind0: 0, wind3: 0, wind6: 0, wind10: 0, followStorm: false }, model = new AtmosphereModel(config)
+    const { nx, ny } = model.grid, e = model.env, theta0 = model.theta.slice(), q0 = model.q.slice()
+    const grass = surfaceFluxes(config, 0), urban = surfaceFluxes(config, 0, 'urban')
+    // Covered: the middle fully, a corner not at all; ~pi 6^2 km2 of the ground in all.
+    expect(model.cityGround[(ny >> 1) * nx + (nx >> 1)]).toBe(1); expect(model.cityGround[0]).toBe(0)
+    const area = model.cityGround.reduce((a, b) => a + b, 0) * model.grid.dx * model.grid.dy / 1e6
+    expect(area).toBeGreaterThan(Math.PI * 36 * .9); expect(area).toBeLessThan(Math.PI * 36 * 1.1)
+    model.step(1)
+    // The ground node's heating and moistening follow the local balance: urban in the middle, grass in the corner.
+    const at = (c: number) => [(model.theta[c] - theta0[c]) * e.exner[0], model.q[c] - q0[c]]
+    const [heatCity, wetCity] = at((ny >> 1) * nx + (nx >> 1)), [heatField, wetField] = at(0)
+    expect(heatCity / heatField).toBeGreaterThan(.8 * urban.sensible / grass.sensible)
+    expect(wetCity / wetField).toBeLessThan(1.3 * urban.latent / grass.latent)
+  })
 })

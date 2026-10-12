@@ -5,7 +5,7 @@ import { decodeSettings, encodeSettings, toCsv } from './share'
 
 const NAMES = SCENARIOS.map(s => s.name)
 const encodeText = (json: string) => btoa(json).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
-const encode = (data: unknown) => btoa(JSON.stringify(data)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+const encode = (data: unknown) => btoa(String.fromCharCode(...new TextEncoder().encode(JSON.stringify(data)))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
 
 describe('shared links and CSV (src/share.ts)', () => {
   it('carries the changed settings and the scenario, and gives them back', () => {
@@ -23,8 +23,16 @@ describe('shared links and CSV (src/share.ts)', () => {
   it('finds the scenario by name; the first links (numbers in the old order) still open the same one', () => {
     expect(decodeSettings(encode({ n: 'HSLC', c: {} }), NAMES)!.scenario).toBe(NAMES.indexOf('HSLC'))
     expect(decodeSettings(encode({ s: 5, c: {} }), NAMES)!.scenario).toBe(NAMES.indexOf('HSLC'))
-    // A scenario that is gone (removed 2026-10-11): its settings without it.
-    expect(decodeSettings(encode({ s: 4, c: { hour: 9 } }), NAMES)).toEqual({ scenario: null, values: { hour: 9 } })
+    // Renamed (2026-10-12): the old name opens the scenario under its new one.
+    expect(decodeSettings(encode({ n: 'Сдвиг ветра', c: {} }), NAMES)!.scenario).toBe(NAMES.indexOf('Многоячейковая гроза'))
+    expect(decodeSettings(encode({ s: 2, c: {} }), NAMES)!.scenario).toBe(NAMES.indexOf('Многоячейковая гроза'))
+    // Retired ones (the first loaded gun, 2026-10-11; «Сухой воздух», 2026-10-12): their own values under the link's,
+    // without a scenario — the same experiment. The new «Заряженное ружьё» keeps its name for itself.
+    const gun = decodeSettings(encode({ s: 4, c: { hour: 9 } }), NAMES)!
+    expect(gun.scenario).toBeNull(); expect(gun.values).toMatchObject({ capStrength: 3, capHeight: 1, surfaceTemp: 30, hour: 9 })
+    expect(decodeSettings(encode({ n: 'Заряженное ружьё', c: {} }), NAMES)!.scenario).toBe(NAMES.indexOf('Заряженное ружьё'))
+    const dry = decodeSettings(encode({ n: 'Сухой воздух', c: { rhMid: 20 } }), NAMES)!
+    expect(dry.scenario).toBeNull(); expect(dry.values).toMatchObject({ rhMid: 20, rhLow: 35, surfaceTemp: 25.5, bubbleRadius: 2.5 })
     expect(decodeSettings(encodeSettings(SUMMER_DAY, SUMMER_DAY, 'Нет такого'), NAMES)!.scenario).toBeNull()
   })
 

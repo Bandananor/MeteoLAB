@@ -45,6 +45,13 @@ export interface SimConfig {
    */
   top?: number
   latitude: number; turbulence: number; hour: number; solarMax: number; soilMoisture: number; surfaceType: SurfaceType
+  /**
+   * Optional city in the middle of the domain (fixed to the ground): its radius, km (0 or absent = none). Inside it the
+   * surface is 'urban' (low albedo, little evaporation, most of the energy into sensible heat), outside the chosen surface
+   * type, with a 1 km transition; an urban heat island that heats its own column more and can start storms over itself.
+   * Only the energy balance changes; friction keeps the chosen surface's roughness.
+   */
+  city?: number
   /** Day of the year (1-365) for the sun's declination; absent = an equinox (sunrise 06:00, sunset 18:00). */
   dayOfYear?: number
   speed: number; seed: number; bubble: number

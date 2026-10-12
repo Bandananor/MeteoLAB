@@ -12,7 +12,7 @@ document.querySelector('#scenarioCards')!.innerHTML = SCENARIOS.map(s => {
   const meso = s.mesocyclone === true
   return `<a class="scenario-card${meso ? ' is-meso' : ''}" href="simulator/?scenario=${encodeURIComponent(s.name)}"><h3>${s.name}</h3><p>${s.summary}</p>`
     + `<div class="scenario-card__nums"><span>ML CAPE ${number(p.ml.cape / 1000)} кДж/кг</span><span>сдвиг 0–6 км ${Math.round(k.shear06)} м/с</span></div>`
-    + `<div class="scenario-card__foot"><span><span class="dot${meso ? ' dot--danger' : ''}"></span>${meso ? 'мезоциклон' : 'без мезоциклона'}</span><span class="scenario-card__open">Открыть →</span></div></a>`
+    + `<div class="scenario-card__foot"><span><span class="dot${meso ? ' dot--danger' : ''}"></span>${meso ? 'мезоциклон' : s.mesocyclone === false ? 'без мезоциклона' : 'вращение — как сложится'}</span><span class="scenario-card__open">Открыть →</span></div></a>`
 }).join('')
 const more = document.querySelector<HTMLButtonElement>('#moreScenarios')!
 more.textContent = `Ещё ${SCENARIOS.length - 4} сценариев`

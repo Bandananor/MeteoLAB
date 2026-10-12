@@ -13,7 +13,7 @@ import { Atmosphere, type Live } from './atmosphere'
 import { RadarPanel } from './radar/panel'
 import { SkewTPanel } from './skewt/panel'
 import { StationPanel } from './station/panel'
-import { CELL_STAGES, MESO_PERSISTENCE, UH_ROTATING, readState, createGrid, describeBalance, DT, Environment, parcelIndices, SCENARIOS, type SimConfig, SPIN_SUPERCELL, spinProfile, stormIndices, UH_LAYERS, type UhLayer, weismanKlemp } from './core'
+import { CELL_STAGES, MESO_PERSISTENCE, UH_ROTATING, readState, createGrid, describeBalance, DT, Environment, parcelIndices, SCENARIOS, type SimConfig, rotationSummary, SPIN_SUPERCELL, spinProfile, stormIndices, UH_LAYERS, type UhLayer, weismanKlemp } from './core'
 import { type FieldMode, fieldInfo } from './render/fields'
 import type { LayerMode } from './render/view'
 import { cleanSettings, decodeSettings, download, encodeSettings, toCsv } from './share'
@@ -22,7 +22,7 @@ import { Timeline } from './timeline'
 import { DEFAULTS as defaults } from './defaults'
 
 // Settings whose change restarts the run (the rest act on the running model): marked ↻ at their label.
-const resetKeys = new Set<keyof SimConfig>(['surfaceTemp','lapseLow','lapseMid','lapseUpper','tropopause','stratoWarming','capStrength','capHeight','rhSurface','rhLow','rhMid','rhUpper','moistLayer','wind0','wind05','wind1','wind3','wind6','wind10','windDir0','windDir05','windDir1','windDir3','windDir6','windDir10','latitude','bubble','surfaceType'])
+const resetKeys = new Set<keyof SimConfig>(['surfaceTemp','lapseLow','lapseMid','lapseUpper','tropopause','stratoWarming','capStrength','capHeight','rhSurface','rhLow','rhMid','rhUpper','moistLayer','wind0','wind05','wind1','wind3','wind6','wind10','windDir0','windDir05','windDir1','windDir3','windDir6','windDir10','latitude','bubble','surfaceType','city'])
 const RESTART = '<span class="field__restart" title="Изменение перезапускает расчёт">↻</span>'
 
 // Markup pieces of the design system (styles/components.css).
@@ -50,6 +50,19 @@ const presets = SCENARIOS.map(s => {
   const minus = (v: number) => String(Math.round(v)).replace('-', '−')
   return { ...s, nums: `ML CAPE ${minus(p.ml.cape)} Дж/кг · ML CIN ${minus(p.ml.cin)} · сдвиг 0–6 км ${Math.round(k.shear06)} м/с · SRH 0–1 км ${Math.round(k.srh01)} м²/с²` }
 })
+/**
+ * The scenario buttons in two columns, in their order: long names take the whole row, and so does a short one that
+ * would otherwise stand alone (before a long one or at the end), so that no gap is left for a later button to fill.
+ */
+const wideScenario = (() => {
+  const wide = presets.map(p => p.name.length > 14)
+  for (let i = 0, col = 0; i < wide.length; i++) {
+    if (wide[i]) { col = 0; continue }
+    if (col === 0 && (i + 1 >= wide.length || wide[i + 1])) wide[i] = true
+    else col = 1 - col
+  }
+  return wide
+})()
 
 const app = document.querySelector<HTMLDivElement>('#app')!
 app.innerHTML = `<div class="app">
@@ -69,7 +82,7 @@ app.innerHTML = `<div class="app">
       <div class="side__scroll">
         <div class="side__block">
           <h2 class="side__title d-only">Сценарии</h2>
-          <div class="scenarios d-only">${presets.map((p, i) => `<button class="btn${p.name.length > 16 ? ' is-wide' : ''}" data-preset="${i}" aria-pressed="false">${p.name}</button>`).join('')}</div>
+          <div class="scenarios d-only">${presets.map((p, i) => `<button class="btn${wideScenario[i] ? ' is-wide' : ''}" data-preset="${i}" aria-pressed="false">${p.name}</button>`).join('')}</div>
           <div class="scards m-only">${presets.map((p, i) => `<button class="scard" data-preset="${i}" aria-pressed="false"><span class="scard__name">${p.name}</span><span class="scard__desc">${p.summary}</span><span class="scard__nums">${p.nums}</span></button>`).join('')}</div>
           <div class="scenario-note d-only" id="scenarioNote">
             <div class="scenario-note__head"><span class="scenario-note__name" id="scenarioName"></span><button class="btn btn--quiet btn--xs" id="scenarioMore">Подробнее</button></div>
@@ -114,7 +127,8 @@ app.innerHTML = `<div class="app">
           ${slider('hour','Местное солнечное время',5,21,.25,13.5,' ч',2)}
           ${slider('dayOfYear','День года: 80 — равноденствие, 172 — 21 июня, 355 — 21 декабря',1,365,1,80,'',0)}
           ${slider('solarMax','Солнце в зените',300,1200,25,1000,' Вт/м²')}
-          ${slider('soilMoisture','Влажность почвы',0,100,1,45,' %')}`, { count: 5 })}
+          ${slider('soilMoisture','Влажность почвы',0,100,1,45,' %')}
+          ${slider('city','Город в центре, радиус (0 — нет)',0,12,1,0,' км')}`, { count: 6 })}
         ${group('Расчёт', `
           <div class="field" title="Точный перенос (WENO 5-го порядка, по умолчанию) почти не размывает восходящие потоки и сам сохраняет массу воды. Быстрый (полулагранжев) примерно вдвое дешевле, но размывает потоки: в сильном сдвиге термик не стартует"><span class="field__label">Перенос</span><span class="select"><select id="transport"><option value="weno">Точный (WENO5)</option><option value="semi-lagrangian">Быстрый (полулагранжев)</option></select></span></div>
           <label class="check" title="Область сдвигается вместе с грозой (правая ячейка по Банкерсу при сдвиге 0–6 км от 15 м/с, иначе средний ветер 0–6 км): гроза остаётся внутри и не въезжает с другой стороны в собственный холодный отток. Ветер, годограф и радар — относительно земли"><input type="checkbox" id="followStorm" checked> Область движется вместе с грозой${RESTART}</label>
@@ -196,7 +210,7 @@ app.innerHTML = `<div class="app">
         ${group('Все показатели грозы', `<div>
           ${stat('downdraft', 'Макс. нисходящий поток', 'м/с')}
           ${stat('uhLow', 'Низкое вращение (UH 0–1 / 0–3 км)', 'м²/с²', 'Вращение восходящего потока у земли: низкоуровневый мезоциклон — признак ячейки, опасной по смерчам. На сетке ~0,65 км слой 0–1 км — один уровень, 0–3 км — четыре')}
-          <div class="chart" title="Профиль w·ζ по высоте в ядре с наибольшим UH (среднее по 3×3 столбцам): на какой высоте и как глубоко вращается восходящий поток. Ниже — корреляция w и ζ по всей области на 2–6 км: в суперячейке поток и циклоническое вращение совпадают (на сетке ~1 км у WK 0,15–0,25), в обычной грозе они рядом, а не вместе (около 0)"><span class="chart__sub">Вращение по высоте (ядро с макс. UH)</span><canvas id="spin"></canvas><span class="t-caption" id="spinNote">—</span></div>
+          <div class="chart" title="Профиль w·ζ по высоте в ядре с наибольшим UH (среднее по 3×3 столбцам): на какой высоте и как глубоко вращается восходящий поток. Ниже — корреляция w и ζ по всей области на 2–6 км: в суперячейке поток и циклоническое вращение совпадают (на сетке ~1 км у WK 0,15–0,25), в обычной грозе они рядом, а не вместе (около 0)"><span class="chart__sub">На какой высоте вращается поток (ядро с макс. UH)</span><canvas id="spin"></canvas><span class="t-caption" id="spinNote">—</span></div>
           ${stat('cloudTop', 'Вершина облака', 'км')}
           ${stat('thermalTop', 'Вершина термика', 'км')}
           ${stat('cloudWater', 'Макс. облачная вода', 'г/кг')}
@@ -679,8 +693,8 @@ function drawSpin(){
   ctx.fillText(`w·ζ до ${peak.toFixed(0)}·10⁻³ м/с²`, R - 92, h - 2)
   ctx.fillStyle = 'rgba(123, 63, 160, .55)'
   for (let k = 1; k + 1 < p.z.length && p.z[k] <= top; k++) if (p.wz[k] > 0) ctx.fillRect(L, Y(p.z[k + 1]), X(p.wz[k]) - L, Y(p.z[k]) - Y(p.z[k + 1]))
-  const c = p.correlation, layer = p.bottom === null ? 'ядро не вращается' : `ядро вращается ${p.bottom.toFixed(1)}–${p.top!.toFixed(1)} км`
-  text('spinNote', c === null ? layer : `${layer}; корреляция w–ζ 2–6 км ${c.toFixed(2)}: ${c >= SPIN_SUPERCELL ? 'поток и вращение совпадают, как в суперячейке' : 'вращение рядом с потоком, не в нём'}`)
+  const c = p.correlation, layer = rotationSummary(sim.model.rotation, p)
+  text('spinNote', c === null ? layer : `${layer}. Корреляция w–ζ 2–6 км ${c.toFixed(2)}: ${c >= SPIN_SUPERCELL ? 'поток и вращение совпадают, как в суперячейке' : 'вращение рядом с потоком, не в нём'}`)
 }
 function drawHodograph(){
   const { ctx, w, h } = prepareCanvas('hodograph'), wind = sim.sounding().wind

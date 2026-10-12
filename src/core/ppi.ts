@@ -1,5 +1,6 @@
 import { levelAt } from './grid'
 import type { AtmosphereModel } from './model'
+import { dualPol } from './polarimetry'
 import { DBZ_FLOOR, reflectivity, reflectivityFallSpeed } from './radar'
 
 /** Elevation angles of a NEXRAD volume scan (VCP 12/212), degrees. */
@@ -16,6 +17,8 @@ export function beamHeight(range: number, elevation: number) {
 
 /** Echo needed for a Doppler velocity estimate, dBZ: without scatterers the radar measures nothing. */
 export const VELOCITY_MIN_DBZ = 5
+/** Echo needed for the dual-polarisation products, dBZ (weaker echo is too noisy for ZDR and rho_hv on a real radar). */
+export const DUAL_MIN_DBZ = 10
 
 /**
  * Plan position indicator over a w x h raster covering the domain (pixel (0, 0) at the north-west corner): reflectivity
@@ -25,26 +28,34 @@ export const VELOCITY_MIN_DBZ = 5
  * the precipitation's fall speed at the model nodes, then interpolate them along the beams. With `stormMotion` the
  * velocity is storm-relative (SRV): the storm's own motion, which masks a mesocyclone's couplet, is subtracted.
  * The raster, the site and every position are fixed to the ground: when the model domain follows the storm
- * (AtmosphereModel.frame), the storm moves across the screen as past a real radar.
+ * (AtmosphereModel.frame), the storm moves across the screen as past a real radar. With `dual` set, `sample` and
+ * `section` also give the dual-polarisation products (polarimetry.ts): ZDR (dB), rho_hv and KDP (deg/km), NaN below
+ * DUAL_MIN_DBZ.
  */
 export class PPI {
   readonly w: number; readonly h: number
   readonly dbz: Float32Array; readonly velocity: Float32Array; readonly compositeDbz: Float32Array
+  readonly zdr: Float32Array; readonly rho: Float32Array; readonly kdp: Float32Array
   private readonly gx: Float32Array; private readonly gy: Float32Array; private readonly sinAz: Float32Array; private readonly cosAz: Float32Array
   /** Grid level of the beam per tilt (-1 above the model top), for the current site. */
   private readonly levels = new Map<number, Float32Array>()
   /** Reflectivity (dBZ) and reflectivity-weighted fall speed (m/s) at the model nodes, refreshed by prepare(). */
   private readonly nodeDbz: Float32Array; private readonly nodeFall: Float32Array
+  /** ZDR, rho_hv and KDP at the model nodes (prepared only with `dual`; without precipitation 0, 1 and 0). */
+  private readonly nodeZdr: Float32Array; private readonly nodeRho: Float32Array; private readonly nodeKdp: Float32Array
   readonly model: AtmosphereModel
   site = { x: 0, y: 0 }; tilt: number = RADAR_TILTS[0]
   /** Storm motion (u, v, m/s) to subtract from the radial velocity (storm-relative velocity), or null (base velocity). */
   stormMotion: readonly [number, number] | null = null
+  /** Whether prepare(), sample() and section() also do ZDR, rho_hv and KDP. */
+  dual = false
 
   constructor(model: AtmosphereModel, w: number, h: number) {
     this.model = model; this.w = w; this.h = h
     const n = w * h, f = () => new Float32Array(n)
-    this.dbz = f(); this.velocity = f(); this.compositeDbz = f(); this.gx = f(); this.gy = f(); this.sinAz = f(); this.cosAz = f()
+    this.dbz = f(); this.velocity = f(); this.compositeDbz = f(); this.zdr = f(); this.rho = f(); this.kdp = f(); this.gx = f(); this.gy = f(); this.sinAz = f(); this.cosAz = f()
     this.nodeDbz = new Float32Array(model.grid.n); this.nodeFall = new Float32Array(model.grid.n)
+    this.nodeZdr = new Float32Array(model.grid.n); this.nodeRho = new Float32Array(model.grid.n).fill(1); this.nodeKdp = new Float32Array(model.grid.n)
     this.site = { x: model.grid.width / 2, y: model.grid.depth / 2 }
     this.layout()
   }
@@ -87,14 +98,19 @@ export class PPI {
 
   /** Reflectivity and fall speed of the precipitation at every model node, from the current fields (sample and composite call it). */
   prepare() {
-    const m = this.model, e = m.env, { nz, layer } = m.grid, rhoGround = e.rho[0]
+    const m = this.model, e = m.env, { nz, layer } = m.grid, rhoGround = e.rho[0], dual = this.dual
     for (let z = 0, i = 0; z < nz; z++) {
       const rho = e.rho[z], exner = e.exner[z]
       for (let end = i + layer; i < end; i++) {
         const rain = m.rain[i], snow = m.snow[i], graupel = m.graupel[i], hail = m.hail[i]
-        if (rain <= 0 && snow <= 0 && graupel <= 0 && hail <= 0) { this.nodeDbz[i] = DBZ_FLOOR; this.nodeFall[i] = 0; continue }
+        if (rain <= 0 && snow <= 0 && graupel <= 0 && hail <= 0) {
+          this.nodeDbz[i] = DBZ_FLOOR; this.nodeFall[i] = 0
+          if (dual) { this.nodeZdr[i] = 0; this.nodeRho[i] = 1; this.nodeKdp[i] = 0 }
+          continue
+        }
         const tc = m.theta[i] * exner - 273.15
         this.nodeDbz[i] = reflectivity(rho, rain, snow, graupel, tc, hail); this.nodeFall[i] = reflectivityFallSpeed(rho, rhoGround, rain, snow, graupel, tc, hail)
+        if (dual) { const d = dualPol(rho, rain, snow, graupel, tc, hail); this.nodeZdr[i] = d.zdr; this.nodeRho[i] = d.rho; this.nodeKdp[i] = d.kdp }
       }
     }
   }
@@ -112,9 +128,13 @@ export class PPI {
     const [ox, oy] = this.shift(), [fu, fv] = m.frame, [su, sv] = this.stormMotion ?? [0, 0], cu = fu - su, cv = fv - sv
     for (let i = 0; i < this.dbz.length; i++) {
       const z = gz[i]
-      if (z < 0) { this.dbz[i] = DBZ_FLOOR; this.velocity[i] = NaN; continue }
+      if (z < 0) { this.dbz[i] = DBZ_FLOOR; this.velocity[i] = this.zdr[i] = this.rho[i] = this.kdp[i] = NaN; continue }
       const x = this.gx[i] - ox, y = this.gy[i] - oy, d = m.sample(this.nodeDbz, x, y, z)
       this.dbz[i] = d
+      if (this.dual) {
+        const echo = d >= DUAL_MIN_DBZ
+        this.zdr[i] = echo ? m.sample(this.nodeZdr, x, y, z) : NaN; this.rho[i] = echo ? m.sample(this.nodeRho, x, y, z) : NaN; this.kdp[i] = echo ? m.sample(this.nodeKdp, x, y, z) : NaN
+      }
       if (d < VELOCITY_MIN_DBZ) { this.velocity[i] = NaN; continue }
       this.velocity[i] = ((m.sample(m.u, x, y, z) + cu) * this.sinAz[i] + (m.sample(m.v, x, y, z) + cv) * this.cosAz[i]) * ce + (m.sample(m.w, x, y, z) - m.sample(this.nodeFall, x, y, z)) * se
     }
@@ -137,12 +157,14 @@ export class PPI {
    * volume (call prepare() first): reflectivity and radial velocity at `gates` ranges `step` m apart (gate g at
    * (g + 0.5) step) and `rows` heights `dz` m apart (row k at (k + 0.5) dz), row-major from the ground up. The radial
    * velocity is along the ray from the radar to the point (elevation atan(h / r)): ground-relative wind, minus the fall
-   * speed, minus `stormMotion` if set; NaN without echo. Periodic like the model; above the model top: no echo.
+   * speed, minus `stormMotion` if set; NaN without echo. With `dual` also ZDR, rho_hv and KDP (NaN below DUAL_MIN_DBZ;
+   * empty arrays without it). Periodic like the model; above the model top: no echo.
    */
   section(azimuth: number, step: number, gates: number, dz: number, rows: number) {
     const m = this.model, grid = m.grid, { dx, dy } = grid, a = azimuth * Math.PI / 180, sa = Math.sin(a), ca = Math.cos(a), [ox, oy] = this.shift()
     const [fu, fv] = m.frame, [su, sv] = this.stormMotion ?? [0, 0], cu = fu - su, cv = fv - sv
-    const dbz = new Float32Array(gates * rows).fill(DBZ_FLOOR), velocity = new Float32Array(gates * rows).fill(NaN)
+    const dbz = new Float32Array(gates * rows).fill(DBZ_FLOOR), velocity = new Float32Array(gates * rows).fill(NaN), dual = this.dual
+    const nan = () => new Float32Array(dual ? gates * rows : 0).fill(NaN), zdr = nan(), rho = nan(), kdp = nan()
     for (let k = 0; k < rows; k++) {
       const h = (k + .5) * dz
       if (h > grid.height) break
@@ -150,12 +172,13 @@ export class PPI {
       for (let g = 0; g < gates; g++) {
         const r = (g + .5) * step, gx = (this.site.x + r * sa) / dx - ox, gy = (this.site.y + r * ca) / dy - oy, i = k * gates + g, d = m.sample(this.nodeDbz, gx, gy, z)
         dbz[i] = d
+        if (dual && d >= DUAL_MIN_DBZ) { zdr[i] = m.sample(this.nodeZdr, gx, gy, z); rho[i] = m.sample(this.nodeRho, gx, gy, z); kdp[i] = m.sample(this.nodeKdp, gx, gy, z) }
         if (d < VELOCITY_MIN_DBZ) continue
         const el = Math.atan2(h, r)
         velocity[i] = ((m.sample(m.u, gx, gy, z) + cu) * sa + (m.sample(m.v, gx, gy, z) + cv) * ca) * Math.cos(el) + (m.sample(m.w, gx, gy, z) - m.sample(this.nodeFall, gx, gy, z)) * Math.sin(el)
       }
     }
-    return { dbz, velocity }
+    return { dbz, velocity, zdr, rho, kdp }
   }
 
   /** Reflectivity (dBZ) the beam of `tilt` sees over a ground point, m (call prepare() first; periodic like the model). */
