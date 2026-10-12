@@ -122,9 +122,9 @@ jobs:
       - name: Report
         if: always()
         run: |
-          sed -i 's/[[0-9;]*m//g' test.log
+          sed -i 's/\x1b\[[0-9;]*m//g' test.log
           result=$(grep -E 'Заряженное ружьё:' test.log | tail -1 | sed 's/^ *//')
-          line=$(grep -E '^s+Tests ' test.log | tail -1 | sed 's/^ *//')
+          line=$(grep -E '^\s+Tests ' test.log | tail -1 | sed 's/^ *//')
           fail=$(grep -E 'AssertionError' test.log | head -1 | sed 's/^ *//')
           echo "### ${result:-Loaded gun: no result} — ${line} ${fail}" >> "$GITHUB_STEP_SUMMARY"
           echo "::notice title=Loaded gun::${result:-no result} | ${line} ${fail}"
