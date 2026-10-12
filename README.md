@@ -10,6 +10,8 @@
 изменилось — [`CHANGELOG.md`](CHANGELOG.md), план дальше — [`roadmap.markdown`](roadmap.markdown)). Всё, что модель пока не
 умеет или упрощает, перечислено в разделе [«Известные ограничения»](#известные-ограничения) с замерами.
 
+Новости проекта — в Telegram-канале **[t.me/MeteoLabBnor](https://t.me/MeteoLabBnor)**.
+
 ## Быстрый старт
 
 Онлайн: **https://bandananor.github.io/MeteoLAB/** — главная, симулятор (`simulator/`), инструкция «Как пользоваться»

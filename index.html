@@ -16,10 +16,10 @@
   <body class="site">
     <header class="site-header"><div class="container site-header__in">
       <a class="logo" href="./" style="font-size:19px"><span class="logo__mark" style="width:22px;height:22px"></span>MeteoLab</a>
-      <nav class="site-nav"><a href="simulator/">Симулятор</a><a href="#scenarios">Сценарии</a><a href="guide/">Как пользоваться</a><a href="about/">О модели</a><a href="https://github.com/Bandananor/MeteoLAB">GitHub</a></nav>
+      <nav class="site-nav"><a href="simulator/">Симулятор</a><a href="#scenarios">Сценарии</a><a href="guide/">Как пользоваться</a><a href="about/">О модели</a><a href="https://github.com/Bandananor/MeteoLAB">GitHub</a><a href="https://t.me/MeteoLabBnor" class="nav-channel">Telegram</a></nav>
       <div class="seg seg--text" role="group" aria-label="Тема"><button data-theme-set="auto" title="Как в системе">Авто</button><button data-theme-set="light">Светлая</button><button data-theme-set="dark">Тёмная</button></div>
       <div class="site-header__menu"><button class="btn btn--quiet btn--icon btn--touch" data-theme-toggle aria-label="Светлая или тёмная тема">◐</button><button class="btn btn--quiet btn--icon btn--touch" data-menu-toggle aria-expanded="false" aria-label="Меню" style="color:var(--text)">☰</button></div>
-      <div class="menu menu--touch site-menu" id="siteMenu" hidden><a class="menu__item" href="simulator/">Симулятор</a><a class="menu__item" href="#scenarios">Сценарии</a><a class="menu__item" href="guide/">Как пользоваться</a><a class="menu__item" href="about/">О модели</a><a class="menu__item" href="https://github.com/Bandananor/MeteoLAB">GitHub</a></div>
+      <div class="menu menu--touch site-menu" id="siteMenu" hidden><a class="menu__item" href="simulator/">Симулятор</a><a class="menu__item" href="#scenarios">Сценарии</a><a class="menu__item" href="guide/">Как пользоваться</a><a class="menu__item" href="about/">О модели</a><a class="menu__item" href="https://github.com/Bandananor/MeteoLAB">GitHub</a><a class="menu__item" href="https://t.me/MeteoLabBnor">Telegram-канал проекта</a></div>
     </div></header>
     <main class="container">
       <section class="hero">
@@ -28,6 +28,7 @@
           <h1 class="t-display" style="margin:0">Гроза, посчитанная по физике — в браузере</h1>
           <p class="hero__lead">Задайте температуру, влажность и ветер по высоте — и смотрите, как вырастает гроза: от одиночной ячейки до суперячейки с мезоциклоном. Для уроков, учёбы и тех, кто следит за грозами.</p>
           <div class="hero__actions"><a class="btn btn--primary btn--hero" href="simulator/">Запустить симулятор</a><a class="btn btn--hero" href="about/">Как это устроено</a></div>
+          <a class="hero__channel" href="https://t.me/MeteoLabBnor">Новости проекта, новые версии и разборы опытов — в Telegram: t.me/MeteoLabBnor →</a>
         </div>
         <figure class="media" style="margin:0;aspect-ratio:1179/591"><img src="./src/site/hero-wk.jpg" alt="Суперячейка в модели: облако с наковальней над зелёной равниной" width="1179" height="591"><figcaption class="media__caption ov-badge" style="letter-spacing:0">Суперячейка WK · кадр модели</figcaption></figure>
       </section>
@@ -50,8 +51,9 @@
         <article class="task"><span class="t-eyebrow">Задание 2</span><h3>Откуда берётся вращение</h3><span class="task__scen">«Многоячейковая гроза» и «Классическая суперячейка»</span><p>В обоих опытах вихри есть, а мезоциклон — только в одном. Сравните годографы и сдвиг ветра 0–6 км, найдите на радаре отметку мезоциклона.</p><span class="task__meta">30 мин · 10–11 класс</span></article>
         <article class="task"><span class="t-eyebrow">Задание 3</span><h3>Когда начнётся гроза</h3><span class="task__scen">«Суточный ход»</span><p>По Skew-T проследите, как солнце съедает ночную инверсию. Запишите время первых кучевых и первой грозы, сравните с прогнозом по уровню свободной конвекции.</p><span class="task__meta">45 мин · кружок, вуз</span></article>
       </div></section>
+      <section class="channel" id="channel"><div class="channel__text"><span class="t-eyebrow">04</span><h2>Канал проекта в Telegram</h2><p>Там выходят новости MeteoLab: новые версии и сценарии, разборы гроз, посчитанных моделью, планы и опросы — что делать дальше. Туда же можно написать вопрос или прислать свой опыт по ссылке.</p></div><a class="btn btn--primary btn--hero" href="https://t.me/MeteoLabBnor">Открыть t.me/MeteoLabBnor</a></section>
     </main>
-    <footer class="site-footer"><div class="container site-footer__in"><div><a class="logo" href="./"><span class="logo__mark"></span>MeteoLab</a><p>Численная лаборатория атмосферы на модели грозы StormLab. Лицензия MIT · © 2026 Bandananor</p><p><a href="https://t.me/EMSquad">Подпишись на t.me/EMSquad</a></p></div><nav><a href="simulator/">Симулятор</a><a href="#scenarios">Сценарии</a><a href="guide/">Как пользоваться</a><a href="about/">О модели</a><a href="about/#changelog">Журнал изменений</a><a href="https://github.com/Bandananor/MeteoLAB">GitHub</a><span class="num faint" style="font-size:12px">v2.1</span></nav></div></footer>
+    <footer class="site-footer"><div class="container site-footer__in"><div><a class="logo" href="./"><span class="logo__mark"></span>MeteoLab</a><p>Численная лаборатория атмосферы на модели грозы StormLab. Лицензия MIT · © 2026 Bandananor</p><p class="footer-channel"><a href="https://t.me/MeteoLabBnor">Telegram-канал проекта — t.me/MeteoLabBnor</a></p><p class="faint">Команда EMSquad · <a href="https://t.me/EMSquad">t.me/EMSquad</a></p></div><nav><a href="simulator/">Симулятор</a><a href="#scenarios">Сценарии</a><a href="guide/">Как пользоваться</a><a href="about/">О модели</a><a href="about/#changelog">Журнал изменений</a><a href="https://github.com/Bandananor/MeteoLAB">GitHub</a><span class="num faint" style="font-size:12px">v2.1</span></nav></div></footer>
     <script type="module" src="/src/site/landing.ts"></script>
   </body>
 </html>

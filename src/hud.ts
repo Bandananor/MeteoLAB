@@ -136,6 +136,7 @@ export class Hud {
       <div class="menu__sep"></div>
       <button class="menu__item" role="menuitem" data-tool="#layoutToggle"><span class="menu__glyph">▭</span>Компьютерный вид</button>
       <a class="menu__item" role="menuitem" href="../guide/" target="_blank" rel="noopener"><span class="menu__glyph">?</span>Как пользоваться</a>
+      <a class="menu__item" role="menuitem" href="https://t.me/MeteoLabBnor" target="_blank" rel="noopener"><span class="menu__glyph">✈</span>Канал проекта</a>
       <div class="menu__sep"></div>
       <div class="menu__group"><span class="label">Тема</span><div class="seg seg--text seg--block seg--touch" role="group" aria-label="Тема"><button data-theme-set="auto">Авто</button><button data-theme-set="light">Светлая</button><button data-theme-set="dark">Тёмная</button></div></div>
     </div>`
