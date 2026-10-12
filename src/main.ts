@@ -13,7 +13,7 @@ import { Atmosphere, type Live } from './atmosphere'
 import { RadarPanel } from './radar/panel'
 import { SkewTPanel } from './skewt/panel'
 import { StationPanel } from './station/panel'
-import { CELL_STAGES, MESO_PERSISTENCE, UH_ROTATING, readState, createGrid, describeBalance, DT, Environment, parcelIndices, SCENARIOS, type SimConfig, rotationSummary, SPIN_SUPERCELL, spinProfile, stormIndices, UH_LAYERS, type UhLayer, environmentProfile } from './core'
+import { CELL_STAGES, MESO_PERSISTENCE, UH_ROTATING, readState, createGrid, describeBalance, DT, Environment, parcelIndices, SCENARIOS, type SimConfig, rotationSummary, SPIN_SUPERCELL, spinProfile, stormIndices, UH_LAYERS, type UhLayer, environmentProfile, parseSounding, soundingProfile, SoundingError, computeSounding, type Sounding } from './core'
 import { type FieldMode, fieldInfo } from './render/fields'
 import type { LayerMode } from './render/view'
 import { cleanSettings, decodeSettings, download, encodeSettings, toCsv } from './share'
@@ -44,12 +44,13 @@ const tip = (id: string, title: string, text: string, scale = '', foot = '') =>
   `<div id="${id}" popover class="popover"><div class="popover__title">${title}</div><div class="popover__text">${text}</div>${scale}${foot ? `<div class="popover__foot">${foot}</div>` : ''}</div>`
 
 // The scenario note under the buttons ends with the environment's own numbers (standard parcels, MetPy conventions).
-const presets = SCENARIOS.map(s => {
-  const c: SimConfig = { ...defaults, ...s.values }, grid = createGrid()
-  const env = new Environment(c, grid, environmentProfile(c, grid.height)), p = parcelIndices(env, grid.height), k = stormIndices(env, p)
+/** ML CAPE and CIN, shear and SRH of a configuration's environment, as one line. */
+function environmentNums(c: SimConfig) {
+  const grid = createGrid(), env = new Environment(c, grid, environmentProfile(c, grid.height)), p = parcelIndices(env, grid.height), k = stormIndices(env, p)
   const minus = (v: number) => String(Math.round(v)).replace('-', '−')
-  return { ...s, nums: `ML CAPE ${minus(p.ml.cape)} Дж/кг · ML CIN ${minus(p.ml.cin)} · сдвиг 0–6 км ${Math.round(k.shear06)} м/с · SRH 0–1 км ${Math.round(k.srh01)} м²/с²` }
-})
+  return `ML CAPE ${minus(p.ml.cape)} Дж/кг · ML CIN ${minus(p.ml.cin)} · сдвиг 0–6 км ${Math.round(k.shear06)} м/с · SRH 0–1 км ${Math.round(k.srh01)} м²/с²`
+}
+const presets = SCENARIOS.map(s => ({ ...s, nums: environmentNums({ ...defaults, ...s.values }) }))
 /**
  * The scenario buttons in two columns, in their order: long names take the whole row, and so does a short one that
  * would otherwise stand alone (before a long one or at the end), so that no gap is left for a later button to fill.
@@ -91,6 +92,7 @@ app.innerHTML = `<div class="app">
             <div class="scenario-note__nums" id="scenarioNums"></div>
           </div>
           <div class="notice" id="profileLocked" hidden>Профиль задан формулами — ползунки температуры, влажности и ветра не действуют.</div>
+          <button class="btn btn--block" id="soundingOpen" title="Реальное зондирование из файла или вставленного текста: Вайомингский университет, SHARPpy, input_sounding CM1/WRF, CSV — гроза в среде конкретного дня">Реальное зондирование…</button>
         </div>
         ${group('Температурный профиль', `
           ${slider('surfaceTemp','Температура у земли',15,40,.5,30,' °C',1)}
@@ -230,6 +232,20 @@ app.innerHTML = `<div class="app">
     </aside>
   </main>
 </div>
+<dialog class="modal modal--wide sounding-dialog" id="soundingDialog"><form method="dialog" style="display:contents">
+  <h2 class="modal__title">Реальное зондирование</h2>
+  <p class="modal__text">Гроза в среде конкретного дня: температура, влажность и ветер по высоте берутся из зондирования, а не из ползунков. Форматы: текст Вайомингского университета (<a href="https://weather.uwyo.edu/upperair/sounding.shtml" target="_blank" rel="noopener">weather.uwyo.edu</a>, вид «Text: List» — можно скопировать страницу целиком), SHARPpy, <code>input_sounding</code> CM1 / WRF, CSV с заголовками (pres, hght, temp, dwpt, drct, sknt…). Нужны данные хотя бы до 10 км.</p>
+  <div class="sounding-dialog__input"><button type="button" class="btn" id="soundingFileButton">Выбрать файл…</button><input type="file" id="soundingFile" accept=".txt,.csv,.dat,.sharppy,.oax,text/plain" hidden><span class="t-caption" id="soundingFileName"></span></div>
+  <textarea class="input sounding-dialog__text" id="soundingText" spellcheck="false" placeholder="…или вставьте текст зондирования сюда"></textarea>
+  <div class="notice" id="soundingError" hidden></div>
+  <div class="sounding-dialog__preview" id="soundingPreview" hidden>
+    <div class="sounding-dialog__head"><b id="soundingName"></b><span class="t-caption" id="soundingInfo"></span></div>
+    <div class="sounding-dialog__body"><canvas id="soundingChart" class="side-chart"></canvas><dl class="kv" id="soundingNums"></dl></div>
+    <ul class="sounding-dialog__notes" id="soundingNotes"></ul>
+    <label class="field"><span class="field__head"><span class="field__label">Начальный термик (в реальном дне его нет — задайте сами; 0 — без термика)</span><output class="field__value" id="soundingBubbleOut">1.00×</output></span><input class="range" id="soundingBubble" type="range" min="0" max="2.5" step="0.05" value="1"></label>
+  </div>
+  <div class="modal__actions"><button class="btn btn--quiet" value="cancel">Отмена</button><button class="btn btn--primary" value="run" id="soundingRun" disabled>Запустить с этим зондированием</button></div>
+</form></dialog>
 <dialog class="modal" id="saveDialog"><form method="dialog" style="display:contents"><h2 class="modal__title">Сохранить расчёт</h2><p class="modal__text" id="saveText"></p><label class="field"><span class="label">Имя файла</span><input class="input" id="saveName" autocomplete="off" spellcheck="false"></label><div class="modal__actions"><button class="btn btn--quiet" value="cancel">Отмена</button><button class="btn btn--primary" value="save">Сохранить</button></div></form></dialog>`
 
 const text = (id: string, value: string) => { document.querySelector(`#${id}`)!.textContent = value }
@@ -283,6 +299,8 @@ addEventListener('keydown', e => {
 const config: SimConfig = { ...defaults, ...SCENARIOS[0].values }
 // A shared link (?cfg=..., see share.ts) brings its scenario and settings; it is applied once and leaves the address.
 let initialPreset: number | null = 0, baseScenario: number | null = 0
+/** With a loaded sounding and no scenario: what the run started from (the sounding and its thermal), for markModified. */
+let soundingBase: Partial<SimConfig> | null = null
 {
   const url = new URL(location.href), shared = url.searchParams.get('cfg'), link = shared === null ? null : decodeSettings(shared, SCENARIOS.map(s => s.name))
   if (link) {
@@ -294,6 +312,8 @@ let initialPreset: number | null = 0, baseScenario: number | null = 0
   const named = url.searchParams.get('scenario'), index = named === null ? -1 : SCENARIOS.findIndex(s => s.name === named)
   if (!link && index >= 0) { Object.assign(config, defaults, SCENARIOS[index].values); initialPreset = baseScenario = index }
   if (named !== null) { url.searchParams.delete('scenario'); history.replaceState(null, '', url) }
+  // A link with a sounding: that is what the run started from.
+  if (config.sounding && baseScenario === null) soundingBase = { sounding: config.sounding }
 }
 // Scenarios without the 0.5 and 1 km wind nodes get them on the straight 0-3 km line, so their hodograph is unchanged
 // and the sliders show where the nodes are.
@@ -350,12 +370,14 @@ document.querySelectorAll<HTMLInputElement>('input.range').forEach(input => {
 })
 // With an analytic profile (the Weisman-Klemp scenario) the temperature, humidity and wind sliders do nothing: dim them.
 const markProfileGroups = () => {
-  const off = !!config.profile
-  document.querySelectorAll<HTMLDetailsElement>('details[data-profile]').forEach(d => { d.classList.toggle('is-inactive', off); d.querySelector<HTMLElement>('.group__tag')!.hidden = !off })
-  document.querySelector<HTMLElement>('#profileLocked')!.hidden = !off
+  const off = !!config.profile || !!config.sounding
+  document.querySelectorAll<HTMLDetailsElement>('details[data-profile]').forEach(d => { d.classList.toggle('is-inactive', off); const tag = d.querySelector<HTMLElement>('.group__tag')!; tag.hidden = !off; tag.textContent = config.sounding ? 'зондирование' : 'формулы WK' })
+  const locked = document.querySelector<HTMLElement>('#profileLocked')!
+  locked.hidden = !off
+  locked.textContent = config.sounding ? 'Профиль взят из зондирования — ползунки температуры, влажности и ветра не действуют. Вернуться к ползункам — выберите сценарий.' : 'Профиль задан формулами — ползунки температуры, влажности и ветра не действуют.'
 }
 /** The scenario the settings started from (null: a run opened from a file), as a full config. */
-const baseConfig = (): SimConfig => { const base: SimConfig = { ...defaults, ...(baseScenario === null ? {} : SCENARIOS[baseScenario].values) }; fillLowWind(base); return base }
+const baseConfig = (): SimConfig => { const base: SimConfig = { ...defaults, ...(baseScenario === null ? soundingBase ?? {} : SCENARIOS[baseScenario].values) }; fillLowWind(base); return base }
 // A dot at a left group whose values differ from the scenario. Speed, the domain and its motion are kept when a
 // scenario is chosen: not the scenario's.
 const KEPT = new Set<keyof SimConfig>(['speed', 'followStorm', 'domain'])
@@ -375,10 +397,10 @@ function markModified() {
 const scenarioNote = document.querySelector<HTMLElement>('#scenarioNote')!, scenarioMore = document.querySelector<HTMLButtonElement>('#scenarioMore')!
 scenarioMore.addEventListener('click', () => { const open = scenarioNote.classList.toggle('is-open'); scenarioMore.textContent = open ? 'Свернуть' : 'Подробнее' })
 function showScenario() {
-  const p = baseScenario === null ? null : presets[baseScenario]
-  text('scenarioName', p ? p.name : 'Расчёт из файла')
-  text('scenarioText', p ? `${p.hint}.` : 'Настройки взяты из сохранённого файла и ни с одним сценарием не сравниваются.')
-  text('scenarioNums', p ? p.nums : '')
+  const p = baseScenario === null ? null : presets[baseScenario], s = config.sounding
+  text('scenarioName', p ? p.name : s ? `Зондирование: ${s.name || 'без названия'}` : 'Расчёт из файла')
+  text('scenarioText', p ? `${p.hint}.` : s ? `Температура, влажность и ветер — из реального зондирования (${s.levels.length} уровней до ${(s.levels[s.levels.length - 1].z / 1000).toFixed(1)} км над станцией). Термик, солнце, поверхность и расчёт — ползунками.` : 'Настройки взяты из сохранённого файла и ни с одним сценарием не сравниваются.')
+  text('scenarioNums', p ? p.nums : s ? environmentNums(config) : '')
   scenarioNote.classList.remove('is-open'); scenarioMore.textContent = 'Подробнее'
   // «Подробнее» only when the text is cut.
   requestAnimationFrame(() => { const t = document.querySelector<HTMLElement>('#scenarioText')!; scenarioMore.hidden = t.scrollHeight <= t.clientHeight + 1 })
@@ -432,7 +454,9 @@ stateNote.querySelector('.notice__close')!.addEventListener('click', () => { cle
 document.querySelector('#share')!.addEventListener('click', () => {
   // Relative to the scenario last chosen (changed sliders unmark it but it is still the starting point).
   const url = new URL(location.href)
-  url.searchParams.set('cfg', encodeSettings(config, baseConfig(), baseScenario === null ? null : SCENARIOS[baseScenario].name)); url.searchParams.set('seed', String(config.seed))
+  // The base a link is read against: the defaults and the scenario (not the loaded sounding — the link must carry it).
+  const linkBase: SimConfig = { ...defaults, ...(baseScenario === null ? {} : SCENARIOS[baseScenario].values) }; fillLowWind(linkBase)
+  url.searchParams.set('cfg', encodeSettings(config, linkBase, baseScenario === null ? null : SCENARIOS[baseScenario].name)); url.searchParams.set('seed', String(config.seed))
   navigator.clipboard.writeText(url.href).then(() => note('Ссылка на опыт скопирована', true), () => { history.replaceState(null, '', url); note('Ссылка на опыт — в адресной строке') })
 })
 // Saving and opening a run (.meteolab, src/core/state.ts). The state is taken when «Сохранить» is pressed; the dialog
@@ -458,6 +482,60 @@ saveDialog.addEventListener('close', () => {
   saved = null; saveDialog.returnValue = ''
 })
 document.querySelector('#loadState')!.addEventListener('click', () => stateFile.click())
+// A real sounding (roadmap 2.2): a file or pasted text, read and checked at once (soundingfile.ts), its profile and
+// numbers shown before the run; «Запустить» starts a run in it, like a scenario: the other settings back to the
+// defaults (speed, domain and its motion kept), the thermal as chosen here.
+const soundingDialog = document.querySelector<HTMLDialogElement>('#soundingDialog')!, soundingText = document.querySelector<HTMLTextAreaElement>('#soundingText')!
+const soundingFile = document.querySelector<HTMLInputElement>('#soundingFile')!, soundingBubble = document.querySelector<HTMLInputElement>('#soundingBubble')!
+let loadedSounding: NonNullable<SimConfig['sounding']> | null = null
+document.querySelector('#soundingOpen')!.addEventListener('click', () => { soundingDialog.showModal(); if (loadedSounding) requestAnimationFrame(() => previewSounding()) })
+document.querySelector('#soundingFileButton')!.addEventListener('click', () => soundingFile.click())
+soundingFile.addEventListener('change', async () => {
+  const file = soundingFile.files?.[0]; soundingFile.value = ''
+  if (!file) return
+  text('soundingFileName', file.name); soundingText.value = await file.text(); readSounding(file.name.replace(/.[^.]+$/, ''))
+})
+let soundingTimer = 0
+soundingText.addEventListener('input', () => { clearTimeout(soundingTimer); soundingTimer = window.setTimeout(() => { text('soundingFileName', ''); readSounding() }, 300) })
+soundingBubble.addEventListener('input', () => { text('soundingBubbleOut', `${Number(soundingBubble.value).toFixed(2)}×`); fillRange(soundingBubble) })
+function readSounding(fallbackName = '') {
+  const error = document.querySelector<HTMLElement>('#soundingError')!, run = document.querySelector<HTMLButtonElement>('#soundingRun')!
+  loadedSounding = null; run.disabled = true; error.hidden = true; document.querySelector<HTMLElement>('#soundingPreview')!.hidden = true
+  if (!soundingText.value.trim()) return
+  try {
+    const file = parseSounding(soundingText.value), grid = createGrid(), sp = soundingProfile(file, grid.height + 2000)
+    loadedSounding = { name: [file.station, file.time].filter(Boolean).join(' · ') || fallbackName, levels: file.levels }
+    soundingNotes = [...file.notes, ...sp.notes]; soundingLatitude = file.latitude
+    run.disabled = false; previewSounding()
+  } catch (e) {
+    error.textContent = e instanceof SoundingError ? e.message : `Не удалось прочитать: ${(e as Error).message}`; error.hidden = false
+  }
+}
+let soundingNotes: string[] = [], soundingLatitude: number | undefined
+function previewSounding() {
+  const s = loadedSounding!, c: SimConfig = { ...defaults, sounding: s }, grid = createGrid(), env = new Environment(c, grid, environmentProfile(c, grid.height))
+  const i = parcelIndices(env, grid.height), k = stormIndices(env, i), top = s.levels[s.levels.length - 1].z
+  document.querySelector<HTMLElement>('#soundingPreview')!.hidden = false
+  text('soundingName', s.name || 'Зондирование')
+  text('soundingInfo', `${s.levels.length} уровней · до ${(top / 1000).toFixed(1)} км над станцией · у земли ${(s.levels[0].p / 100).toFixed(0)} гПа${soundingLatitude !== undefined ? ` · широта ${soundingLatitude.toFixed(1)}°` : ''}`)
+  const n = (v: number) => String(Math.round(v)).replace('-', '−'), km = (v: number | null) => v === null ? '—' : `${v.toFixed(1)} км`
+  document.querySelector('#soundingNums')!.innerHTML = ([['SB CAPE / CIN', `${n(i.sb.cape)} / ${n(i.sb.cin)} Дж/кг`], ['ML CAPE / CIN', `${n(i.ml.cape)} / ${n(i.ml.cin)} Дж/кг`], ['MU CAPE', `${n(i.mu.cape)} Дж/кг`], ['LCL / LFC', `${km(i.ml.lcl)} / ${km(i.ml.lfc)}`], ['Сдвиг 0–6 км', `${Math.round(k.shear06)} м/с`], ['SRH 0–1 / 0–3 км', `${n(k.srh01)} / ${n(k.srh03)} м²/с²`], ['SCP / STP', `${k.scp.toFixed(1)} / ${k.stp.toFixed(1)}`]] as const).map(([a, b]) => `<dt>${a}</dt><dd>${b}</dd>`).join('')
+  document.querySelector('#soundingNotes')!.innerHTML = soundingNotes.map(t => `<li>${t.replace(/[<>&]/g, ch => `&#${ch.charCodeAt(0)};`)}</li>`).join('')
+  drawSounding('soundingChart', computeSounding(c, env, grid.height))
+}
+soundingDialog.addEventListener('close', () => {
+  if (soundingDialog.returnValue !== 'run' || !loadedSounding) { soundingDialog.returnValue = ''; return }
+  soundingDialog.returnValue = ''
+  Object.assign(config, defaults, { speed: config.speed, followStorm: config.followStorm, domain: config.domain, wind05: undefined, wind1: undefined, windDir05: undefined, windDir1: undefined, profile: undefined, bubbleRadius: undefined, front: undefined, edges: undefined, start: undefined, frameMotion: undefined, top: undefined, nightInversion: undefined, transport: 'weno' },
+    { sounding: loadedSounding, bubble: Number(soundingBubble.value), ...(soundingLatitude !== undefined ? { latitude: Math.round(Math.abs(soundingLatitude)) } : {}) })
+  fillLowWind(config)
+  baseScenario = null; soundingBase = { sounding: config.sounding, bubble: config.bubble, latitude: config.latitude }
+  syncControls(); markPreset(null); showScenario()
+  recreate(); running = true; updatePause()
+  dispatchEvent(new Event('closesheet'))
+  note(`Запущено в зондировании «${loadedSounding.name || 'без названия'}»`, true)
+})
+
 // Rewind: the points the Atmosphere keeps, refreshed when their number changes.
 const rewindSelect = document.querySelector<HTMLSelectElement>('#rewind')!
 let rewindKey = ''
@@ -479,7 +557,7 @@ stateFile.addEventListener('change', async () => {
   try {
     const buffer = await file.arrayBuffer(), state = readState(buffer)
     Object.assign(config, defaults, { wind05: undefined, wind1: undefined, windDir05: undefined, windDir1: undefined, profile: undefined, sounding: undefined, bubbleRadius: undefined, front: undefined, edges: undefined, start: undefined, frameMotion: undefined, top: undefined, nightInversion: undefined }, cleanSettings(state.header.config))
-    fillLowWind(config); baseScenario = null; syncControls(); markPreset(null); showScenario()
+    fillLowWind(config); baseScenario = null; soundingBase = config.sounding ? { sounding: config.sounding } : null; syncControls(); markPreset(null); showScenario()
     // The file's seed: the surface pattern under the domain comes from it and is not in the file.
     recreate(config.seed)
     timeline.points.length = 0
@@ -655,8 +733,9 @@ const prepareCanvas = (id: string) => {
   return { ctx, w, h }
 }
 const T_MIN = -75, T_MAX = 45, Z_MAX = 18
-function drawSounding(){
-  const { ctx, w, h } = prepareCanvas('sounding'), s = sim.sounding()
+/** The sounding chart: the environment, dew point and parcel by height, CAPE and CIN shaded (the side column's, or the sounding dialog's preview). */
+function drawSounding(canvas = 'sounding', s: Sounding = sim.sounding()){
+  const { ctx, w, h } = prepareCanvas(canvas)
   const L = 22, R = w - 30, T = 6, B = h - 14
   const X = (t: number) => L + (t - T_MIN) / (T_MAX - T_MIN) * (R - L), Y = (z: number) => T + (1 - z / Z_MAX) * (B - T)
   const c = chartPalette()

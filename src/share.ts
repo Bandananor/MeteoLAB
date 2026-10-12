@@ -1,9 +1,9 @@
 // Sharing an experiment and taking its results away: a link that carries every setting (not only the seed), and the
 // time series as CSV files. The link is outside input, so decoding accepts only known settings of the right kind.
-import type { SimConfig } from './core'
+import { MIN_SOUNDING_TOP, type SimConfig, type SoundingLevel } from './core'
 
-/** The settings a link may carry, with what each may be: a number, one of a few words, a flag or a pair of numbers. */
-const KINDS: Record<string, 'number' | 'boolean' | 'pair' | readonly string[]> = {
+/** The settings a link may carry, with what each may be: a number, one of a few words, a flag, a pair of numbers or a sounding. */
+const KINDS: Record<string, 'number' | 'boolean' | 'pair' | 'sounding' | readonly string[]> = {
   surfaceTemp: 'number', lapseLow: 'number', lapseMid: 'number', lapseUpper: 'number', tropopause: 'number', stratoWarming: 'number',
   rhSurface: 'number', rhLow: 'number', rhMid: 'number', rhUpper: 'number',
   wind0: 'number', wind05: 'number', wind1: 'number', wind3: 'number', wind6: 'number', wind10: 'number',
@@ -13,7 +13,7 @@ const KINDS: Record<string, 'number' | 'boolean' | 'pair' | readonly string[]> =
   speed: 'number', bubble: 'number', bubbleRadius: 'number', city: 'number',
   surfaceType: ['grass', 'dry', 'water', 'urban'], microphysics: ['warm', 'ice'], transport: ['semi-lagrangian', 'weno'],
   profile: ['weisman-klemp'], domain: ['standard', 'large'], edges: ['periodic', 'relaxed', 'relaxed-x'], start: ['thermals', 'line'],
-  followStorm: 'boolean', frameMotion: 'pair',
+  followStorm: 'boolean', frameMotion: 'pair', sounding: 'sounding',
 }
 /** Numbers from a link are kept within this magnitude (a slider never goes near it). */
 const LIMIT = 1e5
@@ -23,6 +23,38 @@ const fits = (kind: (typeof KINDS)[string], v: unknown) => {
   if (kind === 'boolean') return typeof v === 'boolean'
   if (kind === 'pair') return Array.isArray(v) && v.length === 2 && v.every(x => typeof x === 'number' && Number.isFinite(x) && Math.abs(x) <= LIMIT)
   return typeof v === 'string' && kind.includes(v)
+}
+
+/**
+ * A loaded sounding (SimConfig.sounding) in a link or a file: its name and levels as rows [z m, p Pa, t, td °C, u, v
+ * m/s, qv kg/kg] (null: missing, qv only when the file gave it), rounded so the link stays short (~3-6 KB for a radiosonde).
+ */
+function packSounding(s: NonNullable<SimConfig['sounding']>) {
+  const r = (x: number | null, k: number) => x === null ? null : Math.round(x * k) / k
+  return { n: s.name ?? '', l: s.levels.map(l => [Math.round(l.z), Math.round(l.p), r(l.t, 100), r(l.td, 100), r(l.u, 100), r(l.v, 100), ...(l.qv !== undefined ? [r(l.qv, 1e6)] : [])]) }
+}
+/** Up to this many levels are read back (a radiosonde has 50-200). */
+const SOUNDING_LEVELS = 2000
+/**
+ * A sounding from outside data (a link or a .meteolab file), packed or as stored, or null when anything is off: every
+ * number finite and physical, heights rising from 0 and pressures falling, at least 5 levels, up to MIN_SOUNDING_TOP.
+ */
+function unpackSounding(v: unknown): SimConfig['sounding'] | null {
+  if (!v || typeof v !== 'object') return null
+  const o = v as { n?: unknown; l?: unknown; name?: unknown; levels?: unknown }, name = o.n ?? o.name, rows = o.l ?? o.levels
+  if (!Array.isArray(rows) || rows.length < 5 || rows.length > SOUNDING_LEVELS || (name !== undefined && (typeof name !== 'string' || name.length > 200))) return null
+  const num = (x: unknown, lo: number, hi: number) => typeof x === 'number' && Number.isFinite(x) && x >= lo && x <= hi
+  const opt = (x: unknown, lo: number, hi: number) => x === null || num(x, lo, hi)
+  const levels: SoundingLevel[] = []
+  for (const row of rows) {
+    const [z, p, t, td, u, w, qv] = Array.isArray(row) ? row : row && typeof row === 'object' ? [row.z, row.p, row.t, row.td, row.u, row.v, row.qv] : []
+    if (!num(z, 0, 60_000) || !num(p, 100, 110_000) || !num(t, -120, 60) || !opt(td, -150, 60) || !opt(u, -150, 150) || !opt(w, -150, 150) || !(qv === undefined || num(qv, 0, .05))) return null
+    const last = levels[levels.length - 1]
+    if (last ? !(z > last.z && p < last.p) : z !== 0) return null
+    levels.push({ z, p, t, td: td as number | null, u: u as number | null, v: w as number | null, ...(qv !== undefined ? { qv: qv as number } : {}) })
+  }
+  if (levels[levels.length - 1].z < MIN_SOUNDING_TOP) return null
+  return { ...(typeof name === 'string' && name ? { name } : {}), levels }
 }
 
 const toBase64Url = (text: string) => btoa(String.fromCharCode(...new TextEncoder().encode(text))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
@@ -56,6 +88,7 @@ const RETIRED: Record<string, Partial<SimConfig>> = {
 export function encodeSettings(config: SimConfig, base: SimConfig, scenario: string | null) {
   const values: Record<string, unknown> = {}
   for (const key of Object.keys(KINDS)) {
+    if (key === 'sounding') { if (config.sounding && JSON.stringify(config.sounding) !== JSON.stringify(base.sounding)) values.sounding = packSounding(config.sounding); continue }
     const v = round((config as unknown as Record<string, unknown>)[key]), b = round((base as unknown as Record<string, unknown>)[key])
     if (v !== undefined && JSON.stringify(v) !== JSON.stringify(b)) values[key] = v
   }
@@ -81,7 +114,8 @@ export function decodeSettings(text: string, names: readonly string[]): { scenar
 export function cleanSettings(data: unknown): Partial<SimConfig> {
   const values: Record<string, unknown> = {}
   if (data && typeof data === 'object') for (const [key, v] of Object.entries(data)) {
-    if (Object.hasOwn(KINDS, key) && fits(KINDS[key], v)) values[key] = v
+    if (key === 'sounding') { const s = unpackSounding(v); if (s) values.sounding = s }
+    else if (Object.hasOwn(KINDS, key) && fits(KINDS[key], v)) values[key] = v
     else if (key === 'seed' && Number.isInteger(v) && (v as number) > 0 && (v as number) < 2 ** 32) values.seed = v
   }
   return values as Partial<SimConfig>

@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { SCENARIOS, type SimConfig } from './core'
+import { parseSounding, SCENARIOS, type SimConfig } from './core'
+import oax2014 from '../tests/fixtures/soundings/oax-2014-06-16-19z.sharppy?raw'
 import { SUMMER_DAY } from './core/fixtures'
-import { decodeSettings, encodeSettings, toCsv } from './share'
+import { cleanSettings, decodeSettings, encodeSettings, toCsv } from './share'
 
 const NAMES = SCENARIOS.map(s => s.name)
 const encodeText = (json: string) => btoa(json).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
@@ -50,5 +51,27 @@ describe('shared links and CSV (src/share.ts)', () => {
   it('writes CSV with a header, rounded numbers and quoted text', () => {
     const csv = toCsv([{ t: 30, w: 12.34567, note: 'a, "b"' }, { t: 60, w: NaN, note: '' }], [['t_s', r => r.t], ['w_ms', r => r.w], ['note', r => r.note]])
     expect(csv).toBe('t_s,w_ms,note\n30,12.346,"a, ""b"""\n60,,""\n')
+  })
+
+  it('carries a loaded sounding (2.2): short enough for a link, read back to rounding, junk and short ones refused', () => {
+    const file = parseSounding(oax2014), sounding = { name: 'OAX 140616/1900', levels: file.levels }
+    const link = encodeSettings({ ...SUMMER_DAY, sounding }, SUMMER_DAY, null)
+    // ~150 levels of a radiosonde: a few kilobytes.
+    expect(link.length).toBeLessThan(9000)
+    const back = decodeSettings(link, NAMES)!.values.sounding!
+    expect(back.name).toBe('OAX 140616/1900'); expect(back.levels).toHaveLength(file.levels.length)
+    back.levels.forEach((l, k) => {
+      const o = file.levels[k]
+      expect(l.z).toBeCloseTo(o.z, -1); expect(l.p).toBeCloseTo(o.p, -1); expect(l.t).toBeCloseTo(o.t, 2)
+      expect(l.td === null).toBe(o.td === null); expect(l.u === null).toBe(o.u === null)
+    })
+    // A .meteolab file keeps the config as it is (objects): read back the same way.
+    expect(cleanSettings({ sounding }).sounding!.levels).toHaveLength(file.levels.length)
+    // Refused: heights not rising, a temperature out of range, below 10 km, not an array.
+    const bad = (levels: unknown) => cleanSettings({ sounding: { levels } }).sounding
+    expect(bad(file.levels.map((l, k) => k === 3 ? { ...l, z: 1 } : l))).toBeUndefined()
+    expect(bad(file.levels.map((l, k) => k === 3 ? { ...l, t: 900 } : l))).toBeUndefined()
+    expect(bad(file.levels.filter(l => l.z < 8000))).toBeUndefined()
+    expect(bad('levels')).toBeUndefined()
   })
 })

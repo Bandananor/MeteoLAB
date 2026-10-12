@@ -30,6 +30,19 @@
 .guide-offer .modal__actions { flex-wrap: wrap; }
 .layout-phone .guide-offer .modal__actions > .btn { flex: 1; height: var(--h-touch); }
 
+/* The real-sounding dialog (2.2): a file or pasted text, then the profile, its numbers and what was done to the data. */
+#soundingOpen { margin-top: 8px; }
+.sounding-dialog { width: min(760px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); overflow: auto; }
+.sounding-dialog__input { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.sounding-dialog__text { height: 110px; padding: 8px 10px; resize: vertical; font: var(--fs-label)/1.4 var(--font-mono); white-space: pre; }
+.sounding-dialog__preview { display: flex; flex-direction: column; gap: 12px; }
+.sounding-dialog__head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.sounding-dialog__body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+.sounding-dialog__body .side-chart { height: 260px; }
+.sounding-dialog__notes { margin: 0; padding-left: 18px; font-size: var(--fs-label); line-height: 18px; color: var(--text-2); }
+.sounding-dialog__notes:empty { display: none; }
+@media (max-width: 640px) { .sounding-dialog__body { grid-template-columns: minmax(0, 1fr); } }
+
 /* The left column's notice under the actions. */
 #stateNote .notice__text { min-width: 0; }
 

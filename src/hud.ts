@@ -166,6 +166,8 @@ export class Hud {
     })
     addEventListener('keydown', e => { if (e.key === 'Escape' && this.open) this.show(null) })
     addEventListener('layoutchange', () => this.show(null))
+    // A run started from outside the bar (the sounding dialog): back to the view.
+    addEventListener('closesheet', () => this.show(null))
     // A scenario chosen on the sheet: back to the view.
     document.querySelectorAll('[data-preset]').forEach(b => b.addEventListener('click', () => { if (isPhone()) this.show(null) }))
   }
