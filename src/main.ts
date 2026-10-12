@@ -13,10 +13,11 @@ import { Atmosphere, type Live } from './atmosphere'
 import { RadarPanel } from './radar/panel'
 import { SkewTPanel } from './skewt/panel'
 import { StationPanel } from './station/panel'
-import { CELL_STAGES, MESO_PERSISTENCE, UH_ROTATING, readState, createGrid, describeBalance, DT, Environment, parcelIndices, SCENARIOS, type SimConfig, rotationSummary, SPIN_SUPERCELL, spinProfile, stormIndices, UH_LAYERS, type UhLayer, environmentProfile, parseSounding, soundingProfile, SoundingError, computeSounding, type Sounding } from './core'
+import { CELL_STAGES, MESO_PERSISTENCE, UH_ROTATING, readState, createGrid, describeBalance, DT, Environment, parcelIndices, SCENARIOS, type SimConfig, rotationSummary, SPIN_SUPERCELL, spinProfile, stormIndices, stormMotion, UH_LAYERS, type UhLayer, environmentProfile, parseSounding, soundingProfile, SoundingError, computeSounding, type Sounding } from './core'
 import { type FieldMode, fieldInfo } from './render/fields'
 import type { LayerMode } from './render/view'
 import { cleanSettings, decodeSettings, download, encodeSettings, toCsv } from './share'
+import { HODOGRAPH_NODES, nudgeSounding, sliderNode } from './hodograph'
 import { applyLayout, askGuide, askLayout, Hud, isPhone, savedLayout, suggestedLayout } from './hud'
 import { Timeline } from './timeline'
 import { DEFAULTS as defaults } from './defaults'
@@ -209,6 +210,7 @@ app.innerHTML = `<div class="app">
         ${group('Ветер: годограф и сдвиг', `
           <canvas id="hodograph" class="side-chart side-chart--square"></canvas>
           <div class="legend"><span><i style="--c:#c4553a"></i>0–3 км</span><span><i style="--c:#4f8f5b"></i>3–6 км</span><span><i style="--c:#3f6fa3"></i>6–10 км</span></div>
+          <div class="hodo-edit"><span class="t-caption" id="hodoHint"></span><button class="btn btn--quiet btn--xs" id="hodoReset" type="button" hidden>Вернуть ветер</button></div>
           <div><div class="stat"><span>Сдвиг ветра 0–6 км</span><span class="stat__v" id="shear">—</span></div><div class="t-caption" id="shearHint"></div></div>`, { id: 'hodograph' })}
         ${group('Все показатели грозы', `<div>
           ${stat('downdraft', 'Макс. нисходящий поток', 'м/с')}
@@ -777,10 +779,88 @@ function drawSpin(){
   const c = p.correlation, layer = rotationSummary(sim.model.rotation, p)
   text('spinNote', c === null ? layer : `${layer}. Корреляция w–ζ 2–6 км ${c.toFixed(2)}: ${c >= SPIN_SUPERCELL ? 'поток и вращение совпадают, как в суперячейке' : 'вращение рядом с потоком, не в нём'}`)
 }
+// The hodograph editor (hodograph.ts): handles at the wind nodes of 0-10 km. A drag shows the new hodograph and storm
+// motion at once; the drop restarts the run, as a wind slider does. The handles show the wind the settings ask for, the
+// line the live one (the domain mean, which the storm slowly changes).
+/** The environment the settings ask for, without the storm: for the handles and the drag's preview. */
+const settingsEnv = (c: SimConfig) => new Environment(c, sim.model.grid, environmentProfile(c, sim.model.grid.height))
+const nodeWinds = (env: Environment) => HODOGRAPH_NODES.map(n => env.windUV(n.z))
+let handles: { key: string; sounding: SimConfig['sounding']; winds: (readonly [number, number])[] } | null = null
+const handleWinds = () => {
+  const key = JSON.stringify(HODOGRAPH_NODES.map(n => [config[n.speed], config[n.dir]]))
+  if (!handles || handles.key !== key || handles.sounding !== config.sounding) handles = { key, sounding: config.sounding, winds: nodeWinds(settingsEnv(config)) }
+  return handles.winds
+}
+interface HodoDrag { k: number; maxRing: number; start: readonly [number, number]; config: SimConfig; preview: { wind: Sounding['wind']; right: readonly [number, number]; left: readonly [number, number]; winds: (readonly [number, number])[] } | null }
+let hodoDrag: HodoDrag | null = null, hodoGeometry = { cx: 0, cy: 0, scale: 1, maxRing: 20 }
+/** The sounding before the hodograph was first edited, while the edited one is in use (for «Вернуть ветер»). */
+let windOriginal: { edited: SimConfig['sounding']; original: SimConfig['sounding'] } | null = null
+const hodoCanvas = document.querySelector<HTMLCanvasElement>('#hodograph')!
+const hodoPoint = (e: PointerEvent) => { const r = hodoCanvas.getBoundingClientRect(), g = hodoGeometry; return [(e.clientX - r.left - g.cx) / g.scale, (g.cy - (e.clientY - r.top)) / g.scale] as const }
+/** The handle under the pointer (within 14 px), or -1. */
+const handleAt = (e: PointerEvent) => {
+  const [u, v] = hodoPoint(e), winds = handleWinds()
+  let best = -1, near = 14 / hodoGeometry.scale
+  winds.forEach(([hu, hv], k) => { const d = Math.hypot(hu - u, hv - v); if (d < near) { near = d; best = k } })
+  return best
+}
+const dragTo = (drag: HodoDrag, u: number, v: number): SimConfig => {
+  if (!config.sounding) {
+    const max = Number(document.querySelector<HTMLInputElement>(`input[data-key="${HODOGRAPH_NODES[drag.k].speed}"]`)!.max)
+    return { ...config, ...sliderNode(drag.k, u, v, max) }
+  }
+  return { ...config, sounding: { ...config.sounding, levels: nudgeSounding(config.sounding.levels, drag.k, u - drag.start[0], v - drag.start[1]) } }
+}
+hodoCanvas.addEventListener('pointerdown', e => {
+  if (config.profile) return
+  // Drawn now, so the hit test uses the scale of what is on the screen.
+  drawHodograph(); const k = handleAt(e)
+  if (k < 0) return
+  e.preventDefault(); hodoCanvas.setPointerCapture(e.pointerId)
+  hodoDrag = { k, maxRing: hodoGeometry.maxRing, start: handleWinds()[k], config, preview: null }
+})
+hodoCanvas.addEventListener('pointermove', e => {
+  if (!hodoDrag) { hodoCanvas.style.cursor = !config.profile && handleAt(e) >= 0 ? 'grab' : ''; return }
+  const [u, v] = hodoPoint(e), c = dragTo(hodoDrag, u, v), env = settingsEnv(c), m = stormMotion(env)
+  hodoDrag.config = c; hodoDrag.preview = { wind: computeSounding(c, env, sim.model.grid.height).wind, right: m.rightMover, left: m.leftMover, winds: nodeWinds(env) }
+  hodoCanvas.style.cursor = 'grabbing'; drawHodograph()
+})
+const endDrag = (apply: boolean) => {
+  const drag = hodoDrag
+  hodoDrag = null; hodoCanvas.style.cursor = ''
+  if (!drag) return
+  if (apply && drag.preview) {
+    if (config.sounding) {
+      const original = windOriginal?.edited === config.sounding ? windOriginal.original : config.sounding
+      config.sounding = drag.config.sounding; windOriginal = { edited: config.sounding, original }
+    } else { Object.assign(config, drag.config); syncControls(); markPreset(null) }
+    recreate(); running = true; updatePause()
+  }
+  drawHodograph()
+}
+hodoCanvas.addEventListener('pointerup', () => endDrag(true))
+hodoCanvas.addEventListener('pointercancel', () => endDrag(false))
+hodoCanvas.addEventListener('lostpointercapture', () => endDrag(true))
+/** The wind of the scenario (sliders) or of the sounding as loaded, when the hodograph has moved it. */
+const windChanged = () => {
+  if (config.profile) return false
+  if (config.sounding) return windOriginal?.edited === config.sounding
+  const base = baseConfig()
+  return HODOGRAPH_NODES.some(n => Math.abs(Number(config[n.speed]) - Number(base[n.speed])) > .05 || Math.abs(Number(config[n.dir]) - Number(base[n.dir])) > .5)
+}
+document.querySelector('#hodoReset')!.addEventListener('click', () => {
+  if (config.sounding) { if (windOriginal?.edited === config.sounding) config.sounding = windOriginal.original; windOriginal = null }
+  else { const base = baseConfig(); for (const n of HODOGRAPH_NODES) Object.assign(config, { [n.speed]: base[n.speed], [n.dir]: base[n.dir] }); syncControls() }
+  recreate(); running = true; updatePause(); drawHodograph()
+})
 function drawHodograph(){
-  const { ctx, w, h } = prepareCanvas('hodograph'), wind = sim.sounding().wind
-  const maxSpeed = Math.max(...wind.map(p => Math.hypot(p.u, p.v))), maxRing = Math.max(20, Math.ceil(maxSpeed / 10) * 10)
+  const { ctx, w, h } = prepareCanvas('hodograph'), preview = hodoDrag?.preview, wind = preview?.wind ?? sim.sounding().wind
+  const editable = !config.profile, winds = editable ? preview?.winds ?? handleWinds() : []
+  const maxSpeed = Math.max(...wind.map(p => Math.hypot(p.u, p.v)), ...winds.map(([u, v]) => Math.hypot(u, v)))
+  // The rings stay put while a handle is dragged (they would run away from the pointer).
+  const maxRing = hodoDrag?.maxRing ?? Math.max(20, Math.ceil(maxSpeed / 10) * 10)
   const cx = w / 2, cy = h / 2, scale = (Math.min(w, h) / 2 - 12) / maxRing
+  hodoGeometry = { cx, cy, scale, maxRing }
   const c = chartPalette()
   ctx.strokeStyle = c.grid; ctx.fillStyle = c.label; ctx.lineWidth = 1
   ctx.beginPath(); ctx.moveTo(cx - maxRing * scale, cy); ctx.lineTo(cx + maxRing * scale, cy); ctx.moveTo(cx, cy - maxRing * scale); ctx.lineTo(cx, cy + maxRing * scale); ctx.stroke()
@@ -788,7 +868,7 @@ function drawHodograph(){
   ctx.fillText('С', cx + 3, 10); ctx.fillText('В', w - 10, cy - 3)
   const P = (p: { u: number, v: number }) => [cx + p.u * scale, cy - p.v * scale] as const
   // Bunkers right (RM) and left (LM) movers.
-  for (const [label, [u, v]] of [['RM', sim.storm.rightMover], ['LM', sim.storm.leftMover]] as const) { const [x, y] = P({ u, v }); ctx.fillStyle = '#7b3fa0'; ctx.beginPath(); ctx.arc(x, y, 2.6, 0, Math.PI * 2); ctx.fill(); ctx.fillText(label, x + 4, y + 9) }
+  for (const [label, [u, v]] of [['RM', preview?.right ?? sim.storm.rightMover], ['LM', preview?.left ?? sim.storm.leftMover]] as const) { const [x, y] = P({ u, v }); ctx.fillStyle = '#7b3fa0'; ctx.beginPath(); ctx.arc(x, y, 2.6, 0, Math.PI * 2); ctx.fill(); ctx.fillText(label, x + 4, y + 9) }
   ctx.fillStyle = c.label
   ctx.lineWidth = 2.2; ctx.lineCap = 'round'
   for (let i = 0; i + 1 < wind.length; i++) {
@@ -798,6 +878,11 @@ function drawHodograph(){
   }
   ctx.fillStyle = c.text
   for (const z of [0, 1, 3, 6, 10]) { const p = wind.find(q => Math.abs(q.z - z) < 1e-6); if (!p) continue; const [x, y] = P(p); ctx.beginPath(); ctx.arc(x, y, 2.4, 0, Math.PI * 2); ctx.fill(); ctx.fillText(`${z}`, x + 4, y - 3) }
+  // Handles: rings at the wind the settings ask for, the dragged one filled.
+  ctx.lineWidth = 1.5
+  winds.forEach(([u, v], k) => { const [x, y] = P({ u, v }); ctx.strokeStyle = c.text; ctx.beginPath(); ctx.arc(x, y, 5.5, 0, Math.PI * 2); ctx.stroke(); if (hodoDrag?.k === k) { ctx.globalAlpha = .35; ctx.fillStyle = c.text; ctx.fill(); ctx.globalAlpha = 1 } })
+  text('hodoHint', !editable ? 'Ветер задан формулами WK и здесь не меняется.' : config.sounding ? 'Кружки 0; 0,5; 1; 3; 6 и 10 км можно тянуть: ветер зондирования поправится между соседними кружками, расчёт начнётся заново.' : 'Кружки 0; 0,5; 1; 3; 6 и 10 км можно тянуть, как ползунки ветра: расчёт начнётся заново.')
+  document.querySelector<HTMLElement>('#hodoReset')!.hidden = !windChanged()
   const w0 = wind[0], w6 = wind.find(p => Math.abs(p.z - 6) < 1e-6)!, shear = Math.hypot(w6.u - w0.u, w6.v - w0.v)
   text('shear', `${shear.toFixed(0)} м/с`)
   text('shearHint', shear < 10 ? 'слабый: одиночные ячейки' : shear < 20 ? 'умеренный: мультиячейки' : 'сильный: возможны суперячейки')
