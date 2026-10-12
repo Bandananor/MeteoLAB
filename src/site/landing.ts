@@ -1,6 +1,6 @@
 // The home page: the scenario cards (from the scenarios themselves, with their environment's numbers) and the facts.
 import './site'
-import { createGrid, DT, Environment, parcelIndices, SCENARIOS, type SimConfig, stormIndices, weismanKlemp } from '../core'
+import { createGrid, DT, Environment, parcelIndices, SCENARIOS, type SimConfig, stormIndices, environmentProfile } from '../core'
 import { DEFAULTS } from '../defaults'
 
 const grid = createGrid(), number = (v: number, digits = 1) => v.toFixed(digits).replace('.', ',')
@@ -8,7 +8,7 @@ const WORDS = ['ноль', 'один', 'два', 'три', 'четыре', 'пя
 
 document.querySelector('#scenarioCards')!.innerHTML = SCENARIOS.map(s => {
   const c: SimConfig = { ...DEFAULTS, ...s.values }
-  const env = new Environment(c, grid, c.profile === 'weisman-klemp' ? weismanKlemp({ qvMax: .016 }) : undefined), p = parcelIndices(env, grid.height), k = stormIndices(env, p)
+  const env = new Environment(c, grid, environmentProfile(c, grid.height)), p = parcelIndices(env, grid.height), k = stormIndices(env, p)
   const meso = s.mesocyclone === true
   return `<a class="scenario-card${meso ? ' is-meso' : ''}" href="simulator/?scenario=${encodeURIComponent(s.name)}"><h3>${s.name}</h3><p>${s.summary}</p>`
     + `<div class="scenario-card__nums"><span>ML CAPE ${number(p.ml.cape / 1000)} кДж/кг</span><span>сдвиг 0–6 км ${Math.round(k.shear06)} м/с</span></div>`

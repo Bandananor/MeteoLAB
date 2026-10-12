@@ -53,7 +53,7 @@ export function liveSounding(m: LiveSource): LiveSounding {
   }
   const base = m.env
   const env = new Environment(m.config, m.grid, {
-    theta: z => at(theta, z), qv: z => at(q, z), wind: z => [at(u, z), at(v, z)],
+    theta: z => at(theta, z), qv: z => at(q, z), wind: z => [at(u, z), at(v, z)], surfacePressure: base.pressureAt(0),
     // Only for completeness (qv wins): the relative humidity at the starting pressure.
     rh: z => { const p = base.pressureAt(z); return at(q, z) / qsatP(at(theta, z) * (p / 100000) ** KAPPA - 273.15, p) },
   })

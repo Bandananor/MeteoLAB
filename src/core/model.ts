@@ -5,7 +5,7 @@ import { createGrid, domainGrid, type Grid, shiftedLevel } from './grid'
 import { domainMotion } from './kinematics'
 import { clamp, lerp, mod, mulberry32 } from './math'
 import { FluxTransport, RK3 } from './advection'
-import { weismanKlemp } from './profiles'
+import { environmentProfile } from './profiles'
 import { SMAGORINSKY, Turbulence } from './turbulence'
 import { graupelFallSpeed, graupelProcesses } from './graupel'
 import { hailFallSpeed, hailMaxDiameter, hailProcesses } from './hail'
@@ -145,7 +145,7 @@ export class AtmosphereModel implements TaskModel {
   constructor(config: SimConfig, grid: Grid = createGrid(domainGrid(config.domain, config.top)), profile?: EnvironmentProfile, options: ModelOptions = {}) {
     this.config = config; this.grid = grid; this.memory = options.memory ?? PRIVATE_MEMORY
     const shared = (name: string, length = grid.n) => this.memory.f32(name, length)
-    this.env = new Environment(config, grid, profile ?? (config.profile === 'weisman-klemp' ? weismanKlemp({ qvMax: .016 }) : undefined))
+    this.env = new Environment(config, grid, profile ?? environmentProfile(config, grid.height))
     this.frame = config.followStorm === false ? [0, 0] : config.frameMotion ?? domainMotion(this.env)
     this.uEnv = this.env.u.map(u => u - this.frame[0]); this.vEnv = this.env.v.map(v => v - this.frame[1])
     this.patternNow = shared('patternNow', grid.layer); this.cityNow = shared('cityNow', grid.layer); this.groundCell = new Int32Array(grid.layer * 4); this.groundWeight = new Float64Array(grid.layer * 4)

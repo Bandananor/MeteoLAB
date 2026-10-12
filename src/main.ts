@@ -13,7 +13,7 @@ import { Atmosphere, type Live } from './atmosphere'
 import { RadarPanel } from './radar/panel'
 import { SkewTPanel } from './skewt/panel'
 import { StationPanel } from './station/panel'
-import { CELL_STAGES, MESO_PERSISTENCE, UH_ROTATING, readState, createGrid, describeBalance, DT, Environment, parcelIndices, SCENARIOS, type SimConfig, rotationSummary, SPIN_SUPERCELL, spinProfile, stormIndices, UH_LAYERS, type UhLayer, weismanKlemp } from './core'
+import { CELL_STAGES, MESO_PERSISTENCE, UH_ROTATING, readState, createGrid, describeBalance, DT, Environment, parcelIndices, SCENARIOS, type SimConfig, rotationSummary, SPIN_SUPERCELL, spinProfile, stormIndices, UH_LAYERS, type UhLayer, environmentProfile } from './core'
 import { type FieldMode, fieldInfo } from './render/fields'
 import type { LayerMode } from './render/view'
 import { cleanSettings, decodeSettings, download, encodeSettings, toCsv } from './share'
@@ -46,7 +46,7 @@ const tip = (id: string, title: string, text: string, scale = '', foot = '') =>
 // The scenario note under the buttons ends with the environment's own numbers (standard parcels, MetPy conventions).
 const presets = SCENARIOS.map(s => {
   const c: SimConfig = { ...defaults, ...s.values }, grid = createGrid()
-  const env = new Environment(c, grid, c.profile === 'weisman-klemp' ? weismanKlemp({ qvMax: .016 }) : undefined), p = parcelIndices(env, grid.height), k = stormIndices(env, p)
+  const env = new Environment(c, grid, environmentProfile(c, grid.height)), p = parcelIndices(env, grid.height), k = stormIndices(env, p)
   const minus = (v: number) => String(Math.round(v)).replace('-', '−')
   return { ...s, nums: `ML CAPE ${minus(p.ml.cape)} Дж/кг · ML CIN ${minus(p.ml.cin)} · сдвиг 0–6 км ${Math.round(k.shear06)} м/с · SRH 0–1 км ${Math.round(k.srh01)} м²/с²` }
 })
@@ -399,7 +399,7 @@ surfaceSelect.addEventListener('change', () => {
 })
 document.querySelectorAll<HTMLButtonElement>('[data-preset]').forEach(button => button.addEventListener('click', () => {
   const index = Number(button.dataset.preset)
-  Object.assign(config, defaults, { speed: config.speed, followStorm: config.followStorm, domain: config.domain, wind05: undefined, wind1: undefined, windDir05: undefined, windDir1: undefined, profile: undefined, bubbleRadius: undefined, front: undefined, edges: undefined, start: undefined, frameMotion: undefined, top: undefined, nightInversion: undefined, transport: 'weno' }, presets[index].values)
+  Object.assign(config, defaults, { speed: config.speed, followStorm: config.followStorm, domain: config.domain, wind05: undefined, wind1: undefined, windDir05: undefined, windDir1: undefined, profile: undefined, sounding: undefined, bubbleRadius: undefined, front: undefined, edges: undefined, start: undefined, frameMotion: undefined, top: undefined, nightInversion: undefined, transport: 'weno' }, presets[index].values)
   fillLowWind(config)
   baseScenario = index
   syncControls()
@@ -478,7 +478,7 @@ stateFile.addEventListener('change', async () => {
   if (!file) return
   try {
     const buffer = await file.arrayBuffer(), state = readState(buffer)
-    Object.assign(config, defaults, { wind05: undefined, wind1: undefined, windDir05: undefined, windDir1: undefined, profile: undefined, bubbleRadius: undefined, front: undefined, edges: undefined, start: undefined, frameMotion: undefined, top: undefined, nightInversion: undefined }, cleanSettings(state.header.config))
+    Object.assign(config, defaults, { wind05: undefined, wind1: undefined, windDir05: undefined, windDir1: undefined, profile: undefined, sounding: undefined, bubbleRadius: undefined, front: undefined, edges: undefined, start: undefined, frameMotion: undefined, top: undefined, nightInversion: undefined }, cleanSettings(state.header.config))
     fillLowWind(config); baseScenario = null; syncControls(); markPreset(null); showScenario()
     // The file's seed: the surface pattern under the domain comes from it and is not in the file.
     recreate(config.seed)

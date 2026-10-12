@@ -1,3 +1,5 @@
+import type { SoundingLevel } from './soundingfile'
+
 export type SurfaceType = 'grass' | 'dry' | 'water' | 'urban'
 
 export interface SimConfig {
@@ -24,6 +26,12 @@ export interface SimConfig {
   microphysics?: 'warm' | 'ice'
   /** Transport scheme; overrides AtmosphereModel.transport (default WENO) when set (the UI switch). */
   transport?: 'semi-lagrangian' | 'weno'
+  /**
+   * A real sounding instead of the slider profile (roadmap 2.2; soundingfile.ts): its levels from the station up and
+   * a name to show (station, time). Takes over temperature, humidity and wind; checked when it is loaded
+   * (soundingProfile throws on one that ends below MIN_SOUNDING_TOP).
+   */
+  sounding?: { name?: string; levels: SoundingLevel[] }
   /** An analytic environment instead of the slider profile: 'weisman-klemp' (WK82 sounding, 16 g/kg, quarter-circle hodograph, one thermal). */
   profile?: 'weisman-klemp'
   /**

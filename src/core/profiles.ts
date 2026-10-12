@@ -1,5 +1,16 @@
+import type { SimConfig } from './config'
 import { CP, G } from './constants'
 import type { EnvironmentProfile } from './environment'
+import { soundingProfile } from './soundingfile'
+
+/**
+ * The environment a configuration asks for instead of the slider profile, or undefined for the sliders: a loaded
+ * sounding (up to `height`, the domain's top, plus the 2 km the base state is integrated above it) or Weisman-Klemp.
+ */
+export function environmentProfile(config: SimConfig, height: number): EnvironmentProfile | undefined {
+  if (config.sounding) return soundingProfile(config.sounding, height + 2000).profile
+  return config.profile === 'weisman-klemp' ? weismanKlemp({ qvMax: .016 }) : undefined
+}
 
 export interface WeismanKlempOptions {
   /** Radius of the quarter-circle hodograph over the lowest 2 km, m/s. */ radius?: number

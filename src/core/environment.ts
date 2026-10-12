@@ -24,6 +24,8 @@ export interface EnvironmentProfile {
   qvMax?: number
   /** The vapour mixing ratio itself, kg/kg, instead of rh (a measured profile: the live sounding, live.ts); capped at saturation. */
   qv?(z: number): number
+  /** Pressure at the ground, Pa (absent: 1013.25 hPa) — a real sounding's station pressure (soundingfile.ts). */
+  surfacePressure?: number
 }
 
 /** The horizontally uniform environment (base state) the model starts from and relaxes towards. */
@@ -61,7 +63,7 @@ export class Environment {
    */
   private integrateHydrostatic(top: number) {
     const n = Math.ceil(top / PRESSURE_STEP) + 1, lnP = new Float64Array(n)
-    lnP[0] = Math.log(SURFACE_PRESSURE)
+    lnP[0] = Math.log(this.profile?.surfacePressure ?? SURFACE_PRESSURE)
     const tv = (z: number, p: number) => { const t = this.temperatureAt(z, p), q = this.mixingRatio(z, t, p); return (t + 273.15) * (1 + .61 * q) }
     for (let k = 0; k + 1 < n; k++) {
       const z = k * PRESSURE_STEP, p = Math.exp(lnP[k])
