@@ -13,7 +13,7 @@ function stepTime(model: AtmosphereModel, steps = 6) {
 }
 
 describe('large domain (96 x 72 km)', () => {
-  it('costs about 4x the standard domain per step: nothing in the step grows faster than the area', () => {
+  it('costs about 4x the standard domain per step: nothing in the step grows faster than the area', { timeout: 120_000, retry: 2 }, () => {
     const standard = new AtmosphereModel({ ...SUMMER_DAY }, createGrid(DEFAULT_GRID)), large = new AtmosphereModel({ ...SUMMER_DAY }, createGrid(LARGE_GRID))
     // Three alternating rounds, the fastest step of each domain: timed once, first, before the JIT had warmed up, the
     // standard one came out slow on a cloud runner (ratio 2.3), and other test files running alongside disturb any one timing.
@@ -22,8 +22,10 @@ describe('large domain (96 x 72 km)', () => {
     const ratio = big / small
     const area = (LARGE_GRID.nx * LARGE_GRID.ny) / (DEFAULT_GRID.nx * DEFAULT_GRID.ny)
     // 4x the columns. The old O(n^2) Fourier transform made it ~6x: the upper bound is what matters; the lower one only
-    // catches a broken measurement (allow 2-5.5x for timing noise).
+    // catches a broken measurement (allow 2-5.5x for timing noise). Up to three tries: on a shared cloud runner, with
+    // other test files running alongside, one try once measured 7.0 (2026-10-12; 3.98-4.07 on a quiet laptop) — a real
+    // cost that grows faster than the area fails every try.
     expect(area).toBe(4)
     expect(ratio).toBeGreaterThan(2); expect(ratio).toBeLessThan(5.5)
-  }, 120_000)
+  })
 })
