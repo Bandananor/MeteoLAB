@@ -4,6 +4,7 @@ import { SUMMER_DAY } from './fixtures'
 import oax2014 from '../../tests/fixtures/soundings/oax-2014-06-16-19z.sharppy?raw'
 import oun1999 from '../../tests/fixtures/soundings/oun-1999-05-04-00z.txt?raw'
 import oun2011 from '../../tests/fixtures/soundings/oun-2011-05-22-12z.txt?raw'
+import smolensk from '../../tests/fixtures/soundings/smolensk-2024-07-04-12z.html?raw'
 import wk82 from '../../tests/fixtures/soundings/weisman-klemp.input_sounding?raw'
 
 // Real soundings (tests/fixtures/soundings/README.md: sources) and small hand-made files of the other formats.
@@ -34,6 +35,23 @@ describe('sounding files (2.2): reading the formats', () => {
     expect(s.levels[s.levels.length - 1]).toMatchObject({ p: 10000, t: -64.3 })
     const html = parseSounding(`<HTML><TITLE>University of Wyoming</TITLE><BODY><H2>${text.split('\n')[0]}</H2>\n<PRE>${text.split('\n').slice(1).join('\n')}</PRE><H3>Station information</H3><PRE>\n Station latitude: 35.18\n Station elevation: 357.0\n</PRE></BODY></HTML>`)
     expect(html.levels).toEqual(s.levels); expect(html.latitude).toBe(35.18); expect(html.elevation).toBe(357)
+  })
+
+  it('the newer Wyoming page (2025): wind speed SPED in m/s, not SKNT in knots; title and elevation in the new places', () => {
+    // A user's report 12.10.2026: this page gave zero wind (the speed column was not found) and a false «knots» note.
+    const s = parseSounding(smolensk)
+    expect(s.format).toBe('wyoming'); expect(s.station).toBe('26781 SMOLENSK'); expect(s.time).toBe('12 UTC 04 Jul 2024')
+    expect(s.latitude).toBe(54.75); expect(s.elevation).toBe(239)
+    // 980 hPa at 239 m: 110° at 3.0 m/s (from the east-south-east).
+    expect(s.levels[0]).toMatchObject({ p: 98000, z: 0, t: 29.4, td: 21.4 })
+    expect(Math.hypot(s.levels[0].u!, s.levels[0].v!)).toBeCloseTo(3, 6); expect(s.levels[0].u!).toBeCloseTo(-3 * Math.sin(110 * Math.PI / 180), 6)
+    // 500 hPa: 180° at 18 m/s; only the top level (24.8 hPa) has no wind in the data.
+    const l500 = s.levels.find(l => l.p === 50000)!
+    expect(l500.v!).toBeCloseTo(18, 6); expect(s.levels.filter(l => l.u === null)).toHaveLength(1)
+    expect(s.notes.some(n => n.includes('узлов'))).toBe(false)
+    // Shear 0-6 km is no longer zero.
+    const sp = soundingProfile(s, 20_000), env = new Environment(SUMMER_DAY, createGrid(domainGrid(undefined)), sp.profile), [u0, v0] = env.windUV(0), [u6, v6] = env.windUV(6000)
+    expect(Math.hypot(u6 - u0, v6 - v0)).toBeGreaterThan(10)
   })
 
   it('SHARPpy %RAW%: -9999 is missing, wind in knots, heights above the station', () => {

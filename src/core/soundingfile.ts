@@ -64,12 +64,17 @@ function stripHtml(text: string) {
 interface Raw { p: number; z: number; t: number; td: number | null; u: number | null; v: number | null; qv?: number }
 interface Read { format: SoundingFormat; levels: Raw[]; agl: boolean; notes: string[]; station?: string; time?: string; latitude?: number; elevation?: number }
 
-/** University of Wyoming TEXT:LIST: fixed 7-character columns PRES HGHT TEMP DWPT RELH MIXR DRCT SKNT …, blanks = missing. */
+/**
+ * University of Wyoming TEXT:LIST: fixed 7-character columns PRES HGHT TEMP DWPT RELH MIXR DRCT SKNT …, blanks = missing.
+ * The site's newer pages (weather.uwyo.edu/wsgi, 2025) give the wind speed as SPED in m/s instead of SKNT in knots, a
+ * title "Observations for Station 26781 at 12 UTC 04 Jul 2024" with the name on the next line, and the elevation in
+ * a table ("Station Elevation 239"); both kinds are read.
+ */
 function wyoming(text: string): Read {
   const lines = text.split(/\r?\n/), notes: string[] = []
   const head = lines.findIndex(l => /^\s*PRES\s+HGHT\s+TEMP/.test(l)), names = lines[head].trim().split(/\s+/)
   const col = (name: string) => names.indexOf(name)
-  const [cp, cz, ct, cd, cr, cdir, csp] = ['PRES', 'HGHT', 'TEMP', 'DWPT', 'RELH', 'DRCT', 'SKNT'].map(col)
+  const [cp, cz, ct, cd, cr, cdir] = ['PRES', 'HGHT', 'TEMP', 'DWPT', 'RELH', 'DRCT'].map(col), knots = col('SKNT') >= 0, csp = knots ? col('SKNT') : col('SPED')
   const levels: Raw[] = []
   for (const line of lines.slice(head + 1)) {
     if (/^\s*-{5,}/.test(line) || /^\s*hPa/.test(line)) continue
@@ -79,14 +84,16 @@ function wyoming(text: string): Read {
     const p = field(cp), z = field(cz), t = field(ct)
     if (!Number.isFinite(p) || !Number.isFinite(z)) continue
     const td = field(cd), rh = field(cr), dir = field(cdir), sp = field(csp)
-    const [u, v] = Number.isFinite(dir) && Number.isFinite(sp) ? windUV(dir, sp * KNOT) : [null, null]
+    const [u, v] = Number.isFinite(dir) && Number.isFinite(sp) ? windUV(dir, knots ? sp * KNOT : sp) : [null, null]
     levels.push({ p, z, t, td: Number.isFinite(td) ? td : Number.isFinite(rh) && Number.isFinite(t) ? dewFromRh(t, rh) : null, u, v })
   }
-  notes.push('Ветер переведён из узлов в м/с')
-  // The title and the station block of a full page.
-  const title = /^\s*(\d{5})\s+(\S+.*?)\s+Observations at\s+(.+?)\s*$/m.exec(text)
-  const lat = /Station latitude:\s*(-?[\d.]+)/.exec(text), elev = /Station elevation:\s*(-?[\d.]+)/.exec(text)
-  return { format: 'wyoming', levels, agl: false, notes, station: title ? `${title[1]} ${title[2]}` : undefined, time: title?.[3], latitude: lat ? Number(lat[1]) : undefined, elevation: elev ? Number(elev[1]) : undefined }
+  if (knots) notes.push('Ветер переведён из узлов в м/с')
+  // The title and the station block of a full page: "72357 OUN Norman Observations at 12Z 22 May 2011", or the newer
+  // "Observations for Station 26781 at 12 UTC 04 Jul 2024" followed by the station's name.
+  const title = /^\s*(\d{5})\s+(\S+.*?)\s+Observations at\s+(.+?)\s*$/m.exec(text), newer = /Observations for Station\s+(\S+)\s+at\s+(.+?)\s*\n\s*([^\n]*\S)/.exec(text)
+  const lat = /latitude:?\s*(-?[\d.]+)/i.exec(text), elev = /Station elevation:?\s*(-?[\d.]+)/i.exec(text)
+  const station = title ? `${title[1]} ${title[2]}` : newer ? `${newer[1]} ${newer[3].split(',')[0].trim()}` : undefined
+  return { format: 'wyoming', levels, agl: false, notes, station, time: title?.[3] ?? newer?.[2], latitude: lat ? Number(lat[1]) : undefined, elevation: elev ? Number(elev[1]) : undefined }
 }
 
 /** SHARPpy / SPC: %RAW% then "PRES, HGHT, TEMP, DWPT, WDIR, WSPD" per line (wind in knots), -9999 = missing, %END%. */
