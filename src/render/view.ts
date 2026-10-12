@@ -355,8 +355,10 @@ export class StormView {
 
   render() {
     const s = this.settings, m = this.model, { dx, dy } = m.grid
-    const width = Math.max(2, this.canvas.clientWidth), height = Math.max(2, this.canvas.clientHeight)
-    if (this.canvas.width !== Math.floor(width * Math.min(devicePixelRatio, 1.5)) || this.canvas.height !== Math.floor(height * Math.min(devicePixelRatio, 1.5))) {
+    const width = Math.max(2, this.canvas.clientWidth), height = Math.max(2, this.canvas.clientHeight), ratio = this.renderer.getPixelRatio()
+    // Against the renderer's own pixel ratio (1 on a phone): compared with 1.5 there, the canvas was resized, and its
+    // drawing buffer reallocated, on every frame — on a weak phone GPU until the WebGL context was lost (a black view).
+    if (this.canvas.width !== Math.floor(width * ratio) || this.canvas.height !== Math.floor(height * ratio)) {
       this.renderer.setSize(width, height, false); this.camera.aspect = width / height; this.camera.updateProjectionMatrix()
     }
     const field = s.field === 'composite' ? null : s.field

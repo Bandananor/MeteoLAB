@@ -161,6 +161,7 @@ app.innerHTML = `<div class="app">
       <div class="viewport">
         <canvas id="sim" width="960" height="600"></canvas>
         <div class="cell-labels" id="cellLabels"></div>
+        <div class="gl-lost" id="glLost" role="alert" hidden><div><p><b>3D-вид отключён браузером</b> — ему не хватило памяти видеокарты (так бывает на телефоне при многих открытых вкладках или после переключения приложений). Расчёт идёт дальше; вид может вернуться сам.</p><button class="btn btn--primary" id="glReload" type="button">Перезапустить с теми же настройками</button></div></div>
         <div class="ov-tl"><button class="ov-toggle" id="flowToggle" aria-pressed="false">Потоки →</button><button class="ov-toggle" id="precipToggle" aria-pressed="false" title="Снежинки выше уровня 0 °C тают в капли по пути вниз">Снег и дождь</button><button class="ov-toggle" id="mesoToggle" aria-pressed="true" title="Кольцо над вращающимся восходящим потоком (UH 2–5 км выше порога вращения)">Мезоциклон</button><button class="ov-toggle" id="swathToggle" aria-pressed="false" title="Сколько дождя выпало на землю с начала расчёта: голубой до 5 мм, зелёный до 10, жёлтый до 25, оранжевый до 50, красный больше">Сумма осадков</button></div>
         <div class="ov-bl"><span class="ov-badge" id="surfaceReadout">ТРАВА</span><span class="ov-chip">ЛКМ — вращение · ПКМ — сдвиг · колесо — масштаб · 2× клик — термик</span></div>
         <div class="ov-br"><div class="ov-legend" id="cloudLegend"><span><i style="--c:#d8e0e3"></i>облачная вода</span><span><i style="--c:#4e7692"></i>осадки</span><span><i style="--c:#b68b59"></i>восходящий</span><span><i style="--c:#7189a5"></i>нисходящий</span></div></div>
@@ -453,12 +454,16 @@ const note = (message: string, ok = false) => {
 }
 stateNote.querySelector('.notice__close')!.addEventListener('click', () => { clearTimeout(noteTimer); stateNote.hidden = true })
 // The link to this run: the settings that differ from the scenario (or the defaults) and the run's seed.
-document.querySelector('#share')!.addEventListener('click', () => {
-  // Relative to the scenario last chosen (changed sliders unmark it but it is still the starting point).
+/** The link to this run: its settings relative to the scenario last chosen (changed sliders unmark it but it is still the starting point). */
+const runLink = () => {
   const url = new URL(location.href)
   // The base a link is read against: the defaults and the scenario (not the loaded sounding — the link must carry it).
   const linkBase: SimConfig = { ...defaults, ...(baseScenario === null ? {} : SCENARIOS[baseScenario].values) }; fillLowWind(linkBase)
   url.searchParams.set('cfg', encodeSettings(config, linkBase, baseScenario === null ? null : SCENARIOS[baseScenario].name)); url.searchParams.set('seed', String(config.seed))
+  return url
+}
+document.querySelector('#share')!.addEventListener('click', () => {
+  const url = runLink()
   navigator.clipboard.writeText(url.href).then(() => note('Ссылка на опыт скопирована', true), () => { history.replaceState(null, '', url); note('Ссылка на опыт — в адресной строке') })
 })
 // Saving and opening a run (.meteolab, src/core/state.ts). The state is taken when «Сохранить» is pressed; the dialog
@@ -725,6 +730,13 @@ canvas.addEventListener('pointerup', event => {
   if (lastTap && now - lastTap.t < 350 && Math.hypot(event.clientX - lastTap.x, event.clientY - lastTap.y) < 30) { thermalAt(event.clientX, event.clientY); lastTap = null; tappedAt = now; return }
   lastTap = { x: event.clientX, y: event.clientY, t: now }
 })
+// The browser may take the WebGL context away (a phone short of GPU memory): say so instead of a silent black view.
+// Three.js keeps the context restorable; if the browser gives it back, the view simply goes on. Otherwise the run can
+// be started again with the same settings (a fresh page gets a fresh context).
+const glLost = document.querySelector<HTMLElement>('#glLost')!
+canvas.addEventListener('webglcontextlost', () => { glLost.hidden = false })
+canvas.addEventListener('webglcontextrestored', () => { glLost.hidden = true })
+document.querySelector('#glReload')!.addEventListener('click', () => { location.href = runLink().href })
 canvas.addEventListener('dblclick', event => { if (performance.now() - tappedAt > 600) thermalAt(event.clientX, event.clientY) })
 
 const prepareCanvas = (id: string) => {

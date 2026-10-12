@@ -10,6 +10,10 @@
 .side-chart--square { height: auto; aspect-ratio: 1; }
 /* The hodograph editor: its handles are dragged, so the browser must not scroll or zoom under them. */
 #hodograph { touch-action: none; }
+/* The WebGL context taken away by the browser: a message over the black view. */
+.gl-lost { position: absolute; inset: 0; z-index: 5; display: grid; place-items: center; padding: 24px; background: rgba(8, 12, 16, .78); color: #e6ecef; text-align: center; }
+.gl-lost > div { max-width: 360px; display: grid; gap: 14px; justify-items: center; }
+.gl-lost p { margin: 0; line-height: 1.45; }
 .hodo-edit { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
 .hodo-edit .btn { flex: none; }
 #spin { height: 96px; }
