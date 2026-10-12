@@ -24,6 +24,8 @@ export interface SimConfig {
   moistLayer?: number
   /** Microphysics; overrides AtmosphereModel.microphysics (default with ice) when set (the UI switch). */
   microphysics?: 'warm' | 'ice'
+  /** Electrification and lightning (2.3; with the ice microphysics only); default on. */
+  lightning?: boolean
   /** Transport scheme; overrides AtmosphereModel.transport (default WENO) when set (the UI switch). */
   transport?: 'semi-lagrangian' | 'weno'
   /**
