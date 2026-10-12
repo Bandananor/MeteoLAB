@@ -12,3 +12,8 @@
 .prose dl.terms dd { margin: 0; color: var(--text-2); }
 /* layout.css gives the footer row "padding: 40px 0", which drops the container's side padding. */
 .site-footer__in { padding-inline: clamp(20px, 7vw, 100px); }
+/* List items with bold, italic or links inside: layout.css makes each li a two-column grid (the dot, the text), so every
+   inline piece became a grid item and the text fell apart word by word into the 16 px column. The dot is placed
+   absolutely instead and the text stays one paragraph. */
+.prose ul li { display: block; position: relative; padding-left: 22px; }
+.prose ul li::before { position: absolute; left: 0; top: 0; }
