@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { AtmosphereModel, CP, createGrid, DT, domainGrid, Environment, G, KAPPA, parcelIndices, parseSounding, SoundingError, soundingProfile, stormIndices } from '.'
+import { AtmosphereModel, CP, createGrid, DT, domainGrid, Environment, environmentProfile, G, KAPPA, parcelIndices, parseSounding, SoundingError, soundingProfile, stormIndices } from '.'
 import { SUMMER_DAY } from './fixtures'
 import oax2014 from '../../tests/fixtures/soundings/oax-2014-06-16-19z.sharppy?raw'
 import oun1999 from '../../tests/fixtures/soundings/oun-1999-05-04-00z.txt?raw'
 import oun2011 from '../../tests/fixtures/soundings/oun-2011-05-22-12z.txt?raw'
+import wk82 from '../../tests/fixtures/soundings/weisman-klemp.input_sounding?raw'
 
 // Real soundings (tests/fixtures/soundings/README.md: sources) and small hand-made files of the other formats.
 const FILES: Record<string, string> = { 'oun-1999-05-04-00z.txt': oun1999, 'oun-2011-05-22-12z.txt': oun2011, 'oax-2014-06-16-19z.sharppy': oax2014 }
@@ -144,5 +145,31 @@ describe('sounding files (2.2): the model environment from a sounding', () => {
     expect(model.clipped).toBe(0); expect(model.theta.every(Number.isFinite)).toBe(true)
     // The thermal has started to rise (one model minute: ~1 m/s).
     expect(model.diagnostics().updraft).toBeGreaterThan(.3)
+  })
+
+  it('WK from a file: the Weisman-Klemp case written as a CM1 input_sounding gives the environment and the storm of the formulas', () => {
+    // tests/fixtures/soundings/weisman-klemp.input_sounding: the model's own WK environment every 250 m to 22 km.
+    const wk = { ...SUMMER_DAY, profile: 'weisman-klemp' as const, solarMax: 0, bubble: 1.5 }
+    const formulas = new Environment(wk, grid, environmentProfile(wk, grid.height)), file = parseSounding(wk82)
+    expect(file.format).toBe('input_sounding')
+    const sp = soundingProfile(file, grid.height + 2000), loaded = new Environment(wk, grid, sp.profile)
+    // Nothing to extend and nothing to neutralise: the environment is used as written.
+    expect(sp.notes.some(n => n.includes('Выше') || n.includes('Неустойчивых'))).toBe(false)
+    for (let z = 0; z <= grid.height; z += 37) {
+      expect(Math.abs(loaded.thetaEnv(z) - formulas.thetaEnv(z))).toBeLessThan(.05)
+      expect(Math.abs(loaded.qEnv(z) - formulas.qEnv(z))).toBeLessThan(2e-4)
+      expect(Math.abs(loaded.pressureAt(z) - formulas.pressureAt(z))).toBeLessThan(1)
+      const [u, v] = loaded.windUV(z), [uf, vf] = formulas.windUV(z)
+      expect(Math.hypot(u - uf, v - vf)).toBeLessThan(.06)
+    }
+    const i = parcelIndices(formulas, grid.height), j = parcelIndices(loaded, grid.height), k = stormIndices(formulas, i), l = stormIndices(loaded, j)
+    expect(Math.abs(j.sb.cape - i.sb.cape) / i.sb.cape).toBeLessThan(.005); expect(Math.abs(j.ml.cape - i.ml.cape) / i.ml.cape).toBeLessThan(.005)
+    expect(Math.abs(l.srh03 - k.srh03) / k.srh03).toBeLessThan(.01); expect(l.shear06).toBeCloseTo(k.shear06, 2)
+    // The same thermal in both (one, as in the WK case): six model minutes of its rise agree to 1 %.
+    const a = new AtmosphereModel(wk), b = new AtmosphereModel({ ...wk, sounding: { name: 'WK', levels: file.levels } })
+    for (let t = 0; t < 360; t += DT) { a.step(DT); a.time += DT; b.step(DT); b.time += DT }
+    const da = a.diagnostics(), db = b.diagnostics()
+    expect(da.updraft).toBeGreaterThan(6)
+    expect(Math.abs(db.updraft - da.updraft) / da.updraft).toBeLessThan(.01); expect(db.cloudTop).toBeCloseTo(da.cloudTop, 1)
   })
 })
