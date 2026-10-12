@@ -49,6 +49,12 @@ export class PPI {
   stormMotion: readonly [number, number] | null = null
   /** Whether prepare(), sample() and section() also do ZDR, rho_hv and KDP. */
   dual = false
+  /**
+   * Radial bins like real radar data (null: every pixel sampled at its own centre): `gate` m along the beam and `beam`
+   * degrees across it. Every pixel of a bin shows the bin's value, sampled at the bin's centre, so the scan looks as on a
+   * radar display — sectors that widen with range. Call layout() after changing it.
+   */
+  bins: { gate: number; beam: number } | null = null
 
   constructor(model: AtmosphereModel, w: number, h: number) {
     this.model = model; this.w = w; this.h = h
@@ -69,12 +75,21 @@ export class PPI {
     return { range, azimuth: (Math.atan2(dx, dy) * 180 / Math.PI + 360) % 360, height: beamHeight(range, this.tilt) }
   }
 
-  /** Recomputes the beam's ground track after the site changed (the per-tilt levels are recomputed on demand). */
+  /** Where the radar samples for a pixel: its centre, or with `bins` the centre of the radial bin it lies in. */
+  private samplePoint(px: number, py: number) {
+    const g = this.ground(px, py), b = this.bins
+    if (!b) return g
+    const ex = g.x - this.site.x, ny = g.y - this.site.y, range = (Math.floor(Math.hypot(ex, ny) / b.gate) + .5) * b.gate
+    const azimuth = (Math.floor(((Math.atan2(ex, ny) * 180 / Math.PI + 360) % 360) / b.beam) + .5) * b.beam * Math.PI / 180
+    return { x: this.site.x + range * Math.sin(azimuth), y: this.site.y + range * Math.cos(azimuth) }
+  }
+
+  /** Recomputes the beam's ground track after the site or the bins changed (the per-tilt levels are recomputed on demand). */
   layout() {
     const { dx, dy } = this.model.grid
     this.levels.clear()
     for (let py = 0, i = 0; py < this.h; py++) for (let px = 0; px < this.w; px++, i++) {
-      const g = this.ground(px, py), ex = g.x - this.site.x, ny = g.y - this.site.y, range = Math.hypot(ex, ny)
+      const g = this.samplePoint(px, py), ex = g.x - this.site.x, ny = g.y - this.site.y, range = Math.hypot(ex, ny)
       this.gx[i] = g.x / dx; this.gy[i] = g.y / dy
       this.sinAz[i] = range > 0 ? ex / range : 0; this.cosAz[i] = range > 0 ? ny / range : 0
     }
@@ -86,7 +101,7 @@ export class PPI {
     const grid = this.model.grid
     gz = new Float32Array(this.w * this.h)
     for (let py = 0, i = 0; py < this.h; py++) for (let px = 0; px < this.w; px++, i++) {
-      const g = this.ground(px, py), height = beamHeight(Math.hypot(g.x - this.site.x, g.y - this.site.y), tilt)
+      const g = this.samplePoint(px, py), height = beamHeight(Math.hypot(g.x - this.site.x, g.y - this.site.y), tilt)
       gz[i] = height > grid.height ? -1 : levelAt(grid, height)
     }
     this.levels.set(tilt, gz)

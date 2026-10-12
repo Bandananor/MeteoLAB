@@ -7,8 +7,10 @@ import { cssGradient, extent, KINDS, lookup, lutIndex, type Palette, type Palett
 type Product = 'Z' | 'V' | 'SRV' | 'CR' | 'ZDR' | 'RHO' | 'KDP' | 'RHI'
 /** What the RHI shows. */
 type RhiField = 'Z' | 'SRV' | 'ZDR' | 'RHO' | 'KDP'
-/** Raster resolution of the scan, m per pixel. */
-const PIXEL = 150
+/** Raster resolution of the scan, m per pixel: half a range gate, so the radial bins' edges fall on pixel edges. */
+const PIXEL = 125
+/** Range gate of the radial bins, m (as NEXRAD's 250 m). */
+const GATE = 250
 /** The vertical section (RHI): gate and row spacing, m, and the highest level shown. */
 const RHI_STEP = 250, RHI_DZ = 250, RHI_TOP = 18_000
 /** Real time between two runs of the mesocyclone detection (all 14 tilts), ms. */
@@ -41,9 +43,13 @@ const HELP: Record<Product, string> = {
   RHI: 'Вертикальный разрез от радара вдоль азимута по всему объёму: видно, как высоко поднимается эхо, свод слабого эха (BWER) над восходящим потоком, нависающее эхо, ядро града, наковальню, колонну ZDR. Тонкие линии — лучи 14 наклонов: так их видит настоящий радар. По вертикали масштаб растянут.',
 }
 
-/** Range rings, azimuth radials and their labels: steps (0: off), compass points instead of degrees. */
-interface GridSettings { radials: number; rings: number; labels: boolean; compass: boolean }
-const GRID_STORE = 'meteolab-radar-grid', GRID_DEFAULT: GridSettings = { radials: 30, rings: 5, labels: true, compass: false }
+/**
+ * Range rings, azimuth radials and their labels: steps (0: off), compass points instead of degrees; the data drawn in
+ * radial bins (beam width `beam` degrees, 0: smooth pixels).
+ */
+interface GridSettings { radials: number; rings: number; labels: boolean; compass: boolean; beam: number }
+const GRID_STORE = 'meteolab-radar-grid', GRID_DEFAULT: GridSettings = { radials: 30, rings: 5, labels: true, compass: false, beam: .5 }
+const BEAMS = [.5, 1, 0]
 const RADIAL_STEPS = [0, 10, 30, 45], RING_STEPS = [0, 5, 10, 25]
 const POINTS = ['С', 'ССВ', 'СВ', 'ВСВ', 'В', 'ВЮВ', 'ЮВ', 'ЮЮВ', 'Ю', 'ЮЮЗ', 'ЮЗ', 'ЗЮЗ', 'З', 'ЗСЗ', 'СЗ', 'ССЗ']
 /** The compass point (of 16) of an azimuth. */
@@ -51,7 +57,7 @@ const point = (azimuth: number) => POINTS[Math.round(((azimuth % 360) + 360) % 3
 function loadGrid(): GridSettings {
   try {
     const g = JSON.parse(localStorage.getItem(GRID_STORE) ?? 'null')
-    if (g && RADIAL_STEPS.includes(g.radials) && RING_STEPS.includes(g.rings)) return { radials: g.radials, rings: g.rings, labels: g.labels !== false, compass: g.compass === true }
+    if (g && RADIAL_STEPS.includes(g.radials) && RING_STEPS.includes(g.rings)) return { radials: g.radials, rings: g.rings, labels: g.labels !== false, compass: g.compass === true, beam: BEAMS.includes(g.beam) ? g.beam : GRID_DEFAULT.beam }
   } catch { /* default */ }
   return { ...GRID_DEFAULT }
 }
@@ -105,7 +111,8 @@ export class RadarPanel {
         <div class="radar-buttons"><button class="btn btn--xs" id="paletteEdit" title="Редактор палитры: точки «значение → цвет», плавно или ступенями">Изменить</button><button class="btn btn--xs" id="paletteImport" title="Файл .pal радарных программ (строки Color: / SolidColor:)">Импорт .pal</button><button class="btn btn--xs" id="paletteExport">Экспорт .pal</button><button class="btn btn--xs" id="paletteDelete" hidden>Удалить</button></div>
         <input type="file" id="paletteFile" accept=".pal,.txt,text/plain" hidden>
         <span class="t-caption" id="paletteNote"></span>`)
-      + section('Сетка', `<span class="label">Радиалы</span>${seg('radials', RADIAL_STEPS.map(s => [String(s), s ? `${s}°` : 'нет']))}
+      + section('Сетка', `<span class="label" title="Как на экране настоящего радара: данные лежат по лучам и стробам дальности (250 м), поэтому ячейки — секторы, которые расширяются с дальностью">Пиксели данных</span>${seg('beam', [['0.5', 'лучи 0,5°'], ['1', 'лучи 1°'], ['0', 'гладкие']])}
+        <span class="label">Радиалы</span>${seg('radials', RADIAL_STEPS.map(s => [String(s), s ? `${s}°` : 'нет']))}
         <span class="label">Кольца дальности</span>${seg('rings', RING_STEPS.map(s => [String(s), s ? `${s} км` : 'нет']))}
         <label class="check"><input type="checkbox" id="gridLabels"> Подписи азимутов и дальностей</label>
         <span class="label">Азимуты</span>${seg('compass', [['0', 'градусы'], ['1', 'румбы']])}`)
@@ -147,6 +154,7 @@ export class RadarPanel {
       if (!b) return
       const v = b.dataset.value!
       if (s.dataset.seg === 'rhi') { this.rhiField = v as RhiField; this.setProduct('RHI'); return }
+      if (s.dataset.seg === 'beam') { this.grid.beam = Number(v); this.applyBins(); this.saveGrid(); this.refresh(true); return }
       if (s.dataset.seg === 'radials') this.grid.radials = Number(v)
       else if (s.dataset.seg === 'rings') this.grid.rings = Number(v)
       else this.grid.compass = v === '1'
@@ -187,7 +195,8 @@ export class RadarPanel {
     this.motion = stormMotion
     const { width, depth } = model.grid, old = this.ppi
     this.ppi = new PPI(model, Math.round(width / PIXEL), Math.round(depth / PIXEL))
-    if (old) { this.ppi.site = old.site; this.ppi.tilt = old.tilt; this.ppi.layout() }
+    if (old) { this.ppi.site = old.site; this.ppi.tilt = old.tilt }
+    this.applyBins()
     this.raster.width = this.ppi.w; this.raster.height = this.ppi.h; this.image = this.rasterCtx.createImageData(this.ppi.w, this.ppi.h)
     this.lastTime = -1; this.lastComposite = 0; this.scanTime = -1; this.detector = new MesocycloneDetector(); this.detections = []; this.markTilt()
   }
@@ -277,8 +286,15 @@ export class RadarPanel {
     this.root.querySelector<HTMLElement>('#radarTilt')!.textContent = this.product === 'RHI' ? `АЗИМУТ ${this.rhiAzimuth}°` : all ? 'ВСЕ' : `${t.toFixed(1)}°`
   }
 
+  /** The radial bins of the chosen beam width (or smooth pixels) on the scan. */
+  private applyBins() {
+    if (!this.ppi) return
+    this.ppi.bins = this.grid.beam ? { gate: GATE, beam: this.grid.beam } : null; this.ppi.layout(); this.lastComposite = 0
+  }
+
   private showGrid() {
     const g = this.grid
+    press(this.root.querySelectorAll<HTMLButtonElement>('[data-seg="beam"] button'), b => Number(b.dataset.value) === g.beam)
     press(this.root.querySelectorAll<HTMLButtonElement>('[data-seg="radials"] button'), b => Number(b.dataset.value) === g.radials)
     press(this.root.querySelectorAll<HTMLButtonElement>('[data-seg="rings"] button'), b => Number(b.dataset.value) === g.rings)
     press(this.root.querySelectorAll<HTMLButtonElement>('[data-seg="compass"] button'), b => (b.dataset.value === '1') === g.compass)

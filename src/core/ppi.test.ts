@@ -50,6 +50,24 @@ describe('radar PPI', () => {
     expect(ppi.dbz[best]).toBeGreaterThan(45); expect(Math.abs(ppi.zdr[best])).toBeLessThan(.5)
   })
 
+  it('with radial bins every pixel of a bin shows the value at the centre of the bin, as on a radar display', () => {
+    const model = new AtmosphereModel({ ...QUIET }, createGrid({ nx: 16, ny: 12, nz: 20, width: 19_200, depth: 13_500, height: 15_000, bottomSpacing: 100 }))
+    const { layer, nx, zs, nz } = model.grid
+    for (let z = 0; z < nz; z++) if (zs[z] < 3000) for (let c = 0; c < layer; c++) model.rain[c + z * layer] = (c % nx) * 1e-4 + Math.floor(c / nx) * 2e-5
+    const ppi = new PPI(model, 64, 45), smooth = (ppi.sample(), ppi.dbz.slice())
+    ppi.bins = { gate: 2000, beam: 10 }; ppi.layout(); ppi.sample()
+    const bins = new Map<string, number>()
+    let shared = 0
+    for (let py = 0, i = 0; py < ppi.h; py++) for (let px = 0; px < ppi.w; px++, i++) {
+      const g = ppi.ground(px, py), b = ppi.beamAt(g.x, g.y), key = `${Math.floor(b.range / 2000)}:${Math.floor(b.azimuth / 10)}`
+      if (bins.has(key)) { expect(ppi.dbz[i]).toBe(bins.get(key)); shared++ } else bins.set(key, ppi.dbz[i])
+    }
+    expect(shared).toBeGreaterThan(ppi.w * ppi.h / 2)
+    // Back to pixels: the same scan as before.
+    ppi.bins = null; ppi.layout(); ppi.sample()
+    expect(Array.from(ppi.dbz)).toEqual(Array.from(smooth))
+  })
+
   it('cuts a vertical section (RHI) through a rain shaft at its range and up to its top', () => {
     const model = new AtmosphereModel({ ...QUIET }, createGrid({ nx: 16, ny: 12, nz: 20, width: 19_200, depth: 13_500, height: 15_000, bottomSpacing: 100 }))
     const { layer, nx, dx } = model.grid
