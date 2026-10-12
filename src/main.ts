@@ -17,7 +17,7 @@ import { CELL_STAGES, MESO_PERSISTENCE, UH_ROTATING, readState, createGrid, desc
 import { type FieldMode, fieldInfo } from './render/fields'
 import type { LayerMode } from './render/view'
 import { cleanSettings, decodeSettings, download, encodeSettings, toCsv } from './share'
-import { applyLayout, askLayout, Hud, isPhone, savedLayout, suggestedLayout } from './hud'
+import { applyLayout, askGuide, askLayout, Hud, isPhone, savedLayout, suggestedLayout } from './hud'
 import { Timeline } from './timeline'
 import { DEFAULTS as defaults } from './defaults'
 
@@ -74,6 +74,7 @@ app.innerHTML = `<div class="app">
     <span class="topbar__spacer"></span>
     <span class="topbar__group"><button class="btn" id="radarOpen" title="Доплеровский радар: отражаемость на выбранном угле наклона луча">Радар <span class="kbd">R</span></button><button class="btn" id="skewOpen" title="Аэрологическая диаграмма Skew-T log-p: профиль среды, частица, CAPE/CIN, ветер и зонд в модели у выбранной ячейки">Skew-T <span class="kbd">S</span></button><button class="btn" id="stationOpen" title="Виртуальная метеостанция: поставьте её щелчком на земле и смотрите метеограмму — температуру, давление, ветер с порывами и осадки, когда гроза проходит над ней">Станция <span class="kbd">M</span></button></span>
     <span class="topbar__sep"></span>
+    <a class="btn btn--quiet" href="../guide/" target="_blank" rel="noopener" title="Как пользоваться: где какие кнопки, как менять параметры, приборы, телефон (откроется в новой вкладке, расчёт не прервётся)">Справка</a>
     <button class="btn btn--quiet" id="layoutToggle" title="Телефонный вид: 3D во весь экран, крупные цифры, панель под палец. Выбор запоминается">Телефонный вид</button>
     <div class="seg seg--text" role="group" aria-label="Тема"><button data-theme-set="auto" title="Как в системе">Авто</button><button data-theme-set="light">Светлая</button><button data-theme-set="dark">Тёмная</button></div>
   </header>
@@ -236,7 +237,8 @@ const text = (id: string, value: string) => { document.querySelector(`#${id}`)!.
 // The layout before the physics starts (its thread count depends on it): the remembered choice, else the screen's
 // suggestion, with the question shown at the first visit.
 applyLayout(savedLayout() ?? suggestedLayout(), false)
-if (!savedLayout()) askLayout()
+// Then, at the first visit, the offer of the guide.
+if (!savedLayout()) askLayout(askGuide); else askGuide()
 document.querySelector('#layoutToggle')!.addEventListener('click', () => applyLayout(isPhone() ? 'desktop' : 'phone'))
 // Theme: Авто (the system's) / Светлая / Тёмная, in the header and in the phone's instruments menu.
 const showThemeChoice = () => document.querySelectorAll<HTMLButtonElement>('[data-theme-set]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.themeSet === themeChoice())))

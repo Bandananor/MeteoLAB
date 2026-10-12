@@ -24,6 +24,12 @@
 #volumeControls { display: flex; flex-direction: column; gap: 12px; }
 #volumeControls[hidden] { display: none; }
 
+/* The guide's offer at the first visit: «Хорошо, посмотрю» in the accent green, «Я знаю, что делаю» in red. */
+.btn--danger { background-color: #B03A22; color: #fff; } /* the light theme's --danger in both: white text stays readable */
+.btn--danger:hover { background-color: #962F1B; background-image: none; color: #fff; }
+.guide-offer .modal__actions { flex-wrap: wrap; }
+.layout-phone .guide-offer .modal__actions > .btn { flex: 1; height: var(--h-touch); }
+
 /* The left column's notice under the actions. */
 #stateNote .notice__text { min-width: 0; }
 

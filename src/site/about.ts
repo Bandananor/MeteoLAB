@@ -1,4 +1,4 @@
-// «О модели»: the contents mark the section being read.
+// «О модели» and «Как пользоваться»: the contents mark the section being read.
 import './site'
 
 const links = [...document.querySelectorAll<HTMLAnchorElement>('.toc a[href^="#"]')]

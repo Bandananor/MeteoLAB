@@ -9,7 +9,7 @@
 /** The screen width the phone layout is suggested for. */
 export const PHONE_QUERY = '(max-width: 760px)'
 export type Layout = 'phone' | 'desktop'
-const LAYOUT_KEY = 'meteolab-layout', GESTURE_KEY = 'meteolab-gestures-seen'
+const LAYOUT_KEY = 'meteolab-layout', GESTURE_KEY = 'meteolab-gestures-seen', GUIDE_KEY = 'meteolab-guide-offered'
 const PHONE_CLASS = 'layout-phone'
 
 /** Whether the page shows the phone layout now. */
@@ -32,7 +32,8 @@ export function applyLayout(layout: Layout, remember = true) {
 
 /** The first visit: which layout. The one the screen suggests comes first and is marked; Esc or a tap beside the
  *  window choose it too. */
-export function askLayout() {
+/** `then` runs once the layout is chosen (the next first-visit question waits for this one). */
+export function askLayout(then?: () => void) {
   const suggested = suggestedLayout(), dialog = document.createElement('dialog')
   const card = (layout: Layout) => {
     const phone = layout === 'phone', recommended = layout === suggested
@@ -46,7 +47,7 @@ export function askLayout() {
   dialog.innerHTML = `<h2 class="modal__title" style="font-size:24px;line-height:30px">Как показывать MeteoLab?</h2>
     <div class="choice-list">${card(suggested)}${card(suggested === 'phone' ? 'desktop' : 'phone')}</div>
     <p class="modal__text" style="color:var(--text-3)">Выбор запомнится. Переключить можно в любой момент — в шапке или в меню «Приборы» на телефоне.</p>`
-  const choose = (layout: Layout) => { applyLayout(layout); dialog.close(); dialog.remove() }
+  const choose = (layout: Layout) => { applyLayout(layout); dialog.close(); dialog.remove(); then?.() }
   dialog.addEventListener('click', e => {
     const layout = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-layout]')?.dataset.layout as Layout | undefined
     if (layout) choose(layout)
@@ -56,6 +57,29 @@ export function askLayout() {
   document.body.appendChild(dialog)
   dialog.showModal()
 }
+/**
+ * At the first visit to the simulator (after the layout question): an offer of the guide to the interface (guide/).
+ * «Хорошо, посмотрю» opens it, «Я знаю, что делаю» or Esc closes the window; either way it is not asked again.
+ */
+export function askGuide() {
+  try { if (localStorage.getItem(GUIDE_KEY)) return } catch { /* ask */ }
+  const dialog = document.createElement('dialog')
+  dialog.className = 'modal guide-offer'
+  dialog.innerHTML = `<h2 class="modal__title">Сложно? Посмотрите наш гайд</h2>
+    <p class="modal__text">Где какие кнопки, как менять параметры погоды, как пользоваться радаром и Skew-T — коротко и по шагам. Гайд всегда под рукой: кнопка «Справка» в шапке (на телефоне — в меню «Приборы»).</p>
+    <div class="modal__actions"><button class="btn btn--danger" data-guide="no">Я знаю, что делаю</button><button class="btn btn--primary" data-guide="yes">Хорошо, посмотрю</button></div>`
+  const done = (open: boolean) => {
+    try { localStorage.setItem(GUIDE_KEY, '1') } catch { /* asked again next time */ }
+    dialog.close(); dialog.remove()
+    if (open) location.href = '../guide/'
+  }
+  dialog.addEventListener('click', e => { const b = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-guide]'); if (b) done(b.dataset.guide === 'yes') })
+  dialog.addEventListener('cancel', e => { e.preventDefault(); done(false) })
+  document.body.appendChild(dialog)
+  dialog.showModal()
+  dialog.querySelector<HTMLButtonElement>('[data-guide="yes"]')!.focus()
+}
+
 /** Physics threads on a phone unless the address asks otherwise: fewer, so it does not overheat. */
 export const PHONE_THREADS = 3
 /** Speed steps of the speed button, in turn. */
@@ -111,6 +135,7 @@ export class Hud {
       <button class="menu__item" role="menuitem" data-tool="#stationOpen"><span class="menu__glyph">⌂</span>Станция</button>
       <div class="menu__sep"></div>
       <button class="menu__item" role="menuitem" data-tool="#layoutToggle"><span class="menu__glyph">▭</span>Компьютерный вид</button>
+      <a class="menu__item" role="menuitem" href="../guide/" target="_blank" rel="noopener"><span class="menu__glyph">?</span>Как пользоваться</a>
       <div class="menu__sep"></div>
       <div class="menu__group"><span class="label">Тема</span><div class="seg seg--text seg--block seg--touch" role="group" aria-label="Тема"><button data-theme-set="auto">Авто</button><button data-theme-set="light">Светлая</button><button data-theme-set="dark">Тёмная</button></div></div>
     </div>`
@@ -132,6 +157,8 @@ export class Hud {
       else if (act === 'speed') { const now = Number((this.bar.querySelector('[data-hud="speed"]')!.textContent ?? '×8').slice(1)); this.setSpeed(SPEEDS[(SPEEDS.indexOf(now) + 1) % SPEEDS.length] ?? 8) }
     })
     this.menu.addEventListener('click', e => {
+      // The guide is a link (a new tab): the menu just closes.
+      if ((e.target as HTMLElement).closest('a')) { this.show(null); return }
       const tool = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-tool]')?.dataset.tool
       if (!tool) return
       this.show(null); document.querySelector<HTMLButtonElement>(tool)!.click()
