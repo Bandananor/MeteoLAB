@@ -1,4 +1,4 @@
-import { type AtmosphereModel, channelShape, type Flash } from '../core'
+import type { AtmosphereModel, Flash } from '../core'
 import { help, instrumentPalette, instrumentScreen, numbers, press, readings, section } from '../instrument'
 import { MONO } from '../theme'
 import { flashDensity, flashFacts, flashPoint, flashRates, lightningJumps, total } from './stats'
@@ -17,7 +17,7 @@ const ageColor = (minutes: number) => AGES.find(([limit]) => minutes < limit)![1
  * The lightning detector (2.3): a separate screen like the radar's. A map of the flashes around the storm — CG
  * strikes as − and +, IC flashes as dots at the centre of their channel, coloured by age; or the flash density per km²
  * over the period. Under it the flash rate minute by minute (IC, −CG, +CG) with the lightning jumps (2σ). A click on a
- * mark opens the flash's card and draws its channel in plan (positive leaders red, negative blue).
+ * mark opens the flash's card and rings the mark (a detector locates flashes; the channel is for the 3D view).
  */
 export class DetectorPanel {
   private readonly root: HTMLDivElement; private readonly canvas: HTMLCanvasElement; private readonly ctx: CanvasRenderingContext2D
@@ -122,19 +122,8 @@ export class DetectorPanel {
     }
     // The domain now.
     ctx.strokeStyle = pal.gridStrong; ctx.setLineDash([5, 4]); ctx.strokeRect(X(0), Y(D), W * scale, D * scale); ctx.setLineDash([])
-    // The selected flash's channel in plan, as in the 3D view (channelShape), thin and half transparent over the marks.
-    const sel = this.selected
-    if (sel && m.flashes.includes(sel)) {
-      const shape = channelShape(m.grid, sel), ago = m.time - sel.time, sx = m.frame[0] * ago, sy = m.frame[1] * ago
-      ctx.lineWidth = 1; ctx.globalAlpha = .7
-      for (let k = 1; k < sel.nodes.length; k++) {
-        const a = sel.parent[k] * 3, b = k * 3, ax = shape[a] - sx, ay = shape[a + 1] - sy, bx = shape[b] - sx, by = shape[b + 1] - sy
-        if (Math.abs(ax - bx) > W / 2 || Math.abs(ay - by) > D / 2) continue
-        ctx.strokeStyle = sel.polarity[k] > 0 ? '#ff6b6b' : sel.polarity[k] < 0 ? '#6ba8ff' : '#cccccc'
-        ctx.beginPath(); ctx.moveTo(X(ax), Y(ay)); ctx.lineTo(X(bx), Y(by)); ctx.stroke()
-      }
-      ctx.globalAlpha = 1
-    } else this.selected = null
+    // A selected flash no longer kept is forgotten.
+    if (this.selected && !m.flashes.includes(this.selected)) this.selected = null
     // Marks, oldest first so the newest are on top.
     this.marks = []
     if (this.mode === 'marks') for (const f of recent) {
@@ -190,6 +179,6 @@ export class DetectorPanel {
       ['положит. лидер', `${Math.round(d.positiveShare * 100)} % канала`],
       [f.kind === 'IC' ? 'нейтрализовано' : 'опущено на землю', `${f.kind === 'IC' ? '±' : d.charge > 0 ? '+' : '−'}${Math.abs(d.charge).toFixed(1).replace('.', ',')} Кл`],
       ['потенциал канала', `${d.potential.toFixed(0).replace('-', '−')} МВ`],
-    ])}</dl><p class="psec__hint">На карте — канал в плане: красный — положительный лидер (шёл в отрицательный заряд), синий — отрицательный.</p>`)
+    ])}</dl>`)
   }
 }
