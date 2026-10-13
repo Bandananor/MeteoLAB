@@ -147,7 +147,7 @@ jobs:
         run: |
           sed -i 's/\x1b\[[0-9;]*m//g' test.log
           result=$(grep -E 'Холодный фронт:' test.log | tail -1 | sed 's/^ *//')
-          line=$(grep -E '^s+Tests ' test.log | tail -1 | sed 's/^ *//')
+          line=$(grep -E '^\s+Tests ' test.log | tail -1 | sed 's/^ *//')
           fail=$(grep -E 'AssertionError' test.log | head -1 | sed 's/^ *//')
           echo "### ${result:-Cold front: no result} — ${line} ${fail}" >> "$GITHUB_STEP_SUMMARY"
           echo "::notice title=Cold front::${result:-no result} | ${line} ${fail}"
