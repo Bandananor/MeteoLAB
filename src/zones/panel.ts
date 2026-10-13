@@ -1,4 +1,4 @@
-import { type AtmosphereModel, Environment, parcelIndices, type ZoneConfig, zoneProfile } from '../core'
+import { type AtmosphereModel, Environment, parcelIndices, stormMotion, type ZoneConfig, zoneProfile } from '../core'
 import { help, instrumentPalette, instrumentScreen, numbers, readings, section } from '../instrument'
 import { MONO } from '../theme'
 
@@ -34,7 +34,7 @@ export class ZonesPanel {
       + section('Выбранная зона', `<div id="zoneEdit">${range('zoneT', 'Температура у земли', -T_RANGE, T_RANGE)}${range('zoneQ', 'Влажность у земли (водяной пар)', -Q_RANGE, Q_RANGE)}
           <div id="zoneNumbers"></div><button class="btn btn--block" id="zoneDelete">Удалить зону</button></div><span class="t-caption" id="zoneNone">Щёлкните по зоне на карте</span>`)
       + section('Расчёт', `<button class="btn btn--block btn--primary" id="zoneApply">Применить — расчёт заново</button><button class="btn btn--block" id="zoneClear">Убрать все зоны</button>`)
-      + help('Зона — участок земли со своим воздухом у земли: теплее или холоднее, влажнее или суше, чем профиль; к 1,5 км разница сходит на нет, края размыты на 2 км. Так задают то, что в природе делает погоду неоднородной: полосу влажного воздуха, сухую линию, остывшее после дождя пятно, тёплый город. Гроза, которая идёт через зоны, сама растёт там, где ей хватает тепла и влаги, и слабеет там, где нет. Зоны лежат на земле: область модели едет вместе с грозой, а зоны стоят. Модель мягко держит воздух каждой зоны (за ~15 минут), но не выше 1,5 км и не снаружи: отток грозы течёт свободно. Тёплая зона — как остров тепла: на её краях возникает ветерок, воздух сходится и поднимается — там могут зарождаться грозы. CAPE и CIN — частица от земли в зоне и в среде вокруг.'))
+      + help('Зона — участок земли со своим воздухом у земли: теплее или холоднее, влажнее или суше, чем профиль; к 1,5 км разница сходит на нет, края размыты на 2 км. Так задают то, что в природе делает погоду неоднородной: полосу влажного воздуха, сухую линию, остывшее после дождя пятно, тёплый город. Гроза, которая идёт через зоны, сама растёт там, где ей хватает тепла и влаги, и слабеет там, где нет. Зоны лежат на земле: область модели едет вместе с грозой, а зоны стоят. Модель мягко держит воздух каждой зоны (за ~15 минут), но не выше 1,5 км и не снаружи: отток грозы течёт свободно. Тёплая зона — как остров тепла: на её краях возникает ветерок, воздух сходится и поднимается — там могут зарождаться грозы. CAPE и CIN — частица от земли в зоне и в среде вокруг. Линии на карте — куда пойдут грозы от термика (○) за 40 минут (у края земля повторяется, как сама область): суперячейка обычно уходит по красному пути (правая ячейка по Банкерсу), её левая пара — по синему, обычные грозы — по серому (средний ветер 0–6 км). Путь меняется с ветром: поправьте годограф — и он повернёт; зону ставьте на пути, минут на 30–40 впереди.'))
     this.canvas = this.root.querySelector('canvas')!; this.ctx = this.canvas.getContext('2d')!
     const $ = <T extends HTMLElement>(id: string) => this.root.querySelector<T>(`#${id}`)!
     this.root.querySelector('.ibar__close')!.addEventListener('click', () => this.toggle(false))
@@ -117,6 +117,28 @@ export class ZonesPanel {
       this.drawing.forEach(([x, y], i) => i ? ctx.lineTo(X(x), Y(y)) : ctx.moveTo(X(x), Y(y))); ctx.stroke(); ctx.setLineDash([])
       ctx.fillStyle = '#ffffff'; for (const [x, y] of this.drawing) { ctx.beginPath(); ctx.arc(X(x), Y(y), 3, 0, Math.PI * 2); ctx.fill() }
     }
+    // Where storms will go in 40 minutes (from the starting thermal, ground-relative Bunkers motion of the environment):
+    // lines broken at the edge and continued on the other side (the ground repeats, as the domain), ticks every 10 min.
+    const motion = stormMotion(m.env), start = m.config.profile === 'weisman-klemp' ? [W * .3, D * .5] : [W * .38, D * .45]
+    const tracks: [string, readonly [number, number], string][] = [['правая', motion.rightMover, '#ff6b6b'], ['левая', motion.leftMover, '#6ba8ff'], ['средний ветер', motion.meanWind, '#c9d1d5']]
+    const wrap = (x: number, size: number) => (x % size + size) % size
+    for (const [name, [u, v], color] of tracks) {
+      ctx.strokeStyle = ctx.fillStyle = color; ctx.lineWidth = 2
+      let px = start[0], py = start[1]
+      ctx.beginPath(); ctx.moveTo(X(px), Y(py))
+      for (let t = 1; t <= 40; t++) {
+        const x = wrap(start[0] + u * t * .06, W), y = wrap(start[1] + v * t * .06, D)
+        if (Math.abs(x - px) > W / 2 || Math.abs(y - py) > D / 2) { ctx.stroke(); ctx.beginPath(); ctx.moveTo(X(x), Y(y)) } else ctx.lineTo(X(x), Y(y))
+        px = x; py = y
+        if (t % 10 === 0) {
+          ctx.stroke(); ctx.beginPath(); ctx.arc(X(x), Y(y), t === 40 ? 4 : 3, 0, Math.PI * 2); ctx.fill(); ctx.beginPath(); ctx.moveTo(X(x), Y(y))
+          // The left mover's labels under its dots: the two movers' tracks often end close together.
+          if (t % 20 === 0) ctx.fillText(`${t}′${t === 40 ? ' ' + name : ''}`, X(x) + 7, Y(y) + (name === 'левая' ? 15 : -7))
+        }
+      }
+      ctx.stroke()
+    }
+    ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(X(start[0]), Y(start[1]), 6, 0, Math.PI * 2); ctx.stroke()
     // Where the domain is now (it moves with the storm; periodic over this ground).
     if (m.time > 0) {
       const [ox, oy] = m.frameOffset(), sx = ((ox / 1000) % W + W) % W, sy = ((oy / 1000) % D + D) % D
@@ -126,7 +148,7 @@ export class ZonesPanel {
       ctx.restore(); ctx.setLineDash([])
     }
     ctx.fillStyle = pal.label
-    ctx.fillText(`км · север вверху${m.time > 0 ? ' · жёлтый пунктир — где область сейчас' : ''}`, X(0), Y(D) - 8)
+    ctx.fillText(`км · север вверху · ○ термик, линии — путь гроз за 40 мин (метки каждые 10 мин; правая и левая ячейки по Банкерсу, средний ветер)${m.time > 0 ? ' · жёлтый пунктир — где область сейчас' : ''}`, X(0), Y(D) - 8)
     this.side()
   }
 
