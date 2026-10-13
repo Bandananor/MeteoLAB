@@ -1,4 +1,4 @@
-# Fast tests, the Weisman-Klemp calibration, the diurnal cycle, the loaded gun, the cold front and every scenario with a thermal (7), each
+# Fast tests, the Weisman-Klemp calibration, the diurnal cycle, the loaded gun, the cold front, the three synoptic situations and every scenario with a thermal (7), each
 # in its own job (in parallel):
 # about 20-30 min instead of ~3 h on one laptop core. Results: the run's summary page and one annotation per job.
 name: Tests
@@ -151,6 +151,34 @@ jobs:
           fail=$(grep -E 'AssertionError' test.log | head -1 | sed 's/^ *//')
           echo "### ${result:-Cold front: no result} — ${line} ${fail}" >> "$GITHUB_STEP_SUMMARY"
           echo "::notice title=Cold front::${result:-no result} | ${line} ${fail}"
+
+  situation:
+    name: Situation ${{ matrix.index }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        index: [0, 1, 2]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 24, cache: npm }
+      - run: npm ci
+      - name: Situation ${{ matrix.index }}
+        env: { STORMLAB_SITUATION: '${{ matrix.index }}' }
+        run: |
+          set -o pipefail
+          npx vitest run --mode slow src/core/situations.test.ts -t 'situation' 2>&1 | tee test.log
+      - name: Report
+        if: always()
+        run: |
+          sed -i 's/\x1b\[[0-9;]*m//g' test.log
+          result=$(grep -E 'Ситуация «' test.log | tail -1 | sed 's/^ *//')
+          line=$(grep -E '^\s+Tests ' test.log | tail -1 | sed 's/^ *//')
+          fail=$(grep -E 'AssertionError' test.log | head -1 | sed 's/^ *//')
+          echo "### ${result:-situation ${{ matrix.index }}: no result} — ${line} ${fail}" >> "$GITHUB_STEP_SUMMARY"
+          echo "::notice title=Situation ${{ matrix.index }}::${result:-no result} | ${line} ${fail}"
 
   scenario:
     name: Scenario ${{ matrix.index }}

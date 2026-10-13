@@ -7,7 +7,7 @@ import { chartPalette, MONO } from './theme'
 export const ADVECTION_PRESETS: { name: string; title: string; changes: AdvectionChange[] }[] = [
   { name: 'Влага к вечеру', title: 'Южный ветер приносит влажный воздух: +2 г/кг водяного пара в нижних 1,5 км за 3 часа. CAPE растёт, основание облаков опускается', changes: [{ quantity: 'moisture', bottom: 0, top: 1.5, amount: 2, start: 0, hours: 3 }] },
   { name: 'Холод наверху (ложбина)', title: 'Подходит высотная ложбина: на 5–9 км холодает на 3 K за 2 часа. Профиль становится круче, CAPE растёт, вершины гроз выше', changes: [{ quantity: 'temperature', bottom: 5, top: 9, amount: -3, start: 0, hours: 2 }] },
-  { name: 'Тёплый воздух над слоем', title: 'Тёплая адвекция на 1–2 км: +2 K за 2 часа. Задерживающий слой крепнет, CIN растёт — конвекция может так и не начаться', changes: [{ quantity: 'temperature', bottom: 1, top: 2, amount: 2, start: 0, hours: 2 }] },
+  { name: 'Тёплый воздух над слоем', title: 'Тёплая адвекция на 2–3,5 км, над слоем перемешивания: +3 K за 2 часа. Задерживающий слой крепнет, CIN растёт — конвекция может так и не начаться. Ниже, внутри слоя перемешивания, тёплый воздух подействовал бы наоборот: слой прогрелся бы весь, как от солнца', changes: [{ quantity: 'temperature', bottom: 2, top: 3.5, amount: 3, start: 0, hours: 2 }] },
   { name: 'Сухой воздух в середине', title: 'Сухой воздух на 3–6 км: −3 г/кг за 2 часа. Вовлечение сухого воздуха усиливает нисходящие потоки и холодный отток', changes: [{ quantity: 'moisture', bottom: 3, top: 6, amount: -3, start: 0, hours: 2 }] },
 ]
 const NEW_CHANGE: AdvectionChange = { quantity: 'temperature', bottom: 0, top: 1.5, amount: 1, start: 0, hours: 2 }

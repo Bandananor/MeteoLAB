@@ -162,3 +162,15 @@ html:not(.layout-phone) .m-only { display: none !important; }
 .adv__num { display: flex; flex-direction: column; gap: 2px; font-size: var(--fs-caption); color: var(--text-3); }
 .adv__num input { width: 100%; min-width: 0; padding: 4px; border: 1px solid var(--line); border-radius: var(--r-1); background: var(--surface-1, var(--surface-3)); color: var(--text); font: inherit; font-family: var(--font-mono); }
 .adv__chart { display: block; width: 100%; height: 120px; margin: 8px 0 4px; }
+
+/* Synoptic situations (main.ts showStory, situations.ts): the story by the hour, the stage now marked; the builder. */
+.side__title--sub { margin-top: 12px; }
+.story { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: var(--fs-label); line-height: 1.35; color: var(--text-3); }
+.story li { display: grid; grid-template-columns: 42px 1fr; gap: 6px; padding: 3px 6px; border-radius: var(--r-1); }
+.story li.is-past { color: var(--text-2); }
+.story li.is-now { color: var(--text); background: var(--surface-3); }
+.story__time { font-family: var(--font-mono); }
+.builder { margin: 8px 0 12px; }
+.builder > summary { cursor: pointer; font-size: var(--fs-label); color: var(--accent); padding: 4px 0; }
+.builder[open] { display: flex; flex-direction: column; gap: 10px; }
+.builder .field { display: flex; flex-direction: column; gap: 4px; }

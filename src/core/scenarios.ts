@@ -1,4 +1,5 @@
 import type { SimConfig } from './config'
+import type { StoryStage } from './situations'
 
 /**
  * A ready-made experiment: values laid over the base configuration. `mesocyclone` says whether the environment is meant
@@ -6,7 +7,11 @@ import type { SimConfig } from './config'
  * scenario test checks it.
  */
 /** `summary`: one line for the phone's scenario cards; `hint`: the full note. */
-export interface Scenario { name: string; summary: string; hint: string; values: Partial<SimConfig>; mesocyclone?: boolean }
+export interface Scenario {
+  name: string; summary: string; hint: string; values: Partial<SimConfig>; mesocyclone?: boolean
+  /** A synoptic situation (2.6, situations.ts): shown apart from the scenarios, with its story by the hour. */
+  story?: StoryStage[]
+}
 
 /**
  * Starting-thermal radius (km) of the ordinary storms (2026-10-08). The default broad thermal (4.2 km, ~8 km across)
@@ -97,4 +102,34 @@ export const SCENARIOS: Scenario[] = [
     values: { bubble: 0, surfaceTemp: 26, rhSurface: 75, rhLow: 70, rhMid: 50, moistLayer: 1.2, capStrength: .7, lapseMid: 5.8, lapseUpper: 6.2,
       wind0: 4, windDir0: 180, wind3: 12, windDir3: 220, wind6: 18, windDir6: 240, wind10: 24, windDir10: 250,
       frontLine: { kind: 'cold', contrast: 9, depth: 2.5, slope: 80, speed: 9, heading: 90, start: -12 } } },
+  // Synoptic situations (2.6): stories over hours, shown apart from the scenarios (they have a story). Calibration
+  // 2026-10-13 (tests/bench/scout.ts, 3 h each; the slow test in situations.test.ts).
+  { name: 'Тёплый сектор и холодный фронт',
+    summary: 'Влага подтягивается, фронт прорывает крышку — грозы на фронте',
+    hint: 'Сюжет на 2–3 часа. 10:00, тёплый сектор циклона: 25 °C, южный ветер, задерживающий слой 1,5 K держит, термика нет. С юга подтягивается влага (+2,5 г/кг в нижних 1,5 км за 3 ч), с 11:00 наверху холодает (ложбина, −2 K на 5–9 км). С запада входит холодный фронт (8 K, 2 км, 10 м/с): к 11:00 его голова прорывает крышку, к 11:15 на фронте грозы, сдвиг умеренный — с вращением. Без фронта та же среда за три часа даёт только кучевые. Фронт — на экране «Зоны», адвекция — в группе «Адвекция» слева',
+    // Calibration (scout «ws_full», 3 h): towers from 11:05, w 32 m/s at 11:15, 40 at 11:30, tops 11.6-14.5 km, a
+    // mesocyclone 28 min, hail to 8 mm, 10 mm of rain by 12:10. Without the front («ws_nofront») w at most 4.9 m/s.
+    values: { bubble: 0, hour: 10, surfaceTemp: 25, rhSurface: 65, rhLow: 60, rhMid: 45, rhUpper: 30, moistLayer: 1, capStrength: 1.5, capHeight: 1.5, lapseLow: 9, lapseMid: 6.3, lapseUpper: 6.5,
+      wind0: 5, windDir0: 170, wind3: 12, windDir3: 210, wind6: 18, windDir6: 235, wind10: 25, windDir10: 245, frameMotion: [8, 4],
+      largeScale: [{ quantity: 'moisture', bottom: 0, top: 1.5, amount: 2.5, start: 0, hours: 3 }, { quantity: 'temperature', bottom: 5, top: 9, amount: -2, start: 1, hours: 2 }],
+      frontLine: { kind: 'cold', contrast: 8, depth: 2, slope: 80, speed: 10, heading: 100, start: -25 } },
+    story: [[0, 'Тёплый сектор: влажно и тепло, но крышка держит — только дымка'], [.25, 'С запада входит холодный фронт, с юга подтягивается влага'], [1, 'Голова фронта прорывает крышку: вдоль фронта растут башни'], [1.25, 'Грозы на фронте, до 11–14 км, с вращением'], [2, 'Наверху холодает (ложбина) — грозы на фронте не слабеют']] },
+  { name: 'Высотная ложбина',
+    summary: 'Солнце запускает грозы, холод наверху не даёт им утихнуть',
+    hint: 'Сюжет на 3 часа. 10:00, континентальный воздух: 27 °C, суховато, крышки нет, термика нет. С 10:30 подходит высотная ложбина — на 4–10 км холодает на 3 K за 2 часа. Солнце доводит до гроз к 11:30, как в обычный день. Обычный день на этом бы и кончился: первые грозы выливаются, отток стабилизирует воздух, к 13:00 всё затихает. С ложбиной профиль всё круче, и новые грозы растут до конца. Сравните: в группе «Адвекция» слева нажмите «Убрать все»',
+    // Calibration (scouts «c0_trough» and «c0_still», 3 h): both fire at ~11:20-11:30 (w 27-32 m/s); from 12:30 the plain
+    // day dies out (w 3-6 m/s by 12:40-13:00), with the trough w 11-14 m/s and new rain to 13:00.
+    values: { bubble: 0, hour: 10, surfaceTemp: 27, rhSurface: 50, rhLow: 45, rhMid: 40, rhUpper: 30, moistLayer: 1, capStrength: 0, lapseLow: 9.3, lapseMid: 6.2, lapseUpper: 6.5,
+      wind0: 3, windDir0: 220, wind3: 8, windDir3: 250, wind6: 13, windDir6: 265, wind10: 18, windDir10: 270,
+      largeScale: [{ quantity: 'temperature', bottom: 4, top: 10, amount: -3, start: .5, hours: 2 }] },
+    story: [[0, 'Утро: солнце греет землю, крышки нет'], [.5, 'Подходит высотная ложбина: на 4–10 км начинает холодать'], [1.3, 'Солнце довело до гроз: башни и первые ливни'], [2.3, 'Обычный день здесь бы затих — но наверху всё холоднее, растут новые грозы']] },
+  { name: 'Тёплая адвекция: грозы не будет',
+    summary: 'Тот же день, но тёплый воздух наверху запирает конвекцию',
+    hint: 'Сюжет на 2 часа. Тот же воздух, что в «Высотной ложбине»: 27 °C, крышки нет, CAPE ~1,8 кДж/кг — в обычный день к 11:30 здесь грозы. Но на 2–3,5 км, над слоем перемешивания, ветер приносит тёплый воздух: +3 K за 2 часа. Крышка растёт быстрее, чем солнце прогревает воздух у земли: кучевые упираются в неё, грозы так и не начинаются. Тёплый воздух ниже, внутри слоя перемешивания, подействовал бы наоборот — слой прогрелся бы весь. Сравните: в группе «Адвекция» слева нажмите «Убрать все» — и к 11:30 вырастут грозы',
+    // Calibration (scouts «c0_warm» and «c0_still», 3 h): with the warm air aloft w at most 3.9 m/s, no cloud; without it
+    // towers from 11:20, w 27 m/s, 6 mm of rain. At 1-2.5 km («wa_full») it warmed the whole mixed layer and gave more.
+    values: { bubble: 0, hour: 10, surfaceTemp: 27, rhSurface: 50, rhLow: 45, rhMid: 40, rhUpper: 30, moistLayer: 1, capStrength: 0, lapseLow: 9.3, lapseMid: 6.2, lapseUpper: 6.5,
+      wind0: 3, windDir0: 220, wind3: 8, windDir3: 250, wind6: 13, windDir6: 265, wind10: 18, windDir10: 270,
+      largeScale: [{ quantity: 'temperature', bottom: 2, top: 3.5, amount: 3, start: 0, hours: 2 }] },
+    story: [[0, 'Утро: CAPE хватает на грозы, крышки нет'], [.3, 'На 2–3,5 км теплеет: ветер приносит тёплый воздух'], [1.3, 'В обычный день здесь уже росли бы грозы — а кучевые упираются в крышку'], [2, 'Крышка окрепла на 3 K: грозы так и не начнутся']] },
 ]

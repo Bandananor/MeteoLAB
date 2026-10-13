@@ -17,7 +17,7 @@ import { DetectorPanel } from './detector/panel'
 import { elapsed as runTime, timeOfDay } from './clock'
 import { ZonesPanel } from './zones/panel'
 import { AdvectionEditor, advectionMarkup } from './largescale-ui'
-import { CELL_STAGES, MESO_PERSISTENCE, TORNADO_DEFAULTS, TORNADO_LEVELS, tornadoSigns, type TornadoThresholds, UH_ROTATING, readState, createGrid, describeBalance, DT, Environment, parcelIndices, SCENARIOS, type SimConfig, rotationSummary, SPIN_SUPERCELL, spinProfile, stormIndices, stormMotion, UH_LAYERS, type UhLayer, environmentProfile, parseSounding, soundingProfile, SoundingError, computeSounding, type Sounding } from './core'
+import { CELL_STAGES, AIR_MASSES, buildSituation, SHEARS, type StoryStage, storyStage, TRIGGERS, MESO_PERSISTENCE, TORNADO_DEFAULTS, TORNADO_LEVELS, tornadoSigns, type TornadoThresholds, UH_ROTATING, readState, createGrid, describeBalance, DT, Environment, parcelIndices, SCENARIOS, type SimConfig, rotationSummary, SPIN_SUPERCELL, spinProfile, stormIndices, stormMotion, UH_LAYERS, type UhLayer, environmentProfile, parseSounding, soundingProfile, SoundingError, computeSounding, type Sounding } from './core'
 import { type FieldMode, fieldInfo } from './render/fields'
 import type { LayerMode } from './render/view'
 import { cleanSettings, decodeSettings, download, encodeSettings, toCsv } from './share'
@@ -60,15 +60,18 @@ const presets = SCENARIOS.map(s => ({ ...s, nums: environmentNums({ ...defaults,
  * The scenario buttons in two columns, in their order: long names take the whole row, and so does a short one that
  * would otherwise stand alone (before a long one or at the end), so that no gap is left for a later button to fill.
  */
-const wideScenario = (() => {
-  const wide = presets.map(p => p.name.length > 14)
+const wideOf = (names: string[]) => {
+  const wide = names.map(n => n.length > 14)
   for (let i = 0, col = 0; i < wide.length; i++) {
     if (wide[i]) { col = 0; continue }
     if (col === 0 && (i + 1 >= wide.length || wide[i + 1])) wide[i] = true
     else col = 1 - col
   }
   return wide
-})()
+}
+const plainPresets = presets.flatMap((p, i) => p.story ? [] : [i]), situationPresets = presets.flatMap((p, i) => p.story ? [i] : [])
+const scenarioButtons = (indices: number[]) => { const wide = wideOf(indices.map(i => presets[i].name)); return indices.map((i, k) => `<button class="btn${wide[k] ? ' is-wide' : ''}" data-preset="${i}" aria-pressed="false">${presets[i].name}</button>`).join('') }
+const choice = (id: string, label: string, items: Record<string, { name: string }>) => `<div class="field"><span class="field__label">${label}</span><span class="select"><select id="${id}">${Object.entries(items).map(([k, v]) => `<option value="${k}">${v.name}</option>`).join('')}</select></span></div>`
 
 const app = document.querySelector<HTMLDivElement>('#app')!
 app.innerHTML = `<div class="app">
@@ -89,12 +92,19 @@ app.innerHTML = `<div class="app">
       <div class="side__scroll">
         <div class="side__block">
           <h2 class="side__title d-only">Сценарии</h2>
-          <div class="scenarios d-only">${presets.map((p, i) => `<button class="btn${wideScenario[i] ? ' is-wide' : ''}" data-preset="${i}" aria-pressed="false">${p.name}</button>`).join('')}</div>
+          <div class="scenarios d-only">${scenarioButtons(plainPresets)}</div>
+          <h2 class="side__title side__title--sub d-only" title="Сюжет на несколько часов: воздушная масса, что приносит ветер (адвекция), фронт и солнце">Синоптические ситуации</h2>
+          <div class="scenarios d-only">${scenarioButtons(situationPresets)}</div>
+          <details class="builder"><summary>Собрать свою ситуацию</summary>
+            ${choice('sitMass', 'Воздушная масса', AIR_MASSES)}${choice('sitTrigger', 'Что запускает конвекцию', TRIGGERS)}${choice('sitShear', 'Сдвиг ветра', SHEARS)}
+            <div class="field"><span class="field__label">Начало</span><span class="select"><select id="sitHour">${[8, 9, 10, 11, 12, 13].map(h => `<option value="${h}"${h === 10 ? ' selected' : ''}>${h}:00</option>`).join('')}</select></span></div>
+            <button class="btn btn--block btn--primary" id="sitBuild" type="button">Собрать и запустить</button></details>
           <div class="scards m-only">${presets.map((p, i) => `<button class="scard" data-preset="${i}" aria-pressed="false"><span class="scard__name">${p.name}</span><span class="scard__desc">${p.summary}</span><span class="scard__nums">${p.nums}</span></button>`).join('')}</div>
           <div class="scenario-note d-only" id="scenarioNote">
             <div class="scenario-note__head"><span class="scenario-note__name" id="scenarioName"></span><button class="btn btn--quiet btn--xs" id="scenarioMore">Подробнее</button></div>
             <div class="scenario-note__text" id="scenarioText"></div>
             <div class="scenario-note__nums" id="scenarioNums"></div>
+            <ol class="story" id="story" hidden></ol>
           </div>
           <div class="notice" id="profileLocked" hidden>Профиль задан формулами — ползунки температуры, влажности и ветра не действуют.</div>
           <button class="btn btn--block" id="soundingOpen" title="Реальное зондирование из файла или вставленного текста: Вайомингский университет, SHARPpy, input_sounding CM1/WRF, CSV — гроза в среде конкретного дня">Реальное зондирование…</button>
@@ -416,7 +426,7 @@ const markProfileGroups = () => {
   locked.textContent = config.sounding ? 'Профиль взят из зондирования — ползунки температуры, влажности и ветра не действуют. Вернуться к ползункам — выберите сценарий.' : 'Профиль задан формулами — ползунки температуры, влажности и ветра не действуют.'
 }
 /** The scenario the settings started from (null: a run opened from a file), as a full config. */
-const baseConfig = (): SimConfig => { const base: SimConfig = { ...defaults, ...(baseScenario === null ? soundingBase ?? {} : SCENARIOS[baseScenario].values) }; fillLowWind(base); return base }
+const baseConfig = (): SimConfig => { const base: SimConfig = { ...defaults, ...(baseScenario === null ? built?.values ?? soundingBase ?? {} : SCENARIOS[baseScenario].values) }; fillLowWind(base); return base }
 // A dot at a left group whose values differ from the scenario. Speed, the domain and its motion are kept when a
 // scenario is chosen: not the scenario's.
 const KEPT = new Set<keyof SimConfig>(['speed', 'followStorm', 'domain', 'domainSize', 'lightning'])
@@ -437,10 +447,11 @@ function markModified() {
 const scenarioNote = document.querySelector<HTMLElement>('#scenarioNote')!, scenarioMore = document.querySelector<HTMLButtonElement>('#scenarioMore')!
 scenarioMore.addEventListener('click', () => { const open = scenarioNote.classList.toggle('is-open'); scenarioMore.textContent = open ? 'Свернуть' : 'Подробнее' })
 function showScenario() {
-  const p = baseScenario === null ? null : presets[baseScenario], s = config.sounding
+  const p = baseScenario === null ? built : presets[baseScenario], s = config.sounding
   text('scenarioName', p ? p.name : s ? `Зондирование: ${s.name || 'без названия'}` : 'Расчёт из файла')
-  text('scenarioText', p ? `${p.hint}.` : s ? `Температура, влажность и ветер — из реального зондирования (${s.levels.length} уровней до ${(s.levels[s.levels.length - 1].z / 1000).toFixed(1)} км над станцией). Термик, солнце, поверхность и расчёт — ползунками.` : 'Настройки взяты из сохранённого файла и ни с одним сценарием не сравниваются.')
+  text('scenarioText', p ? `${p.hint.replace(/.$/, '')}.` : s ? `Температура, влажность и ветер — из реального зондирования (${s.levels.length} уровней до ${(s.levels[s.levels.length - 1].z / 1000).toFixed(1)} км над станцией). Термик, солнце, поверхность и расчёт — ползунками.` : 'Настройки взяты из сохранённого файла и ни с одним сценарием не сравниваются.')
   text('scenarioNums', p ? p.nums : s ? environmentNums(config) : '')
+  showStory(p?.story ?? null)
   scenarioNote.classList.remove('is-open'); scenarioMore.textContent = 'Подробнее'
   // «Подробнее» only when the text is cut.
   requestAnimationFrame(() => { const t = document.querySelector<HTMLElement>('#scenarioText')!; scenarioMore.hidden = t.scrollHeight <= t.clientHeight + 1 })
@@ -459,8 +470,36 @@ surfaceSelect.addEventListener('change', () => {
   markPreset(null)
   recreate()
 })
+/** The story of the situation shown (null: none) and its stage now, marked as the run goes. */
+let story: StoryStage[] | null = null, storyNow = -2
+function showStory(s: StoryStage[] | null) {
+  story = s; storyNow = -2
+  const list = document.querySelector<HTMLElement>('#story')!
+  list.hidden = !s
+  if (s) list.innerHTML = s.map(([h, t]) => `<li><span class="story__time">${timeOfDay(config.hour, h * 3600)}</span><span>${t}</span></li>`).join('')
+  markStory()
+}
+function markStory() {
+  if (!story) return
+  const now = storyStage(story, sim.time)
+  if (now === storyNow) return
+  storyNow = now
+  document.querySelectorAll('#story li').forEach((li, k) => { li.classList.toggle('is-now', k === now); li.classList.toggle('is-past', k < now) })
+}
+// A situation assembled from the choices (situations.ts): run like a scenario, but its own.
+let built: { name: string; hint: string; nums: string; story: StoryStage[]; values: Partial<SimConfig> } | null = null
+document.querySelector('#sitBuild')!.addEventListener('click', () => {
+  const pick = (id: string) => document.querySelector<HTMLSelectElement>(`#${id}`)!.value
+  const b = buildSituation({ mass: pick('sitMass') as keyof typeof AIR_MASSES, trigger: pick('sitTrigger') as keyof typeof TRIGGERS, shear: pick('sitShear') as keyof typeof SHEARS, hour: Number(pick('sitHour')) }, defaults)
+  Object.assign(config, defaults, { speed: config.speed, followStorm: config.followStorm, lightning: config.lightning, domain: config.domain, domainSize: config.domainSize, wind05: undefined, wind1: undefined, windDir05: undefined, windDir1: undefined, profile: undefined, sounding: undefined, bubbleRadius: undefined, front: undefined, edges: undefined, start: undefined, frameMotion: undefined, top: undefined, nightInversion: undefined, zones: undefined, frontLine: undefined, largeScale: undefined, transport: 'weno' }, b.values)
+  fillLowWind(config)
+  built = { ...b, nums: environmentNums(config) }; baseScenario = null; soundingBase = null
+  syncControls(); markPreset(null); showScenario()
+  recreate(); running = true; updatePause()
+})
 document.querySelectorAll<HTMLButtonElement>('[data-preset]').forEach(button => button.addEventListener('click', () => {
   const index = Number(button.dataset.preset)
+  built = null
   Object.assign(config, defaults, { speed: config.speed, followStorm: config.followStorm, lightning: config.lightning, domain: config.domain, domainSize: config.domainSize, wind05: undefined, wind1: undefined, windDir05: undefined, windDir1: undefined, profile: undefined, sounding: undefined, bubbleRadius: undefined, front: undefined, edges: undefined, start: undefined, frameMotion: undefined, top: undefined, nightInversion: undefined, zones: undefined, frontLine: undefined, largeScale: undefined, transport: 'weno' }, presets[index].values)
   fillLowWind(config)
   baseScenario = index
@@ -572,7 +611,7 @@ soundingDialog.addEventListener('close', () => {
   Object.assign(config, defaults, { speed: config.speed, followStorm: config.followStorm, lightning: config.lightning, domain: config.domain, domainSize: config.domainSize, wind05: undefined, wind1: undefined, windDir05: undefined, windDir1: undefined, profile: undefined, bubbleRadius: undefined, front: undefined, edges: undefined, start: undefined, frameMotion: undefined, top: undefined, nightInversion: undefined, zones: undefined, frontLine: undefined, largeScale: undefined, transport: 'weno' },
     { sounding: loadedSounding, bubble: Number(soundingBubble.value), ...(soundingLatitude !== undefined ? { latitude: Math.round(Math.abs(soundingLatitude)) } : {}) })
   fillLowWind(config)
-  baseScenario = null; soundingBase = { sounding: config.sounding, bubble: config.bubble, latitude: config.latitude }
+  baseScenario = null; built = null; soundingBase = { sounding: config.sounding, bubble: config.bubble, latitude: config.latitude }
   syncControls(); markPreset(null); showScenario()
   recreate(); running = true; updatePause()
   dispatchEvent(new Event('closesheet'))
@@ -600,7 +639,7 @@ stateFile.addEventListener('change', async () => {
   try {
     const buffer = await file.arrayBuffer(), state = readState(buffer)
     Object.assign(config, defaults, { wind05: undefined, wind1: undefined, windDir05: undefined, windDir1: undefined, profile: undefined, sounding: undefined, bubbleRadius: undefined, front: undefined, edges: undefined, start: undefined, frameMotion: undefined, top: undefined, nightInversion: undefined, zones: undefined, frontLine: undefined, largeScale: undefined }, cleanSettings(state.header.config))
-    fillLowWind(config); baseScenario = null; soundingBase = config.sounding ? { sounding: config.sounding } : null; syncControls(); markPreset(null); showScenario()
+    fillLowWind(config); baseScenario = null; built = null; soundingBase = config.sounding ? { sounding: config.sounding } : null; syncControls(); markPreset(null); showScenario()
     // The file's seed: the surface pattern under the domain comes from it and is not in the file.
     recreate(config.seed)
     timeline.points.length = 0
@@ -993,7 +1032,7 @@ function frame(now:number){
   text('cape',d.cape.toFixed(0));text('mlcape',d.indices.ml.cape.toFixed(0));text('mlcin',d.indices.ml.cin.toFixed(0));text('mucape',d.indices.mu.cape.toFixed(0));text('dcape',d.indices.dcape.toFixed(0));text('srh01',d.storm.srh01.toFixed(0));text('srh03',d.storm.srh03.toFixed(0));text('scp',d.storm.scp.toFixed(1));text('stp',d.storm.stp.toFixed(1));text('cin',d.cin.toFixed(0));text('updraft',d.updraft.toFixed(1));text('downdraft',d.downdraft.toFixed(1));text('uh',d.updraftHelicity.toFixed(0));text('uhLow',`${d.uh01.toFixed(0)} / ${d.uh03.toFixed(0)}`);text('cloudTop',d.cloudTop.toFixed(1));text('thermalTop',d.thermalTop.toFixed(1));text('cloudWater',d.cloudWater.toFixed(2));text('coldPool',d.coldPool.toFixed(1));text('gust',d.gust.toFixed(1));text('hail',d.hail>=1?(d.hail/10).toFixed(1):'—');text('hailSwath',d.hailSwath>=1?`за прогон до ${(d.hailSwath/10).toFixed(1)} см`:'');showMode(d.hail>=1);text('clipped',String(d.clipped));text('rain',d.rain.toFixed(1));text('rainTotal',d.rainTotal.toFixed(1));text('lcl',d.lcl===null?'—':`${d.lcl.toFixed(1)} км`);text('lfc',d.lfc===null?'—':`${d.lfc.toFixed(1)} км`);text('el',d.el===null?'—':`${d.el.toFixed(1)} км`);text('cellType',d.cellType);text('cellReason',d.cellReason);text('logicText',d.logic);text('sun',`${d.insolation.toFixed(0)} Вт/м²`);text('sunElevation',d.sunElevation>0?`${d.sunElevation.toFixed(0)}° над горизонтом`:'ночь')
   text('surfaceReadout',({grass:'ТРАВА',dry:'СУХАЯ ПОЧВА',water:'ВОДА',urban:'ГОРОД'} as const)[config.surfaceType])
   const b=sim.balance;text('rkw',b?b.ratio.toFixed(1):'—');text('rkwNote',b?`C ${b.c.toFixed(0)} / Δu ${b.deltaU.toFixed(0)} м/с`:'купола нет');const card=document.querySelector<HTMLElement>('#rkwCard')!;card.dataset.base??=card.title;card.title=b?`${card.dataset.base}\n\nСейчас: ${describeBalance(b)}.`:card.dataset.base
-  text('time',runTime(sim.time));text('localTime',timeOfDay(config.hour,sim.time));text('threads',String(sim.threads));text('freezing',d.freezing===null?'—':`${d.freezing.toFixed(1)} км`);if(sim.live!==shownLive){shownLive=sim.live;skewt.setLive(shownLive.env,shownLive)}const sampled=timeline.record({t:sim.time,cape:sim.live.indices.sb.cape,cin:sim.live.indices.sb.cin,updraft:d.updraft,uh:d.updraftHelicity,rain:d.rain,rainTotal:d.rainTotal,rotationHeld:sim.model.rotation.persisted,flashes:sim.model.flashes.filter(f=>f.time>sim.time-60).length});if(frameCount++%20===0){drawSounding();drawHodograph();drawSpin()}if(sampled||frameCount%20===1){const{ctx,w,h}=prepareCanvas('timeline');timeline.draw(ctx,w,h)}updateCells();radar.refresh();const probe=sim.cells.find(selectedCell);skewt.refresh(probe?{id:probe.id,x:probe.x,y:probe.y,u:probe.u+sim.model.frame[0],v:probe.v+sim.model.frame[1]}:null);station.refresh(sim.station,placingStation);detector.refresh(sim.model);showSpeed();showTornado();zonesPanel.refresh(sim.model);listRewind();hud.update({time:sim.time,local:timeOfDay(config.hour,sim.time),updraft:d.updraft,rain:d.rain,uh:d.updraftHelicity,mesocyclone:sim.model.rotation.persisted>=MESO_PERSISTENCE,regime:document.querySelector('#cellType')!.textContent??'',running,speed:config.speed});canvas.style.cursor=placingStation?'crosshair':'';requestAnimationFrame(frame)
+  text('time',runTime(sim.time));text('localTime',timeOfDay(config.hour,sim.time));text('threads',String(sim.threads));text('freezing',d.freezing===null?'—':`${d.freezing.toFixed(1)} км`);if(sim.live!==shownLive){shownLive=sim.live;skewt.setLive(shownLive.env,shownLive)}const sampled=timeline.record({t:sim.time,cape:sim.live.indices.sb.cape,cin:sim.live.indices.sb.cin,updraft:d.updraft,uh:d.updraftHelicity,rain:d.rain,rainTotal:d.rainTotal,rotationHeld:sim.model.rotation.persisted,flashes:sim.model.flashes.filter(f=>f.time>sim.time-60).length});if(frameCount++%20===0){drawSounding();drawHodograph();drawSpin()}if(sampled||frameCount%20===1){const{ctx,w,h}=prepareCanvas('timeline');timeline.draw(ctx,w,h)}updateCells();radar.refresh();const probe=sim.cells.find(selectedCell);skewt.refresh(probe?{id:probe.id,x:probe.x,y:probe.y,u:probe.u+sim.model.frame[0],v:probe.v+sim.model.frame[1]}:null);station.refresh(sim.station,placingStation);detector.refresh(sim.model);showSpeed();showTornado();zonesPanel.refresh(sim.model);listRewind();markStory();hud.update({time:sim.time,local:timeOfDay(config.hour,sim.time),updraft:d.updraft,rain:d.rain,uh:d.updraftHelicity,mesocyclone:sim.model.rotation.persisted>=MESO_PERSISTENCE,regime:document.querySelector('#cellType')!.textContent??'',running,speed:config.speed});canvas.style.cursor=placingStation?'crosshair':'';requestAnimationFrame(frame)
 }
 showDomain()
 requestAnimationFrame(frame)
