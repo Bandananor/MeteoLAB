@@ -13,6 +13,7 @@ import { Atmosphere, type Live } from './atmosphere'
 import { RadarPanel } from './radar/panel'
 import { SkewTPanel } from './skewt/panel'
 import { StationPanel } from './station/panel'
+import { DetectorPanel } from './detector/panel'
 import { CELL_STAGES, MESO_PERSISTENCE, UH_ROTATING, readState, createGrid, describeBalance, DT, Environment, parcelIndices, SCENARIOS, type SimConfig, rotationSummary, SPIN_SUPERCELL, spinProfile, stormIndices, stormMotion, UH_LAYERS, type UhLayer, environmentProfile, parseSounding, soundingProfile, SoundingError, computeSounding, type Sounding } from './core'
 import { type FieldMode, fieldInfo } from './render/fields'
 import type { LayerMode } from './render/view'
@@ -74,7 +75,7 @@ app.innerHTML = `<div class="app">
     <span class="status" id="statusText">Идёт расчёт</span><span class="num faint m-only" data-hud="speed">×8</span>
     <span class="topbar__stats"><span>T+<b id="time">00:00</b></span><span title="Потоки расчёта физики"><b id="threads">—</b> потоков</span><span class="faint" id="domainSize">48 × 36 × 19 км</span></span>
     <span class="topbar__spacer"></span>
-    <span class="topbar__group"><button class="btn" id="radarOpen" title="Доплеровский радар: отражаемость на выбранном угле наклона луча">Радар <span class="kbd">R</span></button><button class="btn" id="skewOpen" title="Аэрологическая диаграмма Skew-T log-p: профиль среды, частица, CAPE/CIN, ветер и зонд в модели у выбранной ячейки">Skew-T <span class="kbd">S</span></button><button class="btn" id="stationOpen" title="Виртуальная метеостанция: поставьте её щелчком на земле и смотрите метеограмму — температуру, давление, ветер с порывами и осадки, когда гроза проходит над ней">Станция <span class="kbd">M</span></button></span>
+    <span class="topbar__group"><button class="btn" id="radarOpen" title="Доплеровский радар: отражаемость на выбранном угле наклона луча">Радар <span class="kbd">R</span></button><button class="btn" id="skewOpen" title="Аэрологическая диаграмма Skew-T log-p: профиль среды, частица, CAPE/CIN, ветер и зонд в модели у выбранной ячейки">Skew-T <span class="kbd">S</span></button><button class="btn" id="detectorOpen" title="Грозопеленгатор: удары в землю и внутриоблачные вспышки на карте, плотность молний на км², частота вспышек и её скачки">Молнии <span class="kbd">L</span></button><button class="btn" id="stationOpen" title="Виртуальная метеостанция: поставьте её щелчком на земле и смотрите метеограмму — температуру, давление, ветер с порывами и осадки, когда гроза проходит над ней">Станция <span class="kbd">M</span></button></span>
     <span class="topbar__sep"></span>
     <a class="btn btn--quiet" href="../guide/" target="_blank" rel="noopener" title="Как пользоваться: где какие кнопки, как менять параметры, приборы, телефон (откроется в новой вкладке, расчёт не прервётся)">Справка</a>
     <button class="btn btn--quiet" id="layoutToggle" title="Телефонный вид: 3D во весь экран, крупные цифры, панель под палец. Выбор запоминается">Телефонный вид</button>
@@ -136,6 +137,7 @@ app.innerHTML = `<div class="app">
         ${group('Расчёт', `
           <div class="field" title="Точный перенос (WENO 5-го порядка, по умолчанию) почти не размывает восходящие потоки и сам сохраняет массу воды. Быстрый (полулагранжев) примерно вдвое дешевле, но размывает потоки: в сильном сдвиге термик не стартует"><span class="field__label">Перенос</span><span class="select"><select id="transport"><option value="weno">Точный (WENO5)</option><option value="semi-lagrangian">Быстрый (полулагранжев)</option></select></span></div>
           <label class="check" title="Область сдвигается вместе с грозой (правая ячейка по Банкерсу при сдвиге 0–6 км от 15 м/с, иначе средний ветер 0–6 км): гроза остаётся внутри и не въезжает с другой стороны в собственный холодный отток. Ветер, годограф и радар — относительно земли"><input type="checkbox" id="followStorm" checked> Область движется вместе с грозой${RESTART}</label>
+          <label class="check" title="Электризация облака и молнии: заряд на крупе, кристаллах и каплях, поле и разряды (IC и в землю). Выключение ускоряет расчёт примерно на четверть; погода от этого не меняется — заряд не влияет на движение воздуха"><input type="checkbox" id="lightning" checked> Молнии${RESTART}</label>
           <div class="field" title="Большая область — 96 × 72 км с тем же шагом: ячейкам просторнее, но расчёт примерно в 4 раза медленнее"><span class="field__label">Размер области${RESTART}</span><span class="select"><select id="domain"><option value="standard">Стандарт — 48 × 36 км</option><option value="large">Большая — 96 × 72 км (в ~4 раза медленнее)</option></select></span></div>
           <div class="field" title="Со льдом (по умолчанию): облачный лёд, снег и крупа (Lin et al. 1983) — наковальня из кристаллов, теплота замерзания, таяние крупы в дождь. Тёплый дождь (Кесслер) — только капли: дешевле, но без наковальни и теплоты замерзания"><span class="field__label">Микрофизика${RESTART}</span><span class="select"><select id="microphysics"><option value="ice">Со льдом — лёд, снег, крупа</option><option value="warm">Тёплый дождь (Кесслер)</option></select></span></div>
           ${slider('speed','Ускорение времени',1,30,1,8,'×')}
@@ -196,7 +198,7 @@ app.innerHTML = `<div class="app">
           ${metric('hail', 'Град у земли', 'см', 'tip-hail', '<div class="t-caption" id="hailSwath"></div>')}
         </div></section>
       <section class="chart"><div class="chart__head"><span class="chart__title">Ход грозы</span><button class="btn btn--xs" id="timelineCsv" title="Выгрузить ряды «Хода грозы» в CSV (таблица или скрипт): время, CAPE и CIN, поток, UH, дождь">CSV</button></div>
-        <canvas id="timeline" title="Ход грозы по модельному времени (вся область, точка каждые 30 с): неустойчивость среды сейчас (CAPE и CIN частицы от земли по живому зондированию — вдали от гроз, раз в модельную минуту), самый сильный восходящий поток, вращение потока и дождь у земли. Перезапуск начинает графики заново"></canvas></section>
+        <canvas id="timeline" title="Ход грозы по модельному времени (вся область, точка каждые 30 с): неустойчивость среды сейчас (CAPE и CIN частицы от земли по живому зондированию — вдали от гроз, раз в модельную минуту), самый сильный восходящий поток, вращение потока, дождь у земли и вспышки молний за последнюю минуту. Перезапуск начинает графики заново"></canvas></section>
       <div class="diag__groups">
         ${group('Индексы неустойчивости', `
           ${pair(['cape', 'CAPE', 'Дж/кг', 'Частица приложения: +0,5 K и вовлечение сухого воздуха (разбавленная CAPE)'], ['cin', 'CIN', 'Дж/кг'])}
@@ -296,7 +298,7 @@ document.querySelectorAll<HTMLElement>('.popover[popover]').forEach(pop => pop.a
 // R, S, M open and close the instruments (not while typing, not with a modifier).
 addEventListener('keydown', e => {
   if (e.ctrlKey || e.metaKey || e.altKey || (e.target as HTMLElement).closest('input:not([type=range]):not([type=checkbox]), select, textarea, dialog')) return
-  const target = ({ KeyR: '#radarOpen', KeyS: '#skewOpen', KeyM: '#stationOpen' } as Record<string, string>)[e.code]
+  const target = ({ KeyR: '#radarOpen', KeyS: '#skewOpen', KeyM: '#stationOpen', KeyL: '#detectorOpen' } as Record<string, string>)[e.code]
   if (target) { e.preventDefault(); document.querySelector<HTMLButtonElement>(target)!.click() }
 })
 const config: SimConfig = { ...defaults, ...SCENARIOS[0].values }
@@ -343,6 +345,8 @@ const station = new StationPanel(document.body)
 let placingStation = false, stationGround: { x: number; y: number } | null = null
 station.onPlace = place => { placingStation = place; if (!place) { stationGround = null; sim.placeStationAt(null) } }
 document.querySelector('#stationOpen')!.addEventListener('click', () => station.toggle())
+const detector = new DetectorPanel(document.body)
+document.querySelector('#detectorOpen')!.addEventListener('click', () => detector.toggle())
 document.querySelector('#skewOpen')!.addEventListener('click', () => skewt.toggle())
 let running = true
 let last = performance.now(), frameCount = 0
@@ -353,6 +357,8 @@ const transportSelect = document.querySelector<HTMLSelectElement>('#transport')!
 transportSelect.addEventListener('change', () => { config.transport = transportSelect.value as SimConfig['transport'] })
 const followCheck = document.querySelector<HTMLInputElement>('#followStorm')!, domainSelect = document.querySelector<HTMLSelectElement>('#domain')!
 followCheck.addEventListener('change', () => { config.followStorm = followCheck.checked; recreate() })
+const lightningCheck = document.querySelector<HTMLInputElement>('#lightning')!
+lightningCheck.addEventListener('change', () => { config.lightning = lightningCheck.checked; recreate() })
 domainSelect.addEventListener('change', () => { config.domain = domainSelect.value as SimConfig['domain']; recreate() })
 const microSelect = document.querySelector<HTMLSelectElement>('#microphysics')!
 microSelect.addEventListener('change', () => { config.microphysics = microSelect.value as SimConfig['microphysics']; markPreset(null); recreate() })
@@ -383,7 +389,7 @@ const markProfileGroups = () => {
 const baseConfig = (): SimConfig => { const base: SimConfig = { ...defaults, ...(baseScenario === null ? soundingBase ?? {} : SCENARIOS[baseScenario].values) }; fillLowWind(base); return base }
 // A dot at a left group whose values differ from the scenario. Speed, the domain and its motion are kept when a
 // scenario is chosen: not the scenario's.
-const KEPT = new Set<keyof SimConfig>(['speed', 'followStorm', 'domain'])
+const KEPT = new Set<keyof SimConfig>(['speed', 'followStorm', 'domain', 'lightning'])
 const SELECTS: [string, keyof SimConfig, string][] = [['#surfaceType', 'surfaceType', 'grass'], ['#transport', 'transport', 'weno'], ['#microphysics', 'microphysics', 'ice']]
 function markModified() {
   const base = baseConfig()
@@ -424,7 +430,7 @@ surfaceSelect.addEventListener('change', () => {
 })
 document.querySelectorAll<HTMLButtonElement>('[data-preset]').forEach(button => button.addEventListener('click', () => {
   const index = Number(button.dataset.preset)
-  Object.assign(config, defaults, { speed: config.speed, followStorm: config.followStorm, domain: config.domain, wind05: undefined, wind1: undefined, windDir05: undefined, windDir1: undefined, profile: undefined, sounding: undefined, bubbleRadius: undefined, front: undefined, edges: undefined, start: undefined, frameMotion: undefined, top: undefined, nightInversion: undefined, transport: 'weno' }, presets[index].values)
+  Object.assign(config, defaults, { speed: config.speed, followStorm: config.followStorm, lightning: config.lightning, domain: config.domain, wind05: undefined, wind1: undefined, windDir05: undefined, windDir1: undefined, profile: undefined, sounding: undefined, bubbleRadius: undefined, front: undefined, edges: undefined, start: undefined, frameMotion: undefined, top: undefined, nightInversion: undefined, transport: 'weno' }, presets[index].values)
   fillLowWind(config)
   baseScenario = index
   syncControls()
@@ -439,7 +445,7 @@ function syncControls() {
   surfaceSelect.value = config.surfaceType
   transportSelect.value = config.transport ?? 'weno'
   microSelect.value = config.microphysics ?? 'ice'
-  followCheck.checked = config.followStorm !== false; domainSelect.value = config.domain ?? 'standard'
+  followCheck.checked = config.followStorm !== false; lightningCheck.checked = config.lightning !== false; domainSelect.value = config.domain ?? 'standard'
   markProfileGroups(); markModified()
 }
 syncControls()
@@ -533,7 +539,7 @@ function previewSounding() {
 soundingDialog.addEventListener('close', () => {
   if (soundingDialog.returnValue !== 'run' || !loadedSounding) { soundingDialog.returnValue = ''; return }
   soundingDialog.returnValue = ''
-  Object.assign(config, defaults, { speed: config.speed, followStorm: config.followStorm, domain: config.domain, wind05: undefined, wind1: undefined, windDir05: undefined, windDir1: undefined, profile: undefined, bubbleRadius: undefined, front: undefined, edges: undefined, start: undefined, frameMotion: undefined, top: undefined, nightInversion: undefined, transport: 'weno' },
+  Object.assign(config, defaults, { speed: config.speed, followStorm: config.followStorm, lightning: config.lightning, domain: config.domain, wind05: undefined, wind1: undefined, windDir05: undefined, windDir1: undefined, profile: undefined, bubbleRadius: undefined, front: undefined, edges: undefined, start: undefined, frameMotion: undefined, top: undefined, nightInversion: undefined, transport: 'weno' },
     { sounding: loadedSounding, bubble: Number(soundingBubble.value), ...(soundingLatitude !== undefined ? { latitude: Math.round(Math.abs(soundingLatitude)) } : {}) })
   fillLowWind(config)
   baseScenario = null; soundingBase = { sounding: config.sounding, bubble: config.bubble, latitude: config.latitude }
@@ -911,7 +917,7 @@ function frame(now:number){
   text('cape',d.cape.toFixed(0));text('mlcape',d.indices.ml.cape.toFixed(0));text('mlcin',d.indices.ml.cin.toFixed(0));text('mucape',d.indices.mu.cape.toFixed(0));text('dcape',d.indices.dcape.toFixed(0));text('srh01',d.storm.srh01.toFixed(0));text('srh03',d.storm.srh03.toFixed(0));text('scp',d.storm.scp.toFixed(1));text('stp',d.storm.stp.toFixed(1));text('cin',d.cin.toFixed(0));text('updraft',d.updraft.toFixed(1));text('downdraft',d.downdraft.toFixed(1));text('uh',d.updraftHelicity.toFixed(0));text('uhLow',`${d.uh01.toFixed(0)} / ${d.uh03.toFixed(0)}`);text('cloudTop',d.cloudTop.toFixed(1));text('thermalTop',d.thermalTop.toFixed(1));text('cloudWater',d.cloudWater.toFixed(2));text('coldPool',d.coldPool.toFixed(1));text('gust',d.gust.toFixed(1));text('hail',d.hail>=1?(d.hail/10).toFixed(1):'—');text('hailSwath',d.hailSwath>=1?`за прогон до ${(d.hailSwath/10).toFixed(1)} см`:'');showMode(d.hail>=1);text('clipped',String(d.clipped));text('rain',d.rain.toFixed(1));text('rainTotal',d.rainTotal.toFixed(1));text('lcl',d.lcl===null?'—':`${d.lcl.toFixed(1)} км`);text('lfc',d.lfc===null?'—':`${d.lfc.toFixed(1)} км`);text('el',d.el===null?'—':`${d.el.toFixed(1)} км`);text('cellType',d.cellType);text('cellReason',d.cellReason);text('logicText',d.logic);text('sun',`${d.insolation.toFixed(0)} Вт/м²`);text('sunElevation',d.sunElevation>0?`${d.sunElevation.toFixed(0)}° над горизонтом`:'ночь')
   text('surfaceReadout',({grass:'ТРАВА',dry:'СУХАЯ ПОЧВА',water:'ВОДА',urban:'ГОРОД'} as const)[config.surfaceType])
   const b=sim.balance;text('rkw',b?b.ratio.toFixed(1):'—');text('rkwNote',b?`C ${b.c.toFixed(0)} / Δu ${b.deltaU.toFixed(0)} м/с`:'купола нет');const card=document.querySelector<HTMLElement>('#rkwCard')!;card.dataset.base??=card.title;card.title=b?`${card.dataset.base}\n\nСейчас: ${describeBalance(b)}.`:card.dataset.base
-  const sec=Math.floor(sim.time);text('time',`${String(Math.floor(sec/60)).padStart(2,'0')}:${String(sec%60).padStart(2,'0')}`);text('threads',String(sim.threads));text('freezing',d.freezing===null?'—':`${d.freezing.toFixed(1)} км`);if(sim.live!==shownLive){shownLive=sim.live;skewt.setLive(shownLive.env,shownLive)}const sampled=timeline.record({t:sim.time,cape:sim.live.indices.sb.cape,cin:sim.live.indices.sb.cin,updraft:d.updraft,uh:d.updraftHelicity,rain:d.rain,rainTotal:d.rainTotal,rotationHeld:sim.model.rotation.persisted});if(frameCount++%20===0){drawSounding();drawHodograph();drawSpin()}if(sampled||frameCount%20===1){const{ctx,w,h}=prepareCanvas('timeline');timeline.draw(ctx,w,h)}updateCells();radar.refresh();const probe=sim.cells.find(selectedCell);skewt.refresh(probe?{id:probe.id,x:probe.x,y:probe.y,u:probe.u+sim.model.frame[0],v:probe.v+sim.model.frame[1]}:null);station.refresh(sim.station,placingStation);listRewind();hud.update({time:sim.time,updraft:d.updraft,rain:d.rain,uh:d.updraftHelicity,mesocyclone:sim.model.rotation.persisted>=MESO_PERSISTENCE,regime:document.querySelector('#cellType')!.textContent??'',running,speed:config.speed});canvas.style.cursor=placingStation?'crosshair':'';requestAnimationFrame(frame)
+  const sec=Math.floor(sim.time);text('time',`${String(Math.floor(sec/60)).padStart(2,'0')}:${String(sec%60).padStart(2,'0')}`);text('threads',String(sim.threads));text('freezing',d.freezing===null?'—':`${d.freezing.toFixed(1)} км`);if(sim.live!==shownLive){shownLive=sim.live;skewt.setLive(shownLive.env,shownLive)}const sampled=timeline.record({t:sim.time,cape:sim.live.indices.sb.cape,cin:sim.live.indices.sb.cin,updraft:d.updraft,uh:d.updraftHelicity,rain:d.rain,rainTotal:d.rainTotal,rotationHeld:sim.model.rotation.persisted,flashes:sim.model.flashes.filter(f=>f.time>sim.time-60).length});if(frameCount++%20===0){drawSounding();drawHodograph();drawSpin()}if(sampled||frameCount%20===1){const{ctx,w,h}=prepareCanvas('timeline');timeline.draw(ctx,w,h)}updateCells();radar.refresh();const probe=sim.cells.find(selectedCell);skewt.refresh(probe?{id:probe.id,x:probe.x,y:probe.y,u:probe.u+sim.model.frame[0],v:probe.v+sim.model.frame[1]}:null);station.refresh(sim.station,placingStation);detector.refresh(sim.model);listRewind();hud.update({time:sim.time,updraft:d.updraft,rain:d.rain,uh:d.updraftHelicity,mesocyclone:sim.model.rotation.persisted>=MESO_PERSISTENCE,regime:document.querySelector('#cellType')!.textContent??'',running,speed:config.speed});canvas.style.cursor=placingStation?'crosshair':'';requestAnimationFrame(frame)
 }
 showDomain()
 requestAnimationFrame(frame)

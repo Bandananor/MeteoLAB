@@ -1,15 +1,15 @@
 // The storm's course over model time: the instability of the live sounding (SB CAPE and CIN, src/core/live.ts), strongest
-// updraught, rotation (UH 2-5 km) and rain at the ground, sampled every 30 model seconds for the whole domain and drawn
-// as four small stacked plots in the side panel. Under the rotation
+// updraught, rotation (UH 2-5 km), rain at the ground and the flash rate (2.3), sampled every 30 model seconds for the
+// whole domain and drawn as five small stacked plots in the side panel. Under the rotation
 // plot, the stretches when the updraught core itself rotated (the model's mesocyclone criterion, MESO_CORE_ZETA) are
 // shaded, dark once that held MESO_PERSISTENCE: UH alone also counts the vortex pairs of weak-shear storms.
 import { MESO_PERSISTENCE } from './core'
 import { chartPalette } from './theme'
 
 /** One sample: model time (s), the values the plots show and how long (s) the core rotation had held then. */
-export interface TimelinePoint { t: number; cape: number; cin: number; updraft: number; uh: number; rain: number; rainTotal: number; rotationHeld: number }
+export interface TimelinePoint { t: number; cape: number; cin: number; updraft: number; uh: number; rain: number; rainTotal: number; rotationHeld: number; /** Flashes in the last model minute. */ flashes: number }
 
-type Key = 'cape' | 'cin' | 'updraft' | 'uh' | 'rain'
+type Key = 'cape' | 'cin' | 'updraft' | 'uh' | 'rain' | 'flashes'
 /** One plot; `second` draws another value on the same axis (CIN under CAPE). */
 interface Series { key: Key; label: string; unit: string; color: string; floor: number; rotation?: boolean; second?: { key: Key; label: string; color: string } }
 
@@ -18,6 +18,7 @@ const SERIES: Series[] = [
   { key: 'updraft', label: 'Восходящий поток', unit: 'м/с', color: '#c4553a', floor: 10 },
   { key: 'uh', label: 'UH 2–5 км', unit: 'м²/с²', color: '#7b3fa0', floor: 200, rotation: true },
   { key: 'rain', label: 'Дождь', unit: 'мм/ч', color: '#3f6fa3', floor: 10 },
+  { key: 'flashes', label: 'Молнии', unit: 'вспышек/мин', color: '#8a6cd8', floor: 10 },
 ]
 
 /** Samples every SAMPLE seconds of model time; a restart (time going back) starts a new record. */

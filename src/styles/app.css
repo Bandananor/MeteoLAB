@@ -5,7 +5,7 @@
 .app { grid-template-columns: minmax(0, 1fr); }
 
 /* Right column: canvases drawn by main.ts and timeline.ts. */
-#timeline { height: 280px; }
+#timeline { height: 340px; }
 .side-chart { width: 100%; height: 220px; border-radius: var(--r-1); background: var(--chart-bg); box-shadow: inset 0 0 0 1px var(--line); }
 .side-chart--square { height: auto; aspect-ratio: 1; }
 /* The hodograph editor: its handles are dragged, so the browser must not scroll or zoom under them. */
