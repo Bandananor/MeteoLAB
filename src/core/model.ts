@@ -10,6 +10,7 @@ import { SMAGORINSKY, Turbulence } from './turbulence'
 import { chargingRate, transferCharge } from './charge'
 import { type Flash, Lightning } from './lightning'
 import { ZONE_DEPTH, ZONE_TIME, zoneMaps, zoneShape } from './zones'
+import { advected } from './largescale'
 import { coldMoisture, FRONT_BLUR, FRONTAL_TIME, frontalDeficit, frontDistance, WARM_BAND } from './fronts'
 import { graupelFallSpeed, graupelProcesses } from './graupel'
 import { hailFallSpeed, hailMaxDiameter, hailProcesses } from './hail'
@@ -602,6 +603,17 @@ export class AtmosphereModel implements TaskModel {
 
   private withIce() { return (this.config.microphysics ?? this.microphysics) === 'ice' }
 
+  /**
+   * The environment's potential temperature (K) and vapour (kg/kg) at level z at time s (default: now): the base state
+   * plus the large-scale advection that has come by then (SimConfig.largeScale).
+   */
+  envNow(z: number, s = this.time): [number, number] {
+    const e = this.env, changes = this.config.largeScale
+    if (!changes?.length) return [e.theta[z], e.q[z]]
+    const [dt, dq] = advected(changes, this.grid.zs[z], s)
+    return [e.theta[z] + dt / e.exner[z], Math.max(0, e.q[z] + dq)]
+  }
+
   /** The side boundaries (SimConfig.edges): relaxed when a moving front is set and they are not. */
   edges() { return this.config.edges ?? (this.config.frontLine ? 'relaxed' : 'periodic') }
 
@@ -656,10 +668,14 @@ export class AtmosphereModel implements TaskModel {
     const edgeY = this.edgeY ??= Float64Array.from({ length: ny }, (_, y) => Math.min(y + .5, ny - .5 - y) * dy)
     {
       let i = z * layer
-      const alt = zs[z], p = e.p[z], rhoZ = e.rho[z], exner = e.exner[z], thEnv = e.theta[z], qEnv = e.q[z], thvEnv = thEnv * (1 + .61 * qEnv), ue = this.uEnv[z], ve = this.vEnv[z]
+      const alt = zs[z], p = e.p[z], rhoZ = e.rho[z], exner = e.exner[z], ue = this.uEnv[z], ve = this.vEnv[z]
+      // Large-scale advection (SimConfig.largeScale): the environment now, and this step's change added to every node.
+      const [thEnv, qEnv] = this.envNow(z), [thNext, qNext] = this.envNow(z, this.time + dt), thvEnv = thEnv * (1 + .61 * qEnv)
+      const addTheta = thNext - thEnv, addQ = qNext - qEnv, advecting = addTheta !== 0 || addQ !== 0
       for (let y = 0; y < ny; y++) {
         const row = y * nx
         for (let x = 0; x < nx; x++, i++) {
+          if (advecting) { theta[i] += addTheta; q[i] = Math.max(0, q[i] + addQ) }
           if (electric) { before[0] = ice[i] + snow[i]; before[1] = graupel[i] + hail[i]; before[2] = rain[i]; before[3] = cloud[i] }
           // Kessler warm rain, then saturation adjustment (vapour and cloud water in equilibrium after every step).
           // Evaporation of rain and cloud feeds the cold-pool indicator.

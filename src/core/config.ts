@@ -1,6 +1,7 @@
 import type { SoundingLevel } from './soundingfile'
 import type { FrontConfig } from './fronts'
 import type { ZoneConfig } from './zones'
+import type { AdvectionChange } from './largescale'
 
 export type SurfaceType = 'grass' | 'dry' | 'water' | 'urban'
 
@@ -77,6 +78,11 @@ export interface SimConfig {
    * round the periodic domain as a second front.
    */
   frontLine?: FrontConfig
+  /**
+   * Large-scale advection (2.6, largescale.ts): changes of temperature or vapour in layers over hours, added to the whole
+   * domain at a steady rate; absent = the environment stays as it started.
+   */
+  largeScale?: AdvectionChange[]
   /** Day of the year (1-365) for the sun's declination; absent = an equinox (sunrise 06:00, sunset 18:00). */
   dayOfYear?: number
   speed: number; seed: number; bubble: number

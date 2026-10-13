@@ -21,7 +21,7 @@ export function computeScalarField(model: AtmosphereModel, field: ScalarField, o
   const { nx, ny, nz } = model.grid, env = model.env, [uh0, uh1] = model.uhLevels
   if (field === 'helicity' && uhLayer !== '2-5') { columnHelicity(model, uhLayer, out); return }
   for (let z = 0, i = 0; z < nz; z++) {
-    const alt = model.grid.zs[z], exner = env.exner[z], thEnv = env.theta[z]
+    const alt = model.grid.zs[z], exner = env.exner[z], thEnv = model.envNow(z)[0]
     for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++, i++) {
       switch (field) {
         case 'updraft': out[i] = model.w[i]; break
