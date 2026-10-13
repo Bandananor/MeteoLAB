@@ -3,7 +3,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js'
 import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js'
 import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeometry.js'
-import { type AtmosphereModel, computeScalarField, type Flash, heightAt, levelAt, MESO_PERSISTENCE, sunDirection, UH_ROTATING, type UhLayer } from '../core'
+import { type AtmosphereModel, channelShape, computeScalarField, type Flash, heightAt, levelAt, MESO_PERSISTENCE, sunDirection, UH_ROTATING, type UhLayer } from '../core'
 import { clamp, lerp, mod, mulberry32 } from '../core/math'
 import { isPhone } from '../hud'
 import { colormapTexture, type FieldMode, fieldInfo } from './fields'
@@ -385,19 +385,15 @@ export class StormView {
     const shown = this.settings.showLightning && this.flashing.length > 0
     this.lightningLines.visible = shown
     if (!shown) return 0
-    const { nx, layer, dx, dy, zs, dzs, width } = m.grid, pos = this.lightningPositions, col = this.lightningColors
+    const { width } = m.grid, pos = this.lightningPositions, col = this.lightningColors
     let n = 0, glow = 0
     for (const { flash, born } of this.flashing) {
       const age = clamp((now - born) / FLASH_SHOWN), cg = flash.kind === 'CG'
       const bright = (1 - age) ** 1.5 * (cg ? .8 + .2 * Math.cos(age * 40) : 1)
       glow = Math.max(glow, bright * (cg ? 1 : .7))
       // On the dark background the newest flash's colour; older ones fade towards it (one opacity for all).
-      const [r, g, b] = cg ? [1, .95, .55] : [.72, .62, 1], rng = mulberry32(Math.round(flash.time * 10) + flash.start)
-      const at = (i: number) => {
-        const z = Math.floor(i / layer), y = Math.floor((i - z * layer) / nx), x = i - z * layer - y * nx, h = dzs[Math.min(z, dzs.length - 1)]
-        return [(x + (rng() - .5) * .7) * dx, (y + (rng() - .5) * .7) * dy, z === 0 ? 0 : zs[z] + (rng() - .5) * .7 * h] as const
-      }
-      const place = Array.from(flash.nodes, at)
+      const [r, g, b] = cg ? [1, .95, .55] : [.72, .62, 1], shape = channelShape(m.grid, flash)
+      const place = Array.from(flash.nodes, (_, c) => [shape[c * 3], shape[c * 3 + 1], shape[c * 3 + 2]] as const)
       for (let c = 1; c < flash.nodes.length && n < LIGHTNING_SEGMENTS * 2; c++) {
         const a = place[flash.parent[c]], b2 = place[c]
         // Across the periodic edge: not a line over the whole domain.

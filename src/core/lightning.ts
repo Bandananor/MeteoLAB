@@ -56,6 +56,20 @@ export interface Flash {
 }
 
 /**
+ * Where to draw a flash's channel, m from the domain corner (x, y, z per node, in the order of `nodes`): each node
+ * shifted at random by up to a third of its cell, the same shifts every time for the same flash, so the 3D view and
+ * the detector's map draw one channel that does not follow the grid.
+ */
+export function channelShape(grid: Grid, flash: Flash) {
+  const { nx, layer, dx, dy, zs, dzs } = grid, rng = mulberry32(Math.round(flash.time * 10) + flash.start), shape = new Float64Array(flash.nodes.length * 3)
+  flash.nodes.forEach((i, c) => {
+    const z = Math.floor(i / layer), y = Math.floor((i - z * layer) / nx), x = i - z * layer - y * nx, h = dzs[Math.min(z, dzs.length - 1)]
+    shape[c * 3] = (x + (rng() - .5) * .7) * dx; shape[c * 3 + 1] = (y + (rng() - .5) * .7) * dy; shape[c * 3 + 2] = z === 0 ? 0 : zs[z] + (rng() - .5) * .7 * h
+  })
+  return shape
+}
+
+/**
  * Electric field and discharges of the storm charge. The charge carriers are the model's four fields (C/kg); flashes
  * change them in place, exactly conserving the charge (with what the CG flashes take from the ground: `fromGround`).
  */

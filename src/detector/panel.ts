@@ -1,7 +1,7 @@
-import type { AtmosphereModel, Flash } from '../core'
+import { type AtmosphereModel, channelShape, type Flash } from '../core'
 import { help, instrumentPalette, instrumentScreen, numbers, press, readings, section } from '../instrument'
 import { MONO } from '../theme'
-import { flashDensity, flashFacts, flashPoint, flashRates, lightningJumps, nodeNow, total } from './stats'
+import { flashDensity, flashFacts, flashPoint, flashRates, lightningJumps, total } from './stats'
 
 type Mode = 'marks' | 'density'
 /** Colours of the marks by age, minutes: [younger than, colour] (as on lightning maps: white the newest, red the oldest). */
@@ -85,9 +85,11 @@ export class DetectorPanel {
     const pal = instrumentPalette(this.root)
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.fillStyle = pal.bg; ctx.fillRect(0, 0, w, h); ctx.font = `11px ${MONO}`
     const now = m.time, since = now - this.period * 60, recent = m.flashes.filter(f => f.time > since)
-    // Rates minute by minute from the start (the quiet minutes before the first flash are the jump's history), or from
-    // the oldest flash kept if older ones were dropped; the last minute is still filling.
-    const dropped = m.flashCount.ic + m.flashCount.cg > m.flashes.length, first = dropped ? Math.floor((m.flashes[0].time - 1) / 60) * 60 : 0
+    // Rates minute by minute from the start (the quiet minutes before the first flash are the jump's history), or, when
+    // older flashes are not here (dropped, or a run opened from a file), from the oldest one kept; the last minute is
+    // still filling.
+    const dropped = m.flashCount.ic + m.flashCount.cg > m.flashes.length
+    const first = !dropped ? 0 : m.flashes.length ? Math.floor((m.flashes[0].time - 1) / 60) * 60 : Math.floor(now / 60) * 60
     const bins = flashRates(m.flashes, Math.max(0, first), Math.max(first, now - 1)), jumps = lightningJumps(bins)
     const lastFull = bins.length >= 2 ? bins[bins.length - 2] : null, rate = lastFull ? total(lastFull) : 0
     this.text('detRate', String(rate)); this.text('detIc', String(m.flashCount.ic)); this.text('detCg', String(m.flashCount.cg))
@@ -120,16 +122,18 @@ export class DetectorPanel {
     }
     // The domain now.
     ctx.strokeStyle = pal.gridStrong; ctx.setLineDash([5, 4]); ctx.strokeRect(X(0), Y(D), W * scale, D * scale); ctx.setLineDash([])
-    // The selected flash's channel in plan.
+    // The selected flash's channel in plan, as in the 3D view (channelShape), thin and half transparent over the marks.
     const sel = this.selected
     if (sel && m.flashes.includes(sel)) {
-      ctx.lineWidth = 1.4
+      const shape = channelShape(m.grid, sel), ago = m.time - sel.time, sx = m.frame[0] * ago, sy = m.frame[1] * ago
+      ctx.lineWidth = 1; ctx.globalAlpha = .7
       for (let k = 1; k < sel.nodes.length; k++) {
-        const a = nodeNow(m, sel, sel.nodes[sel.parent[k]]), b = nodeNow(m, sel, sel.nodes[k])
-        if (Math.abs(a.x - b.x) > W / 2 || Math.abs(a.y - b.y) > D / 2) continue
+        const a = sel.parent[k] * 3, b = k * 3, ax = shape[a] - sx, ay = shape[a + 1] - sy, bx = shape[b] - sx, by = shape[b + 1] - sy
+        if (Math.abs(ax - bx) > W / 2 || Math.abs(ay - by) > D / 2) continue
         ctx.strokeStyle = sel.polarity[k] > 0 ? '#ff6b6b' : sel.polarity[k] < 0 ? '#6ba8ff' : '#cccccc'
-        ctx.beginPath(); ctx.moveTo(X(a.x), Y(a.y)); ctx.lineTo(X(b.x), Y(b.y)); ctx.stroke()
+        ctx.beginPath(); ctx.moveTo(X(ax), Y(ay)); ctx.lineTo(X(bx), Y(by)); ctx.stroke()
       }
+      ctx.globalAlpha = 1
     } else this.selected = null
     // Marks, oldest first so the newest are on top.
     this.marks = []

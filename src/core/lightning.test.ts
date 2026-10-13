@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { Environment } from './environment'
 import { QUIET } from './fixtures'
 import { createGrid, DEFAULT_GRID } from './grid'
-import { Lightning } from './lightning'
+import { channelShape, Lightning } from './lightning'
 import { environmentProfile } from './profiles'
 
 const grid = createGrid(DEFAULT_GRID), air = new Environment(QUIET, grid, environmentProfile(QUIET, grid.height)).rho
@@ -61,6 +61,17 @@ describe('lightning (2.3 step 3)', () => {
     const lowered = flashes.reduce((s, f) => s + (f.kind === 'CG' ? f.charge : 0), 0)
     expect(lightning.fromGround).toBeCloseTo(-lowered, 6)
     expect(Math.abs(total(carriers) - start - lightning.fromGround)).toBeLessThan(1e-6 * Math.abs(first.charge))
+  })
+
+  it('the drawn channel: every node shifted within its cell, the same shape every time', () => {
+    const [flash] = new Lightning(grid, air, 7).discharge(storm([[10000, 2], [6500, -3.5], [3500, 1]]), 0), shape = channelShape(grid, flash)
+    expect(Array.from(channelShape(grid, flash))).toEqual(Array.from(shape))
+    flash.nodes.forEach((i, c) => {
+      const z = Math.floor(i / grid.layer), y = Math.floor((i - z * grid.layer) / grid.nx), x = i - z * grid.layer - y * grid.nx
+      expect(Math.abs(shape[c * 3] - x * grid.dx)).toBeLessThanOrEqual(.35 * grid.dx)
+      expect(Math.abs(shape[c * 3 + 1] - y * grid.dy)).toBeLessThanOrEqual(.35 * grid.dy)
+      expect(Math.abs(shape[c * 3 + 2] - grid.zs[z])).toBeLessThanOrEqual(.35 * grid.dzs[Math.min(z, grid.nz - 2)])
+    })
   })
 
   it('below the breakdown threshold nothing happens', () => {
