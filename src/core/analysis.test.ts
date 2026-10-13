@@ -42,6 +42,6 @@ describe('the surface analysis (2.6)', () => {
     expect(plots).toHaveLength(4 * 3)
     const near = plots.find(s => Math.hypot(s.x - 9000, s.y - 9000) < 1)!, far = plots.find(s => s.x === 21_000 && s.y === 15_000)!
     expect(near.temp).toBeLessThan(far.temp - 3); expect(near.pressure).toBeGreaterThan(far.pressure)
-    expect(far.dew).toBeLessThanOrEqual(far.temp); expect(far.rain).toBe(0); expect(far.thunder).toBe(false); expect(far.cloudy).toBe(false)
+    expect(far.dew).toBeLessThanOrEqual(far.temp); expect(far.rain).toBe(0); expect(far.thunder).toBe(false); expect(far.cloud).toBe(0)
   })
 })

@@ -5,10 +5,10 @@ import { chartPalette, MONO } from './theme'
 
 /** Ready-made changes: a name, what it is, the changes. */
 export const ADVECTION_PRESETS: { name: string; title: string; changes: AdvectionChange[] }[] = [
-  { name: 'Влага к вечеру', title: 'Южный ветер приносит влажный воздух: +2 г/кг водяного пара в нижних 1,5 км за 3 часа. CAPE растёт, основание облаков опускается', changes: [{ quantity: 'moisture', bottom: 0, top: 1.5, amount: 2, start: 0, hours: 3 }] },
-  { name: 'Холод наверху (ложбина)', title: 'Подходит высотная ложбина: на 5–9 км холодает на 3 K за 2 часа. Профиль становится круче, CAPE растёт, вершины гроз выше', changes: [{ quantity: 'temperature', bottom: 5, top: 9, amount: -3, start: 0, hours: 2 }] },
+  { name: 'Приток влаги', title: 'Южный ветер приносит влажный воздух: +2 г/кг водяного пара в нижних 1,5 км за 3 часа (с начала расчёта). CAPE растёт, основание облаков опускается. Быстро, но бывает: так возвращается влага с низкоуровневым струйным течением', changes: [{ quantity: 'moisture', bottom: 0, top: 1.5, amount: 2, start: 0, hours: 3 }] },
+  { name: 'Холод наверху (ложбина)', title: 'Подходит высотная ложбина: на 5–9 км холодает на 3 K за 2 часа — ускорено, в природе так за 6–12 ч. Профиль становится круче, CAPE растёт, вершины гроз выше. Подъём воздуха перед ложбиной модель не учитывает', changes: [{ quantity: 'temperature', bottom: 5, top: 9, amount: -3, start: 0, hours: 2 }] },
   { name: 'Тёплый воздух над слоем', title: 'Тёплая адвекция на 2–3,5 км, над слоем перемешивания: +3 K за 2 часа. Задерживающий слой крепнет, CIN растёт — конвекция может так и не начаться. Ниже, внутри слоя перемешивания, тёплый воздух подействовал бы наоборот: слой прогрелся бы весь, как от солнца', changes: [{ quantity: 'temperature', bottom: 2, top: 3.5, amount: 3, start: 0, hours: 2 }] },
-  { name: 'Сухой воздух в середине', title: 'Сухой воздух на 3–6 км: −3 г/кг за 2 часа. Вовлечение сухого воздуха усиливает нисходящие потоки и холодный отток', changes: [{ quantity: 'moisture', bottom: 3, top: 6, amount: -3, start: 0, hours: 2 }] },
+  { name: 'Сухой воздух в середине', title: 'Сухой воздух на 3–6 км: −1,5 г/кг за 2 часа. Вовлечение сухого воздуха может усиливать нисходящие потоки (DCAPE растёт), но осадков становится меньше. Пара не станет меньше нуля: на 6 км его всего ~0,5 г/кг', changes: [{ quantity: 'moisture', bottom: 3, top: 6, amount: -1.5, start: 0, hours: 2 }] },
 ]
 const NEW_CHANGE: AdvectionChange = { quantity: 'temperature', bottom: 0, top: 1.5, amount: 1, start: 0, hours: 2 }
 /** At most this many changes (share.ts accepts 12). */
@@ -76,7 +76,7 @@ export class AdvectionEditor {
   private chart() {
     const c = document.querySelector<HTMLCanvasElement>('#advChart')!, note = document.querySelector<HTMLElement>('#advNote')!
     c.hidden = !this.changes.length || !this.config
-    if (c.hidden) { note.textContent = 'Среда весь расчёт остаётся такой, как в начале. Адвекция — изменение температуры или влажности в слое за несколько часов, как его приносит ветер: например, «Влага к вечеру».'; return }
+    if (c.hidden) { note.textContent = 'Среда весь расчёт остаётся такой, как в начале. Адвекция — изменение температуры или влажности в слое за несколько часов, как его приносит ветер: например, «Приток влаги». Модель меняет только температуру и влагу: подъём воздуха и ветер остаются прежними.'; return }
     if (!this.list.closest('details')?.open) return
     const config = this.config!, grid = createGrid(), env = new Environment(config, grid, environmentProfile(config, grid.height))
     const end = Math.max(3, ...this.changes.map(x => Math.min(24, x.start + x.hours) + .5)), hours = Array.from({ length: POINTS }, (_, k) => end * k / (POINTS - 1))

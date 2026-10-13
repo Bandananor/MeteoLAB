@@ -32,7 +32,7 @@
         <a href="#compare"><span class="num">11</span>Сравнить два опыта</a>
         <a href="#front"><span class="num">12</span>Холодный фронт</a>
         <a href="#advection"><span class="num">13</span>Один день — три исхода</a>
-        <span class="toc__ver">v2.6</span></nav>
+        <span class="toc__ver">v2.6.1</span></nav>
       <article class="prose">
         <span class="t-eyebrow">Гайд для тех, кто освоился</span>
         <h1>Опыты и рецепты</h1>
@@ -151,15 +151,15 @@
         <h2 id="advection"><span class="num">13</span>Один день — три исхода</h2>
         <ol>
           <li>Ситуация <b>«Высотная ложбина»</b> (под сценариями, «Синоптические ситуации»). Ускорение ×30 или больше. Следите за сюжетом под описанием: к 11:30 солнце доводит до гроз.</li>
-          <li><b>Опыт 1 — обычный день:</b> слева, группа «Адвекция: среда меняется» → «Убрать все». Те же грозы к 11:30, но к 13:00 всё затихает: отток стабилизировал воздух, а новый холод сверху не приходит.</li>
-          <li><b>Опыт 2 — день без гроз:</b> ситуация <b>«Тёплая адвекция: грозы не будет»</b>. Тот же воздух, но на 2–3,5 км теплеет на 3 K: кучевые упираются в крышку. График CAPE/CIN в группе «Адвекция» показывает, как растёт CIN.</li>
+          <li><b>Опыт 1 — обычный день:</b> слева, группа «Адвекция: среда меняется» → «Убрать все». Те же грозы к 11:30, но к 13:00 всё затихает: отток заполнил всю маленькую область модели, а новый холод сверху не приходит. В природе новые грозы росли бы на границах оттока до вечера — это ограничение области 48 × 36 км, а не свойство «обычного дня».</li>
+          <li><b>Опыт 2 — день без гроз:</b> ситуация <b>«Тёплый воздух над слоем: гроз не будет»</b>. Тот же воздух, но на 2–3,5 км теплеет на 3 K: кучевые упираются в крышку. График CAPE/CIN в группе «Адвекция» показывает, как растёт CIN.</li>
           <li><b>Опыт 3 — ниже слоя:</b> в изменении той же ситуации поставьте слой 1–2,5 км. Перезапуск — и гроз станет больше: днём слой перемешивания дорастает до ~2 км и тёплый воздух прогревает его весь, как солнце.</li>
           <li><b>Куда смотреть:</b> Skew-T (S) — профиль в модели; справа «Ход грозы» — CAPE и CIN по времени.</li>
         </ol>
         <p>Дальше: <a href="../meteo/">Метеорология с нуля</a>; <a href="../start/">Первые шаги</a>; <a href="../">справочник интерфейса</a>. Свои рецепты и вопросы — в <a href="https://t.me/MeteoLabBnor">канале проекта</a>.</p>
       </article>
     </div></main>
-    <footer class="site-footer"><div class="container site-footer__in"><div><a class="logo" href="../../"><span class="logo__mark"></span>MeteoLab</a><p>Численная лаборатория атмосферы на модели грозы StormLab. Лицензия MIT · © 2026 Bandananor</p><p class="footer-channel"><a href="https://t.me/MeteoLabBnor">Telegram-канал проекта — t.me/MeteoLabBnor</a></p><p class="faint">Команда EMSquad · <a href="https://t.me/EMSquad">t.me/EMSquad</a></p></div><nav><a href="../../simulator/">Симулятор</a><a href="../../#scenarios">Сценарии</a><a href="../">Как пользоваться</a><a href="../../about/">О модели</a><a href="../../about/#changelog">Журнал изменений</a><a href="https://github.com/Bandananor/MeteoLAB">GitHub</a><span class="num faint" style="font-size:12px">v2.6</span></nav></div></footer>
+    <footer class="site-footer"><div class="container site-footer__in"><div><a class="logo" href="../../"><span class="logo__mark"></span>MeteoLab</a><p>Численная лаборатория атмосферы на модели грозы StormLab. Лицензия MIT · © 2026 Bandananor</p><p class="footer-channel"><a href="https://t.me/MeteoLabBnor">Telegram-канал проекта — t.me/MeteoLabBnor</a></p><p class="faint">Команда EMSquad · <a href="https://t.me/EMSquad">t.me/EMSquad</a></p></div><nav><a href="../../simulator/">Симулятор</a><a href="../../#scenarios">Сценарии</a><a href="../">Как пользоваться</a><a href="../../about/">О модели</a><a href="../../about/#changelog">Журнал изменений</a><a href="https://github.com/Bandananor/MeteoLAB">GitHub</a><span class="num faint" style="font-size:12px">v2.6.1</span></nav></div></footer>
     <script type="module" src="/src/site/about.ts"></script>
   </body>
 </html>

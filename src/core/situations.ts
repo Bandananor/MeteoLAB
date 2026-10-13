@@ -22,11 +22,13 @@ export interface SituationChoice {
 
 /**
  * Air masses of a summer day over the plains: the temperature and moisture profile. No lid: under one the sun alone
- * starts no storm in 3 h (scouts 2026-10-13; without it storms by ~1.3 h); a front brings its own (TRIGGERS).
+ * starts no storm in 3 h (scouts 2026-10-13; without it storms by ~1.3 h); a front brings its own (TRIGGERS). That a
+ * lid of 1.5 K (CIN ~10 J/kg) holds is the ~1 km grid's slow initiation, not nature (the reviewer, 2.6.1): to be
+ * recalibrated with real lids (CIN 50-100) on the 500 m grid.
  */
 export const AIR_MASSES = {
-  tropical: { name: 'Тропическая: жаркая и влажная', values: { surfaceTemp: 30, rhSurface: 65, rhLow: 60, rhMid: 55, rhUpper: 35, moistLayer: 1.2, lapseLow: 8.5, lapseMid: 5.8, lapseUpper: 6.5, tropopause: 14, capStrength: 0, capHeight: 1.5 } },
-  maritime: { name: 'Морская умеренная: прохладная и влажная', values: { surfaceTemp: 22, rhSurface: 75, rhLow: 70, rhMid: 50, rhUpper: 35, moistLayer: 1, lapseLow: 8, lapseMid: 6.6, lapseUpper: 6.5, tropopause: 11, capStrength: 0, capHeight: 1.5 } },
+  tropical: { name: 'Морская тропическая: с юга, жаркая и влажная', values: { surfaceTemp: 30, rhSurface: 65, rhLow: 60, rhMid: 55, rhUpper: 35, moistLayer: 1.2, lapseLow: 8.5, lapseMid: 5.8, lapseUpper: 6.5, tropopause: 14, capStrength: 0, capHeight: 1.5 } },
+  maritime: { name: 'Морская умеренная: прохладная и влажная', values: { surfaceTemp: 22, rhSurface: 60, rhLow: 58, rhMid: 50, rhUpper: 35, moistLayer: 1, lapseLow: 8, lapseMid: 6.3, lapseUpper: 6.5, tropopause: 11, capStrength: 0, capHeight: 1.5 } },
   continental: { name: 'Континентальная умеренная', values: { surfaceTemp: 27, rhSurface: 50, rhLow: 45, rhMid: 40, rhUpper: 30, moistLayer: 1, lapseLow: 9.3, lapseMid: 6.2, lapseUpper: 6.5, tropopause: 12, capStrength: 0, capHeight: 1.5 } },
   steppe: { name: 'Сухая степная: жара, высокая база облаков', values: { surfaceTemp: 33, rhSurface: 28, rhLow: 28, rhMid: 50, rhUpper: 30, moistLayer: 0, lapseLow: 9.7, lapseMid: 7.2, lapseUpper: 6.5, tropopause: 12.5, capStrength: 0, capHeight: 1.5 } },
 } satisfies Record<string, { name: string; values: Partial<SimConfig> }>
@@ -57,7 +59,7 @@ export const TRIGGERS = {
     largeScale: [{ quantity: 'temperature', bottom: 4, top: 10, amount: -3, start: .5, hours: 2 }] as AdvectionChange[], story: [[0, 'Утро: солнце греет землю'], [.5, 'Подходит высотная ложбина: наверху холодает'], [1.5, 'CAPE растёт, кучевые тянутся выше'], [2.5, 'Холод наверху и тепло у земли — грозы']] as StoryStage[] },
   moisture: { name: 'Вынос тёплой влажной массы', note: 'Южный ветер приносит влагу: +2,5 г/кг в нижних 1,5 км за 3 часа.',
     largeScale: [{ quantity: 'moisture', bottom: 0, top: 1.5, amount: 2.5, start: 0, hours: 3 }] as AdvectionChange[], story: [[0, 'Утро: воздух ещё суховат'], [1, 'Влага подтягивается, основание облаков опускается'], [2, 'CAPE растёт — кучевые всё мощнее'], [3, 'Вынос закончился: самая неустойчивая среда дня']] as StoryStage[] },
-  warmAdvection: { name: 'Тёплая адвекция над слоем (грозы гаснут)', note: 'На 2–3,5 км, над слоем перемешивания, теплеет на 3 K за 2 часа: задерживающий слой крепнет.',
+  warmAdvection: { name: 'Тёплый воздух над слоем (крышка крепнет)', note: 'На 2–3,5 км, над слоем перемешивания, ветер приносит тёплый сухой воздух: +3 K за 2 часа, задерживающий слой крепнет.',
     largeScale: [{ quantity: 'temperature', bottom: 2, top: 3.5, amount: 3, start: 0, hours: 2 }] as AdvectionChange[], story: [[0, 'Утро: CAPE большая, крышка слабая'], [.5, 'Над пограничным слоем теплеет — растёт CIN'], [2, 'Крышка окрепла: кучевые упираются в неё, грозы не прорываются']] as StoryStage[] },
 } satisfies Record<string, { name: string; note: string; front?: FrontConfig; values?: Partial<SimConfig>; largeScale: AdvectionChange[]; story: StoryStage[] }>
 
@@ -80,7 +82,7 @@ export function buildSituation(choice: SituationChoice, defaults: SimConfig): { 
   }
   values.frameMotion = [Math.round(mu * 10) / 10, Math.round(mv * 10) / 10]
   const name = `${trigger.name}: ${mass.name.split(':')[0].toLowerCase()} масса`
-  const hint = `Собранная ситуация. Воздушная масса — ${mass.name.toLowerCase()}; сдвиг ветра — ${shear.name.toLowerCase()}. ${trigger.note} Начало в ${choice.hour}:00, термика нет: конвекцию запускают солнце и то, что приходит.`
+  const hint = `Собранная ситуация. Воздушная масса — ${mass.name.toLowerCase()}; сдвиг ветра — ${shear.name.toLowerCase()}. ${trigger.note} Начало в ${choice.hour}:00, термика нет: конвекцию запускают солнце и то, что приходит. Изменения среды ускорены, чтобы уложиться в 2–3 часа; слабая крышка у фронта в модели держит дольше, чем в природе (на сетке ~1 км солнце медленно запускает конвекцию)`
   return { name, hint, story: trigger.story, values }
 }
 

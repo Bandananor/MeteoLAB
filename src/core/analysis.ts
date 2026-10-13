@@ -87,8 +87,17 @@ export function pressureCentres(field: ArrayLike<number>, nx: number, ny: number
   return out
 }
 
-/** A station plot: where (m in the domain), °C, °C, hPa, wind (ground-relative, m/s; meteorological direction °), rain at the ground (mm/h), a thunderstorm nearby, cloud overhead. */
-export interface StationPlot { x: number; y: number; temp: number; dew: number; pressure: number; speed: number; dir: number; rain: number; thunder: boolean; cloudy: boolean }
+/** A station plot: where (m in the domain), °C, °C, hPa, wind (ground-relative, m/s; meteorological direction °), rain at the ground (mm/h), a thunderstorm nearby, cloud cover (0-1). */
+export interface StationPlot { x: number; y: number; temp: number; dew: number; pressure: number; speed: number; dir: number; rain: number; thunder: boolean; cloud: number }
+
+/** The sky a station sees for its cloud cover: columns within this distance, m. */
+export const SKY_RADIUS = 4000
+
+/** Rain at the ground of a column, mm/h: rho0 q_r V_t at the lowest level (as ModelDiagnostics.rainRate, rain only). */
+export function groundRain(m: Pick<StationSource, 'env' | 'rain'>, c: number) {
+  const rho0 = m.env.rho[0]
+  return rho0 * m.rain[c] * fallSpeed(m.rain[c], rho0, rho0) * 3600
+}
 
 /** How close (m) and how recent (s) a flash makes a thunderstorm at a station (thunder is heard ~10-15 km away). */
 export const THUNDER_RANGE = 10_000, THUNDER_TIME = 600
@@ -98,17 +107,24 @@ export const THUNDER_RANGE = 10_000, THUNDER_TIME = 600
  * lowest model level. `flashes` with `where` (the flash's point in the domain now) give the thunderstorm symbol.
  */
 export function stationPlots(m: StationSource, pressure: ArrayLike<number>, spacing: number, flashes: readonly Flash[] = [], where?: (f: Flash) => { x: number; y: number }) {
-  const { nx, ny, dx, dy, width, depth } = m.grid, e = m.env, rho0 = e.rho[0], out: StationPlot[] = []
+  const { nx, ny, dx, dy, width, depth } = m.grid, e = m.env, out: StationPlot[] = []
   const recent = where ? flashes.filter(f => f.time > m.time - THUNDER_TIME).map(where) : []
   for (let y = spacing / 2; y < depth; y += spacing) for (let x = spacing / 2; x < width; x += spacing) {
     const c = Math.min(nx - 1, Math.round(x / dx)) + nx * Math.min(ny - 1, Math.round(y / dy))
     const temp = m.theta[c] * e.exner[0] - 273.15, q = Math.max(1e-6, m.q[c]), u = m.u[c] + m.frame[0], v = m.v[c] + m.frame[1]
-    const rain = rho0 * m.rain[c] * fallSpeed(m.rain[c], rho0, rho0) * 3600
-    let cloudy = false
-    for (let i = c; i < m.cloud.length && !cloudy; i += nx * ny) cloudy = m.cloud[i] + m.ice[i] > 1e-5
+    const rain = groundRain(m, c)
+    let seen = 0, cloudy = 0
+    const rx = Math.ceil(SKY_RADIUS / dx), ry = Math.ceil(SKY_RADIUS / dy), cx = c % nx, cy = Math.floor(c / nx)
+    for (let j = -ry; j <= ry; j++) for (let i = -rx; i <= rx; i++) {
+      if ((i * dx) ** 2 + (j * dy) ** 2 > SKY_RADIUS ** 2) continue
+      const col = mod(cx + i, nx) + nx * mod(cy + j, ny)
+      let any = false
+      for (let k = col; k < m.cloud.length && !any; k += nx * ny) any = m.cloud[k] + m.ice[k] > 1e-5
+      seen++; if (any) cloudy++
+    }
     out.push({
       x, y, temp, dew: Math.min(temp, dewpointAt(q, e.p[0])), pressure: pressure[c], speed: Math.hypot(u, v),
-      dir: mod(270 - Math.atan2(v, u) * 180 / Math.PI, 360), rain, thunder: recent.some(p => Math.hypot(p.x - x, p.y - y) < THUNDER_RANGE), cloudy,
+      dir: mod(270 - Math.atan2(v, u) * 180 / Math.PI, 360), rain, thunder: recent.some(p => Math.hypot(p.x - x, p.y - y) < THUNDER_RANGE), cloud: cloudy / seen,
     })
   }
   return out

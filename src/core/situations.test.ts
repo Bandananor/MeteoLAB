@@ -65,8 +65,8 @@ const CHECKS: Record<string, () => void> = {
     expect(trough.clipped).toBe(0); expect(trough.maxW).toBeGreaterThan(20); expect(plain.maxW).toBeGreaterThan(15)
     expect(trough.late).toBeGreaterThan(8); expect(trough.late).toBeGreaterThan(plain.late + 4)
   },
-  'Тёплая адвекция: грозы не будет': () => {
-    const s = SCENARIOS.find(x => x.name === 'Тёплая адвекция: грозы не будет')!, capped = run(s.values, 120), plain = run({ ...s.values, largeScale: undefined }, 120)
+  'Тёплый воздух над слоем: гроз не будет': () => {
+    const s = SCENARIOS.find(x => x.name === 'Тёплый воздух над слоем: гроз не будет')!, capped = run(s.values, 120), plain = run({ ...s.values, largeScale: undefined }, 120)
     console.log(`Ситуация «${s.name}»: с тёплым воздухом наверху w ${capped.maxW.toFixed(1)}, вершины ${capped.top.toFixed(1)} км; без него w ${plain.maxW.toFixed(1)}, вершины ${plain.top.toFixed(1)} км`)
     expect(capped.maxW).toBeLessThan(8); expect(capped.top).toBeLessThan(4); expect(plain.maxW).toBeGreaterThan(20); expect(plain.top).toBeGreaterThan(8)
   },

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { AtmosphereModel, createGrid, DEFAULT_GRID, domainPoint, groundPoint, Station, STATION_RECORD, surfacePressure } from '.'
+import { AtmosphereModel, createGrid, DEFAULT_GRID, domainPoint, DT, groundPoint, hydrostaticPressure, Station, STATION_RECORD, surfacePressure } from '.'
 import { SUMMER_DAY } from './fixtures'
 
 const smallGrid = () => createGrid({ ...DEFAULT_GRID, nx: 16, ny: 12, width: 16 * 1200, depth: 12 * 1125 })
@@ -43,5 +43,19 @@ describe('virtual weather station', () => {
   it('has no net pressure perturbation over the domain', () => {
     const model = new AtmosphereModel({ ...SUMMER_DAY, bubble: 1 }, smallGrid())
     expect(Math.abs(surfacePressure(model).reduce((a, b) => a + b, 0))).toBeLessThan(1e-6)
+  })
+})
+
+describe('the pressure at the ground (2.6.1)', () => {
+  it('is the model\u2019s own once it has stepped: under a wide shallow cold pool close to the hydrostatic one', () => {
+    const g = createGrid({ ...DEFAULT_GRID, nx: 40, ny: 32 }), m = new AtmosphereModel({ ...SUMMER_DAY, followStorm: false, bubble: 0, solarMax: 0 }, g), { nx, layer, zs, dx, dy } = g
+    for (let z = 0; zs[z] < 1000; z++) for (let c = 0; c < layer; c++) if (Math.hypot((c % nx) * dx - 24_000, Math.floor(c / nx) * dy - 18_000) < 8000) m.theta[c + z * layer] -= 5
+    const centre = Math.round(24_000 / dx) + nx * Math.round(18_000 / dy)
+    // Before a step the model has no pressure yet: the hydrostatic estimate stands in.
+    expect(surfacePressure(m)[centre]).toBe(hydrostaticPressure(m)[centre])
+    for (let k = 0; k < 2; k++) { m.step(DT); m.time += DT }
+    const own = surfacePressure(m)[centre], hydro = hydrostaticPressure(m)[centre]
+    expect(own).not.toBe(hydro); expect(own).toBeGreaterThan(.75 * hydro); expect(own).toBeLessThan(1.05 * hydro)
+    expect(Math.abs(surfacePressure(m).reduce((a, b) => a + b, 0))).toBeLessThan(1e-6)
   })
 })

@@ -15,6 +15,8 @@ export interface StationSource {
   cloud: ArrayLike<number>; rain: ArrayLike<number>; ice: ArrayLike<number>; snow: ArrayLike<number>; graupel: ArrayLike<number>; hail: ArrayLike<number>
   /** Rain and hail on the ground since the start, mm, per ground column (fixed to the ground, see AtmosphereModel). */
   precipitation: ArrayLike<number>; hailGround: ArrayLike<number>
+  /** The model's projection pressure (p'/rho0 at the dual cells, see PressureSolver), if it has one. */
+  pressure?: ArrayLike<number>
 }
 
 /** A ground point (m from the ground origin) to the domain point (m from the domain corner) over it now, and back. */
@@ -28,11 +30,35 @@ export function groundPoint(m: Pick<StationSource, 'grid' | 'frame' | 'time'>, x
 }
 
 /**
+ * Surface pressure perturbation of every column, Pa: the model's own pressure (the anelastic projection: buoyancy and
+ * the dynamic part together) in the lowest layer of cells, rho0 p', minus the domain mean. Under a narrow, deep column
+ * the hydrostatic estimate (hydrostaticPressure) is 2-4 times too strong (a storm's updraught is no wide slab: the
+ * reviewer's measurement on the classic supercell, 2.6.1); a mesocyclone's low is in it. Before the model's first step
+ * (a run just opened from a file: the pressure is not saved) the hydrostatic estimate stands in.
+ */
+export function surfacePressure(m: StationSource) {
+  const { nx, ny, layer } = m.grid, p = m.pressure, out = new Float64Array(layer)
+  let any = false
+  if (p && p.length >= layer) for (let c = 0; c < layer; c++) if (p[c] !== 0) { any = true; break }
+  if (!any) return hydrostaticPressure(m)
+  // The lowest cells lie between node levels 0 and 1, centred on the nodes' squares: average the four around a node.
+  const rho = m.env.rho[0]
+  let mean = 0
+  for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++) {
+    const xm = (x + nx - 1) % nx, ym = (y + ny - 1) % ny, v = (p![x + nx * y] + p![xm + nx * y] + p![x + nx * ym] + p![xm + nx * ym]) / 4 * rho
+    out[x + nx * y] = v; mean += v
+  }
+  mean /= layer
+  for (let c = 0; c < layer; c++) out[c] -= mean
+  return out
+}
+
+/**
  * Surface pressure perturbation of every column, Pa, hydrostatic: p'(0) = -∫ rho0 B dz with the buoyancy
  * B = g (θv'/θv0 - condensate), zero at the top, minus the domain mean (the anelastic model knows pressure only up to a
  * constant). A cold pool 5 K deep 1 km gives ~+2 hPa (a mesohigh); the dynamic part under a rotating updraught is not in it.
  */
-export function surfacePressure(m: StationSource) {
+export function hydrostaticPressure(m: StationSource) {
   const { nz, layer, hz } = m.grid, e = m.env, out = new Float64Array(layer)
   for (let k = 0; k < nz; k++) {
     const thv0 = e.theta[k] * (1 + .61 * e.q[k]), w = e.rho[k] * G * hz[k]

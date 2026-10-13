@@ -100,7 +100,7 @@ const round = (v: unknown): unknown => typeof v === 'number' ? Math.round(v * 1e
  */
 const NUMBERED = ['Летний день', 'Сухой воздух', 'Сдвиг ветра', 'Микропорыв', 'Заряженное ружьё (2026-10-10)', 'HSLC', 'Жаркий город', 'Суперячейка WK', 'Тропическая конвекция', 'Суточный ход']
 /** Renamed scenarios: a link with the old name opens the scenario under its new one. */
-const RENAMED: Record<string, string> = { 'Сдвиг ветра': 'Многоячейковая гроза' }
+const RENAMED: Record<string, string> = { 'Сдвиг ветра': 'Многоячейковая гроза', 'Тёплая адвекция: грозы не будет': 'Тёплый воздух над слоем: гроз не будет' }
 const LIGHT_WIND = { wind0: 2, wind3: 5, wind6: 9, wind10: 14, windDir0: 200, windDir3: 230, windDir6: 250, windDir10: 260 }
 const SUMMER_AIR = { surfaceTemp: 28, rhSurface: 55, rhLow: 50, rhMid: 45, rhUpper: 30, lapseLow: 9.3, lapseMid: 6.3, lapseUpper: 6.5, capStrength: 1, capHeight: 1.4, moistLayer: 1 }
 /**

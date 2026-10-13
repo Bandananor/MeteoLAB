@@ -1,10 +1,10 @@
-import { type AtmosphereModel, contour, frontDistance, isobarStep, pressureCentres, type StationPlot, stationPlots, surfacePressureField } from '../core'
+import { type AtmosphereModel, contour, groundRain, frontDistance, isobarStep, pressureCentres, type StationPlot, stationPlots, surfacePressureField } from '../core'
 import { flashPoint } from '../detector/stats'
 import { help, instrumentPalette, instrumentScreen, numbers, press, readings, section } from '../instrument'
 import { MONO } from '../theme'
 
 type Layer = 'isobars' | 'stations' | 'front' | 'rain'
-const LAYERS: [Layer, string][] = [['isobars', 'Изобары и центры H / L'], ['stations', 'Станции'], ['front', 'Фронт'], ['rain', 'Осадки у земли']]
+const LAYERS: [Layer, string][] = [['isobars', 'Изобары и центры В / Н'], ['stations', 'Станции'], ['front', 'Фронт'], ['rain', 'Осадки у земли']]
 const TEMP = '#ff6b5a', DEW = '#4fc46a', PRESSURE = '#d9dee2', ISOBAR = '#8fb3ff', HIGH = '#5aa0ff', LOW = '#ff5a5a', THUNDER = '#ffb03d'
 /** Rain at the ground, mm/h: [from, colour] (light green to dark, as on a surface chart's precipitation shading). */
 const RAIN: [number, string][] = [[.5, 'rgba(80,200,110,.25)'], [5, 'rgba(80,200,110,.45)'], [20, 'rgba(60,170,90,.65)'], [50, 'rgba(40,140,70,.8)']]
@@ -31,8 +31,8 @@ export class AnalysisPanel {
         + `<div class="seg seg--block seg--instrument" data-seg="spacing"><button data-value="6000">Станции через 6 км</button><button data-value="12000">через 12 км</button></div>`)
       + section('Давление', '<div id="anaNow"></div>')
       + section('Станция', '<div id="anaCard"><span class="t-caption">Щёлкните по станции на карте</span></div>')
-      + section('Как читать станцию', `<p class="psec__hint"><span style="color:${TEMP}">температура</span> слева сверху, <span style="color:${DEW}">точка росы</span> слева снизу, <span style="color:${PRESSURE}">давление</span> справа сверху — десятые доли гПа без «10» и «9» впереди (135 = 1013,5). Палочка — откуда дует ветер, перо — 5 м/с, полпера — 2,5, флажок — 25. Кружок закрашен — над станцией облако. <span style="color:${DEW}">••</span> — ливень, <span style="color:${THUNDER}">ϟ</span> — гроза (вспышка ближе 10 км за 10 минут).</p>`)
-      + help('Приземный анализ — карта, которую синоптик рисует по наблюдениям станций: изобары (линии равного давления), центры высокого (H) и низкого (L) давления, фронты и сами станции. Здесь давление берётся из модели у земли (гидростатическое: холодный воздух тяжелее — давление под ним выше) и сглаживается, как сглаживает синоптик. Область модели — 50–150 км, поэтому на карте видны мезомасштабные детали: мезоповышение под холодным оттоком грозы (+1…+4 гПа), рост давления за холодным фронтом, ложбина перед ним. Изобары циклона, на сотни километров, сюда не помещаются — это задача будущей синоптической модели MeteoLab. Ветер у станций — относительно земли; карта — область модели сейчас, север сверху.'))
+      + section('Как читать станцию', `<p class="psec__hint"><span style="color:${TEMP}">температура</span> слева сверху, <span style="color:${DEW}">точка росы</span> слева снизу, <span style="color:${PRESSURE}">давление</span> справа сверху — десятые доли гПа без «10» и «9» впереди (135 = 1013,5). Палочка — откуда дует ветер, перо — 5 м/с, полпера — 2,5, флажок — 25. Кружок закрашен по доле облачности (восьмыми, в радиусе 4 км). <span style="color:${DEW}">▽ с точкой</span> — ливень, <span style="color:${THUNDER}">ϟ</span> — гроза (вспышка ближе 10 км за 10 минут).</p>`)
+      + help('Приземный анализ — карта, которую синоптик рисует по наблюдениям станций: изобары (линии равного давления), центры высокого (В) и низкого (Н) давления, фронты и сами станции. Давление берётся из самой модели у земли — и вес воздуха (холодный тяжелее, давление под ним выше), и динамическая часть (понижение под вращающимся потоком) — и сглаживается, как сглаживает синоптик. Изобары проводятся через 0,5, 1 или 2 гПа, каждые 5 гПа — толще. Область модели — 50–150 км, поэтому на карте видны мезомасштабные детали: мезоповышение под холодным оттоком грозы (+1…+4 гПа), рост давления за холодным фронтом, ложбина перед ним. Сразу после открытия файла, до первого шага расчёта, давление — гидростатическая оценка (поле давления в файл не сохраняется). Изобары циклона, на сотни километров, сюда не помещаются — это задача будущей синоптической модели MeteoLab. Ветер у станций — относительно земли; карта — область модели сейчас, север сверху.'))
     this.canvas = this.root.querySelector('canvas')!; this.ctx = this.canvas.getContext('2d')!
     this.root.querySelector('.ibar__close')!.addEventListener('click', () => this.toggle(false))
     this.root.querySelectorAll<HTMLInputElement>('[data-layer]').forEach(input => input.addEventListener('change', () => {
@@ -109,16 +109,16 @@ export class AnalysisPanel {
   }
 
   private drawRain(m: AtmosphereModel, X: (x: number) => number, Y: (y: number) => number, scale: number) {
-    const { nx, ny, dx, dy } = m.grid, rho0 = m.env.rho[0], ctx = this.ctx
+    const { nx, ny, dx, dy } = m.grid, ctx = this.ctx
     for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++) {
-      const q = m.rain[x + nx * y], rate = rho0 * q * 3600 * 5.5
+      const rate = groundRain(m, x + nx * y)
       const step = [...RAIN].reverse().find(([from]) => rate >= from)
       if (!step) continue
       ctx.fillStyle = step[1]; ctx.fillRect(X((x - .5) * dx), Y((y + .5) * dy), dx * scale + .5, dy * scale + .5)
     }
   }
 
-  /** Isobars every `step` hPa, labelled, thicker every 4 hPa; H and L at the centres. */
+  /** Isobars every `step` hPa, labelled, thicker every 5 hPa (as on Russian charts); В and Н at the centres. */
   private drawIsobars(p: Float64Array, step: number, nx: number, ny: number, dx: number, dy: number, X: (x: number) => number, Y: (y: number) => number) {
     const ctx = this.ctx
     let lo = Infinity, hi = -Infinity; for (const v of p) { lo = Math.min(lo, v); hi = Math.max(hi, v) }
@@ -126,7 +126,7 @@ export class AnalysisPanel {
     for (let level = Math.ceil(lo / step) * step; level <= hi; level += step) {
       const segs = contour(p, nx, ny, level)
       if (!segs.length) continue
-      ctx.lineWidth = Math.abs(level / 4 - Math.round(level / 4)) < 1e-6 ? 2 : 1
+      ctx.lineWidth = Math.abs(level / 5 - Math.round(level / 5)) < 1e-6 ? 2 : 1
       ctx.beginPath()
       for (const [x1, y1, x2, y2] of segs) { ctx.moveTo(X(x1 * dx), Y(y1 * dy)); ctx.lineTo(X(x2 * dx), Y(y2 * dy)) }
       ctx.stroke()
@@ -138,7 +138,7 @@ export class AnalysisPanel {
     ctx.font = `bold 18px ${MONO}`
     // Only distinct centres (a trough along a front is a line of small minima, not lows).
     for (const c of pressureCentres(p, nx, ny, 6, .6)) {
-      ctx.fillStyle = c.high ? HIGH : LOW; ctx.fillText(c.high ? 'H' : 'L', X(c.x * dx) - 6, Y(c.y * dy) + 6)
+      ctx.fillStyle = c.high ? HIGH : LOW; ctx.fillText(c.high ? 'В' : 'Н', X(c.x * dx) - 6, Y(c.y * dy) + 6)
       ctx.font = `10px ${MONO}`; ctx.fillText((Math.round(c.value * 10) / 10).toFixed(1).replace('.', ','), X(c.x * dx) - 14, Y(c.y * dy) + 18); ctx.font = `bold 18px ${MONO}`
     }
     ctx.font = `11px ${MONO}`
@@ -180,14 +180,22 @@ export class AnalysisPanel {
       if (left >= 2.25) { const [ax, ay] = pos(at || 4); ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(ax + px * 5 + bx * 1.5, ay + py * 5 + by * 1.5); ctx.stroke() }
     } else { ctx.strokeStyle = PRESSURE; ctx.beginPath(); ctx.arc(sx, sy, r + 3, 0, Math.PI * 2); ctx.stroke() }
     ctx.lineWidth = chosen ? 2.5 : 1.3; ctx.strokeStyle = chosen ? '#ffffff' : PRESSURE; ctx.beginPath(); ctx.arc(sx, sy, r, 0, Math.PI * 2)
-    if (s.cloudy) { ctx.fillStyle = PRESSURE; ctx.fill() }
     ctx.stroke()
+    // Cloud cover by octants, filled clockwise from north (WMO N: 0-8 eighths).
+    const octas = Math.round(s.cloud * 8)
+    if (octas > 0) { ctx.fillStyle = chosen ? '#ffffff' : PRESSURE; ctx.beginPath(); ctx.moveTo(sx, sy); ctx.arc(sx, sy, r, -Math.PI / 2, -Math.PI / 2 + octas / 8 * Math.PI * 2); ctx.closePath(); ctx.fill() }
     ctx.font = `11px ${MONO}`
     ctx.fillStyle = TEMP; ctx.fillText(String(Math.round(s.temp)).replace('-', '−'), sx - 22, sy - 6)
     ctx.fillStyle = DEW; ctx.fillText(String(Math.round(s.dew)).replace('-', '−'), sx - 22, sy + 14)
     ctx.fillStyle = PRESSURE; ctx.fillText(String(Math.round(s.pressure * 10) % 1000).padStart(3, '0'), sx + 7, sy - 6)
     if (s.thunder) { ctx.fillStyle = THUNDER; ctx.font = `bold 15px ${MONO}`; ctx.fillText('ϟ', sx - 36, sy + 5) }
-    else if (s.rain >= .5) { ctx.fillStyle = DEW; ctx.fillText('••', sx - 38, sy + 4) }
+    else if (s.rain >= .5) {
+      // Shower (WMO ww 80-82): a dot over a downward triangle.
+      const tx = sx - 30, ty = sy + 2
+      ctx.strokeStyle = DEW; ctx.fillStyle = DEW; ctx.lineWidth = 1.3
+      ctx.beginPath(); ctx.moveTo(tx - 5, ty - 1); ctx.lineTo(tx + 5, ty - 1); ctx.lineTo(tx, ty + 7); ctx.closePath(); ctx.stroke()
+      ctx.beginPath(); ctx.arc(tx, ty - 5, 1.8, 0, Math.PI * 2); ctx.fill()
+    }
   }
 
   private drawCard() {
@@ -196,7 +204,7 @@ export class AnalysisPanel {
     const f = (v: number, d = 1) => v.toFixed(d).replace('.', ',').replace('-', '−')
     this.text('anaCard', `<p class="psec__hint">Станция ${f(s.x / 1000, 0)}, ${f(s.y / 1000, 0)} км</p><dl class="kv">${readings([
       ['температура', `${f(s.temp)} °C`], ['точка росы', `${f(s.dew)} °C`], ['давление', `${f(s.pressure)} гПа`], ['ветер', `${f(s.speed)} м/с, с ${Math.round(s.dir)}°`],
-      ['дождь у земли', s.rain >= .1 ? `${f(s.rain)} мм/ч` : 'нет'], ['облако над станцией', s.cloudy ? 'да' : 'нет'], ['гроза рядом', s.thunder ? 'да' : 'нет'],
+      ['дождь у земли', s.rain >= .1 ? `${f(s.rain)} мм/ч` : 'нет'], ['облачность', `${Math.round(s.cloud * 8)} из 8 (в радиусе 4 км)`], ['гроза рядом', s.thunder ? 'да' : 'нет'],
     ])}</dl>`)
   }
 }
