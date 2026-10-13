@@ -12,6 +12,9 @@ export const LIVE_EVERY = 60
 /** Rewind points: a saved state every HISTORY_EVERY s of model time, the oldest dropped beyond HISTORY_BYTES in all. */
 export const HISTORY_EVERY = 300, HISTORY_BYTES = 64 * 1024 * 1024
 
+/** Flashes the page keeps for the lightning detector (the latest; ~an hour of a supercell). */
+export const KEPT_FLASHES = 3000
+
 /** The live sounding and what the panels show from it. */
 export interface Live { time: number; quiet: number; all: boolean; env: Environment; sounding: Sounding; indices: ParcelIndices; storm: StormIndices }
 
@@ -136,6 +139,8 @@ export class Atmosphere implements ViewSettings {
     for (const key of SNAPSHOT_FIELDS) { m[key].set(data.subarray(offset, offset + n)); offset += n }
     for (const key of SNAPSHOT_COLUMNS) { m[key].set(data.subarray(offset, offset + layer)); offset += layer }
     m.time = s.time; Object.assign(m.rotation, s.rotation); this.latest = s.diagnostics; this.threads = s.threads
+    m.flashes.push(...s.flashes); m.flashCount = s.flashCount; m.chargeGround = s.chargeGround
+    if (m.flashes.length > KEPT_FLASHES) m.flashes.splice(0, m.flashes.length - KEPT_FLASHES)
     this.post({ type: 'release', buffer: s.buffer }, [s.buffer])
     this.inFlight = false
     // Cells move about a grid column a minute: every 6 s of model time is plenty.

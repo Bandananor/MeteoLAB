@@ -10,6 +10,9 @@ const scope = self as unknown as {
   postMessage(message: unknown, transfer: Transferable[]): void; addEventListener(type: 'message', listener: (event: MessageEvent<WorkerRequest>) => void): void
 }
 let model: AtmosphereModel | null = null, accumulator = 0, pendingSteps = 0
+/** Flashes (counted since the start) already sent to the main thread. */
+let sentFlashes = 0
+const flashTotal = (m: AtmosphereModel) => m.flashCount.ic + m.flashCount.cg
 /** A state was just loaded: the next snapshot says so (Snapshot.loaded). */
 let loaded = false
 // Snapshot buffers come back from the main thread after it has copied them; at most two exist (one drawn, one in flight).
@@ -27,6 +30,7 @@ function threadCount(limit = MAX_THREADS) {
 function start(config: SimConfig, limit?: number) {
   pool?.stop(); pool = null
   const threads = threadCount(limit), id = ++generation
+  sentFlashes = 0
   if (threads === 1) { model = new AtmosphereModel(config); ready = true; send(); return }
   const memory = new SharedMemory(), grid = domainGrid(config.domain, config.top), control = controlBuffer()
   model = new AtmosphereModel(config, createGrid(grid), undefined, { memory })
@@ -49,7 +53,9 @@ function send() {
   let offset = 0
   for (const key of SNAPSHOT_FIELDS) { data.set(model[key], offset); offset += n }
   for (const key of SNAPSHOT_COLUMNS) { data.set(model[key], offset); offset += layer }
-  const snapshot: Snapshot = { type: 'snapshot', buffer, steps: pendingSteps, time: model.time, rotation: { ...model.rotation }, diagnostics: model.diagnostics(), threads: pool ? pool.helpers + 1 : 1, loaded }
+  const total = flashTotal(model), flashes = model.flashes.slice(Math.max(0, model.flashes.length - (total - sentFlashes)))
+  sentFlashes = total
+  const snapshot: Snapshot = { type: 'snapshot', buffer, steps: pendingSteps, flashes, flashCount: { ...model.flashCount }, chargeGround: model.chargeGround, time: model.time, rotation: { ...model.rotation }, diagnostics: model.diagnostics(), threads: pool ? pool.helpers + 1 : 1, loaded }
   pendingSteps = 0; loaded = false
   scope.postMessage(snapshot, [buffer])
 }
@@ -60,7 +66,7 @@ scope.addEventListener('message', ({ data }) => {
     case 'config': if (model) Object.assign(model.config, data.config); break
     case 'perturb': model?.injectBubble(data.x, data.y, data.strength); break
     case 'release': free.push(data.buffer); break
-    case 'load': if (model) { applyState(model, readState(data.buffer)); loaded = true; send() } break
+    case 'load': if (model) { applyState(model, readState(data.buffer)); sentFlashes = flashTotal(model); loaded = true; send() } break
     case 'advance': {
       if (!model || !ready) break
       accumulator = Math.min(accumulator + data.seconds * model.config.speed, MAX_STEPS_PER_BATCH * DT)

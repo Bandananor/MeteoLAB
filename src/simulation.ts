@@ -1,8 +1,8 @@
 // Message protocol between the main thread (Atmosphere) and the physics worker (simulation.worker.ts).
-import type { ModelDiagnostics, RotationState, SimConfig } from './core'
+import type { Flash, ModelDiagnostics, RotationState, SimConfig } from './core'
 
 /** Grid-sized fields copied into every snapshot, then the column fields; the order is the buffer layout. */
-export const SNAPSHOT_FIELDS = ['u', 'v', 'w', 'theta', 'q', 'cloud', 'rain', 'cold', 'fallSpeed', 'ice', 'snow', 'graupel', 'hail'] as const
+export const SNAPSHOT_FIELDS = ['u', 'v', 'w', 'theta', 'q', 'cloud', 'rain', 'cold', 'fallSpeed', 'ice', 'snow', 'graupel', 'hail', 'chargeIce', 'chargeGraupel', 'chargeRain', 'chargeAir'] as const
 export const SNAPSHOT_COLUMNS = ['uhColumn', 'precipitation', 'coreW', 'coreWZ', 'hailGround', 'hailSize'] as const
 /** Most model steps run for one batch; time beyond that is dropped instead of piling up after slow frames. */
 export const MAX_STEPS_PER_BATCH = 12
@@ -30,6 +30,8 @@ export type WorkerRequest =
 export interface Snapshot {
   type: 'snapshot'; buffer: ArrayBuffer; steps: number; time: number
   rotation: RotationState; diagnostics: ModelDiagnostics
+  /** The flashes since the previous snapshot, the counts since the start and the charge carried to the ground, C. */
+  flashes: Flash[]; flashCount: { ic: number; cg: number }; chargeGround: number
   /** Threads the physics runs on (1 without cross-origin isolation). */
   threads: number
   /** The first snapshot after a 'load' request: the ones still on their way from before it are stale. */

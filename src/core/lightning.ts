@@ -70,7 +70,8 @@ export class Lightning {
   /** Initiation field of each level, V/m, and the capacitance of a node of each level, F. */
   private readonly eInit: Float64Array; private readonly capacitance: Float64Array
   private readonly mark: Int32Array; private readonly failed: Int32Array; private flashId = 0
-  private readonly rng: () => number
+  /** Random numbers of the channel growth: started afresh at every discharge from the seed and the model time, so a run continued from a saved state flashes exactly as the original. */
+  private rng: () => number; private readonly seed: number
   /**
    * Growth front of the flash: the nodes beside the channel it may grow into, with the shortest link to each (its
    * length times the propagation threshold, V) and the channel node it comes from.
@@ -88,7 +89,7 @@ export class Lightning {
     // lowered by the shielding of the channel's other nodes.
     this.capacitance = Float64Array.from(grid.hz, h => { const L = Math.cbrt(grid.dx * grid.dy * h); return SHIELDING * 2 * Math.PI * EPSILON0 * L / Math.log(L / CHANNEL_RADIUS) })
     this.mark = new Int32Array(grid.n); this.failed = new Int32Array(grid.n)
-    this.rng = mulberry32(seed)
+    this.seed = seed; this.rng = mulberry32(seed)
     this.frontier = new Int32Array(grid.n); this.weight = new Float64Array(grid.n)
     this.seen = new Int32Array(grid.n); this.scale = new Float64Array(grid.n); this.link = new Int32Array(grid.n)
   }
@@ -122,6 +123,7 @@ export class Lightning {
    */
   discharge(carriers: readonly Float32Array[], time: number): Flash[] {
     const flashes: Flash[] = [], stamp = ++this.flashId
+    this.rng = mulberry32(this.seed ^ Math.imul(Math.round(time * 10), 0x9E3779B1))
     for (let k = 0; k < MAX_FLASHES; k++) {
       this.solve(carriers)
       const [start, ratio] = this.strongest(stamp)
