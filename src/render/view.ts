@@ -58,6 +58,8 @@ export class StormView {
   /** The ground colours with the city blended in (null without a city). */
   private readonly cityTexture: THREE.DataTexture | null = null
   private readonly swathData: Uint8Array; private readonly swathTexture: THREE.DataTexture; private readonly swath: THREE.Mesh
+  /** The zones of the environment (SimConfig.zones) tinted on the ground — warm reddish, cool bluish, only the moisture greenish (null without zones). */
+  private readonly zoneTexture: THREE.DataTexture | null = null
   /** Lines on the ground every 3 km; they move with the ground when the domain follows the storm. */
   private readonly groundGrid: THREE.GridHelper
   private readonly ground: THREE.Mesh; private readonly raycaster = new THREE.Raycaster(); private readonly pointer = new THREE.Vector2()
@@ -130,6 +132,17 @@ export class StormView {
     this.swathTexture.magFilter = this.swathTexture.minFilter = THREE.LinearFilter; this.swathTexture.wrapS = this.swathTexture.wrapT = THREE.RepeatWrapping; this.swathTexture.needsUpdate = true
     this.swath = new THREE.Mesh(new THREE.PlaneGeometry(W, D), new THREE.MeshBasicMaterial({ map: this.swathTexture, transparent: true, depthWrite: false, toneMapped: false }))
     this.swath.rotation.x = -Math.PI / 2; this.swath.position.y = .02; this.swath.visible = false; this.scene.add(this.swath)
+    if (model.zoneGround) {
+      const { share, theta, vapour } = model.zoneGround, data = new Uint8Array(nx * ny * 4)
+      for (let i = 0; i < nx * ny; i++) {
+        const t = theta[i], q = vapour[i] * 1000, rgb = t > .2 ? [235, 95, 60] : t < -.2 ? [80, 140, 235] : q >= 0 ? [80, 200, 110] : [200, 160, 90]
+        data.set([...rgb, share[i] * 90], i * 4)
+      }
+      this.zoneTexture = new THREE.DataTexture(data, nx, ny, THREE.RGBAFormat)
+      this.zoneTexture.magFilter = this.zoneTexture.minFilter = THREE.LinearFilter; this.zoneTexture.wrapS = this.zoneTexture.wrapT = THREE.RepeatWrapping; this.zoneTexture.needsUpdate = true
+      const zones = new THREE.Mesh(new THREE.PlaneGeometry(W, D), new THREE.MeshBasicMaterial({ map: this.zoneTexture, transparent: true, depthWrite: false, toneMapped: false }))
+      zones.rotation.x = -Math.PI / 2; zones.position.y = .015; this.scene.add(zones)
+    }
     const grid = new THREE.GridHelper(W, Math.round(W / 3), 0x71838a, 0x485d66); grid.material.transparent = true; grid.material.opacity = .32; this.scene.add(grid); this.groundGrid = grid
     const box = new THREE.BoxGeometry(W, H, D); box.translate(0, H / 2, 0)
     this.scene.add(new THREE.LineSegments(new THREE.EdgesGeometry(box), new THREE.LineBasicMaterial({ color: 0x75909c, transparent: true, opacity: .4 })))
@@ -193,7 +206,7 @@ export class StormView {
 
   dispose() {
     this.controls.dispose()
-    ;[this.volumeTexture, this.fieldTexture, this.colormap, this.volumeMaterial, this.fieldMaterial, this.sliceMaterial, this.volumeMesh.geometry, this.sliceH.geometry, this.sliceV.geometry, this.precipGeometry, this.precipMaterial, this.swathTexture, this.cityTexture, this.swath.geometry, this.swath.material as THREE.Material, this.mesoMarker.geometry, this.mesoMarker.material as THREE.Material, this.selectionMarker.geometry, this.selectionMarker.material as THREE.Material, this.stationMarker.geometry, this.stationMarker.material as THREE.Material, this.lightningGeometry, this.lightningMaterial].forEach(r => r?.dispose())
+    ;[this.volumeTexture, this.fieldTexture, this.colormap, this.volumeMaterial, this.fieldMaterial, this.sliceMaterial, this.volumeMesh.geometry, this.sliceH.geometry, this.sliceV.geometry, this.precipGeometry, this.precipMaterial, this.swathTexture, this.cityTexture, this.zoneTexture, this.swath.geometry, this.swath.material as THREE.Material, this.mesoMarker.geometry, this.mesoMarker.material as THREE.Material, this.selectionMarker.geometry, this.selectionMarker.material as THREE.Material, this.stationMarker.geometry, this.stationMarker.material as THREE.Material, this.lightningGeometry, this.lightningMaterial].forEach(r => r?.dispose())
     this.renderer.dispose()
   }
 
@@ -213,7 +226,7 @@ export class StormView {
    */
   private updateGround() {
     const { width, depth } = this.model.grid, [ox, oy] = this.model.frameOffset(), step = width / 1000 / Math.round(width / 3000)
-    this.swathTexture.offset.set(ox / width, oy / depth); this.cityTexture?.offset.set(ox / width, oy / depth)
+    this.swathTexture.offset.set(ox / width, oy / depth); this.cityTexture?.offset.set(ox / width, oy / depth); this.zoneTexture?.offset.set(ox / width, oy / depth)
     this.groundGrid.position.x = -((ox / 1000) % step); this.groundGrid.position.z = (oy / 1000) % step
   }
 
