@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { AtmosphereModel, coldDepth, createGrid, densityCurrentSpeed, domainGrid, DT, type FrontConfig, frontalDeficit, frontDistance } from '.'
-import { QUIET } from './fixtures'
+import { AtmosphereModel, coldDepth, createGrid, densityCurrentSpeed, domainGrid, DT, type FrontConfig, frontalDeficit, frontDistance, SCENARIOS } from '.'
+import { QUIET, SUMMER_DAY } from './fixtures'
 
 const cold: FrontConfig = { kind: 'cold', contrast: 6, depth: 1.5, slope: 80, speed: 8, heading: 90, start: -10 }
 
@@ -36,4 +36,30 @@ describe('moving fronts (2.5)', () => {
     for (let z = 1; z < 20 && m.grid.zs[z] < 2500; z++) for (let x = 0; x < nx; x++) lift = Math.max(lift, m.w[x + row + z * layer])
     expect(lift).toBeGreaterThan(.5)
   })
+})
+
+// The «Холодный фронт» scenario (2.5): a moist warm sector under a weak lid where nothing grows without a trigger; the
+// cold front breaks the lid and storms grow along it. Calibration 2026-10-13 (50 min): without the front w <3.5 m/s and
+// no cloud above 1.8 km; with it cells from 35 min, 43 m/s and tops 11 km at 50. Slow (~15 min on a laptop: two runs of
+// 50 simulated minutes): `npx vitest run --mode slow src/core/fronts.test.ts`, or in the cloud (slow-tests.yml).
+const slow = (import.meta as { env?: { MODE?: string } }).env?.MODE === 'slow'
+describe('the cold front scenario (slow)', () => {
+  it.runIf(slow)('cold front: nothing grows without it; with it the lid breaks and storms grow along it within 50 minutes', () => {
+    const scenario = SCENARIOS.find(s => s.name === 'Холодный фронт')!, run = (frontLine: FrontConfig | undefined) => {
+      const model = new AtmosphereModel({ ...SUMMER_DAY, ...scenario.values, frontLine })
+      let maxW = 0, top = 0, wAt40 = 0
+      for (let t = DT; t <= 50 * 60; t += DT) {
+        model.step(DT); model.time += DT
+        if (t % 60) continue
+        const d = model.diagnostics(); maxW = Math.max(maxW, d.updraft); top = Math.max(top, d.cloudTop)
+        if (t === 40 * 60) wAt40 = maxW
+      }
+      return { maxW, top, wAt40, clipped: model.clipped }
+    }
+    const without = run(undefined), withFront = run(scenario.values.frontLine)
+    console.log(`Холодный фронт: without the front w ${without.maxW.toFixed(1)} m/s, tops ${without.top.toFixed(1)} km; with it w ${withFront.wAt40.toFixed(1)} by 40 min, ${withFront.maxW.toFixed(1)} m/s and tops ${withFront.top.toFixed(1)} km by 50, clipped ${withFront.clipped}`)
+    expect(without.maxW).toBeLessThan(8); expect(without.top).toBeLessThan(3)
+    expect(withFront.maxW).toBeGreaterThan(25); expect(withFront.top).toBeGreaterThan(8)
+    expect(withFront.maxW).toBeLessThanOrEqual(55); expect(withFront.clipped).toBe(0)
+  }, 3_600_000)
 })

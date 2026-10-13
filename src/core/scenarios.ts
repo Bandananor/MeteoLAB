@@ -88,4 +88,13 @@ export const SCENARIOS: Scenario[] = [
     // 55-75) not by 15:00; caps of 1-1.5 K fire no sooner (the heating of the day decides, not the lid).
     values: { surfaceTemp: 26, rhSurface: 65, rhLow: 65, rhMid: 30, rhUpper: 30, lapseLow: 8, lapseMid: 7.5, lapseUpper: 6.5, tropopause: 12, moistLayer: 1, capHeight: 1, capStrength: 3,
       bubble: 0, hour: 9, latitude: 35, dayOfYear: 170, wind0: 6, windDir0: 170, wind1: 10, windDir1: 190, wind3: 12, windDir3: 220, wind6: 18, windDir6: 240, wind10: 25, windDir10: 250 } },
+  { name: 'Холодный фронт',
+    summary: 'Фронт прорывает инверсию: на нём встаёт линия гроз',
+    hint: 'Тёплый влажный сектор (26 °C, 75 % у земли, CAPE ~2,9 кДж/кг) под слабой «крышкой» 0,7 K: без толчка здесь за час не вырастает ничего, термика нет. С запада подходит холодный фронт: воздух за ним на 9 K холоднее, глубиной 2,5 км, наклон поверхности 1 : 80, скорость 9 м/с на восток. Голова фронта поднимает тёплый влажный воздух, прорывает инверсию — к 35–40-й минуте вдоль фронта растут облака, к 50-й грозы поднимаются до 11 км. Фронт меняется на экране «Зоны» (Z): контраст, глубина, наклон, скорость, направление; можно сделать тёплый.',
+    // Calibration (2026-10-13, 50 min): without the front w <3.5 m/s and no cloud above 1.8 km; with it cells from 35 min,
+    // w 14 at 40, 43 m/s and tops 11 km at 50, ~100 mm/h. The domain follows the mean wind (8.8 m/s east), so the front
+    // nearly stands in it: the storms grow along it in view.
+    values: { bubble: 0, surfaceTemp: 26, rhSurface: 75, rhLow: 70, rhMid: 50, moistLayer: 1.2, capStrength: .7, lapseMid: 5.8, lapseUpper: 6.2,
+      wind0: 4, windDir0: 180, wind3: 12, windDir3: 220, wind6: 18, windDir6: 240, wind10: 24, windDir10: 250,
+      frontLine: { kind: 'cold', contrast: 9, depth: 2.5, slope: 80, speed: 9, heading: 90, start: -12 } } },
 ]

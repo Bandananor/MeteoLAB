@@ -3,7 +3,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js'
 import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js'
 import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeometry.js'
-import { type AtmosphereModel, channelShape, computeScalarField, type Flash, heightAt, levelAt, MESO_PERSISTENCE, sunDirection, UH_ROTATING, type UhLayer } from '../core'
+import { type AtmosphereModel, channelShape, computeScalarField, type Flash, headingVector, heightAt, levelAt, MESO_PERSISTENCE, sunDirection, UH_ROTATING, type UhLayer } from '../core'
 import { clamp, lerp, mod, mulberry32 } from '../core/math'
 import { isPhone } from '../hud'
 import { colormapTexture, type FieldMode, fieldInfo } from './fields'
@@ -60,6 +60,8 @@ export class StormView {
   private readonly swathData: Uint8Array; private readonly swathTexture: THREE.DataTexture; private readonly swath: THREE.Mesh
   /** The zones of the environment (SimConfig.zones) tinted on the ground — warm reddish, cool bluish, only the moisture greenish (null without zones). */
   private readonly zoneTexture: THREE.DataTexture | null = null
+  /** The moving front's line on the ground (SimConfig.frontLine): blue for a cold front, red for a warm one; null without. */
+  private readonly frontLine: LineSegments2 | null = null
   /** Lines on the ground every 3 km; they move with the ground when the domain follows the storm. */
   private readonly groundGrid: THREE.GridHelper
   private readonly ground: THREE.Mesh; private readonly raycaster = new THREE.Raycaster(); private readonly pointer = new THREE.Vector2()
@@ -145,6 +147,10 @@ export class StormView {
       const zones = new THREE.Mesh(new THREE.PlaneGeometry(W, D), new THREE.MeshBasicMaterial({ map: this.zoneTexture, transparent: true, depthWrite: false, toneMapped: false }))
       zones.rotation.x = -Math.PI / 2; zones.position.y = .015; this.scene.add(zones)
     }
+    if (model.config.frontLine) {
+      const material = new LineMaterial({ color: model.config.frontLine.kind === 'cold' ? 0x4f8fe0 : 0xe0574f, linewidth: 4, transparent: true, opacity: .9, depthWrite: false })
+      this.frontLine = new LineSegments2(new LineSegmentsGeometry(), material); this.frontLine.renderOrder = 3; this.scene.add(this.frontLine)
+    }
     const grid = new THREE.GridHelper(W, Math.round(W / 3), 0x71838a, 0x485d66); grid.material.transparent = true; grid.material.opacity = .32; this.scene.add(grid); this.groundGrid = grid
     const box = new THREE.BoxGeometry(W, H, D); box.translate(0, H / 2, 0)
     this.scene.add(new THREE.LineSegments(new THREE.EdgesGeometry(box), new THREE.LineBasicMaterial({ color: 0x75909c, transparent: true, opacity: .4 })))
@@ -208,7 +214,7 @@ export class StormView {
 
   dispose() {
     this.controls.dispose()
-    ;[this.volumeTexture, this.fieldTexture, this.colormap, this.volumeMaterial, this.fieldMaterial, this.sliceMaterial, this.volumeMesh.geometry, this.sliceH.geometry, this.sliceV.geometry, this.precipGeometry, this.precipMaterial, this.swathTexture, this.cityTexture, this.zoneTexture, this.swath.geometry, this.swath.material as THREE.Material, this.mesoMarker.geometry, this.mesoMarker.material as THREE.Material, this.selectionMarker.geometry, this.selectionMarker.material as THREE.Material, this.stationMarker.geometry, this.stationMarker.material as THREE.Material, this.lightningGeometry, this.lightningMaterial].forEach(r => r?.dispose())
+    ;[this.volumeTexture, this.fieldTexture, this.colormap, this.volumeMaterial, this.fieldMaterial, this.sliceMaterial, this.volumeMesh.geometry, this.sliceH.geometry, this.sliceV.geometry, this.precipGeometry, this.precipMaterial, this.swathTexture, this.cityTexture, this.zoneTexture, this.frontLine?.geometry, this.frontLine?.material as THREE.Material | undefined, this.swath.geometry, this.swath.material as THREE.Material, this.mesoMarker.geometry, this.mesoMarker.material as THREE.Material, this.selectionMarker.geometry, this.selectionMarker.material as THREE.Material, this.stationMarker.geometry, this.stationMarker.material as THREE.Material, this.lightningGeometry, this.lightningMaterial].forEach(r => r?.dispose())
     this.renderer.dispose()
   }
 
@@ -230,6 +236,30 @@ export class StormView {
     const { width, depth } = this.model.grid, [ox, oy] = this.model.frameOffset(), step = width / 1000 / Math.round(width / 3000)
     this.swathTexture.offset.set(ox / width, oy / depth); this.cityTexture?.offset.set(ox / width, oy / depth); this.zoneTexture?.offset.set(ox / width, oy / depth)
     this.groundGrid.position.x = -((ox / 1000) % step); this.groundGrid.position.z = (oy / 1000) % step
+  }
+
+  /**
+   * The front's line on the ground now: the points of the domain where frontDistance is 0 — a straight line across the
+   * domain, perpendicular to the heading, clipped to the domain's box.
+   */
+  private updateFront() {
+    const f = this.model.config.frontLine, line = this.frontLine
+    if (!f || !line) return
+    const m = this.model, { width: W, depth: D } = m.grid, [nx, ny] = headingVector(f.heading), [fx, fy] = m.frame
+    // A point of the line in domain coordinates (m): the ground point moved back by the domain's own motion.
+    const d = (f.start + f.speed * m.time / 1000) * 1000, px = W / 2 + nx * d - fx * m.time, py = D / 2 + ny * d - fy * m.time
+    // Clip the line p + t (ny, -nx) to the box [0, W] x [0, D].
+    let lo = -Infinity, hi = Infinity
+    for (const [p, dir, size] of [[px, ny, W], [py, -nx, D]] as const) {
+      if (Math.abs(dir) < 1e-9) { if (p < 0 || p > size) { line.visible = false; return } continue }
+      const a = (0 - p) / dir, b = (size - p) / dir
+      lo = Math.max(lo, Math.min(a, b)); hi = Math.min(hi, Math.max(a, b))
+    }
+    line.visible = hi > lo
+    if (!line.visible) return
+    const [ax, ay, az] = this.toWorld(px + lo * ny, py - lo * nx, 30), [bx, by, bz] = this.toWorld(px + hi * ny, py - hi * nx, 30)
+    ;(line.geometry as LineSegmentsGeometry).setPositions([ax, ay, az, bx, by, bz])
+    ;(line.material as LineMaterial).resolution.set(this.canvas.width, this.canvas.height)
   }
 
   /** Model-space position (m from the domain corner) of the ground point under normalised screen coordinates. */
@@ -448,7 +478,7 @@ export class StormView {
     this.shared.uSliceOn.value = slices ? 1 : 0; this.shared.uSliceH.value = this.sliceH.position.y = s.sliceHeight; this.shared.uSliceZ.value = this.sliceV.position.z = -s.sliceNorth
     this.flowPoints.visible = s.showVectors; this.vectorLines.visible = s.showVectors
     this.swath.visible = s.showRainTotal; if (s.showRainTotal) this.updateSwath()
-    this.updateGround()
+    this.updateGround(); this.updateFront()
     const r = m.rotation
     this.mesoMarker.visible = s.showMesocyclone && r.uh >= UH_ROTATING
     if (this.mesoMarker.visible) {
