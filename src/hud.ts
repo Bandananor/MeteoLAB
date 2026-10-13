@@ -6,6 +6,8 @@
 // width only suggests it) and switched by hand, remembered in localStorage — a wrong guess from the width (a small
 // laptop window, a large tablet) is then one tap away from fixed.
 
+import { elapsedShort } from './clock'
+
 /** The screen width the phone layout is suggested for. */
 export const PHONE_QUERY = '(max-width: 760px)'
 export type Layout = 'phone' | 'desktop'
@@ -85,7 +87,7 @@ export const PHONE_THREADS = 3
 /** Speed steps of the speed button, in turn. */
 const SPEEDS = [4, 8, 16, 30, 60]
 
-export interface HudState { time: number; updraft: number; rain: number; uh: number; mesocyclone: boolean; regime: string; running: boolean; speed: number }
+export interface HudState { time: number; /** Local solar time of day, hh:mm. */ local: string; updraft: number; rain: number; uh: number; mesocyclone: boolean; regime: string; running: boolean; speed: number }
 
 /** What the bar opens: the two sheets (the page's side columns) and the instruments menu; one at a time. */
 type Panel = 'scenarios' | 'data' | 'tools'
@@ -103,7 +105,7 @@ export class Hud {
     const overlay = document.createElement('div'); overlay.className = 'm-only'
     overlay.innerHTML = `
       <div class="ov-nums">
-        <div class="ov-num"><span class="ov-num__label">T+</span><span class="ov-num__value" data-hud="time">00:00</span></div>
+        <div class="ov-num"><span class="ov-num__label">T+ · <span data-hud="local">—</span></span><span class="ov-num__value" data-hud="time">0:00</span></div>
         <div class="ov-num"><span class="ov-num__label">поток, м/с</span><span class="ov-num__value" data-hud="updraft">0</span></div>
         <div class="ov-num"><span class="ov-num__label">дождь, мм/ч</span><span class="ov-num__value" data-hud="rain">0</span></div>
         <div class="ov-num"><span class="ov-num__label">UH</span><span class="ov-num__value" data-hud="uh">0</span></div>
@@ -186,12 +188,12 @@ export class Hud {
 
   /** Called every frame; touches the page only when something shown changed. */
   update(s: HudState) {
-    const sec = Math.floor(s.time), time = `${String(Math.floor(sec / 60)).padStart(2, '0')}:${String(sec % 60).padStart(2, '0')}`
-    const key = [time, s.updraft.toFixed(0), s.rain.toFixed(0), s.uh.toFixed(0), s.mesocyclone, s.regime, s.running, s.speed].join('|')
+    const time = elapsedShort(s.time)
+    const key = [time, s.local, s.updraft.toFixed(0), s.rain.toFixed(0), s.uh.toFixed(0), s.mesocyclone, s.regime, s.running, s.speed].join('|')
     if (key === this.shown) return
     this.shown = key
     const set = (name: string, text: string) => { for (const el of document.querySelectorAll(`[data-hud="${name}"]`)) el.textContent = text }
-    set('time', time); set('updraft', s.updraft.toFixed(0)); set('rain', s.rain.toFixed(0)); set('uh', s.uh.toFixed(0))
+    set('time', time); set('local', s.local); set('updraft', s.updraft.toFixed(0)); set('rain', s.rain.toFixed(0)); set('uh', s.uh.toFixed(0))
     set('regime', s.regime)
     document.querySelector('[data-hud="regime"]')!.classList.toggle('is-meso', s.mesocyclone)
     set('pause', s.running ? '❚❚' : '▶'); set('pauseText', s.running ? 'Пауза' : 'Пуск'); set('speed', `×${s.speed}`)

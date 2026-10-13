@@ -1,4 +1,5 @@
 import type { Station, StationRecord } from '../core'
+import { minuteMark } from '../clock'
 import { help, instrumentPalette, instrumentScreen, numbers, readings, section } from '../instrument'
 import { MONO } from '../theme'
 import { download, toCsv } from '../share'
@@ -103,6 +104,6 @@ export class StationPanel {
     })
     // Time axis: model minutes, every 10.
     ctx.fillStyle = pal.label; ctx.strokeStyle = pal.gridStrong
-    for (let m = Math.ceil(t0 / 600) * 10; m * 60 <= t0 + span; m += 10) { const x = X(m * 60); ctx.beginPath(); ctx.moveTo(x, bottom - 6); ctx.lineTo(x, bottom); ctx.stroke(); ctx.fillText(`${m}′`, x - 8, bottom + 12) }
+    for (let m = Math.ceil(t0 / 600) * 10; m * 60 <= t0 + span; m += 10) { const x = X(m * 60); ctx.beginPath(); ctx.moveTo(x, bottom - 6); ctx.lineTo(x, bottom); ctx.stroke(); ctx.fillText(minuteMark(m), x - 8, bottom + 12) }
   }
 }

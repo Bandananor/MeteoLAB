@@ -1,4 +1,5 @@
 import type { AtmosphereModel, Flash } from '../core'
+import { minuteMark } from '../clock'
 import { help, instrumentPalette, instrumentScreen, numbers, press, readings, section } from '../instrument'
 import { MONO } from '../theme'
 import { flashDensity, flashFacts, flashPoint, flashRates, lightningJumps, total } from './stats'
@@ -167,7 +168,7 @@ export class DetectorPanel {
     ctx.fillStyle = JUMP
     for (const t of jumps) if (t >= start) { const x = X(t) + barW / 2; ctx.beginPath(); ctx.moveTo(x - 5, top + 10); ctx.lineTo(x + 5, top + 10); ctx.lineTo(x, top + 18); ctx.fill() }
     ctx.fillStyle = pal.label
-    for (let t = Math.ceil(start / 600) * 600; t <= now; t += 600) ctx.fillText(`${t / 60}′`, X(t) - 6, bottom)
+    for (let t = Math.ceil(start / 600) * 600; t <= now; t += 600) ctx.fillText(minuteMark(t / 60), X(t) - 6, bottom)
   }
 
   private drawCard() {

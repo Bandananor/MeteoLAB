@@ -4,6 +4,7 @@
 // plot, the stretches when the updraught core itself rotated (the model's mesocyclone criterion, MESO_CORE_ZETA) are
 // shaded, dark once that held MESO_PERSISTENCE: UH alone also counts the vortex pairs of weak-shear storms.
 import { MESO_PERSISTENCE } from './core'
+import { minuteMark } from './clock'
 import { chartPalette } from './theme'
 
 /** One sample: model time (s), the values the plots show and how long (s) the core rotation had held then. */
@@ -50,7 +51,7 @@ export class Timeline {
       ctx.beginPath(); ctx.moveTo(left, bottom + .5); ctx.lineTo(right, bottom + .5); ctx.stroke()
       // Minute ticks every 10 min.
       ctx.fillStyle = c.label
-      for (let m = 10; m * 60 <= span; m += 10) { const x = X(m * 60); ctx.beginPath(); ctx.moveTo(x, bottom); ctx.lineTo(x, bottom + 3); ctx.stroke(); if (r === rows - 1) ctx.fillText(`${m}′`, x - 6, bottom + 12) }
+      for (let m = 10; m * 60 <= span; m += 10) { const x = X(m * 60); ctx.beginPath(); ctx.moveTo(x, bottom); ctx.lineTo(x, bottom + 3); ctx.stroke(); if (r === rows - 1) ctx.fillText(minuteMark(m), x - 6, bottom + 12) }
       const now = values.length ? values[values.length - 1] : 0, peak = values.length ? Math.max(...values) : 0
       ctx.fillStyle = c.text2; ctx.fillText(`${s.label}, ${s.unit}`, left, top - 6)
       ctx.fillStyle = c.text
