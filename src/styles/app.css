@@ -152,3 +152,13 @@ html:not(.layout-phone) .m-only { display: none !important; }
 .tornado__grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 10px; margin: 6px 0; }
 .tornado__th { display: flex; flex-direction: column; gap: 2px; font-size: var(--fs-caption); color: var(--text-3); }
 .tornado__th input { width: 100%; padding: 4px 6px; border: 1px solid var(--line); border-radius: var(--r-1); background: var(--surface-2); color: var(--text); font: inherit; }
+
+/* Large-scale advection (largescale-ui.ts): ready-made changes, one card per change, the CAPE/CIN chart by the hour. */
+.adv__presets { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.adv__row { display: flex; flex-direction: column; gap: 6px; padding: 8px; margin-bottom: 8px; border-radius: var(--r-2); background: var(--surface-2); }
+.adv__head { display: flex; gap: 6px; align-items: center; }
+.adv__head .select { flex: 1; }
+.adv__grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.adv__num { display: flex; flex-direction: column; gap: 2px; font-size: var(--fs-caption); color: var(--text-3); }
+.adv__num input { width: 100%; min-width: 0; padding: 4px; border: 1px solid var(--line); border-radius: var(--r-1); background: var(--surface-1, var(--surface-3)); color: var(--text); font: inherit; font-family: var(--font-mono); }
+.adv__chart { display: block; width: 100%; height: 120px; margin: 8px 0 4px; }

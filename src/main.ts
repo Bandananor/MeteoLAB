@@ -16,6 +16,7 @@ import { StationPanel } from './station/panel'
 import { DetectorPanel } from './detector/panel'
 import { elapsed as runTime, timeOfDay } from './clock'
 import { ZonesPanel } from './zones/panel'
+import { AdvectionEditor, advectionMarkup } from './largescale-ui'
 import { CELL_STAGES, MESO_PERSISTENCE, TORNADO_DEFAULTS, TORNADO_LEVELS, tornadoSigns, type TornadoThresholds, UH_ROTATING, readState, createGrid, describeBalance, DT, Environment, parcelIndices, SCENARIOS, type SimConfig, rotationSummary, SPIN_SUPERCELL, spinProfile, stormIndices, stormMotion, UH_LAYERS, type UhLayer, environmentProfile, parseSounding, soundingProfile, SoundingError, computeSounding, type Sounding } from './core'
 import { type FieldMode, fieldInfo } from './render/fields'
 import type { LayerMode } from './render/view'
@@ -136,6 +137,7 @@ app.innerHTML = `<div class="app">
           ${slider('solarMax','Солнце в зените',300,1200,25,1000,' Вт/м²')}
           ${slider('soilMoisture','Влажность почвы',0,100,1,45,' %')}
           ${slider('city','Город в центре, радиус (0 — нет)',0,12,1,0,' км')}`, { count: 6 })}
+        ${group('Адвекция: среда меняется', advectionMarkup(), { id: 'advection' })}
         ${group('Расчёт', `
           <div class="field" title="Точный перенос (WENO 5-го порядка, по умолчанию) почти не размывает восходящие потоки и сам сохраняет массу воды. Быстрый (полулагранжев) примерно вдвое дешевле, но размывает потоки: в сильном сдвиге термик не стартует"><span class="field__label">Перенос</span><span class="select"><select id="transport"><option value="weno">Точный (WENO5)</option><option value="semi-lagrangian">Быстрый (полулагранжев)</option></select></span></div>
           <label class="check" title="Область сдвигается вместе с грозой (правая ячейка по Банкерсу при сдвиге 0–6 км от 15 м/с, иначе средний ветер 0–6 км): гроза остаётся внутри и не въезжает с другой стороны в собственный холодный отток. Ветер, годограф и радар — относительно земли"><input type="checkbox" id="followStorm" checked> Область движется вместе с грозой${RESTART}</label>
@@ -363,6 +365,9 @@ let last = performance.now(), frameCount = 0
 const recreate = (seed?: number) => { useSeed(seed ?? nextSeed()); sim.dispose(); sim = Object.assign(new Atmosphere(canvas, config), view); radar.attach(sim.model, sim.storm.rightMover); skewt.attach(sim.model); sim.placeStationAt(stationGround); selectCell(null); showDomain() }
 // Zones of the environment (2.4): applied from their screen, the run starts again with them.
 zonesPanel.onApply = (zones, front) => { config.zones = zones.length ? zones : undefined; config.frontLine = front ?? undefined; recreate(); markModified() }
+// Large-scale advection (2.6): changed in the left column, the run starts again with it.
+const advection = new AdvectionEditor()
+advection.onChange = changes => { config.largeScale = changes.length ? changes : undefined; recreate(); advection.show(config); markModified() }
 
 const surfaceSelect = document.querySelector<HTMLSelectElement>('#surfaceType')!
 const transportSelect = document.querySelector<HTMLSelectElement>('#transport')!
@@ -424,7 +429,8 @@ function markModified() {
       return !KEPT.has(key) && Math.abs(Number(config[key]) - Number(base[key])) > Number(input.step) / 2
     })
     const selects = SELECTS.some(([selector, key, fallback]) => d.querySelector(selector) && (config[key] ?? fallback) !== (base[key] ?? fallback))
-    d.classList.toggle('is-modified', sliders || selects)
+    const advected = !!d.querySelector('#advList') && JSON.stringify(config.largeScale ?? []) !== JSON.stringify(base.largeScale ?? [])
+    d.classList.toggle('is-modified', sliders || selects || advected)
   })
 }
 // The note under the scenario buttons: what the scenario shows, cut to four lines until «Подробнее».
@@ -446,7 +452,7 @@ document.querySelectorAll<HTMLInputElement>('input[data-key]').forEach(input => 
     ;(config[key] as number|string) = Number(input.value)
     showOutput(input)
   })
-  input.addEventListener('change', () => { if (resetKeys.has(key)) { markPreset(null); recreate() } else markModified() })
+  input.addEventListener('change', () => { if (resetKeys.has(key)) { markPreset(null); recreate(); advection.show(config) } else markModified() })
 })
 surfaceSelect.addEventListener('change', () => {
   config.surfaceType = surfaceSelect.value as SimConfig['surfaceType']
@@ -471,7 +477,7 @@ function syncControls() {
   transportSelect.value = config.transport ?? 'weno'
   microSelect.value = config.microphysics ?? 'ice'
   followCheck.checked = config.followStorm !== false; lightningCheck.checked = config.lightning !== false; domainSelect.value = config.domain ?? 'standard'; showDomainControls()
-  markProfileGroups(); markModified()
+  advection.show(config); markProfileGroups(); markModified()
 }
 syncControls()
 markPreset(initialPreset); showScenario()
