@@ -10,6 +10,7 @@ import { SMAGORINSKY, Turbulence } from './turbulence'
 import { chargingRate, transferCharge } from './charge'
 import { type Flash, Lightning } from './lightning'
 import { ZONE_DEPTH, ZONE_TIME, zoneMaps, zoneShape } from './zones'
+import { FRONT_BLUR, FRONTAL_TIME, frontalDeficit, frontDistance, WARM_BAND } from './fronts'
 import { graupelFallSpeed, graupelProcesses } from './graupel'
 import { hailFallSpeed, hailMaxDiameter, hailProcesses } from './hail'
 import { freezeRain, saturationAdjustMixed, snowFallSpeed, snowProcesses } from './ice'
@@ -217,6 +218,9 @@ export class AtmosphereModel implements TaskModel {
       this.cloud[i] = this.rain[i] = this.cold[i] = this.ice[i] = this.snow[i] = this.graupel[i] = this.hail[i] = 0
       this.chargeIce[i] = this.chargeGraupel[i] = this.chargeRain[i] = this.chargeAir[i] = 0
     }
+    // The moving front's cold air, from the start.
+    if (this.config.frontLine) for (let z = 0; z < nz && zs[z] < this.config.frontLine.depth * 1000 + FRONT_BLUR; z++)
+      for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++) this.theta[x + nx * (y + ny * z)] -= this.frontalAt(x, y, zs[z])[0]
     // The zones' air near the ground, from the start (the domain is still over its starting ground).
     const zones = this.zoneGround
     if (zones) for (let z = 0; z < nz && zs[z] < ZONE_DEPTH; z++) {
@@ -598,6 +602,21 @@ export class AtmosphereModel implements TaskModel {
 
   private withIce() { return (this.config.microphysics ?? this.microphysics) === 'ice' }
 
+  /** The side boundaries (SimConfig.edges): relaxed when a moving front is set and they are not. */
+  edges() { return this.config.edges ?? (this.config.frontLine ? 'relaxed' : 'periodic') }
+
+  /**
+   * How much colder the moving front (SimConfig.frontLine) keeps the air at node column (x, y) and height alt now, K,
+   * and whether the column lies in the band behind a warm front (where the air is pulled back to the warm air).
+   */
+  private frontalAt(x: number, y: number, alt: number): [number, boolean] {
+    const f = this.config.frontLine
+    if (!f) return [0, false]
+    const { dx, dy, width, depth } = this.grid, [fx, fy] = this.frame
+    const s = frontDistance(f, x * dx + fx * this.time, y * dy + fy * this.time, this.time, width, depth)
+    return [frontalDeficit(f, s, alt), f.kind === 'warm' && s <= 0 && s > -WARM_BAND]
+  }
+
   /** Electrification runs with the ice microphysics (it needs graupel and crystals) unless lightning is switched off. */
   electrified() { return this.withIce() && this.config.lightning !== false }
 
@@ -632,7 +651,7 @@ export class AtmosphereModel implements TaskModel {
     const flux = surfaceFluxes(cfg, this.time), urban = (cfg.city ?? 0) > 0 ? surfaceFluxes(cfg, this.time, 'urban') : flux, f = 2 * OMEGA * Math.sin(cfg.latitude * Math.PI / 180)
     const spongeStart = Math.max(cfg.tropopause * 1000 + 2500, 14_000), keep = Math.exp(-this.windRelaxation * dt)
     // Distance of each column from the nearest domain edge (the seam between the last and the first node), m.
-    const relaxed = cfg.edges === 'relaxed' || cfg.edges === 'relaxed-x', onlyX = cfg.edges === 'relaxed-x', front = cfg.front ?? 0, zones = this.zoneGround !== null, { dx, dy } = this.grid
+    const edges = this.edges(), relaxed = edges === 'relaxed' || edges === 'relaxed-x', onlyX = edges === 'relaxed-x', front = cfg.front ?? 0, zones = this.zoneGround !== null, frontTop = cfg.frontLine ? cfg.frontLine.depth * 1000 + FRONT_BLUR : -1, frontPull = 1 - Math.exp(-dt / FRONTAL_TIME), { dx, dy } = this.grid
     const edgeX = this.edgeX ??= Float64Array.from({ length: nx }, (_, x) => Math.min(x + .5, nx - .5 - x) * dx)
     const edgeY = this.edgeY ??= Float64Array.from({ length: ny }, (_, y) => Math.min(y + .5, ny - .5 - y) * dy)
     {
@@ -687,6 +706,12 @@ export class AtmosphereModel implements TaskModel {
           if (alt > spongeStart) { const s = clamp((alt - spongeStart) / (H - spongeStart)) * .06 * dt; w[i] *= 1 - s; u[i] = lerp(u[i], ue, s); v[i] = lerp(v[i], ve, s); theta[i] = lerp(theta[i], thEnv, s) }
           // The maintained front: the cold side is pulled to its colder profile (the warm side is left alone).
           if (front && alt < FRONT_DEPTH) { const d = this.frontDeficit(x, y, alt), s = 1 - Math.exp(-dt / FRONT_TIME * d / front / (1 - alt / FRONT_DEPTH)); theta[i] = lerp(theta[i], thEnv - d, s) }
+          // The moving front: inside its cold air the air is pulled to the colder profile; behind a warm front, back to the
+          // warm air (outside both, nothing: the storms' outflow and the front's own density current move freely).
+          if (frontTop > alt) {
+            const [d, behindWarm] = this.frontalAt(x, y, alt)
+            if (d > .01 || behindWarm) theta[i] = lerp(theta[i], thEnv - d, frontPull)
+          }
           // Zones of the environment: inside one, the air near the ground is pulled to the zone's profile, in proportion to
           // the share of the column it covers (outside, nothing: the outflow spreads freely).
           if (zones && alt < ZONE_DEPTH) {
@@ -701,7 +726,7 @@ export class AtmosphereModel implements TaskModel {
             const d = onlyX ? edgeX[x] : Math.min(edgeX[x], edgeY[y])
             if (d < EDGE_ZONE) {
               const s = 1 - Math.exp(-dt / EDGE_TIME * (1 - d / EDGE_ZONE) ** 2), k = 1 - s
-              u[i] = lerp(u[i], ue, s); v[i] = lerp(v[i], ve, s); w[i] *= k; theta[i] = lerp(theta[i], thEnv - this.frontDeficit(x, y, alt), s); q[i] = lerp(q[i], qEnv, s)
+              u[i] = lerp(u[i], ue, s); v[i] = lerp(v[i], ve, s); w[i] *= k; theta[i] = lerp(theta[i], thEnv - this.frontDeficit(x, y, alt) - (frontTop > alt ? this.frontalAt(x, y, alt)[0] : 0), s); q[i] = lerp(q[i], qEnv, s)
               cloud[i] *= k; rain[i] *= k; ice[i] *= k; snow[i] *= k; graupel[i] *= k; hail[i] *= k; cold[i] *= k
               if (electric) { cI[i] *= k; cG[i] *= k; cR[i] *= k; cA[i] *= k }
             }

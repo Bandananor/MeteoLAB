@@ -1,4 +1,5 @@
 import type { SoundingLevel } from './soundingfile'
+import type { FrontConfig } from './fronts'
 import type { ZoneConfig } from './zones'
 
 export type SurfaceType = 'grass' | 'dry' | 'water' | 'urban'
@@ -70,6 +71,12 @@ export interface SimConfig {
    * (warmer or cooler, moister or drier, fading out by 1.5 km), kept by a gentle pull inside them; absent = none.
    */
   zones?: ZoneConfig[]
+  /**
+   * A moving front (2.5, fronts.ts): cold or warm, its contrast, the depth and slope of the cold air, speed and heading;
+   * absent = none. With a front the side boundaries are relaxed (unless set): the cold air mass would otherwise come
+   * round the periodic domain as a second front.
+   */
+  frontLine?: FrontConfig
   /** Day of the year (1-365) for the sun's declination; absent = an equinox (sunrise 06:00, sunset 18:00). */
   dayOfYear?: number
   speed: number; seed: number; bubble: number
