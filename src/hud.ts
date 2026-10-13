@@ -136,6 +136,7 @@ export class Hud {
       <button class="menu__item" role="menuitem" data-tool="#skewOpen"><span class="menu__glyph">⟋</span>Skew-T</button>
       <button class="menu__item" role="menuitem" data-tool="#zonesOpen"><span class="menu__glyph">▦</span>Зоны</button>
       <button class="menu__item" role="menuitem" data-tool="#detectorOpen"><span class="menu__glyph">ϟ</span>Молнии</button>
+      <button class="menu__item" role="menuitem" data-tool="#analysisOpen"><span class="menu__glyph">≋</span>Анализ</button>
       <button class="menu__item" role="menuitem" data-tool="#stationOpen"><span class="menu__glyph">⌂</span>Станция</button>
       <div class="menu__sep"></div>
       <button class="menu__item" role="menuitem" data-tool="#layoutToggle"><span class="menu__glyph">▭</span>Компьютерный вид</button>
