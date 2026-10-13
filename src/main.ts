@@ -16,7 +16,7 @@ import { StationPanel } from './station/panel'
 import { DetectorPanel } from './detector/panel'
 import { elapsed as runTime, timeOfDay } from './clock'
 import { ZonesPanel } from './zones/panel'
-import { CELL_STAGES, MESO_PERSISTENCE, UH_ROTATING, readState, createGrid, describeBalance, DT, Environment, parcelIndices, SCENARIOS, type SimConfig, rotationSummary, SPIN_SUPERCELL, spinProfile, stormIndices, stormMotion, UH_LAYERS, type UhLayer, environmentProfile, parseSounding, soundingProfile, SoundingError, computeSounding, type Sounding } from './core'
+import { CELL_STAGES, MESO_PERSISTENCE, TORNADO_DEFAULTS, TORNADO_LEVELS, tornadoSigns, type TornadoThresholds, UH_ROTATING, readState, createGrid, describeBalance, DT, Environment, parcelIndices, SCENARIOS, type SimConfig, rotationSummary, SPIN_SUPERCELL, spinProfile, stormIndices, stormMotion, UH_LAYERS, type UhLayer, environmentProfile, parseSounding, soundingProfile, SoundingError, computeSounding, type Sounding } from './core'
 import { type FieldMode, fieldInfo } from './render/fields'
 import type { LayerMode } from './render/view'
 import { cleanSettings, decodeSettings, download, encodeSettings, toCsv } from './share'
@@ -224,6 +224,8 @@ app.innerHTML = `<div class="app">
         ${group('Все показатели грозы', `<div>
           ${stat('downdraft', 'Макс. нисходящий поток', 'м/с')}
           ${stat('uhLow', 'Низкое вращение (UH 0–1 / 0–3 км)', 'м²/с²', 'Вращение восходящего потока у земли: низкоуровневый мезоциклон — признак ячейки, опасной по смерчам. На сетке ~0,65 км слой 0–1 км — один уровень, 0–3 км — четыре')}
+          <div class="tornado" title="Определитель признаков смерчеобразования по всей области: вращение у земли, держащееся несколько минут, мезоциклон над ним, среда (STP, SRH 0–1 км, низкое основание облака) и не слишком холодный отток. Сам смерч сетка ~1 км не разрешает — это признаки, по которым о нём судят синоптики">${stat('tornadoLevel', 'Признаки смерчеобразования', '')}<ul class="tornado__checks" id="tornadoChecks"></ul>
+            <details class="tornado__more"><summary>Пороги</summary><div class="tornado__grid"><label class="tornado__th"><span>UH 0–1 км, м²/с²</span><input type="number" step="1" data-tornado="uh01"></label><label class="tornado__th"><span>держится, мин</span><input type="number" step="0.5" data-tornado="held"></label><label class="tornado__th"><span>STP от</span><input type="number" step="0.1" data-tornado="stp"></label><label class="tornado__th"><span>SRH 0–1 км от</span><input type="number" step="10" data-tornado="srh01"></label><label class="tornado__th"><span>LCL до, км</span><input type="number" step="0.1" data-tornado="lcl"></label><label class="tornado__th"><span>отток до, K</span><input type="number" step="0.5" data-tornado="cold"></label></div><button class="btn btn--quiet btn--xs" id="tornadoReset" type="button">По умолчанию</button></details></div>
           <div class="chart" title="Профиль w·ζ по высоте в ядре с наибольшим UH (среднее по 3×3 столбцам): на какой высоте и как глубоко вращается восходящий поток. Ниже — корреляция w и ζ по всей области на 2–6 км: в суперячейке поток и циклоническое вращение совпадают (на сетке ~1 км у WK 0,15–0,25), в обычной грозе они рядом, а не вместе (около 0)"><span class="chart__sub">На какой высоте вращается поток (ядро с макс. UH)</span><canvas id="spin"></canvas><span class="t-caption" id="spinNote">—</span></div>
           ${stat('cloudTop', 'Вершина облака', 'км')}
           ${stat('thermalTop', 'Вершина термика', 'км')}
@@ -743,6 +745,36 @@ function showMode(hail: boolean) {
 const cellDot = (c: { meso: number; supercell: boolean; leftMover: boolean; stage: string }) => c.meso >= MESO_PERSISTENCE ? ' dot--danger' : c.supercell || c.leftMover || c.stage === 'rotating' ? ' dot--warn' : ''
 // An instrument screen covers the 3D view: the view is not drawn meanwhile (the ray-marched clouds are the heaviest
 // drawing of the page; behind the radar they made it lag even on a computer). The physics runs on.
+// Signs of tornadogenesis (core/tornado.ts) over the whole domain, once a second: how long the rotation at the ground
+// has held is counted here, from the snapshots; the thresholds are the user's (kept in the browser).
+const TORNADO_KEY = 'meteolab-tornado'
+let tornado: TornadoThresholds = { ...TORNADO_DEFAULTS }
+try { const saved = JSON.parse(localStorage.getItem(TORNADO_KEY) ?? 'null'); if (saved && typeof saved === 'object') for (const k of Object.keys(TORNADO_DEFAULTS) as (keyof TornadoThresholds)[]) if (Number.isFinite(saved[k])) tornado[k] = saved[k] } catch { /* defaults */ }
+const tornadoInputs = [...document.querySelectorAll<HTMLInputElement>('[data-tornado]')]
+const showThresholds = () => { for (const input of tornadoInputs) input.value = String(tornado[input.dataset.tornado as keyof TornadoThresholds]) }
+for (const input of tornadoInputs) input.addEventListener('change', () => {
+  const v = Number(input.value)
+  if (Number.isFinite(v) && v >= 0) { tornado[input.dataset.tornado as keyof TornadoThresholds] = v; try { localStorage.setItem(TORNADO_KEY, JSON.stringify(tornado)) } catch { /* this visit only */ } }
+  showThresholds(); tornadoShown = 0
+})
+document.querySelector('#tornadoReset')!.addEventListener('click', () => { tornado = { ...TORNADO_DEFAULTS }; try { localStorage.removeItem(TORNADO_KEY) } catch { /* nothing kept */ } showThresholds(); tornadoShown = 0 })
+showThresholds()
+let tornadoShown = 0, lowHeld = 0, lowAt = 0
+function showTornado() {
+  const m = sim.model, now = performance.now()
+  // The rotation at the ground: held while at the threshold, counted in model time (back to 0 on a restart).
+  if (m.time < lowAt) lowHeld = 0
+  lowHeld = m.rotation.uh01 >= tornado.uh01 ? lowHeld + Math.max(0, m.time - lowAt) : 0; lowAt = m.time
+  if (now - tornadoShown < 1000) return
+  tornadoShown = now
+  const live = sim.live, signs = tornadoSigns({ uh01: m.rotation.uh01, lowHeld, mesoHeld: m.rotation.persisted, stp: live.storm.stp, srh01: live.storm.srh01, lcl: live.indices.sb.lcl, cold: sim.diagnostics().coldPool }, tornado)
+  text('tornadoLevel', TORNADO_LEVELS[signs.level])
+  document.querySelector('#tornadoLevel')?.closest('.stat')?.classList.toggle('stat--warn', signs.level === 2)
+  document.querySelector('#tornadoLevel')?.closest('.stat')?.classList.toggle('stat--danger', signs.level === 3)
+  const html = signs.checks.map(c => `<li class="${c.ok ? 'is-ok' : ''}"><span>${c.ok ? '✓' : '·'} ${c.name}</span><b>${c.value}</b></li>`).join('')
+  const list = document.querySelector('#tornadoChecks')!
+  if (list.innerHTML !== html) list.innerHTML = html
+}
 /**
  * The speed the computer keeps up, under the speed slider, once a second; a warning when it is well below the chosen
  * one (the model cannot run faster than it is computed).
@@ -955,7 +987,7 @@ function frame(now:number){
   text('cape',d.cape.toFixed(0));text('mlcape',d.indices.ml.cape.toFixed(0));text('mlcin',d.indices.ml.cin.toFixed(0));text('mucape',d.indices.mu.cape.toFixed(0));text('dcape',d.indices.dcape.toFixed(0));text('srh01',d.storm.srh01.toFixed(0));text('srh03',d.storm.srh03.toFixed(0));text('scp',d.storm.scp.toFixed(1));text('stp',d.storm.stp.toFixed(1));text('cin',d.cin.toFixed(0));text('updraft',d.updraft.toFixed(1));text('downdraft',d.downdraft.toFixed(1));text('uh',d.updraftHelicity.toFixed(0));text('uhLow',`${d.uh01.toFixed(0)} / ${d.uh03.toFixed(0)}`);text('cloudTop',d.cloudTop.toFixed(1));text('thermalTop',d.thermalTop.toFixed(1));text('cloudWater',d.cloudWater.toFixed(2));text('coldPool',d.coldPool.toFixed(1));text('gust',d.gust.toFixed(1));text('hail',d.hail>=1?(d.hail/10).toFixed(1):'—');text('hailSwath',d.hailSwath>=1?`за прогон до ${(d.hailSwath/10).toFixed(1)} см`:'');showMode(d.hail>=1);text('clipped',String(d.clipped));text('rain',d.rain.toFixed(1));text('rainTotal',d.rainTotal.toFixed(1));text('lcl',d.lcl===null?'—':`${d.lcl.toFixed(1)} км`);text('lfc',d.lfc===null?'—':`${d.lfc.toFixed(1)} км`);text('el',d.el===null?'—':`${d.el.toFixed(1)} км`);text('cellType',d.cellType);text('cellReason',d.cellReason);text('logicText',d.logic);text('sun',`${d.insolation.toFixed(0)} Вт/м²`);text('sunElevation',d.sunElevation>0?`${d.sunElevation.toFixed(0)}° над горизонтом`:'ночь')
   text('surfaceReadout',({grass:'ТРАВА',dry:'СУХАЯ ПОЧВА',water:'ВОДА',urban:'ГОРОД'} as const)[config.surfaceType])
   const b=sim.balance;text('rkw',b?b.ratio.toFixed(1):'—');text('rkwNote',b?`C ${b.c.toFixed(0)} / Δu ${b.deltaU.toFixed(0)} м/с`:'купола нет');const card=document.querySelector<HTMLElement>('#rkwCard')!;card.dataset.base??=card.title;card.title=b?`${card.dataset.base}\n\nСейчас: ${describeBalance(b)}.`:card.dataset.base
-  text('time',runTime(sim.time));text('localTime',timeOfDay(config.hour,sim.time));text('threads',String(sim.threads));text('freezing',d.freezing===null?'—':`${d.freezing.toFixed(1)} км`);if(sim.live!==shownLive){shownLive=sim.live;skewt.setLive(shownLive.env,shownLive)}const sampled=timeline.record({t:sim.time,cape:sim.live.indices.sb.cape,cin:sim.live.indices.sb.cin,updraft:d.updraft,uh:d.updraftHelicity,rain:d.rain,rainTotal:d.rainTotal,rotationHeld:sim.model.rotation.persisted,flashes:sim.model.flashes.filter(f=>f.time>sim.time-60).length});if(frameCount++%20===0){drawSounding();drawHodograph();drawSpin()}if(sampled||frameCount%20===1){const{ctx,w,h}=prepareCanvas('timeline');timeline.draw(ctx,w,h)}updateCells();radar.refresh();const probe=sim.cells.find(selectedCell);skewt.refresh(probe?{id:probe.id,x:probe.x,y:probe.y,u:probe.u+sim.model.frame[0],v:probe.v+sim.model.frame[1]}:null);station.refresh(sim.station,placingStation);detector.refresh(sim.model);showSpeed();zonesPanel.refresh(sim.model);listRewind();hud.update({time:sim.time,local:timeOfDay(config.hour,sim.time),updraft:d.updraft,rain:d.rain,uh:d.updraftHelicity,mesocyclone:sim.model.rotation.persisted>=MESO_PERSISTENCE,regime:document.querySelector('#cellType')!.textContent??'',running,speed:config.speed});canvas.style.cursor=placingStation?'crosshair':'';requestAnimationFrame(frame)
+  text('time',runTime(sim.time));text('localTime',timeOfDay(config.hour,sim.time));text('threads',String(sim.threads));text('freezing',d.freezing===null?'—':`${d.freezing.toFixed(1)} км`);if(sim.live!==shownLive){shownLive=sim.live;skewt.setLive(shownLive.env,shownLive)}const sampled=timeline.record({t:sim.time,cape:sim.live.indices.sb.cape,cin:sim.live.indices.sb.cin,updraft:d.updraft,uh:d.updraftHelicity,rain:d.rain,rainTotal:d.rainTotal,rotationHeld:sim.model.rotation.persisted,flashes:sim.model.flashes.filter(f=>f.time>sim.time-60).length});if(frameCount++%20===0){drawSounding();drawHodograph();drawSpin()}if(sampled||frameCount%20===1){const{ctx,w,h}=prepareCanvas('timeline');timeline.draw(ctx,w,h)}updateCells();radar.refresh();const probe=sim.cells.find(selectedCell);skewt.refresh(probe?{id:probe.id,x:probe.x,y:probe.y,u:probe.u+sim.model.frame[0],v:probe.v+sim.model.frame[1]}:null);station.refresh(sim.station,placingStation);detector.refresh(sim.model);showSpeed();showTornado();zonesPanel.refresh(sim.model);listRewind();hud.update({time:sim.time,local:timeOfDay(config.hour,sim.time),updraft:d.updraft,rain:d.rain,uh:d.updraftHelicity,mesocyclone:sim.model.rotation.persisted>=MESO_PERSISTENCE,regime:document.querySelector('#cellType')!.textContent??'',running,speed:config.speed});canvas.style.cursor=placingStation?'crosshair':'';requestAnimationFrame(frame)
 }
 showDomain()
 requestAnimationFrame(frame)

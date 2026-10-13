@@ -10,7 +10,7 @@ import { SMAGORINSKY, Turbulence } from './turbulence'
 import { chargingRate, transferCharge } from './charge'
 import { type Flash, Lightning } from './lightning'
 import { ZONE_DEPTH, ZONE_TIME, zoneMaps, zoneShape } from './zones'
-import { FRONT_BLUR, FRONTAL_TIME, frontalDeficit, frontDistance, WARM_BAND } from './fronts'
+import { coldMoisture, FRONT_BLUR, FRONTAL_TIME, frontalDeficit, frontDistance, WARM_BAND } from './fronts'
 import { graupelFallSpeed, graupelProcesses } from './graupel'
 import { hailFallSpeed, hailMaxDiameter, hailProcesses } from './hail'
 import { freezeRain, saturationAdjustMixed, snowFallSpeed, snowProcesses } from './ice'
@@ -220,7 +220,7 @@ export class AtmosphereModel implements TaskModel {
     }
     // The moving front's cold air, from the start.
     if (this.config.frontLine) for (let z = 0; z < nz && zs[z] < this.config.frontLine.depth * 1000 + FRONT_BLUR; z++)
-      for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++) this.theta[x + nx * (y + ny * z)] -= this.frontalAt(x, y, zs[z])[0]
+      for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++) { const i = x + nx * (y + ny * z), d = this.frontalAt(x, y, zs[z])[0]; this.theta[i] -= d; this.q[i] *= coldMoisture(d) }
     // The zones' air near the ground, from the start (the domain is still over its starting ground).
     const zones = this.zoneGround
     if (zones) for (let z = 0; z < nz && zs[z] < ZONE_DEPTH; z++) {
@@ -710,7 +710,7 @@ export class AtmosphereModel implements TaskModel {
           // warm air (outside both, nothing: the storms' outflow and the front's own density current move freely).
           if (frontTop > alt) {
             const [d, behindWarm] = this.frontalAt(x, y, alt)
-            if (d > .01 || behindWarm) theta[i] = lerp(theta[i], thEnv - d, frontPull)
+            if (d > .01 || behindWarm) { theta[i] = lerp(theta[i], thEnv - d, frontPull); q[i] = lerp(q[i], qEnv * coldMoisture(d), frontPull) }
           }
           // Zones of the environment: inside one, the air near the ground is pulled to the zone's profile, in proportion to
           // the share of the column it covers (outside, nothing: the outflow spreads freely).
@@ -726,7 +726,8 @@ export class AtmosphereModel implements TaskModel {
             const d = onlyX ? edgeX[x] : Math.min(edgeX[x], edgeY[y])
             if (d < EDGE_ZONE) {
               const s = 1 - Math.exp(-dt / EDGE_TIME * (1 - d / EDGE_ZONE) ** 2), k = 1 - s
-              u[i] = lerp(u[i], ue, s); v[i] = lerp(v[i], ve, s); w[i] *= k; theta[i] = lerp(theta[i], thEnv - this.frontDeficit(x, y, alt) - (frontTop > alt ? this.frontalAt(x, y, alt)[0] : 0), s); q[i] = lerp(q[i], qEnv, s)
+              u[i] = lerp(u[i], ue, s); v[i] = lerp(v[i], ve, s); w[i] *= k; const fd = frontTop > alt ? this.frontalAt(x, y, alt)[0] : 0
+              theta[i] = lerp(theta[i], thEnv - this.frontDeficit(x, y, alt) - fd, s); q[i] = lerp(q[i], qEnv * coldMoisture(fd), s)
               cloud[i] *= k; rain[i] *= k; ice[i] *= k; snow[i] *= k; graupel[i] *= k; hail[i] *= k; cold[i] *= k
               if (electric) { cI[i] *= k; cG[i] *= k; cR[i] *= k; cA[i] *= k }
             }

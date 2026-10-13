@@ -65,6 +65,13 @@ export function frontalDeficit(f: FrontConfig, s: number, z: number) {
 }
 
 /**
+ * The cold air's water vapour as a share of the environment's, for a deficit of `deficit` K: saturation falls ~7 % per
+ * K (Clausius-Clapeyron), so the cold air mass keeps the environment's relative humidity — a lower dew point, as a real
+ * one, not the warm air's moisture cooled into a saturated slab (the first version made a fog bank of it).
+ */
+export const coldMoisture = (deficit: number) => Math.exp(-.068 * deficit)
+
+/**
  * The speed the cold air would advance at by itself, m/s: a density current, c = 0.7 √(g' h) (Benjamin 1968; g' =
  * g Δθ/θ) — shown beside the speed set for the front, which the forcing keeps.
  */
