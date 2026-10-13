@@ -83,7 +83,7 @@ export function askGuide() {
 /** Physics threads on a phone unless the address asks otherwise: fewer, so it does not overheat. */
 export const PHONE_THREADS = 3
 /** Speed steps of the speed button, in turn. */
-const SPEEDS = [4, 8, 16, 30]
+const SPEEDS = [4, 8, 16, 30, 60]
 
 export interface HudState { time: number; updraft: number; rain: number; uh: number; mesocyclone: boolean; regime: string; running: boolean; speed: number }
 

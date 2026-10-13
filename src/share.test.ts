@@ -9,6 +9,11 @@ const encodeText = (json: string) => btoa(json).replace(/\+/g, '-').replace(/\//
 const encode = (data: unknown) => btoa(String.fromCharCode(...new TextEncoder().encode(JSON.stringify(data)))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
 
 describe('shared links and CSV (src/share.ts)', () => {
+  it('carries a domain of its own size', () => {
+    const base: SimConfig = { ...SUMMER_DAY }
+    expect(decodeSettings(encodeSettings({ ...base, domain: 'custom', domainSize: [72, 54] }, base, null), NAMES)!.values).toEqual({ domain: 'custom', domainSize: [72, 54] })
+  })
+
   it('carries the zones of the environment, and drops broken ones', () => {
     const base: SimConfig = { ...SUMMER_DAY }, zones = [{ points: [[1, 2], [10.123456, 2], [10, 9]] as [number, number][], temperature: 2.5, moisture: -1 }]
     const back = decodeSettings(encodeSettings({ ...base, zones }, base, null), NAMES)!

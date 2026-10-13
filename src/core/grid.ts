@@ -33,9 +33,20 @@ export const DEFAULT_GRID: GridOptions = { nx: 40, ny: 32, nz: 50, width: 48_000
 /** The large domain (SimConfig.domain): 96 x 72 km at the same 1.2 x 1.125 km spacing, as in standard supercell experiments. */
 export const LARGE_GRID: GridOptions = { ...DEFAULT_GRID, nx: 80, ny: 64, width: 96_000, depth: 72_000 }
 
-/** Grid options for a domain size setting and, optionally, the height of the top (km). */
-export const domainGrid = (domain: 'standard' | 'large' | undefined, top?: number): GridOptions => {
-  const base = domain === 'large' ? LARGE_GRID : DEFAULT_GRID
+/**
+ * A domain of the user's own size (SimConfig.domainSize), km: width in steps of 12 km (10 columns of 1.2 km) and depth
+ * in steps of 9 km (8 rows of 1.125 km), within DOMAIN_MIN..DOMAIN_MAX — the same spacing as the standard domain.
+ */
+export const DOMAIN_MIN = [24, 18] as const, DOMAIN_MAX = [144, 108] as const, DOMAIN_STEP = [12, 9] as const
+export function customGrid([width, depth]: readonly [number, number]): GridOptions {
+  const fit = (v: number, k: 0 | 1) => Math.min(DOMAIN_MAX[k], Math.max(DOMAIN_MIN[k], Math.round((Number.isFinite(v) ? v : DOMAIN_MIN[k]) / DOMAIN_STEP[k]) * DOMAIN_STEP[k]))
+  const w = fit(width, 0), d = fit(depth, 1)
+  return { ...DEFAULT_GRID, nx: w * 10 / 12, ny: d * 8 / 9, width: w * 1000, depth: d * 1000 }
+}
+
+/** Grid options for a domain size setting (with the own size for 'custom') and, optionally, the height of the top (km). */
+export const domainGrid = (domain: 'standard' | 'large' | 'custom' | undefined, top?: number, size?: readonly [number, number]): GridOptions => {
+  const base = domain === 'large' ? LARGE_GRID : domain === 'custom' && size ? customGrid(size) : DEFAULT_GRID
   return top === undefined ? base : { ...base, height: top * 1000 }
 }
 

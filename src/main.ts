@@ -139,9 +139,13 @@ app.innerHTML = `<div class="app">
           <div class="field" title="Точный перенос (WENO 5-го порядка, по умолчанию) почти не размывает восходящие потоки и сам сохраняет массу воды. Быстрый (полулагранжев) примерно вдвое дешевле, но размывает потоки: в сильном сдвиге термик не стартует"><span class="field__label">Перенос</span><span class="select"><select id="transport"><option value="weno">Точный (WENO5)</option><option value="semi-lagrangian">Быстрый (полулагранжев)</option></select></span></div>
           <label class="check" title="Область сдвигается вместе с грозой (правая ячейка по Банкерсу при сдвиге 0–6 км от 15 м/с, иначе средний ветер 0–6 км): гроза остаётся внутри и не въезжает с другой стороны в собственный холодный отток. Ветер, годограф и радар — относительно земли"><input type="checkbox" id="followStorm" checked> Область движется вместе с грозой${RESTART}</label>
           <label class="check" title="Электризация облака и молнии: заряд на крупе, кристаллах и каплях, поле и разряды (IC и в землю). Выключение ускоряет расчёт примерно на четверть; погода от этого не меняется — заряд не влияет на движение воздуха"><input type="checkbox" id="lightning" checked> Молнии${RESTART}</label>
-          <div class="field" title="Большая область — 96 × 72 км с тем же шагом: ячейкам просторнее, но расчёт примерно в 4 раза медленнее"><span class="field__label">Размер области${RESTART}</span><span class="select"><select id="domain"><option value="standard">Стандарт — 48 × 36 км</option><option value="large">Большая — 96 × 72 км (в ~4 раза медленнее)</option></select></span></div>
+          <div class="field" title="Большая область — 96 × 72 км с тем же шагом: ячейкам просторнее, но расчёт примерно в 4 раза медленнее"><span class="field__label">Размер области${RESTART}</span><span class="select"><select id="domain"><option value="standard">Стандарт — 48 × 36 км</option><option value="large">Большая — 96 × 72 км (в ~4 раза медленнее)</option><option value="custom">Своя…</option></select></span></div>
           <div class="field" title="Со льдом (по умолчанию): облачный лёд, снег и крупа (Lin et al. 1983) — наковальня из кристаллов, теплота замерзания, таяние крупы в дождь. Тёплый дождь (Кесслер) — только капли: дешевле, но без наковальни и теплоты замерзания"><span class="field__label">Микрофизика${RESTART}</span><span class="select"><select id="microphysics"><option value="ice">Со льдом — лёд, снег, крупа</option><option value="warm">Тёплый дождь (Кесслер)</option></select></span></div>
-          ${slider('speed','Ускорение времени',1,30,1,8,'×')}
+          <div id="domainCustom" hidden><label class="field"><span class="field__head"><span class="field__label">Ширина области</span><output class="field__value" id="domainWidthOut">48 км</output></span><input class="range" type="range" id="domainWidth" min="24" max="144" step="12" value="48"></label><label class="field"><span class="field__head"><span class="field__label">Глубина области</span><output class="field__value" id="domainDepthOut">36 км</output></span><input class="range" type="range" id="domainDepth" min="18" max="108" step="9" value="36"></label></div>
+          <div class="notice notice--warn" id="domainWarn" hidden><span class="notice__text">Большая область считается медленнее: время шага растёт с площадью (96 × 72 км — в ~4 раза дольше стандартной). До расчёта на видеокарте (WebGPU, в плане) очень большие области на слабом компьютере идут медленно.</span></div>
+          ${slider('speed','Ускорение времени',1,120,1,8,'×')}
+          <div class="t-caption" id="speedReal"></div>
+          <div class="notice notice--warn" id="speedWarn" hidden><span class="notice__text"></span></div>
           ${slider('bubble','Сила начального термика (0 — без термика)',0,2.5,.05,1,'×',2)}`, { count: 6 })}
         ${group('Что рассчитано, а что нет', `<div class="model-notes">
           <p><b>Рассчитано по уравнениям</b> на сетке ~1,2 км по горизонтали (у земли 100 м по вертикали, выше — растянуто): ветер во всех трёх направлениях, давление (анеластическое приближение), плавучесть с учётом пара и веса капель, перенос тепла, пара, облака и осадков (WENO 5-го порядка), сила Кориолиса. Потоки шире ~6–8 км (5–7 шагов сетки) разрешены хорошо, более узкие сглажены.</p>
@@ -364,7 +368,20 @@ const followCheck = document.querySelector<HTMLInputElement>('#followStorm')!, d
 followCheck.addEventListener('change', () => { config.followStorm = followCheck.checked; recreate() })
 const lightningCheck = document.querySelector<HTMLInputElement>('#lightning')!
 lightningCheck.addEventListener('change', () => { config.lightning = lightningCheck.checked; recreate() })
-domainSelect.addEventListener('change', () => { config.domain = domainSelect.value as SimConfig['domain']; recreate() })
+domainSelect.addEventListener('change', () => { config.domain = domainSelect.value as SimConfig['domain']; if (config.domain === 'custom') config.domainSize ??= [48, 36]; showDomainControls(); recreate() })
+// The domain's own size (domain 'custom'): two sliders, the run restarts when one is let go.
+const domainWidth = document.querySelector<HTMLInputElement>('#domainWidth')!, domainDepth = document.querySelector<HTMLInputElement>('#domainDepth')!
+function showDomainControls() {
+  const custom = config.domain === 'custom', [w, d] = config.domain === 'large' ? [96, 72] : custom ? config.domainSize ?? [48, 36] : [48, 36]
+  ;(document.querySelector('#domainCustom') as HTMLElement).hidden = !custom
+  domainWidth.value = String(w); domainDepth.value = String(d); fillRange(domainWidth); fillRange(domainDepth)
+  text('domainWidthOut', `${w} км`); text('domainDepthOut', `${d} км`)
+  ;(document.querySelector('#domainWarn') as HTMLElement).hidden = w * d <= 96 * 72
+}
+for (const input of [domainWidth, domainDepth]) {
+  input.addEventListener('input', () => { fillRange(input); text(`${input.id}Out`, `${input.value} км`); (document.querySelector('#domainWarn') as HTMLElement).hidden = Number(domainWidth.value) * Number(domainDepth.value) <= 96 * 72 })
+  input.addEventListener('change', () => { config.domainSize = [Number(domainWidth.value), Number(domainDepth.value)]; recreate() })
+}
 const microSelect = document.querySelector<HTMLSelectElement>('#microphysics')!
 microSelect.addEventListener('change', () => { config.microphysics = microSelect.value as SimConfig['microphysics']; markPreset(null); recreate() })
 // Sliders: the value with its unit beside the label, the track filled up to the thumb (--p), the value in the accent
@@ -394,7 +411,7 @@ const markProfileGroups = () => {
 const baseConfig = (): SimConfig => { const base: SimConfig = { ...defaults, ...(baseScenario === null ? soundingBase ?? {} : SCENARIOS[baseScenario].values) }; fillLowWind(base); return base }
 // A dot at a left group whose values differ from the scenario. Speed, the domain and its motion are kept when a
 // scenario is chosen: not the scenario's.
-const KEPT = new Set<keyof SimConfig>(['speed', 'followStorm', 'domain', 'lightning'])
+const KEPT = new Set<keyof SimConfig>(['speed', 'followStorm', 'domain', 'domainSize', 'lightning'])
 const SELECTS: [string, keyof SimConfig, string][] = [['#surfaceType', 'surfaceType', 'grass'], ['#transport', 'transport', 'weno'], ['#microphysics', 'microphysics', 'ice']]
 function markModified() {
   const base = baseConfig()
@@ -435,7 +452,7 @@ surfaceSelect.addEventListener('change', () => {
 })
 document.querySelectorAll<HTMLButtonElement>('[data-preset]').forEach(button => button.addEventListener('click', () => {
   const index = Number(button.dataset.preset)
-  Object.assign(config, defaults, { speed: config.speed, followStorm: config.followStorm, lightning: config.lightning, domain: config.domain, wind05: undefined, wind1: undefined, windDir05: undefined, windDir1: undefined, profile: undefined, sounding: undefined, bubbleRadius: undefined, front: undefined, edges: undefined, start: undefined, frameMotion: undefined, top: undefined, nightInversion: undefined, zones: undefined, transport: 'weno' }, presets[index].values)
+  Object.assign(config, defaults, { speed: config.speed, followStorm: config.followStorm, lightning: config.lightning, domain: config.domain, domainSize: config.domainSize, wind05: undefined, wind1: undefined, windDir05: undefined, windDir1: undefined, profile: undefined, sounding: undefined, bubbleRadius: undefined, front: undefined, edges: undefined, start: undefined, frameMotion: undefined, top: undefined, nightInversion: undefined, zones: undefined, transport: 'weno' }, presets[index].values)
   fillLowWind(config)
   baseScenario = index
   syncControls()
@@ -450,7 +467,7 @@ function syncControls() {
   surfaceSelect.value = config.surfaceType
   transportSelect.value = config.transport ?? 'weno'
   microSelect.value = config.microphysics ?? 'ice'
-  followCheck.checked = config.followStorm !== false; lightningCheck.checked = config.lightning !== false; domainSelect.value = config.domain ?? 'standard'
+  followCheck.checked = config.followStorm !== false; lightningCheck.checked = config.lightning !== false; domainSelect.value = config.domain ?? 'standard'; showDomainControls()
   markProfileGroups(); markModified()
 }
 syncControls()
@@ -544,7 +561,7 @@ function previewSounding() {
 soundingDialog.addEventListener('close', () => {
   if (soundingDialog.returnValue !== 'run' || !loadedSounding) { soundingDialog.returnValue = ''; return }
   soundingDialog.returnValue = ''
-  Object.assign(config, defaults, { speed: config.speed, followStorm: config.followStorm, lightning: config.lightning, domain: config.domain, wind05: undefined, wind1: undefined, windDir05: undefined, windDir1: undefined, profile: undefined, bubbleRadius: undefined, front: undefined, edges: undefined, start: undefined, frameMotion: undefined, top: undefined, nightInversion: undefined, zones: undefined, transport: 'weno' },
+  Object.assign(config, defaults, { speed: config.speed, followStorm: config.followStorm, lightning: config.lightning, domain: config.domain, domainSize: config.domainSize, wind05: undefined, wind1: undefined, windDir05: undefined, windDir1: undefined, profile: undefined, bubbleRadius: undefined, front: undefined, edges: undefined, start: undefined, frameMotion: undefined, top: undefined, nightInversion: undefined, zones: undefined, transport: 'weno' },
     { sounding: loadedSounding, bubble: Number(soundingBubble.value), ...(soundingLatitude !== undefined ? { latitude: Math.round(Math.abs(soundingLatitude)) } : {}) })
   fillLowWind(config)
   baseScenario = null; soundingBase = { sounding: config.sounding, bubble: config.bubble, latitude: config.latitude }
@@ -724,6 +741,20 @@ function showMode(hail: boolean) {
 }
 /** The dot of a cell in the list: a mesocyclone now, rotation (or a left mover), or neither. */
 const cellDot = (c: { meso: number; supercell: boolean; leftMover: boolean; stage: string }) => c.meso >= MESO_PERSISTENCE ? ' dot--danger' : c.supercell || c.leftMover || c.stage === 'rotating' ? ' dot--warn' : ''
+/**
+ * The speed the computer keeps up, under the speed slider, once a second; a warning when it is well below the chosen
+ * one (the model cannot run faster than it is computed).
+ */
+let speedShown = 0
+function showSpeed() {
+  const now = performance.now()
+  if (now - speedShown < 1000) return
+  speedShown = now
+  const real = sim.realSpeed, warn = document.querySelector<HTMLElement>('#speedWarn')!, low = running && real > 0 && real < .7 * config.speed
+  text('speedReal', running && real > 0 ? `фактически ×${real < 10 ? real.toFixed(1) : real.toFixed(0)}` : '')
+  warn.hidden = !low
+  if (low) warn.querySelector('.notice__text')!.textContent = `Компьютер успевает только ×${real.toFixed(real < 10 ? 1 : 0)}: модель идёт медленнее выбранной скорости. Быстрее — меньше область или расчёт на видеокарте (WebGPU, в плане).`
+}
 /** Domain size and grid in the header and footer, and how fast the domain moves with the storm. */
 function showDomain() {
   const { nx, ny, nz, width, depth, height } = sim.model.grid, [fu, fv] = sim.model.frame, speed = Math.hypot(fu, fv)
@@ -922,7 +953,7 @@ function frame(now:number){
   text('cape',d.cape.toFixed(0));text('mlcape',d.indices.ml.cape.toFixed(0));text('mlcin',d.indices.ml.cin.toFixed(0));text('mucape',d.indices.mu.cape.toFixed(0));text('dcape',d.indices.dcape.toFixed(0));text('srh01',d.storm.srh01.toFixed(0));text('srh03',d.storm.srh03.toFixed(0));text('scp',d.storm.scp.toFixed(1));text('stp',d.storm.stp.toFixed(1));text('cin',d.cin.toFixed(0));text('updraft',d.updraft.toFixed(1));text('downdraft',d.downdraft.toFixed(1));text('uh',d.updraftHelicity.toFixed(0));text('uhLow',`${d.uh01.toFixed(0)} / ${d.uh03.toFixed(0)}`);text('cloudTop',d.cloudTop.toFixed(1));text('thermalTop',d.thermalTop.toFixed(1));text('cloudWater',d.cloudWater.toFixed(2));text('coldPool',d.coldPool.toFixed(1));text('gust',d.gust.toFixed(1));text('hail',d.hail>=1?(d.hail/10).toFixed(1):'—');text('hailSwath',d.hailSwath>=1?`за прогон до ${(d.hailSwath/10).toFixed(1)} см`:'');showMode(d.hail>=1);text('clipped',String(d.clipped));text('rain',d.rain.toFixed(1));text('rainTotal',d.rainTotal.toFixed(1));text('lcl',d.lcl===null?'—':`${d.lcl.toFixed(1)} км`);text('lfc',d.lfc===null?'—':`${d.lfc.toFixed(1)} км`);text('el',d.el===null?'—':`${d.el.toFixed(1)} км`);text('cellType',d.cellType);text('cellReason',d.cellReason);text('logicText',d.logic);text('sun',`${d.insolation.toFixed(0)} Вт/м²`);text('sunElevation',d.sunElevation>0?`${d.sunElevation.toFixed(0)}° над горизонтом`:'ночь')
   text('surfaceReadout',({grass:'ТРАВА',dry:'СУХАЯ ПОЧВА',water:'ВОДА',urban:'ГОРОД'} as const)[config.surfaceType])
   const b=sim.balance;text('rkw',b?b.ratio.toFixed(1):'—');text('rkwNote',b?`C ${b.c.toFixed(0)} / Δu ${b.deltaU.toFixed(0)} м/с`:'купола нет');const card=document.querySelector<HTMLElement>('#rkwCard')!;card.dataset.base??=card.title;card.title=b?`${card.dataset.base}\n\nСейчас: ${describeBalance(b)}.`:card.dataset.base
-  const sec=Math.floor(sim.time);text('time',`${String(Math.floor(sec/60)).padStart(2,'0')}:${String(sec%60).padStart(2,'0')}`);text('threads',String(sim.threads));text('freezing',d.freezing===null?'—':`${d.freezing.toFixed(1)} км`);if(sim.live!==shownLive){shownLive=sim.live;skewt.setLive(shownLive.env,shownLive)}const sampled=timeline.record({t:sim.time,cape:sim.live.indices.sb.cape,cin:sim.live.indices.sb.cin,updraft:d.updraft,uh:d.updraftHelicity,rain:d.rain,rainTotal:d.rainTotal,rotationHeld:sim.model.rotation.persisted,flashes:sim.model.flashes.filter(f=>f.time>sim.time-60).length});if(frameCount++%20===0){drawSounding();drawHodograph();drawSpin()}if(sampled||frameCount%20===1){const{ctx,w,h}=prepareCanvas('timeline');timeline.draw(ctx,w,h)}updateCells();radar.refresh();const probe=sim.cells.find(selectedCell);skewt.refresh(probe?{id:probe.id,x:probe.x,y:probe.y,u:probe.u+sim.model.frame[0],v:probe.v+sim.model.frame[1]}:null);station.refresh(sim.station,placingStation);detector.refresh(sim.model);zonesPanel.refresh(sim.model);listRewind();hud.update({time:sim.time,updraft:d.updraft,rain:d.rain,uh:d.updraftHelicity,mesocyclone:sim.model.rotation.persisted>=MESO_PERSISTENCE,regime:document.querySelector('#cellType')!.textContent??'',running,speed:config.speed});canvas.style.cursor=placingStation?'crosshair':'';requestAnimationFrame(frame)
+  const sec=Math.floor(sim.time);text('time',`${String(Math.floor(sec/60)).padStart(2,'0')}:${String(sec%60).padStart(2,'0')}`);text('threads',String(sim.threads));text('freezing',d.freezing===null?'—':`${d.freezing.toFixed(1)} км`);if(sim.live!==shownLive){shownLive=sim.live;skewt.setLive(shownLive.env,shownLive)}const sampled=timeline.record({t:sim.time,cape:sim.live.indices.sb.cape,cin:sim.live.indices.sb.cin,updraft:d.updraft,uh:d.updraftHelicity,rain:d.rain,rainTotal:d.rainTotal,rotationHeld:sim.model.rotation.persisted,flashes:sim.model.flashes.filter(f=>f.time>sim.time-60).length});if(frameCount++%20===0){drawSounding();drawHodograph();drawSpin()}if(sampled||frameCount%20===1){const{ctx,w,h}=prepareCanvas('timeline');timeline.draw(ctx,w,h)}updateCells();radar.refresh();const probe=sim.cells.find(selectedCell);skewt.refresh(probe?{id:probe.id,x:probe.x,y:probe.y,u:probe.u+sim.model.frame[0],v:probe.v+sim.model.frame[1]}:null);station.refresh(sim.station,placingStation);detector.refresh(sim.model);showSpeed();zonesPanel.refresh(sim.model);listRewind();hud.update({time:sim.time,updraft:d.updraft,rain:d.rain,uh:d.updraftHelicity,mesocyclone:sim.model.rotation.persisted>=MESO_PERSISTENCE,regime:document.querySelector('#cellType')!.textContent??'',running,speed:config.speed});canvas.style.cursor=placingStation?'crosshair':'';requestAnimationFrame(frame)
 }
 showDomain()
 requestAnimationFrame(frame)

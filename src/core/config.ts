@@ -48,7 +48,9 @@ export interface SimConfig {
    */
   frameMotion?: readonly [number, number]
   /** Domain size (absent = 'standard'): 48 x 36 km, or 96 x 72 km at the same resolution (about 4x slower). */
-  domain?: 'standard' | 'large'
+  domain?: 'standard' | 'large' | 'custom'
+  /** The domain's own size with domain 'custom': [width, depth], km (see customGrid: steps of 12 and 9 km, 24-144 by 18-108). */
+  domainSize?: [number, number]
   /**
    * Height of the domain's top, km (absent = 18.9): the same 50 levels stretched from 100 m at the ground. The tropics
    * need ~22 km, so the sponge (from 2.5 km above the tropopause, see AtmosphereModel.physics) still has room over a

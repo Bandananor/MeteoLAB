@@ -32,7 +32,7 @@ function start(config: SimConfig, limit?: number) {
   const threads = threadCount(limit), id = ++generation
   sentFlashes = 0
   if (threads === 1) { model = new AtmosphereModel(config); ready = true; send(); return }
-  const memory = new SharedMemory(), grid = domainGrid(config.domain, config.top), control = controlBuffer()
+  const memory = new SharedMemory(), grid = domainGrid(config.domain, config.top, config.domainSize), control = controlBuffer()
   model = new AtmosphereModel(config, createGrid(grid), undefined, { memory })
   const runner = new ThreadRunner(model, control, threads - 1), started: Promise<unknown>[] = []
   for (let k = 0; k < threads - 1; k++) {

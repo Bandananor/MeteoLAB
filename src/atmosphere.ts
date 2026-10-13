@@ -49,6 +49,9 @@ export class Atmosphere implements ViewSettings {
   readonly history: { time: number; buffer: ArrayBuffer }[] = []
   /** The virtual weather station (src/core/station.ts), if one is placed; it records with every snapshot. */
   station: Station | null = null
+  /** Model seconds per real second over the last couple of seconds: the speed the computer keeps up (0 until measured). */
+  realSpeed = 0
+  private speedMark: { real: number; model: number } | null = null
   /** Threads the physics runs on (see simulation.worker.ts). */
   threads = 1
 
@@ -139,6 +142,9 @@ export class Atmosphere implements ViewSettings {
     for (const key of SNAPSHOT_FIELDS) { m[key].set(data.subarray(offset, offset + n)); offset += n }
     for (const key of SNAPSHOT_COLUMNS) { m[key].set(data.subarray(offset, offset + layer)); offset += layer }
     m.time = s.time; Object.assign(m.rotation, s.rotation); this.latest = s.diagnostics; this.threads = s.threads
+    const now = performance.now(), mark = this.speedMark
+    if (!mark || m.time < mark.model || now - mark.real > 5000) this.speedMark = { real: now, model: m.time }
+    else if (now - mark.real > 2000) { this.realSpeed = (m.time - mark.model) / ((now - mark.real) / 1000); this.speedMark = { real: now, model: m.time } }
     m.flashes.push(...s.flashes); m.flashCount = s.flashCount; m.chargeGround = s.chargeGround
     if (m.flashes.length > KEPT_FLASHES) m.flashes.splice(0, m.flashes.length - KEPT_FLASHES)
     this.post({ type: 'release', buffer: s.buffer }, [s.buffer])

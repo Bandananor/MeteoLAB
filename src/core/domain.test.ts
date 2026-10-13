@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { AtmosphereModel, createGrid, DEFAULT_GRID, DT, LARGE_GRID } from '.'
+import { AtmosphereModel, createGrid, customGrid, DEFAULT_GRID, domainGrid, DT, LARGE_GRID } from '.'
 import { SUMMER_DAY } from './fixtures'
 
 /** Fastest of `steps` model steps after two warm-up steps, ms (the fastest is the least disturbed by the machine). */
@@ -27,5 +27,26 @@ describe('large domain (96 x 72 km)', () => {
     // cost that grows faster than the area fails every try.
     expect(area).toBe(4)
     expect(ratio).toBeGreaterThan(2); expect(ratio).toBeLessThan(5.5)
+  })
+})
+
+describe('a domain of the user\'s own size (SimConfig.domainSize)', () => {
+  it('fits the size to steps of 12 x 9 km within the limits, at the standard spacing', () => {
+    expect(customGrid([60, 45])).toMatchObject({ nx: 50, ny: 40, width: 60_000, depth: 45_000 })
+    // Off the steps: rounded; beyond the limits: held there; nonsense: the smallest.
+    expect(customGrid([50, 40])).toMatchObject({ width: 48_000, depth: 36_000 })
+    expect(customGrid([1000, 1])).toMatchObject({ width: 144_000, depth: 18_000 })
+    expect(customGrid([NaN, NaN])).toMatchObject({ width: 24_000, depth: 18_000 })
+    expect(domainGrid('custom', undefined, [36, 27])).toMatchObject({ nx: 30, ny: 24 })
+    // Without a size, 'custom' is the standard domain.
+    expect(domainGrid('custom')).toEqual(DEFAULT_GRID)
+  })
+
+  it('runs on an odd-sized grid (30 x 24 columns: the pressure and the field solvers take any size)', () => {
+    const config = { ...SUMMER_DAY, domain: 'custom' as const, domainSize: [36, 27] as [number, number] }, m = new AtmosphereModel(config)
+    expect([m.grid.nx, m.grid.ny]).toEqual([30, 24])
+    for (let k = 0; k < 20; k++) { m.step(DT); m.time += DT }
+    expect(m.u.every(Number.isFinite) && m.w.every(Number.isFinite)).toBe(true)
+    expect(m.diagnostics().updraft).toBeGreaterThan(.3)
   })
 })
