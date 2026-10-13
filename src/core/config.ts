@@ -1,4 +1,5 @@
 import type { SoundingLevel } from './soundingfile'
+import type { ZoneConfig } from './zones'
 
 export type SurfaceType = 'grass' | 'dry' | 'water' | 'urban'
 
@@ -62,6 +63,11 @@ export interface SimConfig {
    * Only the energy balance changes; friction keeps the chosen surface's roughness.
    */
   city?: number
+  /**
+   * Zones of the environment on the map (2.4, zones.ts): polygons fixed to the ground with their own air near the ground
+   * (warmer or cooler, moister or drier, fading out by 1.5 km), kept by a gentle pull inside them; absent = none.
+   */
+  zones?: ZoneConfig[]
   /** Day of the year (1-365) for the sun's declination; absent = an equinox (sunrise 06:00, sunset 18:00). */
   dayOfYear?: number
   speed: number; seed: number; bubble: number
