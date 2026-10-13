@@ -43,6 +43,22 @@ describe('electrification in the model (2.3 step 2)', () => {
     expect(h0 - heightOf()).toBeGreaterThan(150)
   })
 
+  it('a strongly charged cloud flashes during the step, and the charge with what went to the ground is conserved', () => {
+    const m = new AtmosphereModel({ ...QUIET, lightning: true }), { nx, ny, nz, layer, zs, dx, dy } = m.grid
+    // Negative charge on graupel at 6.5 km under positive charge on ice at 9 km, 3 nC/m³ at the centre: above the threshold.
+    for (let z = 0; z < nz; z++) for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++) {
+      const i = x + y * nx + z * layer, r2 = ((x - nx / 2) * dx) ** 2 + ((y - ny / 2) * dy) ** 2, rho = m.env.rho[z]
+      m.chargeIce[i] = 3e-9 * Math.exp(-r2 / 2500 ** 2 - ((zs[z] - 9000) / 700) ** 2) / rho
+      m.chargeGraupel[i] = -3e-9 * Math.exp(-r2 / 2500 ** 2 - ((zs[z] - 6500) / 700) ** 2) / rho
+    }
+    const start = m.totalCharge()
+    m.step(DT); m.time += DT
+    expect(m.flashes.length).toBeGreaterThan(0)
+    expect(m.flashCount.ic + m.flashCount.cg).toBe(m.flashes.length)
+    expect(m.flashes.every(f => f.time === DT)).toBe(true)
+    expect(Math.abs(m.totalCharge() + m.chargeGround - start)).toBeLessThan(1e-3)
+  })
+
   it('switched off, or without the ice microphysics, no charge appears', () => {
     for (const m of [mixedPhase(false), (() => { const w = mixedPhase(); w.config.microphysics = 'warm'; return w })()]) {
       for (let k = 0; k < 5; k++) { m.step(DT); m.time += DT }

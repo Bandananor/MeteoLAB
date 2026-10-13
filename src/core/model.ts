@@ -8,6 +8,7 @@ import { FluxTransport, RK3 } from './advection'
 import { environmentProfile } from './profiles'
 import { SMAGORINSKY, Turbulence } from './turbulence'
 import { chargingRate, transferCharge } from './charge'
+import { type Flash, Lightning } from './lightning'
 import { graupelFallSpeed, graupelProcesses } from './graupel'
 import { hailFallSpeed, hailMaxDiameter, hailProcesses } from './hail'
 import { freezeRain, saturationAdjustMixed, snowFallSpeed, snowProcesses } from './ice'
@@ -21,6 +22,8 @@ import { type Memory, type Phase, PRIVATE_MEMORY, type StepRunner, type TaskMode
 interface Carried { field: Float32Array; monotone: boolean; conserve: boolean; decay: number }
 /** At most this many fields are transported (rain, snow, graupel, hail, u, v, w, theta, vapour, cloud, ice, cold pool, 4 charges). */
 const MAX_CARRIED = 16
+/** Flashes the model keeps (the latest). */
+const RECENT_FLASHES = 2000
 /**
  * Slabs of levels each transported field is split into when helper threads share the step (AtmosphereModel.transportSlabs):
  * finer work for them, but ~15 % more work in all (each slab recomputes the vertical flux below it).
@@ -108,6 +111,10 @@ export class AtmosphereModel implements TaskModel {
   private readonly chargeFallIce: Float32Array; private readonly chargeFallGraupel: Float32Array
   /** Charge carried to the ground by the falling precipitation since the start, C (counted by the thread that sediments: the main one). */
   chargeGround = 0
+  /** The latest flashes (lightning.ts), oldest first, at most RECENT_FLASHES; and the counts since the start. */
+  readonly flashes: Flash[] = []
+  flashCount = { ic: 0, cg: 0 }
+  private lightning?: Lightning
   private readonly chargeNow = [0, 0, 0, 0]; private readonly massBefore = [0, 0, 0, 0]; private readonly massAfter = [0, 0, 0, 0]
   /** Projection pressure (times dt, per unit density) at the dual-cell centres between nodes; see PressureSolver. */
   readonly pressure: Float64Array
@@ -521,6 +528,7 @@ export class AtmosphereModel implements TaskModel {
     }
     this.project(dt)
     this.updateRotation(dt)
+    if (this.electrified()) this.discharge(dt)
   }
 
   /** Does task k of a parallel phase (see threads.ts): transport field k, physics of level k, or mixing of field k. */
@@ -678,6 +686,19 @@ export class AtmosphereModel implements TaskModel {
       }
     }
     if (withIce) for (let i = z * layer, e = i + layer; i < e; i++) this.condensate[i] = cloud[i] + ice[i]
+  }
+
+  /**
+   * Lightning (2.3 step 3): flashes wherever the storm's field exceeds the breakdown threshold, on the main thread
+   * after the step. A CG flash lowers its charge to the ground.
+   */
+  private discharge(dt: number) {
+    this.lightning ??= new Lightning(this.grid, this.env.rho, this.config.seed + 1)
+    for (const flash of this.lightning.discharge([this.chargeIce, this.chargeGraupel, this.chargeRain, this.chargeAir], this.time + dt)) {
+      if (flash.kind === 'CG') { this.chargeGround += flash.charge; this.flashCount.cg++ } else this.flashCount.ic++
+      this.flashes.push(flash)
+    }
+    if (this.flashes.length > RECENT_FLASHES) this.flashes.splice(0, this.flashes.length - RECENT_FLASHES)
   }
 
   /** Total charge in the domain, C: the three carriers summed with the air mass of every node (rho0 · volume). */
