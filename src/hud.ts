@@ -87,7 +87,9 @@ export const PHONE_THREADS = 3
 /** Speed steps of the speed button, in turn. */
 const SPEEDS = [4, 8, 16, 30, 60]
 
-export interface HudState { time: number; /** Local solar time of day, hh:mm. */ local: string; updraft: number; rain: number; uh: number; mesocyclone: boolean; regime: string; running: boolean; speed: number }
+export interface HudState { time: number; /** Local solar time of day, hh:mm. */ local: string; updraft: number; rain: number; uh: number; mesocyclone: boolean; regime: string; running: boolean; speed: number
+  /** The story's stage now (a synoptic situation, 2.6), or '' without one. */
+  story: string }
 
 /** What the bar opens: the two sheets (the page's side columns) and the instruments menu; one at a time. */
 type Panel = 'scenarios' | 'data' | 'tools'
@@ -110,7 +112,7 @@ export class Hud {
         <div class="ov-num"><span class="ov-num__label">дождь, мм/ч</span><span class="ov-num__value" data-hud="rain">0</span></div>
         <div class="ov-num"><span class="ov-num__label">UH</span><span class="ov-num__value" data-hud="uh">0</span></div>
       </div>
-      <div class="ov-modeline"><span class="ov-mode" data-hud="regime">—</span></div>`
+      <div class="ov-modeline"><span class="ov-mode" data-hud="regime">—</span><p class="ov-story" data-hud="story" hidden></p></div>`
     viewport.appendChild(overlay)
     let seen = false
     try { seen = localStorage.getItem(GESTURE_KEY) === '1' } catch { /* show it */ }
@@ -190,12 +192,13 @@ export class Hud {
   /** Called every frame; touches the page only when something shown changed. */
   update(s: HudState) {
     const time = elapsedShort(s.time)
-    const key = [time, s.local, s.updraft.toFixed(0), s.rain.toFixed(0), s.uh.toFixed(0), s.mesocyclone, s.regime, s.running, s.speed].join('|')
+    const key = [time, s.local, s.updraft.toFixed(0), s.rain.toFixed(0), s.uh.toFixed(0), s.mesocyclone, s.regime, s.running, s.speed, s.story].join('|')
     if (key === this.shown) return
     this.shown = key
     const set = (name: string, text: string) => { for (const el of document.querySelectorAll(`[data-hud="${name}"]`)) el.textContent = text }
     set('time', time); set('local', s.local); set('updraft', s.updraft.toFixed(0)); set('rain', s.rain.toFixed(0)); set('uh', s.uh.toFixed(0))
-    set('regime', s.regime)
+    set('regime', s.regime); set('story', s.story)
+    for (const el of document.querySelectorAll<HTMLElement>('[data-hud="story"]')) el.hidden = !s.story
     document.querySelector('[data-hud="regime"]')!.classList.toggle('is-meso', s.mesocyclone)
     set('pause', s.running ? '❚❚' : '▶'); set('pauseText', s.running ? 'Пауза' : 'Пуск'); set('speed', `×${s.speed}`)
   }

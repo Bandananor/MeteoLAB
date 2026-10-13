@@ -95,14 +95,16 @@ export class AnalysisPanel {
     if (this.layers.has('rain')) this.drawRain(m, X, Y, scale)
     if (this.layers.has('isobars')) this.drawIsobars(p, step, nx, ny, dx, dy, X, Y)
     if (this.layers.has('front') && m.config.frontLine) this.drawFront(m, X, Y)
-    this.plots = stationPlots(m, p, this.spacing, m.flashes, f => flashPoint(m, f))
+    // Stations at least ~80 px apart (on a phone 6 km is too dense for their numbers): the spacing grows by 6 km steps.
+    const spacing = Math.max(this.spacing, Math.ceil(80 / scale / 6000) * 6000)
+    this.plots = stationPlots(m, p, spacing, m.flashes, f => flashPoint(m, f))
     if (this.layers.has('stations')) for (const s of this.plots) this.drawStation(s, X(s.x), Y(s.y), s === this.chosen)
     ctx.restore()
     ctx.strokeStyle = pal.gridStrong; ctx.strokeRect(X(0), Y(D), W * scale, D * scale)
     ctx.fillStyle = pal.label
     for (let x = 0; x <= W; x += 12000) ctx.fillText(`${x / 1000}`, X(x) - 6, Y(0) + 14)
     for (let y = 0; y <= D; y += 12000) ctx.fillText(`${y / 1000}`, X(0) - 24, Y(y) + 4)
-    ctx.fillText('км · север сверху · область модели сейчас', X(0), Y(D) - 8)
+    ctx.fillText(`км · север сверху${w < 600 ? '' : ' · область модели сейчас'}${spacing > this.spacing ? ` · станции через ${spacing / 1000} км` : ''}`, X(0), Y(D) - 8)
     this.drawCard()
   }
 
