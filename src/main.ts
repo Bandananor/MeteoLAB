@@ -741,6 +741,8 @@ function showMode(hail: boolean) {
 }
 /** The dot of a cell in the list: a mesocyclone now, rotation (or a left mover), or neither. */
 const cellDot = (c: { meso: number; supercell: boolean; leftMover: boolean; stage: string }) => c.meso >= MESO_PERSISTENCE ? ' dot--danger' : c.supercell || c.leftMover || c.stage === 'rotating' ? ' dot--warn' : ''
+// An instrument screen covers the 3D view: the view is not drawn meanwhile (the ray-marched clouds are the heaviest
+// drawing of the page; behind the radar they made it lag even on a computer). The physics runs on.
 /**
  * The speed the computer keeps up, under the speed slider, once a second; a warning when it is well below the chosen
  * one (the model cannot run faster than it is computed).
@@ -949,7 +951,7 @@ showThemeChoice()
 /** The live sounding last handed to the Skew-T screen (a new one every LIVE_EVERY s of model time). */
 let shownLive: Live | null = null
 function frame(now:number){
-  const elapsed=Math.min(.2,(now-last)/1000);last=now;if(running)sim.advance(elapsed);sim.render();const d=sim.diagnostics()
+  const elapsed=Math.min(.2,(now-last)/1000);last=now;if(running)sim.advance(elapsed);if(!(radar.open||skewt.open||station.open||detector.open||zonesPanel.open))sim.render();const d=sim.diagnostics()
   text('cape',d.cape.toFixed(0));text('mlcape',d.indices.ml.cape.toFixed(0));text('mlcin',d.indices.ml.cin.toFixed(0));text('mucape',d.indices.mu.cape.toFixed(0));text('dcape',d.indices.dcape.toFixed(0));text('srh01',d.storm.srh01.toFixed(0));text('srh03',d.storm.srh03.toFixed(0));text('scp',d.storm.scp.toFixed(1));text('stp',d.storm.stp.toFixed(1));text('cin',d.cin.toFixed(0));text('updraft',d.updraft.toFixed(1));text('downdraft',d.downdraft.toFixed(1));text('uh',d.updraftHelicity.toFixed(0));text('uhLow',`${d.uh01.toFixed(0)} / ${d.uh03.toFixed(0)}`);text('cloudTop',d.cloudTop.toFixed(1));text('thermalTop',d.thermalTop.toFixed(1));text('cloudWater',d.cloudWater.toFixed(2));text('coldPool',d.coldPool.toFixed(1));text('gust',d.gust.toFixed(1));text('hail',d.hail>=1?(d.hail/10).toFixed(1):'—');text('hailSwath',d.hailSwath>=1?`за прогон до ${(d.hailSwath/10).toFixed(1)} см`:'');showMode(d.hail>=1);text('clipped',String(d.clipped));text('rain',d.rain.toFixed(1));text('rainTotal',d.rainTotal.toFixed(1));text('lcl',d.lcl===null?'—':`${d.lcl.toFixed(1)} км`);text('lfc',d.lfc===null?'—':`${d.lfc.toFixed(1)} км`);text('el',d.el===null?'—':`${d.el.toFixed(1)} км`);text('cellType',d.cellType);text('cellReason',d.cellReason);text('logicText',d.logic);text('sun',`${d.insolation.toFixed(0)} Вт/м²`);text('sunElevation',d.sunElevation>0?`${d.sunElevation.toFixed(0)}° над горизонтом`:'ночь')
   text('surfaceReadout',({grass:'ТРАВА',dry:'СУХАЯ ПОЧВА',water:'ВОДА',urban:'ГОРОД'} as const)[config.surfaceType])
   const b=sim.balance;text('rkw',b?b.ratio.toFixed(1):'—');text('rkwNote',b?`C ${b.c.toFixed(0)} / Δu ${b.deltaU.toFixed(0)} м/с`:'купола нет');const card=document.querySelector<HTMLElement>('#rkwCard')!;card.dataset.base??=card.title;card.title=b?`${card.dataset.base}\n\nСейчас: ${describeBalance(b)}.`:card.dataset.base

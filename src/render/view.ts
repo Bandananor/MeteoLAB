@@ -84,6 +84,8 @@ export class StormView {
   private readonly lightningGeometry: LineSegmentsGeometry; private readonly lightningMaterial: LineMaterial; private readonly lightningLines: LineSegments2
   private readonly lightningPositions = new Float32Array(LIGHTNING_SEGMENTS * 6); private readonly lightningColors = new Float32Array(LIGHTNING_SEGMENTS * 6)
   private readonly flashing: { flash: Flash; born: number }[] = []; private flashesSeen = 0
+  /** When the lightning was last drawn (performance.now()): after a pause in drawing (an instrument screen over the view) the flashes meanwhile are not shown all at once. */
+  private lightningDrawn = 0
   /**
    * The volume textures are uniform in height (the shaders map height linearly onto them). On a stretched grid every
    * texture level t is interpolated between model levels k0[t] and k0[t] + 1 with weight f[t]; on a uniform grid the
@@ -391,6 +393,8 @@ export class StormView {
     const m = this.model, total = m.flashCount.ic + m.flashCount.cg
     // A rewind or a loaded state: counts went back.
     if (total < this.flashesSeen) this.flashing.length = 0
+    if (now - this.lightningDrawn > 500) this.flashesSeen = total
+    this.lightningDrawn = now
     const fresh = Math.min(Math.max(0, total - this.flashesSeen), m.flashes.length, 12)
     for (const flash of m.flashes.slice(m.flashes.length - fresh)) this.flashing.push({ flash, born: now })
     this.flashesSeen = total
