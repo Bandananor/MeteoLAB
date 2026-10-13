@@ -24,7 +24,7 @@ export interface Live { time: number; quiet: number; all: boolean; env: Environm
  * of every snapshot, so the view and the field slices read it exactly as they would read the live model.
  */
 export class Atmosphere implements ViewSettings {
-  field: FieldMode = 'composite'; uhLayer: UhLayer = '2-5'; showVectors = false; showPrecip = false; layerMode: LayerMode = 'both'; showRainTotal = false; showMesocyclone = true; volumeThreshold = .1; volumeDensity = 1; sliceHeight = 2; sliceNorth = 0
+  field: FieldMode = 'composite'; uhLayer: UhLayer = '2-5'; showVectors = false; showPrecip = false; layerMode: LayerMode = 'both'; showRainTotal = false; showMesocyclone = true; showLightning = true; volumeThreshold = .1; volumeDensity = 1; sliceHeight = 2; sliceNorth = 0
   private readonly mirror: AtmosphereModel; private readonly view: StormView; private readonly worker: Worker
   private readonly config: SimConfig; private sentConfig: string
   private latest: ModelDiagnostics
