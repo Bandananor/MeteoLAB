@@ -1,9 +1,24 @@
-import { type AtmosphereModel, Environment, parcelIndices, stormMotion, type ZoneConfig, zoneProfile } from '../core'
+import { type AtmosphereModel, densityCurrentSpeed, Environment, type FrontConfig, headingVector, parcelIndices, stormMotion, type ZoneConfig, zoneProfile } from '../core'
 import { help, instrumentPalette, instrumentScreen, numbers, readings, section } from '../instrument'
 import { MONO } from '../theme'
 
 /** Ranges of a zone's differences on the sliders. */
 const T_RANGE = 8, Q_RANGE = 6
+/** A new front of each kind (the sliders start here). */
+const FRONT_DEFAULTS: Record<FrontConfig['kind'], FrontConfig> = {
+  cold: { kind: 'cold', contrast: 6, depth: 1.5, slope: 80, speed: 8, heading: 90, start: -15 },
+  warm: { kind: 'warm', contrast: 4, depth: 1, slope: 200, speed: 6, heading: 90, start: -5 },
+}
+/** The front's sliders: key, label, range, step, unit. */
+const FRONT_SLIDERS: [keyof FrontConfig, string, number, number, number, string][] = [
+  ['contrast', 'Контраст: насколько холоднее холодный воздух', 1, 12, .5, ' K'],
+  ['depth', 'Глубина холодного воздуха', .3, 3, .1, ' км'],
+  ['slope', 'Наклон фронтальной поверхности, 1 : …', 30, 300, 10, ''],
+  ['speed', 'Скорость фронта', 0, 20, .5, ' м/с'],
+  ['heading', 'Куда движется', 0, 355, 5, '°'],
+  ['start', 'Где в начале: от центра области', -40, 40, 1, ' км'],
+]
+const POINTS8 = ['север', 'северо-восток', 'восток', 'юго-восток', 'юг', 'юго-запад', 'запад', 'северо-запад']
 const fmt = (v: number, digits = 1) => `${v > 0 ? '+' : v < 0 ? '−' : ''}${Math.abs(v).toFixed(digits).replace('.', ',')}`
 
 /**
@@ -17,12 +32,14 @@ export class ZonesPanel {
   private model: AtmosphereModel | null = null
   /** The zones being edited (applied: SimConfig.zones), the chosen one, the corners of the one being drawn (km). */
   private zones: ZoneConfig[] = []; private chosen = -1; private drawing: [number, number][] | null = null
-  private applied = '[]'; private drawn = ''
+  /** The moving front being edited (SimConfig.frontLine), or none. */
+  private front: FrontConfig | null = null
+  private applied = ''; private drawn = ''
   /** Map transform of the last draw: km to canvas px. */
   private view = { x0: 0, y0: 0, scale: 1 }
   open = false
   /** Called with the zones to run with (an empty list: none). */
-  onApply: (zones: ZoneConfig[]) => void = () => {}
+  onApply: (zones: ZoneConfig[], front: FrontConfig | null) => void = () => {}
 
   constructor(host: HTMLElement) {
     const range = (id: string, label: string, min: number, max: number) => `<label class="field"><span class="field__head"><span class="field__label">${label}</span><output class="field__value" id="${id}Out"></output></span><input class="range" type="range" id="${id}" min="${min}" max="${max}" step="0.5" value="0"></label>`
@@ -33,6 +50,9 @@ export class ZonesPanel {
           <p class="psec__hint" id="zoneHint"></p>`)
       + section('Выбранная зона', `<div id="zoneEdit">${range('zoneT', 'Температура у земли', -T_RANGE, T_RANGE)}${range('zoneQ', 'Влажность у земли (водяной пар)', -Q_RANGE, Q_RANGE)}
           <div id="zoneNumbers"></div><button class="btn btn--block" id="zoneDelete">Удалить зону</button></div><span class="t-caption" id="zoneNone">Щёлкните по зоне на карте</span>`)
+      + section('Фронт', `<div class="seg seg--block seg--instrument" data-seg="frontKind"><button data-value="none">Нет</button><button data-value="cold">Холодный</button><button data-value="warm">Тёплый</button></div>
+          <div id="frontEdit">${FRONT_SLIDERS.map(([key, label, min, max, step]) => `<label class="field"><span class="field__head"><span class="field__label">${label}</span><output class="field__value" id="front_${key}Out"></output></span><input class="range" type="range" id="front_${key}" min="${min}" max="${max}" step="${step}"></label>`).join('')}
+          <p class="psec__hint" id="frontNote"></p></div>`)
       + section('Расчёт', `<button class="btn btn--block btn--primary" id="zoneApply">Применить — расчёт заново</button><button class="btn btn--block" id="zoneClear">Убрать все зоны</button>`)
       + help('Зона — участок земли со своим воздухом у земли: теплее или холоднее, влажнее или суше, чем профиль; к 1,5 км разница сходит на нет, края размыты на 2 км. Так задают то, что в природе делает погоду неоднородной: полосу влажного воздуха, сухую линию, остывшее после дождя пятно, тёплый город. Гроза, которая идёт через зоны, сама растёт там, где ей хватает тепла и влаги, и слабеет там, где нет. Зоны лежат на земле: область модели едет вместе с грозой, а зоны стоят. Модель мягко держит воздух каждой зоны (за ~15 минут), но не выше 1,5 км и не снаружи: отток грозы течёт свободно. Тёплая зона — как остров тепла: на её краях возникает ветерок, воздух сходится и поднимается — там могут зарождаться грозы. CAPE и CIN — частица от земли в зоне и в среде вокруг. Линии на карте — куда пойдут грозы от термика (○) за 40 минут (у края земля повторяется, как сама область): суперячейка обычно уходит по красному пути (правая ячейка по Банкерсу), её левая пара — по синему, обычные грозы — по серому (средний ветер 0–6 км). Путь меняется с ветром: поправьте годограф — и он повернёт; зону ставьте на пути, минут на 30–40 впереди.'))
     this.canvas = this.root.querySelector('canvas')!; this.ctx = this.canvas.getContext('2d')!
@@ -42,7 +62,14 @@ export class ZonesPanel {
     $('zoneCancel').addEventListener('click', () => { this.drawing = null; this.redraw() })
     $('zoneDone').addEventListener('click', () => this.finish())
     $('zoneDelete').addEventListener('click', () => { if (this.chosen >= 0) { this.zones.splice(this.chosen, 1); this.chosen = -1; this.redraw() } })
-    $('zoneApply').addEventListener('click', () => { this.applied = JSON.stringify(this.zones); this.onApply(this.zones.map(z => ({ ...z, points: z.points.map(p => [...p] as [number, number]) }))); this.redraw() })
+    $('zoneApply').addEventListener('click', () => { this.applied = this.key(); this.onApply(this.zones.map(z => ({ ...z, points: z.points.map(p => [...p] as [number, number]) })), this.front && { ...this.front }); this.redraw() })
+    this.root.querySelector('[data-seg="frontKind"]')!.addEventListener('click', e => {
+      const v = (e.target as HTMLElement).closest<HTMLButtonElement>('button')?.dataset.value
+      if (!v) return
+      this.front = v === 'none' ? null : this.front?.kind === v ? this.front : { ...FRONT_DEFAULTS[v as FrontConfig['kind']] }
+      this.redraw()
+    })
+    for (const [key] of FRONT_SLIDERS) $<HTMLInputElement>(`front_${key}`).addEventListener('input', e => { if (this.front) { (this.front as unknown as Record<string, number>)[key] = Number((e.target as HTMLInputElement).value); this.redraw() } })
     $('zoneClear').addEventListener('click', () => { this.zones = []; this.chosen = -1; this.drawing = null; this.redraw() })
     for (const [id, key] of [['zoneT', 'temperature'], ['zoneQ', 'moisture']] as const) $<HTMLInputElement>(id).addEventListener('input', e => {
       if (this.chosen < 0) return
@@ -66,7 +93,7 @@ export class ZonesPanel {
   /** Opens with the zones the run has (SimConfig.zones). */
   toggle(open = !this.open) {
     this.open = open; this.root.hidden = !open
-    if (open && this.model) { this.zones = (this.model.config.zones ?? []).map(z => ({ ...z, points: z.points.map(p => [...p] as [number, number]) })); this.applied = JSON.stringify(this.zones); this.chosen = -1; this.drawing = null; this.redraw() }
+    if (open && this.model) { this.zones = (this.model.config.zones ?? []).map(z => ({ ...z, points: z.points.map(p => [...p] as [number, number]) })); this.front = this.model.config.frontLine ? { ...this.model.config.frontLine } : null; this.applied = this.key(); this.chosen = -1; this.drawing = null; this.redraw() }
   }
 
   /** Called every frame with the model the page shows. */
@@ -77,6 +104,9 @@ export class ZonesPanel {
     const key = `${Math.floor(model.time / 60)}`
     if (key !== this.drawn) this.draw(key)
   }
+
+  /** What is set, to see whether it was applied. */
+  private key() { return JSON.stringify({ zones: this.zones, front: this.front }) }
 
   private redraw() { this.drawn = ''; if (this.model) this.refresh(this.model) }
 
@@ -139,6 +169,7 @@ export class ZonesPanel {
       ctx.stroke()
     }
     ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(X(start[0]), Y(start[1]), 6, 0, Math.PI * 2); ctx.stroke()
+    if (this.front) this.drawFront(X, Y, W, D)
     // Where the domain is now (it moves with the storm; periodic over this ground).
     if (m.time > 0) {
       const [ox, oy] = m.frameOffset(), sx = ((ox / 1000) % W + W) % W, sy = ((oy / 1000) % D + D) % D
@@ -152,8 +183,53 @@ export class ZonesPanel {
     this.side()
   }
 
+  /** The front's controls: the kind pressed, the sliders, the note with the cold air's own speed. */
+  private sideFront() {
+    const f = this.front
+    for (const b of this.root.querySelectorAll<HTMLElement>('[data-seg="frontKind"] button')) b.setAttribute('aria-pressed', String(b.dataset.value === (f?.kind ?? 'none')))
+    ;(this.root.querySelector('#frontEdit') as HTMLElement).hidden = !f
+    if (!f) return
+    for (const [key, , min, max, , unit] of FRONT_SLIDERS) {
+      const v = f[key] as number, input = this.root.querySelector<HTMLInputElement>(`#front_${key}`)!
+      input.value = String(v); input.style.setProperty('--p', `${(v - min) / (max - min) * 100}%`)
+      this.text(`front_${key}Out`, key === 'heading' ? `${v}° — на ${compass(v)}` : key === 'slope' ? `1 : ${v}` : `${String(v).replace('.', ',').replace('-', '−')}<span class="u">${unit}</span>`)
+    }
+    const own = densityCurrentSpeed(f)
+    this.text('frontNote', f.kind === 'cold'
+      ? `Холодный воздух такой глубины и контраста сам шёл бы со скоростью ~${own.toFixed(0)} м/с (плотностное течение); заданная скорость поддерживается крупномасштабным «подталкиванием». У земли — крутая голова фронта: на ней поднимается тёплый воздух и прорывается задерживающий слой.`
+      : `Тёплый воздух натекает на клин холодного и поднимается по нему; клин пологий: на 100 км он поднимается на ${(100 / f.slope).toFixed(1).replace('.', ',')} км. Грозы — над холодным слоем (приподнятая конвекция).`)
+  }
+
+  /** The front on the map: now (solid, with its symbols, the cold air shaded) and in 20 and 40 minutes (dashed). */
+  private drawFront(X: (x: number) => number, Y: (y: number) => number, W: number, D: number) {
+    const f = this.front!, ctx = this.ctx, [nx, ny] = headingVector(f.heading), color = f.kind === 'cold' ? '#4f8fe0' : '#e0574f', L = 300
+    const at = (minutes: number) => { const d = f.start + f.speed * minutes * .06; return [W / 2 + nx * d, D / 2 + ny * d] as const }
+    ctx.save(); ctx.beginPath(); ctx.rect(X(0), Y(D), X(W) - X(0), Y(0) - Y(D)); ctx.clip()
+    const [px, py] = at(0), side = f.kind === 'cold' ? -1 : 1
+    // The cold air's side, shaded.
+    ctx.fillStyle = 'rgba(80,140,230,.12)'; ctx.beginPath()
+    ctx.moveTo(X(px + ny * L), Y(py - nx * L)); ctx.lineTo(X(px - ny * L), Y(py + nx * L))
+    ctx.lineTo(X(px - ny * L + side * nx * L), Y(py + nx * L + side * ny * L)); ctx.lineTo(X(px + ny * L + side * nx * L), Y(py - nx * L + side * ny * L)); ctx.fill()
+    for (const minutes of [40, 20, 0]) {
+      const [cx, cy] = at(minutes)
+      ctx.strokeStyle = color; ctx.lineWidth = minutes ? 1.5 : 3; ctx.setLineDash(minutes ? [6, 5] : [])
+      ctx.beginPath(); ctx.moveTo(X(cx + ny * L), Y(cy - nx * L)); ctx.lineTo(X(cx - ny * L), Y(cy + nx * L)); ctx.stroke()
+      if (minutes) { ctx.fillStyle = color; ctx.fillText(`${minutes}′`, X(cx) + 6, Y(cy) - 6); continue }
+      // Symbols every 4 km along the line, on the side it moves to: triangles for a cold front, semicircles for a warm one.
+      ctx.setLineDash([]); ctx.fillStyle = color
+      for (let k = -L; k <= L; k += 4) {
+        const sx = cx + ny * k, sy = cy - nx * k, size = 1.1
+        ctx.beginPath()
+        if (f.kind === 'cold') { ctx.moveTo(X(sx + ny * size), Y(sy - nx * size)); ctx.lineTo(X(sx - ny * size), Y(sy + nx * size)); ctx.lineTo(X(sx + nx * size * 1.2), Y(sy + ny * size * 1.2)); ctx.fill() }
+        else { const a = Math.atan2(-(ny), nx); ctx.arc(X(sx), Y(sy), size * Math.abs(X(1) - X(0)), a - Math.PI / 2, a + Math.PI / 2); ctx.fill() }
+      }
+    }
+    ctx.restore(); ctx.setLineDash([])
+  }
+
   private side() {
-    const m = this.model!, changed = JSON.stringify(this.zones) !== this.applied, z = this.zones[this.chosen]
+    const m = this.model!, changed = this.key() !== this.applied, z = this.zones[this.chosen]
+    this.sideFront()
     this.text('zoneCount', String(this.zones.length)); this.text('zoneState', changed ? '<b>НЕ ПРИМЕНЕНЫ</b>' : '')
     this.text('zoneHint', this.drawing ? `Углов: ${this.drawing.length}. Щёлкайте по карте; «Готово» (или двойной щелчок) замыкает зону, Esc — отмена.` : this.zones.length ? 'Щёлкните по зоне, чтобы выбрать её.' : 'Зон нет: среда одна на всю область.')
     ;(this.root.querySelector('#zoneDone') as HTMLButtonElement).disabled = !this.drawing || this.drawing.length < 3
@@ -171,6 +247,9 @@ export class ZonesPanel {
       + `<dl class="kv">${readings([['вокруг', `CAPE ${base.cape.toFixed(0)}, CIN ${base.cin.toFixed(0)} Дж/кг`]])}</dl>`)
   }
 }
+
+/** The 8-point compass word of a heading. */
+const compass = (heading: number) => POINTS8[Math.round(((heading % 360) + 360) % 360 / 45) % 8]
 
 /** Whether (x, y) is inside the polygon. */
 function inside(points: [number, number][], x: number, y: number) {

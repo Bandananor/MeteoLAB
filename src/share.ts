@@ -3,7 +3,7 @@
 import { MIN_SOUNDING_TOP, type SimConfig, type SoundingLevel } from './core'
 
 /** The settings a link may carry, with what each may be: a number, one of a few words, a flag, a pair of numbers, a sounding or zones. */
-const KINDS: Record<string, 'number' | 'boolean' | 'pair' | 'sounding' | 'zones' | readonly string[]> = {
+const KINDS: Record<string, 'number' | 'boolean' | 'pair' | 'sounding' | 'zones' | 'front' | readonly string[]> = {
   surfaceTemp: 'number', lapseLow: 'number', lapseMid: 'number', lapseUpper: 'number', tropopause: 'number', stratoWarming: 'number',
   rhSurface: 'number', rhLow: 'number', rhMid: 'number', rhUpper: 'number',
   wind0: 'number', wind05: 'number', wind1: 'number', wind3: 'number', wind6: 'number', wind10: 'number',
@@ -13,7 +13,7 @@ const KINDS: Record<string, 'number' | 'boolean' | 'pair' | 'sounding' | 'zones'
   speed: 'number', bubble: 'number', bubbleRadius: 'number', city: 'number',
   surfaceType: ['grass', 'dry', 'water', 'urban'], microphysics: ['warm', 'ice'], transport: ['semi-lagrangian', 'weno'],
   profile: ['weisman-klemp'], domain: ['standard', 'large', 'custom'], domainSize: 'pair', edges: ['periodic', 'relaxed', 'relaxed-x'], start: ['thermals', 'line'],
-  followStorm: 'boolean', lightning: 'boolean', frameMotion: 'pair', sounding: 'sounding', zones: 'zones',
+  followStorm: 'boolean', lightning: 'boolean', frameMotion: 'pair', sounding: 'sounding', zones: 'zones', frontLine: 'front',
 }
 /** Numbers from a link are kept within this magnitude (a slider never goes near it). */
 const LIMIT = 1e5
@@ -23,7 +23,16 @@ const fits = (kind: (typeof KINDS)[string], v: unknown) => {
   if (kind === 'boolean') return typeof v === 'boolean'
   if (kind === 'pair') return Array.isArray(v) && v.length === 2 && v.every(x => typeof x === 'number' && Number.isFinite(x) && Math.abs(x) <= LIMIT)
   if (kind === 'zones') return validZones(v)
+  if (kind === 'front') return validFront(v)
   return typeof v === 'string' && kind.includes(v)
+}
+
+/** A moving front (SimConfig.frontLine) from outside data: its kind and numbers within the sliders' ranges (a little wider). */
+function validFront(v: unknown) {
+  if (!v || typeof v !== 'object') return false
+  const f = v as Record<string, unknown>, num = (k: string, lo: number, hi: number) => typeof f[k] === 'number' && Number.isFinite(f[k]) && (f[k] as number) >= lo && (f[k] as number) <= hi
+  return Object.keys(f).every(k => ['kind', 'contrast', 'depth', 'slope', 'speed', 'heading', 'start'].includes(k)) && (f.kind === 'cold' || f.kind === 'warm')
+    && num('contrast', 0, 20) && num('depth', .1, 5) && num('slope', 10, 1000) && num('speed', 0, 40) && num('heading', -360, 720) && num('start', -200, 200)
 }
 
 /** Zones of the environment (SimConfig.zones) from outside data: at most MAX_ZONES polygons of 3-MAX_CORNERS corners within ±1000 km, differences within ±15 K and ±15 g/kg. */

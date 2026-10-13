@@ -14,6 +14,12 @@ describe('shared links and CSV (src/share.ts)', () => {
     expect(decodeSettings(encodeSettings({ ...base, domain: 'custom', domainSize: [72, 54] }, base, null), NAMES)!.values).toEqual({ domain: 'custom', domainSize: [72, 54] })
   })
 
+  it('carries a moving front, and drops a broken one', () => {
+    const base: SimConfig = { ...SUMMER_DAY }, frontLine = { kind: 'cold' as const, contrast: 6, depth: 1.5, slope: 80, speed: 8, heading: 90, start: -15 }
+    expect(decodeSettings(encodeSettings({ ...base, frontLine }, base, null), NAMES)!.values).toEqual({ frontLine })
+    for (const bad of [{ ...frontLine, kind: 'hot' }, { ...frontLine, depth: 50 }, { ...frontLine, extra: 1 }]) expect(cleanSettings({ frontLine: bad })).toEqual({})
+  })
+
   it('carries the zones of the environment, and drops broken ones', () => {
     const base: SimConfig = { ...SUMMER_DAY }, zones = [{ points: [[1, 2], [10.123456, 2], [10, 9]] as [number, number][], temperature: 2.5, moisture: -1 }]
     const back = decodeSettings(encodeSettings({ ...base, zones }, base, null), NAMES)!
