@@ -38,6 +38,19 @@ describe('moving fronts (2.5)', () => {
   })
 })
 
+describe('a warm front (2.5)', () => {
+  it('the cold air ahead retreats and the warm air takes its place behind the line', () => {
+    const warm: FrontConfig = { kind: 'warm', contrast: 5, depth: 1, slope: 150, speed: 8, heading: 90, start: -10 }
+    const m = new AtmosphereModel({ ...QUIET, followStorm: false, bubble: 0, frontLine: warm }, createGrid(domainGrid('custom', undefined, [48, 36]))), { nx, dx } = m.grid
+    const row = 16 * nx, ground = (xKm: number) => m.theta[Math.round(xKm * 1000 / dx) + row] - m.env.theta[0]
+    // The line at 14 km: cold ahead of it (east), deepening slowly; nothing behind it.
+    expect(ground(30)).toBeLessThan(-3); expect(Math.abs(ground(8))).toBeLessThan(.3)
+    for (let k = 0; k < 1200 / DT; k++) { m.step(DT); m.time += DT }
+    // 20 minutes later the line is at ~23.6 km: at 18 km the cold air has gone; well ahead it is still cold.
+    expect(ground(18)).toBeGreaterThan(-1.5); expect(ground(40)).toBeLessThan(-3)
+  })
+})
+
 // The «Холодный фронт» scenario (2.5): a moist warm sector under a weak lid where nothing grows without a trigger; the
 // cold front breaks the lid and storms grow along it. Calibration 2026-10-13 (50 min): without the front w <3.5 m/s and
 // no cloud above 1.8 km; with it cells from 35 min, 43 m/s and tops 11 km at 50. Slow (~15 min on a laptop: two runs of
