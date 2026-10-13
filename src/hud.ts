@@ -132,6 +132,7 @@ export class Hud {
     this.menu.innerHTML = `<div class="menu menu--touch" role="menu">
       <button class="menu__item" role="menuitem" data-tool="#radarOpen"><span class="menu__glyph">◉</span>Радар</button>
       <button class="menu__item" role="menuitem" data-tool="#skewOpen"><span class="menu__glyph">⟋</span>Skew-T</button>
+      <button class="menu__item" role="menuitem" data-tool="#zonesOpen"><span class="menu__glyph">▦</span>Зоны</button>
       <button class="menu__item" role="menuitem" data-tool="#detectorOpen"><span class="menu__glyph">ϟ</span>Молнии</button>
       <button class="menu__item" role="menuitem" data-tool="#stationOpen"><span class="menu__glyph">⌂</span>Станция</button>
       <div class="menu__sep"></div>

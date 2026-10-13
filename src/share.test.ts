@@ -9,6 +9,15 @@ const encodeText = (json: string) => btoa(json).replace(/\+/g, '-').replace(/\//
 const encode = (data: unknown) => btoa(String.fromCharCode(...new TextEncoder().encode(JSON.stringify(data)))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
 
 describe('shared links and CSV (src/share.ts)', () => {
+  it('carries the zones of the environment, and drops broken ones', () => {
+    const base: SimConfig = { ...SUMMER_DAY }, zones = [{ points: [[1, 2], [10.123456, 2], [10, 9]] as [number, number][], temperature: 2.5, moisture: -1 }]
+    const back = decodeSettings(encodeSettings({ ...base, zones }, base, null), NAMES)!
+    expect(back.values.zones).toEqual([{ points: [[1, 2], [10.1235, 2], [10, 9]], temperature: 2.5, moisture: -1 }])
+    for (const bad of [[{ points: [[1, 2], [3, 4]], temperature: 1, moisture: 0 }], [{ points: [[1, 2], [3, 4], [5, 6]], temperature: 99, moisture: 0 }], [{ points: [[1, 2], [3, 4], [5, 6]], temperature: 1, moisture: 0, evil: 1 }], 'zones'])
+      expect(cleanSettings({ zones: bad })).toEqual({})
+  })
+
+
   it('carries the changed settings and the scenario, and gives them back', () => {
     const base: SimConfig = { ...SUMMER_DAY, ...SCENARIOS[2].values }
     const config: SimConfig = { ...base, surfaceTemp: 31.5, wind6: 25, surfaceType: 'urban', domain: 'large', frameMotion: [14, 0], followStorm: false, nightInversion: 4 }

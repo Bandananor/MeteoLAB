@@ -5,6 +5,7 @@
 // air (its own environment); where that air leaves the zone it is warmer or colder than the air around and rises or
 // sinks: zones make breezes on their borders (a warm 10 km zone, +3 K: ~7 m/s), as coasts and cities do — physics,
 // and a place where storms start. Without a storm a zone keeps ~80 % of its warmth and ~60 % of its moisture.
+import type { Environment, EnvironmentProfile } from './environment'
 import type { Grid } from './grid'
 
 /** One zone: a polygon on the ground and how its air near the ground differs from the profile. */
@@ -57,4 +58,20 @@ export function zoneMaps(grid: Grid, zones: readonly ZoneConfig[] | undefined) {
     }
   }
   return { share, theta, vapour }
+}
+
+/**
+ * The environment inside a zone, for its numbers before the run (CAPE, CIN): the profile `env` with the zone's
+ * differences near the ground (the same shape as in the model).
+ */
+export function zoneProfile(env: Pick<Environment, 'thetaEnv' | 'qEnv' | 'windUV' | 'p'>, zone: Pick<ZoneConfig, 'temperature' | 'moisture'>): EnvironmentProfile {
+  // Exner function at the height, from the hydrostatic pressure of the environment near the ground (enough below 1.5 km).
+  const exner = (z: number) => (1 - z / 44_330) ** (5.255 * .2857)
+  return {
+    theta: z => env.thetaEnv(z) + zone.temperature * zoneShape(z) / exner(z),
+    qv: z => Math.max(0, env.qEnv(z) + zone.moisture / 1000 * zoneShape(z)),
+    rh: () => 0,
+    wind: z => env.windUV(z),
+    surfacePressure: env.p[0],
+  }
 }

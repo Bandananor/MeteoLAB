@@ -2,8 +2,8 @@
 // time series as CSV files. The link is outside input, so decoding accepts only known settings of the right kind.
 import { MIN_SOUNDING_TOP, type SimConfig, type SoundingLevel } from './core'
 
-/** The settings a link may carry, with what each may be: a number, one of a few words, a flag, a pair of numbers or a sounding. */
-const KINDS: Record<string, 'number' | 'boolean' | 'pair' | 'sounding' | readonly string[]> = {
+/** The settings a link may carry, with what each may be: a number, one of a few words, a flag, a pair of numbers, a sounding or zones. */
+const KINDS: Record<string, 'number' | 'boolean' | 'pair' | 'sounding' | 'zones' | readonly string[]> = {
   surfaceTemp: 'number', lapseLow: 'number', lapseMid: 'number', lapseUpper: 'number', tropopause: 'number', stratoWarming: 'number',
   rhSurface: 'number', rhLow: 'number', rhMid: 'number', rhUpper: 'number',
   wind0: 'number', wind05: 'number', wind1: 'number', wind3: 'number', wind6: 'number', wind10: 'number',
@@ -13,7 +13,7 @@ const KINDS: Record<string, 'number' | 'boolean' | 'pair' | 'sounding' | readonl
   speed: 'number', bubble: 'number', bubbleRadius: 'number', city: 'number',
   surfaceType: ['grass', 'dry', 'water', 'urban'], microphysics: ['warm', 'ice'], transport: ['semi-lagrangian', 'weno'],
   profile: ['weisman-klemp'], domain: ['standard', 'large'], edges: ['periodic', 'relaxed', 'relaxed-x'], start: ['thermals', 'line'],
-  followStorm: 'boolean', lightning: 'boolean', frameMotion: 'pair', sounding: 'sounding',
+  followStorm: 'boolean', lightning: 'boolean', frameMotion: 'pair', sounding: 'sounding', zones: 'zones',
 }
 /** Numbers from a link are kept within this magnitude (a slider never goes near it). */
 const LIMIT = 1e5
@@ -22,7 +22,17 @@ const fits = (kind: (typeof KINDS)[string], v: unknown) => {
   if (kind === 'number') return typeof v === 'number' && Number.isFinite(v) && Math.abs(v) <= LIMIT
   if (kind === 'boolean') return typeof v === 'boolean'
   if (kind === 'pair') return Array.isArray(v) && v.length === 2 && v.every(x => typeof x === 'number' && Number.isFinite(x) && Math.abs(x) <= LIMIT)
+  if (kind === 'zones') return validZones(v)
   return typeof v === 'string' && kind.includes(v)
+}
+
+/** Zones of the environment (SimConfig.zones) from outside data: at most MAX_ZONES polygons of 3-MAX_CORNERS corners within ±1000 km, differences within ±15 K and ±15 g/kg. */
+const MAX_ZONES = 12, MAX_CORNERS = 40
+function validZones(v: unknown) {
+  const num = (x: unknown, limit: number) => typeof x === 'number' && Number.isFinite(x) && Math.abs(x) <= limit
+  return Array.isArray(v) && v.length <= MAX_ZONES && v.every(z => z && typeof z === 'object' && Object.keys(z).every(k => ['points', 'temperature', 'moisture'].includes(k))
+    && num(z.temperature, 15) && num(z.moisture, 15) && Array.isArray(z.points) && z.points.length >= 3 && z.points.length <= MAX_CORNERS
+    && z.points.every((p: unknown) => Array.isArray(p) && p.length === 2 && p.every(x => num(x, 1000))))
 }
 
 /**
@@ -61,7 +71,8 @@ const toBase64Url = (text: string) => btoa(String.fromCharCode(...new TextEncode
 const fromBase64Url = (text: string) => new TextDecoder().decode(Uint8Array.from(atob(text.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0)))
 
 /** Numbers to 4 decimals: no float noise like 4.166666666666667 in the link. */
-const round = (v: unknown): unknown => typeof v === 'number' ? Math.round(v * 1e4) / 1e4 : Array.isArray(v) ? v.map(round) : v
+const round = (v: unknown): unknown => typeof v === 'number' ? Math.round(v * 1e4) / 1e4 : Array.isArray(v) ? v.map(round)
+  : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, round(x)])) : v
 
 /**
  * The scenarios in the order the first links (2026-10-10) numbered them; links since carry the scenario's name, so

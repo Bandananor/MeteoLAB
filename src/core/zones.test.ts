@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { AtmosphereModel, createGrid, DEFAULT_GRID, DT, zoneMaps } from '.'
-import { QUIET } from './fixtures'
+import { AtmosphereModel, createGrid, DEFAULT_GRID, DT, Environment, environmentProfile, parcelIndices, zoneMaps, zoneProfile } from '.'
+import { QUIET, SUMMER_DAY } from './fixtures'
 
 const grid = createGrid(DEFAULT_GRID), { nx, dx, dy } = grid
 /** A square zone, km. */
@@ -19,6 +19,16 @@ describe('zones of the environment (2.4)', () => {
     expect(maps.share[column(40.8, 31.5)]).toBe(0)
     expect(maps.share[column(6, 13.5)]).toBeCloseTo(.5, 1)
     expect(zoneMaps(grid, [])).toBeNull()
+  })
+
+  it('the numbers of a zone before the run: moister and warmer air near the ground gives more CAPE and less CIN, drier less CAPE', () => {
+    const env = new Environment(SUMMER_DAY, grid, environmentProfile(SUMMER_DAY, grid.height)), sb = (zone: { temperature: number; moisture: number }) => parcelIndices(new Environment(SUMMER_DAY, grid, zoneProfile(env, zone)), grid.height).sb
+    const base = parcelIndices(env, grid.height).sb, same = sb({ temperature: 0, moisture: 0 })
+    // No difference: the same environment (to the hydrostatic approximation of the pressure).
+    expect(Math.abs(same.cape - base.cape)).toBeLessThan(.03 * base.cape + 20)
+    const moist = sb({ temperature: 1, moisture: 2 }), dry = sb({ temperature: 0, moisture: -3 })
+    expect(moist.cape).toBeGreaterThan(base.cape + 300); expect(moist.cin).toBeLessThanOrEqual(base.cin + 1)
+    expect(dry.cape).toBeLessThan(base.cape - 300)
   })
 
   it('without a storm a zone keeps most of its warmer, moister air near the ground, makes a breeze, and the air away from it stays as it was', () => {
