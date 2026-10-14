@@ -183,7 +183,7 @@ app.innerHTML = `<div class="app">
         <canvas id="sim" width="960" height="600"></canvas>
         <div class="cell-labels" id="cellLabels"></div>
         <div class="gl-lost" id="glLost" role="alert" hidden><div><p><b>3D-вид отключён браузером</b> — ему не хватило памяти видеокарты (так бывает на телефоне при многих открытых вкладках или после переключения приложений). Расчёт идёт дальше; вид может вернуться сам.</p><button class="btn btn--primary" id="glReload" type="button">Перезапустить с теми же настройками</button></div></div>
-        <div class="ov-tl"><button class="ov-toggle" id="flowToggle" aria-pressed="false">Потоки →</button><button class="ov-toggle" id="precipToggle" aria-pressed="false" title="Снежинки выше уровня 0 °C тают в капли по пути вниз">Снег и дождь</button><button class="ov-toggle" id="mesoToggle" aria-pressed="true" title="Кольцо над вращающимся восходящим потоком (UH 2–5 км выше порога вращения)">Мезоциклон</button><button class="ov-toggle" id="lightningToggle" aria-pressed="true" title="Каналы молний в момент вспышки: внутриоблачные голубоватые, в землю белые">Молнии</button><button class="ov-toggle" id="swathToggle" aria-pressed="false" title="Сколько дождя выпало на землю с начала расчёта: голубой до 5 мм, зелёный до 10, жёлтый до 25, оранжевый до 50, красный больше">Сумма осадков</button></div>
+        <div class="ov-tl"><button class="ov-toggle" id="flowToggle" aria-pressed="false">Потоки →</button><button class="ov-toggle" id="precipToggle" aria-pressed="false" title="Снежинки выше уровня 0 °C тают в капли по пути вниз">Снег и дождь</button><button class="ov-toggle" id="mesoToggle" aria-pressed="true" title="Кольцо над вращающимся восходящим потоком (UH 2–5 км выше порога вращения)">Мезоциклон</button><button class="ov-toggle" id="lightningToggle" aria-pressed="true" title="Каналы молний в момент вспышки: видны там, где выходят из облака; внутри облака — только его свечение">Молнии</button><button class="ov-toggle" id="lightningReplay" title="Последний удар в землю ещё раз, в 20 раз медленнее: видно, как ступенчатый лидер ветвится вниз, и как по тому же каналу идут повторные удары (отсюда мерцание)">Повтор удара</button><button class="ov-toggle" id="swathToggle" aria-pressed="false" title="Сколько дождя выпало на землю с начала расчёта: голубой до 5 мм, зелёный до 10, жёлтый до 25, оранжевый до 50, красный больше">Сумма осадков</button></div>
         <div class="ov-bl"><span class="ov-badge" id="surfaceReadout">ТРАВА</span><span class="ov-chip">ЛКМ — вращение · ПКМ — сдвиг · колесо — масштаб · 2× клик — термик</span></div>
         <div class="ov-br"><div class="ov-legend" id="cloudLegend"><span><i style="--c:#d8e0e3"></i>облачная вода</span><span><i style="--c:#4e7692"></i>осадки</span><span><i style="--c:#b68b59"></i>восходящий</span><span><i style="--c:#7189a5"></i>нисходящий</span></div></div>
         <div class="ov-tr" id="fieldPanel" hidden><div class="field-panel">
@@ -704,6 +704,14 @@ document.querySelector<HTMLSelectElement>('#uhLayer')!.addEventListener('change'
 // Overlay switches on the 3D view.
 for (const [id, key] of [['#flowToggle', 'showVectors'], ['#mesoToggle', 'showMesocyclone'], ['#lightningToggle', 'showLightning'], ['#swathToggle', 'showRainTotal'], ['#precipToggle', 'showPrecip']] as const)
   document.querySelector<HTMLButtonElement>(id)!.addEventListener('click', event => { setView({ [key]: !view[key] }); (event.currentTarget as HTMLElement).setAttribute('aria-pressed', String(view[key])) })
+{
+  const replay = document.querySelector<HTMLButtonElement>('#lightningReplay')!
+  replay.addEventListener('click', () => {
+    if (!view.showLightning) { setView({ showLightning: true }); document.querySelector('#lightningToggle')!.setAttribute('aria-pressed', 'true') }
+    if (sim.replayLightning(1 / 20)) return
+    replay.textContent = 'Молний ещё не было'; setTimeout(() => { replay.textContent = 'Повтор удара' }, 2000)
+  })
+}
 const sliceHeight = document.querySelector<HTMLInputElement>('#sliceHeight')!, sliceNorth = document.querySelector<HTMLInputElement>('#sliceNorth')!
 sliceHeight.addEventListener('input', () => { setView({ sliceHeight: Number(sliceHeight.value) }); text('sliceHeightOut', `${Number(sliceHeight.value).toFixed(1)} км`) })
 sliceNorth.addEventListener('input', () => {

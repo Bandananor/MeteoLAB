@@ -34,7 +34,9 @@ describe('the course of a flash in time (lightning.ts)', () => {
     const rng = mulberry32(9)
     for (let k = 0; k < 200; k++) {
       const c = course(flash('IC', 3), rng), peak = Math.max(...Array.from({ length: 100 }, (_, i) => brightness(c, false, i * c.end / 100).main))
-      expect(c.end).toBeGreaterThan(300); expect(c.end).toBeLessThan(650); expect(peak).toBeLessThan(.65)
+      expect(c.end).toBeGreaterThan(300); expect(c.end).toBeLessThan(650); expect(peak).toBeLessThan(.75)
+      // Its K-changes come once the channel has grown.
+      expect(c.strokes[0].at).toBeCloseTo(c.leader, 5); expect(c.strokes.every(s => s.at >= c.leader)).toBe(true)
     }
   })
 })

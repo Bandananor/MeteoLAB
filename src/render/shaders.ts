@@ -55,9 +55,10 @@ vec4 flashDecode(vec4 v){ return -log(max(1.0 - v, vec4(1e-4))) / FLASH_ENCODE; 
 /**
  * One layer of a flash light volume: from up to 64 points of the channels of four flashes (uPts: x, y, z in km and the
  * slot 0-3 of the four; uW: each point's share of its flash), the light at the texel's node. Each point is a source
- * whose light falls off with distance (softened within ~0.5 km of the channel) and passes the cloud on the way (8
- * steps) as diffused light does in an optically thick cloud: 1 / (1 + 0.75 (1 - g) tau) with g = 0.85, not exp(-tau),
- * so a flash deep in a storm still lights the whole cloud from inside, softly.
+ * whose light falls off with distance (softened within ~0.5 km of the channel) as 1/r^2 through clear air, but in a
+ * cloud that scatters without absorbing the light diffuses and lingers: the fluence goes as (1 + 0.75 (1 - g) tau)/r^2
+ * (g = 0.85; tau along the way, 8 steps), which turns into ~1/r inside the cloud, where tau grows with r. So a flash
+ * deep in a storm lights the whole cloud from inside (capped at 4 times the clear-air light).
  */
 export const flashVolumeFragment = /* glsl */`
 precision highp float;
@@ -78,7 +79,7 @@ void main(){
     vec3 d = uPts[i].xyz - p;
     float r = length(d), od = 0.0;
     for(int j = 0; j < 8; j++){ vec2 f = fields(p + d * ((float(j) + 0.5) / 8.0)); od += f.r * 1.1 + f.g * 0.3; }
-    E[int(uPts[i].w + 0.5)] += uW[i] / (1.0 + 0.11 * od * r / 8.0 * uExtinction) / (r * r + 0.25);
+    E[int(uPts[i].w + 0.5)] += uW[i] * min(1.0 + 0.11 * od * r / 8.0 * uExtinction, 4.0) / (r * r + 0.25);
   }
   gl_FragColor = 1.0 - exp(-E * FLASH_ENCODE);
 }`

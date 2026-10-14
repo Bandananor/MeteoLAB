@@ -85,6 +85,8 @@ export class Atmosphere implements ViewSettings {
     this.waiting = 0
   }
   render() { this.view.render() }
+  /** The last flash again, slowed down (see StormView.replayLightning). */
+  replayLightning(rate: number) { return this.view.replayLightning(rate) }
   dispose() { this.worker.terminate(); this.view.dispose() }
   sounding() { return this.live.sounding }
 

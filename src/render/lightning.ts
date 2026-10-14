@@ -23,8 +23,9 @@ export interface Course { leader: number; strokes: { at: number; peak: number; c
 
 export function course(flash: Flash, rng: () => number): Course {
   if (flash.kind === 'IC') {
+    // The K-changes once the channel is there, the first as it completes.
     const leader = 60 + rng() * 90, end = 200 + rng() * 300, n = 3 + Math.floor(rng() * 8)
-    const strokes = Array.from({ length: n }, () => ({ at: leader * .5 + rng() * (end - leader * .5), peak: .25 + rng() * .35, cc: 0, ccLength: 0 })).sort((a, b) => a.at - b.at)
+    const strokes = Array.from({ length: n }, (_, k) => ({ at: k ? leader + rng() * (end - leader) : leader, peak: .35 + rng() * .35, cc: 0, ccLength: 0 })).sort((a, b) => a.at - b.at)
     return { leader, strokes, end: end + 120 }
   }
   const leader = 20 + rng() * 15, positive = flash.charge > 0
@@ -43,10 +44,13 @@ export function course(flash: Flash, rng: () => number): Course {
   return { leader, strokes, end: at + 220 }
 }
 
-/** Brightness at `t` ms of a flash's main channel and of its branches, and how much of the channel has grown (0-1). */
-export function brightness(c: Course, cg: boolean, t: number) {
+/**
+ * Brightness at `t` ms of a flash's main channel and of its branches, and how much of the channel has grown (0-1).
+ * `slow`: a slowed replay, seen as by a high-speed camera, which shows the faint stepped leader the eye hardly sees.
+ */
+export function brightness(c: Course, cg: boolean, t: number, slow = false) {
   const reveal = Math.min(1, t / c.leader)
-  let main = t < c.leader ? .12 : 0, branch = main
+  let main = t < c.leader ? slow ? .35 : .12 : 0, branch = main
   for (const [k, s] of c.strokes.entries()) {
     if (t < s.at) continue
     const after = t - s.at
@@ -107,7 +111,8 @@ export class LightningView {
     if (now - this.drawn > 500) this.seen = total
     this.drawn = now
     const fresh = Math.min(Math.max(0, total - this.seen), m.flashes.length, 12)
-    if (fresh) {
+    // A slow replay on screen: the new flashes are not shown over it.
+    if (fresh && !this.shown.some(s => s && s.rate < 1)) {
       // Spread over the real time since the last ones came (at most 1.5 s): one model step brings them all at once.
       const spread = Math.min(1500, now - this.lastArrival)
       for (const flash of m.flashes.slice(m.flashes.length - fresh)) this.queue.push({ flash, at: now + this.rng() * spread })
@@ -130,10 +135,11 @@ export class LightningView {
     for (let i = 0; i < SLOTS; i++) {
       const s = this.shown[i]
       if (!s) { flashes[i].set(0, 0, 0, 0); this.bright[i] = 0; continue }
-      const cg = s.flash.kind === 'CG', b = brightness(s.course, cg, clock(s))
+      const cg = s.flash.kind === 'CG', b = brightness(s.course, cg, clock(s), s.rate < 1)
       flashes[i].set(b.main, b.branch, b.reveal, cg ? 1 : 0)
-      // The cloud is lit once the channel is there: the leader's own light is faint.
-      this.bright[i] = enabled ? b.main * (cg ? 1 : .7) * (b.reveal < 1 ? .3 : 1) : 0
+      // The cloud is lit once the channel is there: the leader's own light is faint. An IC flash lights its cloud as
+      // much as a CG does (at night the whole storm flashes: "heat lightning").
+      this.bright[i] = enabled ? b.main * (b.reveal < 1 ? .3 : 1) : 0
       glow = Math.max(glow, this.bright[i])
       const p = this.points[i]
       if (cg && p && enabled && b.reveal >= 1 && b.main > (this.strike?.bright ?? 0)) this.strike = { x: p[0], y: p[1], z: p[2], bright: b.main }

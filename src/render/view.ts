@@ -299,6 +299,8 @@ export class StormView {
    */
   debugSunHour: number | null = null
   get debugLightning() { return this.lightning }
+  /** Shows the last flash again (a CG if there was one lately), `rate` times as fast as real time; false without one. */
+  replayLightning(rate: number) { return this.lightning.replay(rate) }
   debugCamera(position: [number, number, number], target: [number, number, number]) { this.camera.position.set(...position); this.controls.target.set(...target); this.controls.update() }
 
   private updateSun() {
