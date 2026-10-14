@@ -389,9 +389,11 @@ void main(){
 
 /**
  * Lightning ribbons (lightning.ts): each piece of channel a quad between its ends aA and aB, widened sideways on the
- * screen (aSide) so its width is in pixels at any distance. aInfo: the flash's slot, main channel (1) or branch (0), the
- * growth order of the piece (0-1, shown once the leader has grown that far), the width factor. uFlash per slot:
- * brightness of the main channel and of the branches, how far the leader has grown, CG (1) or IC (0). Each end of a
+ * screen (aSide) so its width is in pixels at any distance. aInfo: the flash's slot, the kind of piece (0 a branch, 1 the
+ * main channel, 2 a new ground contact's path, 3 the old path below where that leaves), the growth order of the piece
+ * (0-1, shown once the leader has grown that far), the width factor. uFlash per slot: brightness of the main channel and
+ * of the branches, how far the leader has grown, CG (1) or IC (0); uPaths: brightness of the old and the new path, how
+ * much the fading channel breaks into beads. aArc: the distance along the channel at the piece's ends, km. Each end of a
  * piece is dimmed by the cloud between it and the eye (16 steps through the cloud texture, the density as the clouds
  * draw it): deep inside a cloud the channel is not seen, only the cloud's glow; what comes out of it is sharp.
  */
@@ -403,7 +405,9 @@ attribute vec3 aB;
 attribute float aSide;
 attribute float aEnd;
 attribute vec4 aInfo;
+attribute vec2 aArc;
 uniform vec4 uFlash[8];
+uniform vec4 uPaths[8];
 uniform vec2 uRes;
 uniform float uPx;
 varying float vAcross;
@@ -412,6 +416,9 @@ varying float vHalo;
 varying float vI;
 varying float vCg;
 varying float vSeen;
+varying float vArc;
+varying float vBeads;
+varying vec3 vTint;
 
 // Optical depth of the cloud and precipitation between a point and the camera.
 float cloudBetween(vec3 p){
@@ -431,7 +438,9 @@ float cloudBetween(vec3 p){
 
 void main(){
   vec4 f = uFlash[int(aInfo.x + 0.5)];
-  float I = aInfo.z <= f.z ? mix(f.y, f.x, aInfo.y) : 0.0;
+  // By kind: a branch, the main channel, a new ground contact's path, the old path below where that leaves.
+  vec4 g = uPaths[int(aInfo.x + 0.5)];
+  float k = aInfo.y, I = aInfo.z <= f.z ? (k < 0.5 ? f.y : k < 1.5 ? f.x : k < 2.5 ? g.y : g.x) : 0.0;
   vec4 ca = projectionMatrix * viewMatrix * vec4(aA, 1.0), cb = projectionMatrix * viewMatrix * vec4(aB, 1.0);
   if(I < 0.002 || ca.w <= 0.0 || cb.w <= 0.0){ gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
   vec2 hr = uRes * 0.5, sa = ca.xy / ca.w * hr, sb = cb.xy / cb.w * hr, d = sb - sa;
@@ -447,7 +456,12 @@ void main(){
   vAcross = aSide * vHalo;
   vI = I;
   vCg = f.w;
-  vSeen = exp(-cloudBetween(aEnd < 0.5 ? aA : aB));
+  vec3 at = aEnd < 0.5 ? aA : aB;
+  vSeen = exp(-cloudBetween(at));
+  vArc = aEnd < 0.5 ? aArc.x : aArc.y;
+  vBeads = g.z;
+  // The haze between: it takes blue more than red, so a far flash looks warmer and dimmer (~orange at 40-50 km).
+  vTint = exp(-length(cameraPosition - at) * vec3(0.010, 0.017, 0.028));
 }`
 
 /**
@@ -463,12 +477,19 @@ varying float vHalo;
 varying float vI;
 varying float vCg;
 varying float vSeen;
+varying float vArc;
+varying float vBeads;
+varying vec3 vTint;
 
 void main(){
   float d = abs(vAcross), k = d / vCore;
+  // Beads of ~30 m: some pieces fade slower than the rest of the channel, so on the dimming channel they stand out (up
+  // to 3 times brighter than it), the gaps between them go dark.
+  float h = fract(sin(floor(vArc / 0.03) * 12.9898) * 43758.5453), bead = mix(1.0, h > 0.45 ? (0.6 + 0.6 * h) * (1.0 + 1.5 * vBeads) : 0.06, vBeads);
   float core = exp(-k * k);
   float glow = exp(-4.0 * d / vHalo) * (1.0 - smoothstep(0.7 * vHalo, vHalo, d));
   vec3 halo = mix(vec3(0.86, 0.86, 0.9), vec3(0.72, 0.78, 1.0), vCg);
   // Through a thin veil of cloud the core is dimmed more than the glow, which the veil itself scatters.
-  gl_FragColor = vec4(vec3(1.0) * core * vI * 1.4 * vSeen + halo * glow * vI * 0.38 * pow(vSeen, 0.6), 1.0);
+  float I = vI * bead;
+  gl_FragColor = vec4((vec3(1.0) * core * I * 1.4 * vSeen + halo * glow * I * 0.38 * pow(vSeen, 0.6)) * vTint, 1.0);
 }`
