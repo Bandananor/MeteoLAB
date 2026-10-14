@@ -4,6 +4,7 @@ import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js'
 import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js'
 import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeometry.js'
 import { FlashVolume, LightVolume } from './light'
+import { noiseTexture } from './noise'
 import { LightningView } from './lightning'
 import { type AtmosphereModel, computeScalarField, headingVector, heightAt, levelAt, MESO_PERSISTENCE, sunDirection, UH_ROTATING, type UhLayer } from '../core'
 import { clamp, lerp, mod, mulberry32 } from '../core/math'
@@ -29,6 +30,19 @@ export interface ViewSettings {
 /** Rain-total colour steps: [upper limit mm, rgb]. */
 const SWATH_COLORS: [number, [number, number, number]][] = [[1, [150, 200, 240]], [5, [60, 150, 225]], [10, [60, 185, 90]], [25, [240, 215, 60]], [50, [240, 130, 40]], [Infinity, [210, 45, 45]]]
 
+/**
+ * The cloud's density in the volume texture from its water and ice, kg/kg: saturating, as a cloud of a few tenths of a
+ * gram per kilogram is already opaque over a kilometre (extinction ~3 LWC / (2 ρw r) ≈ 50-100 per km for droplets of
+ * ~10 µm); a linear scale to 1.4 g/kg drew the updraught core (depleted to 0.2-0.6 g/kg by the graupel) as smoke.
+ */
+/**
+ * Extinction of the cloud ice per gram, relative to the droplets': crystals of 30-100 µm against droplets of ~10 µm
+ * (extinction ∝ mass / size). The anvil is then translucent at its edges instead of a white slab.
+ */
+const ICE_EXTINCTION = .25
+const cloudOpacity = (c: number) => c > .00003 ? 1 - Math.exp(-(c - .00003) / .0004) : 0
+/** Updraught that gives the cloud its full billows, m/s (the volume texture's B). */
+const UPDRAUGHT_SCALE = 20
 const FLOW_PARTICLES = 10_000, PRECIP_PARTICLES = 8000, MELT_DEPTH = 600, SNOW_FALL = 2
 
 const texture3D = (data: Uint8Array, format: THREE.PixelFormat, nx: number, ny: number, nz: number) => {
@@ -68,6 +82,10 @@ export class StormView {
   private readonly sunLight: THREE.DirectionalLight; private readonly hemiLight: THREE.HemisphereLight
   private readonly shared: Record<string, THREE.IUniform>
   private readonly light: LightVolume; private readonly flashLight: FlashVolume; private readonly strikeLight: THREE.PointLight
+  /** The strongest updraught of each column, and of each column with those beside it (the tower's), m/s. */
+  private towerColumn?: Float32Array; private tower?: Float32Array
+  /** Baked noise of the cloud's sub-grid detail (noise.ts). */
+  private readonly noise: THREE.Data3DTexture
   private readonly volumeData: Uint8Array; private readonly volumeTexture: THREE.Data3DTexture; private readonly volumeMaterial: THREE.ShaderMaterial; private readonly volumeMesh: THREE.Mesh
   private readonly fieldValues: Float32Array; private readonly fieldData: Uint8Array; private readonly fieldTexture: THREE.Data3DTexture
   private colormap: THREE.DataTexture | null = null; private colormapField: FieldMode | null = null
@@ -105,7 +123,7 @@ export class StormView {
       this.texLevels = { nz: tz, k0, f }
     }
     const nz = this.texLevels?.nz ?? model.grid.nz, texels = nx * ny * nz
-    this.volumeData = new Uint8Array(texels * 2); this.fieldValues = new Float32Array(n); this.fieldData = new Uint8Array(texels)
+    this.volumeData = new Uint8Array(texels * 4); this.fieldValues = new Float32Array(n); this.fieldData = new Uint8Array(texels)
 
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' })
     // A phone renders at 1 pixel per CSS pixel: its screen is small and its GPU weak (the clouds are ray-marched).
@@ -158,13 +176,14 @@ export class StormView {
       uBoxMin: { value: new THREE.Vector3(-W / 2, 0, -D / 2) }, uBoxMax: { value: new THREE.Vector3(W / 2, H, D / 2) }, uGrid: { value: new THREE.Vector3(nx, ny, nz) },
       uSunDir: { value: new THREE.Vector3(0, 1, 0) }, uHeight: { value: H }, uExtinction: { value: 2.2 }, uSliceOn: { value: 0 }, uSliceH: { value: 2 }, uSliceZ: { value: 0 },
     }
-    this.volumeTexture = texture3D(this.volumeData, THREE.RGFormat, nx, ny, nz)
+    this.volumeTexture = texture3D(this.volumeData, THREE.RGBAFormat, nx, ny, nz)
+    this.noise = noiseTexture()
     this.light = new LightVolume(nx, ny, nz, this.shared, this.volumeTexture)
     this.flashLight = new FlashVolume(nx, ny, nz, this.shared, this.volumeTexture)
     this.volumeMaterial = new THREE.ShaderMaterial({
       vertexShader: volumeVertex, fragmentShader: volumeFragment, side: THREE.BackSide, transparent: true, depthWrite: false, depthTest: false, premultipliedAlpha: true,
       uniforms: {
-        ...this.shared, uDensity: { value: this.volumeTexture }, uLight: { value: this.light.texture }, uFlashA: { value: this.flashLight.targets[0].texture }, uFlashB: { value: this.flashLight.targets[1].texture }, uFlashIA: { value: new THREE.Vector4() }, uFlashIB: { value: new THREE.Vector4() }, uFlashOn: { value: 0 }, uSunColor: { value: new THREE.Color() }, uAmbientTop: { value: new THREE.Color() }, uAmbientBottom: { value: new THREE.Color() },
+        ...this.shared, uDensity: { value: this.volumeTexture }, uNoise: { value: this.noise }, uLight: { value: this.light.texture }, uFlashA: { value: this.flashLight.targets[0].texture }, uFlashB: { value: this.flashLight.targets[1].texture }, uFlashIA: { value: new THREE.Vector4() }, uFlashIB: { value: new THREE.Vector4() }, uFlashOn: { value: 0 }, uSunColor: { value: new THREE.Color() }, uAmbientTop: { value: new THREE.Color() }, uAmbientBottom: { value: new THREE.Color() },
         uFogColor: { value: (this.scene.fog as THREE.FogExp2).color }, uFogDensity: { value: (this.scene.fog as THREE.FogExp2).density }, uTime: { value: 0 }, uOpacity: { value: 1 },
       },
     })
@@ -213,7 +232,7 @@ export class StormView {
 
   dispose() {
     this.controls.dispose()
-    ;[this.volumeTexture, this.fieldTexture, this.colormap, this.volumeMaterial, this.fieldMaterial, this.sliceMaterial, this.volumeMesh.geometry, this.sliceH.geometry, this.sliceV.geometry, this.precipGeometry, this.precipMaterial, this.swathTexture, this.cityTexture, this.zoneTexture, this.frontLine?.geometry, this.frontLine?.material as THREE.Material | undefined, this.swath.geometry, this.swath.material as THREE.Material, this.mesoMarker.geometry, this.mesoMarker.material as THREE.Material, this.selectionMarker.geometry, this.selectionMarker.material as THREE.Material, this.stationMarker.geometry, this.stationMarker.material as THREE.Material, this.lightning, this.light, this.flashLight].forEach(r => r?.dispose())
+    ;[this.volumeTexture, this.noise, this.fieldTexture, this.colormap, this.volumeMaterial, this.fieldMaterial, this.sliceMaterial, this.volumeMesh.geometry, this.sliceH.geometry, this.sliceV.geometry, this.precipGeometry, this.precipMaterial, this.swathTexture, this.cityTexture, this.zoneTexture, this.frontLine?.geometry, this.frontLine?.material as THREE.Material | undefined, this.swath.geometry, this.swath.material as THREE.Material, this.mesoMarker.geometry, this.mesoMarker.material as THREE.Material, this.selectionMarker.geometry, this.selectionMarker.material as THREE.Material, this.stationMarker.geometry, this.stationMarker.material as THREE.Material, this.lightning, this.light, this.flashLight].forEach(r => r?.dispose())
     this.renderer.dispose()
   }
 
@@ -372,16 +391,32 @@ export class StormView {
     pos.needsUpdate = true; melt.needsUpdate = true
   }
 
+  /**
+   * The cloud volume, per texel: the cloud water and ice (R), the precipitation (G), the tower's updraught (B,
+   * 0-UPDRAUGHT_SCALE m/s) and the ice share of the cloud (A): the shader shapes the cloud's sub-grid detail from them —
+   * rising cauliflower billows on a tower, soft fibrous ice in the anvil away from it. The tower's updraught is the
+   * strongest of its column and the columns beside it: the updraught is strong only inside the tower, while its
+   * surface, which is what is seen, billows all the same.
+   */
   private updateVolume() {
     const m = this.model, d = this.volumeData, tl = this.texLevels, cloud = (i: number) => m.cloud[i] + m.ice[i], precip = (i: number) => m.rain[i] + m.snow[i] + m.graupel[i] + m.hail[i]
-    if (!tl) for (let i = 0; i < m.grid.n; i++) { d[i * 2] = clamp((cloud(i) - .00003) / .0014) * 255; d[i * 2 + 1] = clamp(precip(i) / .0025) * 255 }
+    const { nx, ny, nz, layer } = m.grid, column = this.towerColumn ??= new Float32Array(layer), tower = this.tower ??= new Float32Array(layer)
+    column.fill(0)
+    for (let z = 0; z < nz; z++) for (let c = 0, i = z * layer; c < layer; c++, i++) if (m.w[i] > column[c]) column[c] = m.w[i]
+    for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++) {
+      let top = 0
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) top = Math.max(top, column[(x + dx + nx) % nx + ((y + dy + ny) % ny) * nx])
+      tower[x + y * nx] = top
+    }
+    const put = (o: number, c: number, p: number, ice: number) => { d[o * 4] = cloudOpacity(c - (1 - ICE_EXTINCTION) * ice) * 255; d[o * 4 + 1] = clamp(p / .0025) * 255; d[o * 4 + 2] = clamp(tower[o % layer] / UPDRAUGHT_SCALE) * 255; d[o * 4 + 3] = (c > 0 ? clamp(ice / c) : 1) * 255 }
+    if (!tl) for (let i = 0; i < m.grid.n; i++) put(i, cloud(i), precip(i), m.ice[i])
     else {
       const { layer } = m.grid
       for (let t = 0, o = 0; t < tl.nz; t++) {
         const base = tl.k0[t] * layer, f = tl.f[t]
         for (let c = 0; c < layer; c++, o++) {
           const i = base + c, j = i + layer
-          d[o * 2] = clamp((lerp(cloud(i), cloud(j), f) - .00003) / .0014) * 255; d[o * 2 + 1] = clamp(lerp(precip(i), precip(j), f) / .0025) * 255
+          put(o, lerp(cloud(i), cloud(j), f), lerp(precip(i), precip(j), f), lerp(m.ice[i], m.ice[j], f))
         }
       }
     }

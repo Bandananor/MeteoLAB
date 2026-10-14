@@ -29,6 +29,8 @@ vec3 toTex(vec3 p){
 const cloudSampling = /* glsl */`
 uniform sampler3D uDensity;
 vec2 fields(vec3 p){ return texture(uDensity, toTex(p)).rg; }
+// All four: cloud, precipitation, the tower's updraught (0-1 of 20 m/s), ice share of the cloud.
+vec4 fieldsAll(vec3 p){ return texture(uDensity, toTex(p)); }
 `
 
 // The light volume (light.ts): R encodes the optical depth to the sun (density units x km, before uExtinction), G the
@@ -190,29 +192,51 @@ uniform float uFlashOn;
 const vec3 FLASH_COLOR = vec3(0.86, 0.86, 1.0);
 const float FLASH_GAIN = 12.0;
 
+// The march: coarse steps (STEPS over the ray through the box) through clear air; on reaching the cloud it steps back
+// and goes on in steps of at most FINE_STEP km, back to coarse once out of it, at most MAX_STEPS in all. With the coarse
+// steps alone (0.5-0.8 km) the sub-grid billows were smeared out.
 const int STEPS = 96;
+const int MAX_STEPS = 224;
+const float FINE_STEP = 0.18;
+// Length of the first sub-grid shadow probe toward the sun, km (the second goes three times as far).
+const float SHADOW_PROBE = 0.15;
 const float PI = 3.14159265;
 
-float hash(vec3 p){
-  p = fract(p * 0.3183099 + 0.1);
-  p *= 17.0;
-  return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
-}
-float vnoise(vec3 x){
-  vec3 i = floor(x), f = fract(x);
-  f = f * f * (3.0 - 2.0 * f);
-  return mix(
-    mix(mix(hash(i), hash(i + vec3(1,0,0)), f.x), mix(hash(i + vec3(0,1,0)), hash(i + vec3(1,1,0)), f.x), f.y),
-    mix(mix(hash(i + vec3(0,0,1)), hash(i + vec3(1,0,1)), f.x), mix(hash(i + vec3(0,1,1)), hash(i + vec3(1,1,1)), f.x), f.y),
-    f.z);
-}
-float fbm(vec3 p){ return vnoise(p) * 0.55 + vnoise(p * 2.03) * 0.3 + vnoise(p * 4.11) * 0.15; }
+// Three octaves of tileable value noise (noise.ts): at x the octaves of lattice spacing 1, 1/2 and 1/4 in R, G, B, in
+// one fetch (the lattice of R is 8 texels).
+uniform sampler3D uNoise;
+vec3 octaves(vec3 x){ return texture(uNoise, x * 0.125).rgb; }
+float fbm(vec3 x){ return dot(octaves(x), vec3(0.55, 0.3, 0.15)); }
 
-// The model grid is ~1 km, so sub-grid noise erodes the edges to give cumuliform texture.
-float cloudDensity(vec3 p, float base){
+// Billow noise (|2n - 1| summed over octaves): rounded lobes meeting in creases, the cauliflower of a growing tower.
+float billow(vec3 x){
+  vec3 o = octaves(x);
+  return abs(o.r * 2.0 - 1.0) * 0.6 + abs(o.g * 2.0 - 1.0) * 0.28 + o.b * 0.12;
+}
+
+// The billows rise with the updraught (w, km/s): the noise is carried up and two copies half a period apart cross-fade,
+// so it never stretches (a flow map). The towers' tops in the model rise at about half the updraught.
+const float BILLOW_PERIOD = 240.0;
+float risingBillow(vec3 p, float w){
+  float a = fract(uTime / BILLOW_PERIOD), b = fract(uTime / BILLOW_PERIOD + 0.5), rise = 0.5 * w * BILLOW_PERIOD;
+  vec3 q = p * 0.9;
+  return mix(billow(q - vec3(0.0, rise * a * 0.9, 0.0)), billow(q - vec3(0.0, rise * b * 0.9, 0.0) + vec3(5.2, 1.3, 7.9)), abs(2.0 * a - 1.0));
+}
+
+// The model grid is ~1 km, so sub-grid noise erodes the edges; its kind follows the cloud. f: fieldsAll. Over a strong
+// updraught, rising cauliflower billows with a sharp edge (liquid cumulus towers); in the ice, fibrous wisps stretched
+// along the horizontal with a soft edge (the anvil, cirrus); elsewhere the soft cumulus texture.
+float cloudDensity(vec3 p, vec4 f){
+  float base = f.r;
   if(base < 0.004) return 0.0;
-  float n = fbm(p * 1.15 + vec3(0.0, -uTime * 0.0015, 0.0));
-  return clamp(base * 1.35 - (1.0 - n) * 0.42 * (1.0 - base * 0.6), 0.0, 1.0);
+  float vigor = smoothstep(0.05, 0.4, f.b), ice = smoothstep(0.5, 0.95, f.a);
+  ice *= 1.0 - vigor;
+  float n = vigor + ice < 1.0 ? fbm(p * 1.15 + vec3(0.0, -uTime * 0.0015, 0.0)) : 0.0;
+  if(vigor > 0.0) n = mix(n, min(1.0, risingBillow(p, f.b * 0.02) * 1.5), vigor);
+  if(ice > 0.0) n = mix(n, fbm(p * vec3(0.55, 2.8, 0.55) + vec3(uTime * 0.0004, 0.0, 0.0)), ice);
+  float d = base * 1.35 - (1.0 - n) * mix(mix(0.42, 0.62, vigor), 0.3, ice) * (1.0 - base * 0.6);
+  // Sharp-edged towers, translucent ice.
+  return clamp(d * (1.0 + 4.0 * vigor) * mix(1.0, 0.75, ice), 0.0, 1.0);
 }
 
 float hg(float c, float g){
@@ -237,8 +261,11 @@ void main(){
   t.y = clipToSlices(ro, rd, t.x, t.y);
   if(t.y <= t.x) discard;
 
-  float dt = (t.y - t.x) / float(STEPS);
-  float tt = t.x + dt * pixelJitter();
+  float coarse = (t.y - t.x) / float(STEPS), fine = min(coarse, FINE_STEP);
+  float dt = coarse;
+  float tt = t.x + coarse * pixelJitter();
+  bool inside = false;
+  int clearRun = 0;
 
   float cosT = dot(rd, uSunDir);
   vec3 phases = vec3(phase(cosT, 1.0), 0.5 * phase(cosT, 0.5), 0.25 * phase(cosT, 0.25));
@@ -247,15 +274,28 @@ void main(){
   vec3 col = vec3(0.0);
   float depthSum = 0.0, weightSum = 0.0;
 
-  for(int i = 0; i < STEPS; i++){
-    if(T < 0.02) break;
+  for(int i = 0; i < MAX_STEPS; i++){
+    if(T < 0.02 || tt > t.y) break;
     vec3 p = ro + rd * tt;
-    vec2 f = fields(p);
-    float dc = cloudDensity(p, f.r);
+    vec4 f = fieldsAll(p);
+    bool cloudy = f.r >= 0.004 || f.g > 0.01;
+    if(!inside){
+      if(cloudy && coarse > fine){ inside = true; clearRun = 0; tt = max(t.x, tt - coarse); dt = fine; tt += dt; continue; }
+    } else if(!cloudy){
+      if(float(++clearRun) * fine > coarse + fine){ inside = false; dt = coarse; }
+    } else clearRun = 0;
+    float dc = cloudDensity(p, f);
     float dr = f.g * 0.35;
     float sigma = (dc + dr) * uExtinction;
     if(sigma > 1e-4){
       vec2 L = lightAt(p);
+      // The light volume is on the model grid (~1 km): the sub-grid billows would not shade one another. Two short
+      // probes toward the sun through the detailed density add the optical depth of the lobes in the way, so the
+      // sunlit side of a billow is bright and its creases dark.
+      if(dc > 0.02 && uSunDir.y > 0.0){
+        vec3 s1 = p + uSunDir * SHADOW_PROBE, s2 = p + uSunDir * (SHADOW_PROBE * 3.0);
+        L.x += (cloudDensity(s1, fieldsAll(s1)) + cloudDensity(s2, fieldsAll(s2)) * 2.0) * SHADOW_PROBE * uExtinction;
+      }
       float powder = 1.0 - exp(-dc * uExtinction * 1.5);
       float h = clamp(p.y / uHeight * 1.3, 0.0, 1.0);
       // Sky light where the sky is seen: dim deep inside and under the cloud, full at its edges.
@@ -267,7 +307,9 @@ void main(){
         vec3 flash = FLASH_COLOR * FLASH_GAIN * (dot(flashDecode(texture(uFlashA, tp)), uFlashIA) + dot(flashDecode(texture(uFlashB, tp)), uFlashIB));
         cloudCol += flash; rainCol += flash * 0.4;
       }
-      vec3 S = mix(cloudCol, rainCol, dr / (dc + dr));
+      // Inside the cloud its droplets set the colour (they scatter far more per gram than the precipitation): the rain's
+      // grey only where the cloud is thin or absent, as in the shafts under the base.
+      vec3 S = mix(cloudCol, rainCol, dr / (dc * 6.0 + dr));
       float a = exp(-sigma * dt);
       float w = T * (1.0 - a);
       col += S * w;
