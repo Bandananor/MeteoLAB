@@ -227,14 +227,15 @@ float risingBillow(vec3 p, float w){
 // updraught, rising cauliflower billows with a sharp edge (liquid cumulus towers); in the ice, fibrous wisps stretched
 // along the horizontal with a soft edge (the anvil, cirrus); elsewhere the soft cumulus texture.
 // The columns (view.ts): R the rotation, the strongest |vertical vorticity| at 1-6 km (0-1 of 0.02 1/s); G the base
-// of an anvil over the column (0-1 of ANVIL_BASE_SCALE km) times B, the presence of that anvil (0-1).
+// of an anvil over the column (0-1 of ANVIL_BASE_SCALE km) times B, the presence of that anvil (0-1); A the cloud base
+// (0-1 of BASE_SCALE km).
 uniform sampler2D uColumns;
-const float ANVIL_BASE_SCALE = 20.0;
+const float ANVIL_BASE_SCALE = 20.0, BASE_SCALE = 10.0;
 
 // Mammatus: rounded pouches hanging up to MAMMA_DEPTH km under the base of an anvil (higher than 5 km, of ice, away
 // from a tower: view.ts finds it for each column). The pouches are lobes of the noise's large octave (~1.2 km across)
 // that hang the deeper the stronger the lobe, so their bottoms are round.
-const float MAMMA_DEPTH = 0.75;
+const float MAMMA_DEPTH = 0.6, MAMMA_CELL = 1.6;
 float mammaDensity(vec3 p){
   vec3 c = texture(uColumns, toTex(p).xy).rgb;
   if(c.b < 0.02) return 0.0;
@@ -242,17 +243,35 @@ float mammaDensity(vec3 p){
   // averages the bases instead of pulling them to the ground.
   float h = c.g / c.b * ANVIL_BASE_SCALE - p.y;
   if(h < 0.0 || h > MAMMA_DEPTH) return 0.0;
-  float lobe = octaves(vec3(p.x * 0.8, 0.0, p.z * 0.8) + vec3(3.1, 0.0, 1.7)).r;
-  float reach = smoothstep(0.4, 0.85, lobe) * MAMMA_DEPTH * smoothstep(0.0, 0.6, c.b);
+  // Cellular noise: each cell of MAMMA_CELL km holds one pouch about a random point; the distance to the nearest point
+  // makes round pouches with narrow gaps between them (value noise made a wavy sheet).
+  // Where the anvil only partly qualifies (c.b < 1) a cell has its pouch or none, by a random number of the cell: shrunk
+  // pouches came out as strings of beads along the anvil's edges.
+  vec2 q = p.xz / MAMMA_CELL, cell = floor(q);
+  float reach = 0.0;
+  for(int j = -1; j <= 1; j++) for(int i = -1; i <= 1; i++){
+    vec2 k = cell + vec2(float(i), float(j));
+    vec3 r = fract(sin(vec3(dot(k, vec2(127.1, 311.7)), dot(k, vec2(269.5, 183.3)), dot(k, vec2(419.2, 371.9)))) * 43758.5);
+    float here = smoothstep(r.z * 0.8 + 0.1, r.z * 0.8 + 0.2, c.b);
+    reach = max(reach, (1.0 - smoothstep(0.1, 0.7, length(q - k - 0.5 - 0.35 * (r.xy - 0.5)))) * here);
+  }
+  reach *= MAMMA_DEPTH;
   // A soft edge wider than the march's fine step (a sharper one came out as a sawtooth), less dense than the anvil.
   return smoothstep(0.0, 0.4, reach - h + 0.15) * 0.6;
 }
 
-float rotationAt(vec3 p){ return smoothstep(0.3, 0.65, texture(uColumns, toTex(p).xy).r); }
+// The striations: on the rotating updraught's side from its base to the middle levels, fading out by ~7.5 km (the top
+// of the tower and the overshooting dome billow).
+float rotationAt(vec3 p){ return smoothstep(0.3, 0.65, texture(uColumns, toTex(p).xy).r) * (1.0 - smoothstep(6.0, 7.5, p.y)); }
 
 float cloudDensity(vec3 p, vec4 f){
   float base = f.r;
   if(base < 0.004) return 0.0;
+  // The base is flat, at the condensation level: no cloud under it, and the noise does not erode it (it erodes the sides
+  // and the top), fading in over the 0.5 km above it.
+  float above = p.y - texture(uColumns, toTex(p).xy).a * BASE_SCALE;
+  if(above < -0.2) return 0.0;
+  float rise = smoothstep(0.0, 0.5, above), under = smoothstep(-0.2, 0.15, above);
   float vigor = smoothstep(0.05, 0.4, f.b), ice = smoothstep(0.5, 0.95, f.a);
   ice *= 1.0 - vigor;
   float n = vigor + ice < 1.0 ? fbm(p * 1.15 + vec3(0.0, -uTime * 0.0015, 0.0)) : 0.0;
@@ -264,9 +283,9 @@ float cloudDensity(vec3 p, vec4 f){
     n = mix(n, tower, vigor);
   }
   if(ice > 0.0) n = mix(n, fbm(p * vec3(0.55, 2.8, 0.55) + vec3(uTime * 0.0004, 0.0, 0.0)), ice);
-  float d = base * 1.35 - (1.0 - n) * mix(mix(0.42, 0.62, vigor), 0.3, ice) * (1.0 - base * 0.6);
+  float d = base * 1.35 - (1.0 - n) * mix(mix(0.42, 0.62, vigor), 0.3, ice) * (1.0 - base * 0.6) * mix(0.2, 1.0, rise);
   // Sharp-edged towers, translucent ice.
-  return clamp(d * (1.0 + 4.0 * vigor) * mix(1.0, 0.75, ice), 0.0, 1.0);
+  return clamp(d * (1.0 + 4.0 * vigor) * mix(1.0, 0.75, ice), 0.0, 1.0) * under;
 }
 
 float hg(float c, float g){

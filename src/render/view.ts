@@ -8,6 +8,7 @@ import { noiseTexture } from './noise'
 import { LightningView } from './lightning'
 import { type AtmosphereModel, computeScalarField, headingVector, heightAt, levelAt, MESO_PERSISTENCE, sunDirection, UH_ROTATING, type UhLayer } from '../core'
 import { clamp, lerp, mod, mulberry32 } from '../core/math'
+import { qsatP } from '../core/microphysics'
 import { isPhone } from '../hud'
 import { colormapTexture, type FieldMode, fieldInfo } from './fields'
 import { fieldVolumeFragment, groundShadowPars, precipFragment, precipVertex, sliceFragment, volumeFragment, volumeVertex } from './shaders'
@@ -31,7 +32,7 @@ export interface ViewSettings {
 const SWATH_COLORS: [number, [number, number, number]][] = [[1, [150, 200, 240]], [5, [60, 150, 225]], [10, [60, 185, 90]], [25, [240, 215, 60]], [50, [240, 130, 40]], [Infinity, [210, 45, 45]]]
 
 /**
- * The cloud's density in the volume texture from its water and ice, kg/kg: saturating, as a cloud of a few tenths of a
+ * The cloud's density in the volume texture from its extinction-weighted mass, kg/kg: saturating, as a cloud of a few tenths of a
  * gram per kilogram is already opaque over a kilometre (extinction ~3 LWC / (2 ρw r) ≈ 50-100 per km for droplets of
  * ~10 µm); a linear scale to 1.4 g/kg drew the updraught core (depleted to 0.2-0.6 g/kg by the graupel) as smoke.
  */
@@ -40,7 +41,21 @@ const SWATH_COLORS: [number, [number, number, number]][] = [[1, [150, 200, 240]]
  * (extinction ∝ mass / size). The anvil is then translucent at its edges instead of a white slab.
  */
 const ICE_EXTINCTION = .25
+/**
+ * The same for snow and for graupel-hail above the melting level: aggregates and rimers of millimetres scatter ~0.05-0.1
+ * and ~0.03 of the droplets' light per gram. Snow is most of the anvil's mass and much of the storm's middle: counted as
+ * precipitation it left the anvil in shreds with gaps to the ground (the meteorologist's review 14.10.2026).
+ */
+const SNOW_EXTINCTION = .08, RIMER_EXTINCTION = .03
+/** The tower: the updraught within this many model levels above and below a node. */
+const TOWER_LEVELS = 2
+/** Rotation for the striations: in an updraught over this, m/s, once the rotation has held this long, s. */
+const SPIN_UPDRAUGHT = 5, MESO_HELD = 600
+/** Mammatus only over air drier than this relative humidity under the anvil's base. */
+const MAMMA_RH = .9
 const cloudOpacity = (c: number) => c > .00003 ? 1 - Math.exp(-(c - .00003) / .0004) : 0
+/** The cloud base in the columns' map: its scale, m, and how high it is looked for, m (a microburst's base is ~4 km). */
+const BASE_SCALE = 10_000, BASE_SEARCH = 6000
 /** The anvil's base in the columns' map: its scale, m, and where the cloud begins (the shader's cloud threshold). */
 const ANVIL_BASE_SCALE = 20_000, ANVIL_OPACITY = .05
 /** Vertical vorticity at the top of the rotation map, 1/s: a mesocyclone (0.01 and more) is at its middle. */
@@ -87,12 +102,14 @@ export class StormView {
   private readonly shared: Record<string, THREE.IUniform>
   private readonly light: LightVolume; private readonly flashLight: FlashVolume; private readonly strikeLight: THREE.PointLight
   /** The strongest updraught of each column, and of each column with those beside it (the tower's), m/s. */
-  private towerColumn?: Float32Array; private tower?: Float32Array
+  /** Scratch of the volume's update, per node: the cloud's extinction-weighted mass, the shafts' mass, the ice share, the tower's updraught. */
+  private cloudMass?: Float32Array; private shaftMass?: Float32Array; private iceShare?: Float32Array; private towerScratch?: Float32Array; private towerField?: Float32Array
   /**
    * The columns for the cloud's shape (RGBA per column): the rotation, the strongest |vertical vorticity| at 1-6 km of
    * the column and those beside it (0-255 of ROTATION_SCALE); the base of an anvil over it (of ANVIL_BASE_SCALE m) times
-   * that anvil's presence, and the presence (0-255).
+   * that anvil's presence, and the presence (0-255); the cloud base (of BASE_SCALE m).
    */
+  private cloudBase?: Float32Array
   private readonly columnData: Uint8Array; private readonly columnTexture: THREE.DataTexture; private spinColumn?: Float32Array
   /** Baked noise of the cloud's sub-grid detail (noise.ts). */
   private readonly noise: THREE.Data3DTexture
@@ -405,57 +422,91 @@ export class StormView {
   }
 
   /**
-   * The cloud volume, per texel: the cloud water and ice (R), the precipitation (G), the tower's updraught (B,
-   * 0-UPDRAUGHT_SCALE m/s) and the ice share of the cloud (A): the shader shapes the cloud's sub-grid detail from them —
-   * rising cauliflower billows on a tower, soft fibrous ice in the anvil away from it. The tower's updraught is the
-   * strongest of its column and the columns beside it: the updraught is strong only inside the tower, while its
-   * surface, which is what is seen, billows all the same.
+   * The cloud volume, per texel: the cloud's density (R: cloud water, ice, snow and the graupel-hail above the melting
+   * level, each with its extinction per gram, saturating), the precipitation below the melting level (G: rain, and the
+   * snow, graupel and hail still falling there: the grey shafts), the tower's updraught (B, 0-UPDRAUGHT_SCALE m/s) and
+   * the ice share of the cloud (A): the shader shapes the cloud's sub-grid detail from them — rising cauliflower billows
+   * on a tower, soft fibrous ice in the anvil away from it. The tower's updraught at a node is the strongest within two
+   * levels and one column of it: the updraught is strong only inside the tower, while its surface, which is what is
+   * seen, billows all the same; but the anvil over it and the low cloud beside it do not (the column's strongest
+   * updraught made them billow too: the meteorologist's review 14.10.2026).
+   * The columns' map: the rotation, the anvil's base for the mammatus, the cloud base for a flat base.
    */
   private updateVolume() {
-    const m = this.model, d = this.volumeData, tl = this.texLevels, cloud = (i: number) => m.cloud[i] + m.ice[i], precip = (i: number) => m.rain[i] + m.snow[i] + m.graupel[i] + m.hail[i]
-    const { nx, ny, nz, layer } = m.grid, column = this.towerColumn ??= new Float32Array(layer), tower = this.tower ??= new Float32Array(layer)
-    column.fill(0)
-    for (let z = 0; z < nz; z++) for (let c = 0, i = z * layer; c < layer; c++, i++) if (m.w[i] > column[c]) column[c] = m.w[i]
-    for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++) {
-      let top = 0
-      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) top = Math.max(top, column[(x + dx + nx) % nx + ((y + dy + ny) % ny) * nx])
-      tower[x + y * nx] = top
+    const m = this.model, d = this.volumeData, tl = this.texLevels, { nx, ny, nz, layer, n, zs } = m.grid, exner = m.env.exner, pressure = m.env.p
+    const mass = this.cloudMass ??= new Float32Array(n), shafts = this.shaftMass ??= new Float32Array(n), share = this.iceShare ??= new Float32Array(n)
+    const vertical = this.towerScratch ??= new Float32Array(n), tower = this.towerField ??= new Float32Array(n)
+    for (let z = 0, i = 0; z < nz; z++) for (let c = 0; c < layer; c++, i++) {
+      const frozen = m.theta[i] * exner[z] < 273.15, rimers = m.graupel[i] + m.hail[i], icy = m.ice[i] + m.snow[i]
+      mass[i] = m.cloud[i] + ICE_EXTINCTION * m.ice[i] + (frozen ? SNOW_EXTINCTION * m.snow[i] + RIMER_EXTINCTION * rimers : 0)
+      shafts[i] = m.rain[i] + (frozen ? 0 : m.snow[i] + rimers)
+      share[i] = m.cloud[i] + icy > 0 ? icy / (m.cloud[i] + icy) : 1
     }
-    // The rotation: the strongest |ζ| of each column at 1-6 km, then of it and the columns beside it.
+    // The tower: the strongest updraught within TOWER_LEVELS levels, then within one column.
+    for (let z = 0; z < nz; z++) for (let c = 0; c < layer; c++) {
+      let w = 0
+      for (let k = Math.max(0, z - TOWER_LEVELS); k <= Math.min(nz - 1, z + TOWER_LEVELS); k++) w = Math.max(w, m.w[c + k * layer])
+      vertical[c + z * layer] = w
+    }
+    for (let z = 0; z < nz; z++) for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++) {
+      let w = 0
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) w = Math.max(w, vertical[(x + dx + nx) % nx + ((y + dy + ny) % ny) * nx + z * layer])
+      tower[x + y * nx + z * layer] = w
+    }
+    // The rotation: the strongest cyclonic ζ of each column at 1-6 km within the updraught (w > SPIN_UPDRAUGHT), of it and
+    // the columns beside it, once the storm's rotation has held for MESO_HELD (the mesocyclone): |ζ| over the whole
+    // column made a microburst's gust front and any storm's flanking vortex pair striated.
     const spin = this.spinColumn ??= new Float32Array(layer), z1 = Math.max(1, levelAt(m.grid, 1000) | 0), z6 = Math.min(nz - 2, Math.ceil(levelAt(m.grid, 6000)))
-    for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++) { let s = 0; for (let z = z1; z <= z6; z++) s = Math.max(s, Math.abs(m.zeta(x, y, z))); spin[x + y * nx] = s }
+    const held = clamp(m.rotation.persisted / MESO_HELD)
     for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++) {
-      let s = 0
-      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) s = Math.max(s, spin[(x + dx + nx) % nx + ((y + dy + ny) % ny) * nx])
-      this.columnData[(x + y * nx) * 4] = clamp(s / ROTATION_SCALE) * 255
+      let sp = 0
+      if (held > 0) for (let z = z1; z <= z6; z++) if (m.w[x + y * nx + z * layer] > SPIN_UPDRAUGHT) sp = Math.max(sp, m.zeta(x, y, z))
+      spin[x + y * nx] = sp
     }
-    // The anvil over each column, for the mammatus: the lowest level above 5 km where the cloud (as drawn) begins, if
-    // it is ice and there is no tower under it; its base between that level and the one below.
-    const opacity = (i: number) => cloudOpacity(cloud(i) - (1 - ICE_EXTINCTION) * m.ice[i]), z5 = Math.ceil(levelAt(m.grid, 5000))
+    for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++) {
+      let sp = 0
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) sp = Math.max(sp, spin[(x + dx + nx) % nx + ((y + dy + ny) % ny) * nx])
+      this.columnData[(x + y * nx) * 4] = clamp(sp / ROTATION_SCALE) * held * 255
+    }
+    // The anvil over each column, for the mammatus: the lowest level above 5 km where the cloud (as drawn) begins, if it
+    // is ice and snow with no tower under it and the air under it is dry (the pouches sink as the snow sublimates into
+    // it, Schultz et al. 2006); its base between that level and the one below.
+    const opacity = (i: number) => cloudOpacity(mass[i]), z5 = Math.ceil(levelAt(m.grid, 5000))
+    const crossing = (c: number, z: number) => { const i = c + z * layer, o = opacity(i), below = opacity(i - layer); return zs[z - 1] + (zs[z] - zs[z - 1]) * (ANVIL_OPACITY - below) / Math.max(o - below, 1e-6) }
     for (let c = 0; c < layer; c++) {
       let base = 0, presence = 0
       for (let z = z5 + 1; z < nz; z++) {
-        const i = c + z * layer, o = opacity(i)
-        if (o < ANVIL_OPACITY) continue
-        const below = opacity(i - layer), share = cloud(i) > 0 ? m.ice[i] / cloud(i) : 0
-        base = m.grid.zs[z - 1] + (m.grid.zs[z] - m.grid.zs[z - 1]) * (ANVIL_OPACITY - below) / Math.max(o - below, 1e-6)
-        presence = clamp((share - .6) / .2) * (1 - clamp((tower[c] - 1.6) / 2))
+        const i = c + z * layer
+        if (opacity(i) < ANVIL_OPACITY) continue
+        const j = i - layer, rh = m.q[j] / qsatP(m.theta[j] * exner[z - 1] - 273.15, pressure[z - 1])
+        base = crossing(c, z)
+        // ... and only under the anvil's thick part (opaque a kilometre over its base), not its thin edges.
+        const thick = opacity(c + Math.min(nz - 1, z + Math.max(1, Math.round(levelAt(m.grid, zs[z] + 1000) - z))) * layer)
+        presence = clamp((share[i] - .6) / .2) * (1 - clamp((tower[i] - 1.6) / 2)) * clamp((MAMMA_RH - rh) / .15) * clamp((thick - .15) / .2)
         break
       }
-      this.columnData[c * 4 + 1] = clamp(base / ANVIL_BASE_SCALE) * presence * 255; this.columnData[c * 4 + 2] = presence * 255; this.columnData[c * 4 + 3] = 255
+      this.columnData[c * 4 + 1] = clamp(base / ANVIL_BASE_SCALE) * presence * 255; this.columnData[c * 4 + 2] = presence * 255
     }
+    // The cloud base of each column, for a flat base: the lowest level under BASE_SEARCH where the cloud (as drawn)
+    // begins, between it and the level below; columns without one take the median of the others (so the filter between
+    // columns keeps the base level).
+    const bases: number[] = [], zTop = Math.ceil(levelAt(m.grid, BASE_SEARCH)), baseOf = this.cloudBase ??= new Float32Array(layer)
+    for (let c = 0; c < layer; c++) {
+      baseOf[c] = -1
+      for (let z = 1; z <= zTop; z++) if (opacity(c + z * layer) >= ANVIL_OPACITY) { baseOf[c] = crossing(c, z); bases.push(baseOf[c]); break }
+    }
+    bases.sort((x, y) => x - y)
+    const median = bases.length ? bases[bases.length >> 1] : 0
+    for (let c = 0; c < layer; c++) this.columnData[c * 4 + 3] = clamp((baseOf[c] < 0 ? median : baseOf[c]) / BASE_SCALE) * 255
     this.columnTexture.needsUpdate = true
-    const put = (o: number, c: number, p: number, ice: number) => { d[o * 4] = cloudOpacity(c - (1 - ICE_EXTINCTION) * ice) * 255; d[o * 4 + 1] = clamp(p / .0025) * 255; d[o * 4 + 2] = clamp(tower[o % layer] / UPDRAUGHT_SCALE) * 255; d[o * 4 + 3] = (c > 0 ? clamp(ice / c) : 1) * 255 }
-    if (!tl) for (let i = 0; i < m.grid.n; i++) put(i, cloud(i), precip(i), m.ice[i])
-    else {
-      const { layer } = m.grid
-      for (let t = 0, o = 0; t < tl.nz; t++) {
-        const base = tl.k0[t] * layer, f = tl.f[t]
-        for (let c = 0; c < layer; c++, o++) {
-          const i = base + c, j = i + layer
-          put(o, lerp(cloud(i), cloud(j), f), lerp(precip(i), precip(j), f), lerp(m.ice[i], m.ice[j], f))
-        }
-      }
+    const put = (o: number, i: number, j: number, f: number) => {
+      d[o * 4] = cloudOpacity(lerp(mass[i], mass[j], f)) * 255; d[o * 4 + 1] = clamp(lerp(shafts[i], shafts[j], f) / .0025) * 255
+      d[o * 4 + 2] = clamp(lerp(tower[i], tower[j], f) / UPDRAUGHT_SCALE) * 255; d[o * 4 + 3] = lerp(share[i], share[j], f) * 255
+    }
+    if (!tl) for (let i = 0; i < n; i++) put(i, i, i, 0)
+    else for (let t = 0, o = 0; t < tl.nz; t++) {
+      const base = tl.k0[t] * layer, f = tl.f[t]
+      for (let c = 0; c < layer; c++, o++) put(o, base + c, Math.min(base + c + layer, n - 1), f)
     }
     this.volumeTexture.needsUpdate = true; this.volumeMaterial.uniforms.uTime.value = m.time
   }
