@@ -185,7 +185,7 @@ uniform vec4 uFlashIA;
 uniform vec4 uFlashIB;
 uniform float uFlashOn;
 const vec3 FLASH_COLOR = vec3(0.86, 0.86, 1.0);
-const float FLASH_GAIN = 32.0;
+const float FLASH_GAIN = 12.0;
 
 const int STEPS = 96;
 const float PI = 3.14159265;
@@ -262,7 +262,7 @@ void main(){
       if(uFlashOn > 0.5){
         vec3 tp = toTex(p);
         vec3 flash = FLASH_COLOR * FLASH_GAIN * (dot(flashDecode(texture(uFlashA, tp)), uFlashIA) + dot(flashDecode(texture(uFlashB, tp)), uFlashIB));
-        cloudCol += flash; rainCol += flash * 0.7;
+        cloudCol += flash; rainCol += flash * 0.4;
       }
       vec3 S = mix(cloudCol, rainCol, dr / (dc + dr));
       float a = exp(-sigma * dt);
