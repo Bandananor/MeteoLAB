@@ -3,8 +3,9 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js'
 import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js'
 import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeometry.js'
-import { LightVolume } from './light'
-import { type AtmosphereModel, channelShape, computeScalarField, type Flash, headingVector, heightAt, levelAt, MESO_PERSISTENCE, sunDirection, UH_ROTATING, type UhLayer } from '../core'
+import { FlashVolume, LightVolume } from './light'
+import { LightningView } from './lightning'
+import { type AtmosphereModel, computeScalarField, headingVector, heightAt, levelAt, MESO_PERSISTENCE, sunDirection, UH_ROTATING, type UhLayer } from '../core'
 import { clamp, lerp, mod, mulberry32 } from '../core/math'
 import { isPhone } from '../hud'
 import { colormapTexture, type FieldMode, fieldInfo } from './fields'
@@ -29,8 +30,6 @@ export interface ViewSettings {
 const SWATH_COLORS: [number, [number, number, number]][] = [[1, [150, 200, 240]], [5, [60, 150, 225]], [10, [60, 185, 90]], [25, [240, 215, 60]], [50, [240, 130, 40]], [Infinity, [210, 45, 45]]]
 
 const FLOW_PARTICLES = 10_000, PRECIP_PARTICLES = 8000, MELT_DEPTH = 600, SNOW_FALL = 2
-/** A flash is seen this long, ms of real time (whatever the speed), fading; at most this many channel segments drawn at once. */
-const FLASH_SHOWN = 700, LIGHTNING_SEGMENTS = 30_000
 
 const texture3D = (data: Uint8Array, format: THREE.PixelFormat, nx: number, ny: number, nz: number) => {
   const t = new THREE.Data3DTexture(data, nx, ny, nz)
@@ -68,7 +67,7 @@ export class StormView {
   private readonly ground: THREE.Mesh; private readonly raycaster = new THREE.Raycaster(); private readonly pointer = new THREE.Vector2()
   private readonly sunLight: THREE.DirectionalLight; private readonly hemiLight: THREE.HemisphereLight
   private readonly shared: Record<string, THREE.IUniform>
-  private readonly light: LightVolume
+  private readonly light: LightVolume; private readonly flashLight: FlashVolume; private readonly strikeLight: THREE.PointLight
   private readonly volumeData: Uint8Array; private readonly volumeTexture: THREE.Data3DTexture; private readonly volumeMaterial: THREE.ShaderMaterial; private readonly volumeMesh: THREE.Mesh
   private readonly fieldValues: Float32Array; private readonly fieldData: Uint8Array; private readonly fieldTexture: THREE.Data3DTexture
   private colormap: THREE.DataTexture | null = null; private colormapField: FieldMode | null = null
@@ -84,12 +83,8 @@ export class StormView {
   private readonly selectionMarker: THREE.Mesh; private selection: { x: number; y: number } | null = null
   private readonly stationMarker: THREE.Mesh; private station: { x: number; y: number } | null = null
   private frame = 0
-  /** Lightning channels on screen: the flashes that arrived in the last FLASH_SHOWN ms (performance.now() at arrival). */
-  private readonly lightningGeometry: LineSegmentsGeometry; private readonly lightningMaterial: LineMaterial; private readonly lightningLines: LineSegments2
-  private readonly lightningPositions = new Float32Array(LIGHTNING_SEGMENTS * 6); private readonly lightningColors = new Float32Array(LIGHTNING_SEGMENTS * 6)
-  private readonly flashing: { flash: Flash; born: number }[] = []; private flashesSeen = 0
-  /** When the lightning was last drawn (performance.now()): after a pause in drawing (an instrument screen over the view) the flashes meanwhile are not shown all at once. */
-  private lightningDrawn = 0
+  /** The lightning channels (lightning.ts). */
+  private readonly lightning: LightningView; private readonly drawingBuffer = new THREE.Vector2()
   /**
    * The volume textures are uniform in height (the shaders map height linearly onto them). On a stretched grid every
    * texture level t is interpolated between model levels k0[t] and k0[t] + 1 with weight f[t]; on a uniform grid the
@@ -165,10 +160,11 @@ export class StormView {
     }
     this.volumeTexture = texture3D(this.volumeData, THREE.RGFormat, nx, ny, nz)
     this.light = new LightVolume(nx, ny, nz, this.shared, this.volumeTexture)
+    this.flashLight = new FlashVolume(nx, ny, nz, this.shared, this.volumeTexture)
     this.volumeMaterial = new THREE.ShaderMaterial({
       vertexShader: volumeVertex, fragmentShader: volumeFragment, side: THREE.BackSide, transparent: true, depthWrite: false, depthTest: false, premultipliedAlpha: true,
       uniforms: {
-        ...this.shared, uDensity: { value: this.volumeTexture }, uLight: { value: this.light.texture }, uSunColor: { value: new THREE.Color() }, uAmbientTop: { value: new THREE.Color() }, uAmbientBottom: { value: new THREE.Color() },
+        ...this.shared, uDensity: { value: this.volumeTexture }, uLight: { value: this.light.texture }, uFlashA: { value: this.flashLight.targets[0].texture }, uFlashB: { value: this.flashLight.targets[1].texture }, uFlashIA: { value: new THREE.Vector4() }, uFlashIB: { value: new THREE.Vector4() }, uFlashOn: { value: 0 }, uSunColor: { value: new THREE.Color() }, uAmbientTop: { value: new THREE.Color() }, uAmbientBottom: { value: new THREE.Color() },
         uFogColor: { value: (this.scene.fog as THREE.FogExp2).color }, uFogDensity: { value: (this.scene.fog as THREE.FogExp2).density }, uTime: { value: 0 }, uOpacity: { value: 1 },
       },
     })
@@ -207,10 +203,9 @@ export class StormView {
     this.stationMarker.rotation.x = Math.PI; this.stationMarker.position.y = .8; this.stationMarker.renderOrder = 3; this.stationMarker.visible = false; this.scene.add(this.stationMarker)
 
     // Lines a few pixels wide, drawn over the cloud: inside a sunlit cloud a thin white channel would not be seen.
-    this.lightningGeometry = new LineSegmentsGeometry()
-    this.lightningMaterial = new LineMaterial({ vertexColors: true, linewidth: 1.8, transparent: true, depthTest: false, depthWrite: false, toneMapped: false })
-    this.lightningLines = new LineSegments2(this.lightningGeometry, this.lightningMaterial)
-    this.lightningLines.frustumCulled = false; this.lightningLines.renderOrder = 4; this.lightningLines.visible = false; this.scene.add(this.lightningLines)
+    this.lightning = new LightningView(model, (x, y, z) => this.toWorld(x, y, z), this.shared, this.volumeTexture); this.scene.add(this.lightning.mesh)
+    // A CG lights the ground and the rain around where it strikes.
+    this.strikeLight = new THREE.PointLight(0xdfe2ff, 0, 30, 2); this.strikeLight.visible = false; this.scene.add(this.strikeLight)
 
     this.updateLevels()
     for (let p = 0; p < FLOW_PARTICLES; p++) this.respawnParticle(p, true)
@@ -218,7 +213,7 @@ export class StormView {
 
   dispose() {
     this.controls.dispose()
-    ;[this.volumeTexture, this.fieldTexture, this.colormap, this.volumeMaterial, this.fieldMaterial, this.sliceMaterial, this.volumeMesh.geometry, this.sliceH.geometry, this.sliceV.geometry, this.precipGeometry, this.precipMaterial, this.swathTexture, this.cityTexture, this.zoneTexture, this.frontLine?.geometry, this.frontLine?.material as THREE.Material | undefined, this.swath.geometry, this.swath.material as THREE.Material, this.mesoMarker.geometry, this.mesoMarker.material as THREE.Material, this.selectionMarker.geometry, this.selectionMarker.material as THREE.Material, this.stationMarker.geometry, this.stationMarker.material as THREE.Material, this.lightningGeometry, this.lightningMaterial, this.light].forEach(r => r?.dispose())
+    ;[this.volumeTexture, this.fieldTexture, this.colormap, this.volumeMaterial, this.fieldMaterial, this.sliceMaterial, this.volumeMesh.geometry, this.sliceH.geometry, this.sliceV.geometry, this.precipGeometry, this.precipMaterial, this.swathTexture, this.cityTexture, this.zoneTexture, this.frontLine?.geometry, this.frontLine?.material as THREE.Material | undefined, this.swath.geometry, this.swath.material as THREE.Material, this.mesoMarker.geometry, this.mesoMarker.material as THREE.Material, this.selectionMarker.geometry, this.selectionMarker.material as THREE.Material, this.stationMarker.geometry, this.stationMarker.material as THREE.Material, this.lightning, this.light, this.flashLight].forEach(r => r?.dispose())
     this.renderer.dispose()
   }
 
@@ -303,6 +298,7 @@ export class StormView {
    * the sun instead of the model's, and the camera placed by hand (km, world axes).
    */
   debugSunHour: number | null = null
+  get debugLightning() { return this.lightning }
   debugCamera(position: [number, number, number], target: [number, number, number]) { this.camera.position.set(...position); this.controls.target.set(...target); this.controls.update() }
 
   private updateSun() {
@@ -425,47 +421,6 @@ export class StormView {
     this.vectorGeometry.setDrawRange(0, n); p.needsUpdate = true; c.needsUpdate = true
   }
 
-  /**
-   * Picks up the flashes that arrived and draws the channels of those still shown: each segment from a node to the one
-   * it grew from, the nodes shifted at random within their cell so the channel does not follow the grid. CG flashes are
-   * whiter and flicker (return strokes). Returns how bright the lightning is now (0-1), to light the cloud.
-   */
-  private updateLightning(now: number) {
-    const m = this.model, total = m.flashCount.ic + m.flashCount.cg
-    // A rewind or a loaded state: counts went back.
-    if (total < this.flashesSeen) this.flashing.length = 0
-    if (now - this.lightningDrawn > 500) this.flashesSeen = total
-    this.lightningDrawn = now
-    const fresh = Math.min(Math.max(0, total - this.flashesSeen), m.flashes.length, 12)
-    for (const flash of m.flashes.slice(m.flashes.length - fresh)) this.flashing.push({ flash, born: now })
-    this.flashesSeen = total
-    while (this.flashing.length && now - this.flashing[0].born > FLASH_SHOWN) this.flashing.shift()
-    const shown = this.settings.showLightning && this.flashing.length > 0
-    this.lightningLines.visible = shown
-    if (!shown) return 0
-    const { width } = m.grid, pos = this.lightningPositions, col = this.lightningColors
-    let n = 0, glow = 0
-    for (const { flash, born } of this.flashing) {
-      const age = clamp((now - born) / FLASH_SHOWN), cg = flash.kind === 'CG'
-      const bright = (1 - age) ** 1.5 * (cg ? .8 + .2 * Math.cos(age * 40) : 1)
-      glow = Math.max(glow, bright * (cg ? 1 : .7))
-      // On the dark background the newest flash's colour; older ones fade towards it (one opacity for all).
-      const [r, g, b] = cg ? [1, .95, .55] : [.72, .62, 1], shape = channelShape(m.grid, flash)
-      const place = Array.from(flash.nodes, (_, c) => [shape[c * 3], shape[c * 3 + 1], shape[c * 3 + 2]] as const)
-      for (let c = 1; c < flash.nodes.length && n < LIGHTNING_SEGMENTS * 2; c++) {
-        const a = place[flash.parent[c]], b2 = place[c]
-        // Across the periodic edge: not a line over the whole domain.
-        if (Math.abs(a[0] - b2[0]) > width / 2 || Math.abs(a[1] - b2[1]) > m.grid.depth / 2) continue
-        pos.set(this.toWorld(...a), n * 3); pos.set(this.toWorld(...b2), n * 3 + 3)
-        col.set([r, g, b, r, g, b], n * 3); n += 2
-      }
-    }
-    this.lightningGeometry.setPositions(pos.subarray(0, n * 3)); this.lightningGeometry.setColors(col.subarray(0, n * 3))
-    this.lightningMaterial.opacity = clamp(glow / .7)
-    this.lightningMaterial.resolution.set(this.canvas.width, this.canvas.height)
-    return glow
-  }
-
   render() {
     const s = this.settings, m = this.model, { dx, dy } = m.grid
     const width = Math.max(2, this.canvas.clientWidth), height = Math.max(2, this.canvas.clientHeight), ratio = this.renderer.getPixelRatio()
@@ -477,8 +432,13 @@ export class StormView {
     const field = s.field === 'composite' ? null : s.field
     this.updateSun()
     // A flash lights the cloud from inside.
-    const glow = this.updateLightning(performance.now())
-    if (glow > 0) for (const key of ['uAmbientTop', 'uAmbientBottom'] as const) (this.volumeMaterial.uniforms[key].value as THREE.Color).add(new THREE.Color(.55 * glow, .55 * glow, .7 * glow))
+    const glow = this.lightning.update(performance.now(), s.showLightning, this.renderer.getDrawingBufferSize(this.drawingBuffer), ratio)
+    const lit = this.lightning, vu = this.volumeMaterial.uniforms
+    if (glow > 0 && lit.changed.some(c => c)) { this.flashLight.update(this.renderer, lit.points, lit.changed); lit.taken() }
+    vu.uFlashOn.value = glow > 0 && this.flashLight.ready ? 1 : 0
+    ;(vu.uFlashIA.value as THREE.Vector4).fromArray(lit.bright, 0); (vu.uFlashIB.value as THREE.Vector4).fromArray(lit.bright, 4)
+    this.strikeLight.visible = !!lit.strike
+    if (lit.strike) { this.strikeLight.position.set(lit.strike.x, Math.max(.3, lit.strike.y), lit.strike.z); this.strikeLight.intensity = 400 * lit.strike.bright }
     this.updateVolume(); if (field) this.updateFieldTexture(field)
     this.light.update(this.renderer, m.time, this.shared.uSunDir.value as THREE.Vector3)
     this.volumeMaterial.uniforms.uOpacity.value = field ? .22 : 1

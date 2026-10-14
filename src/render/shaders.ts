@@ -45,6 +45,44 @@ vec2 lightAt(vec3 p){
 }
 `
 
+// The flash light volumes (light.ts FlashVolume): per flash slot (RGBA = 4 slots) the light a flash of brightness 1
+// sends to a point, encoded 1 - exp(-E * FLASH_ENCODE).
+const flashEncoding = /* glsl */`
+const float FLASH_ENCODE = 4.0;
+vec4 flashDecode(vec4 v){ return -log(max(1.0 - v, vec4(1e-4))) / FLASH_ENCODE; }
+`
+
+/**
+ * One layer of a flash light volume: from up to 64 points of the channels of four flashes (uPts: x, y, z in km and the
+ * slot 0-3 of the four; uW: each point's share of its flash), the light at the texel's node. Each point is a source
+ * whose light falls off with distance (softened within ~0.5 km of the channel) and passes the cloud on the way (8
+ * steps) as diffused light does in an optically thick cloud: 1 / (1 + 0.75 (1 - g) tau) with g = 0.85, not exp(-tau),
+ * so a flash deep in a storm still lights the whole cloud from inside, softly.
+ */
+export const flashVolumeFragment = /* glsl */`
+precision highp float;
+${volumeCommon}
+${cloudSampling}
+${flashEncoding}
+uniform float uLayer;
+uniform vec4 uPts[64];
+uniform float uW[64];
+uniform int uCount;
+
+void main(){
+  vec3 s = uBoxMax - uBoxMin;
+  vec3 p = vec3(uBoxMin.x + (gl_FragCoord.x - 0.5) / uGrid.x * s.x, uLayer / (uGrid.z - 1.0) * uHeight, uBoxMax.z - (gl_FragCoord.y - 0.5) / uGrid.y * s.z);
+  vec4 E = vec4(0.0);
+  for(int i = 0; i < 64; i++){
+    if(i >= uCount) break;
+    vec3 d = uPts[i].xyz - p;
+    float r = length(d), od = 0.0;
+    for(int j = 0; j < 8; j++){ vec2 f = fields(p + d * ((float(j) + 0.5) / 8.0)); od += f.r * 1.1 + f.g * 0.3; }
+    E[int(uPts[i].w + 0.5)] += uW[i] / (1.0 + 0.11 * od * r / 8.0 * uExtinction) / (r * r + 0.25);
+  }
+  gl_FragColor = 1.0 - exp(-E * FLASH_ENCODE);
+}`
+
 export const lightVolumeVertex = /* glsl */`
 void main(){ gl_Position = vec4(position.xy, 0.0, 1.0); }`
 
@@ -139,6 +177,15 @@ uniform float uTime;
 uniform float uOpacity;
 
 ${lightSampling}
+${flashEncoding}
+// Light of the flashes shown (FlashVolume): the volumes of slots 0-3 and 4-7 and each slot's brightness now.
+uniform sampler3D uFlashA;
+uniform sampler3D uFlashB;
+uniform vec4 uFlashIA;
+uniform vec4 uFlashIB;
+uniform float uFlashOn;
+const vec3 FLASH_COLOR = vec3(0.86, 0.86, 1.0);
+const float FLASH_GAIN = 32.0;
 
 const int STEPS = 96;
 const float PI = 3.14159265;
@@ -212,6 +259,11 @@ void main(){
       vec3 ambient = mix(uAmbientBottom, uAmbientTop, h) * mix(0.18, 1.0, L.y);
       vec3 cloudCol = uSunColor * sunlight(L.x, phases) * mix(0.6, 1.0, powder) * 0.55 + ambient * 0.9;
       vec3 rainCol = vec3(0.40, 0.44, 0.50) * (uSunColor * exp(-L.x) * 0.25 + ambient * 1.1);
+      if(uFlashOn > 0.5){
+        vec3 tp = toTex(p);
+        vec3 flash = FLASH_COLOR * FLASH_GAIN * (dot(flashDecode(texture(uFlashA, tp)), uFlashIA) + dot(flashDecode(texture(uFlashB, tp)), uFlashIB));
+        cloudCol += flash; rainCol += flash * 0.7;
+      }
       vec3 S = mix(cloudCol, rainCol, dr / (dc + dr));
       float a = exp(-sigma * dt);
       float w = T * (1.0 - a);
@@ -330,4 +382,86 @@ void main(){
   col = mix(col, vec3(0.1, 0.12, 0.14), zero * 0.8);
   gl_FragColor = vec4(col, 1.0);
   #include <colorspace_fragment>
+}`
+
+/**
+ * Lightning ribbons (lightning.ts): each piece of channel a quad between its ends aA and aB, widened sideways on the
+ * screen (aSide) so its width is in pixels at any distance. aInfo: the flash's slot, main channel (1) or branch (0), the
+ * growth order of the piece (0-1, shown once the leader has grown that far), the width factor. uFlash per slot:
+ * brightness of the main channel and of the branches, how far the leader has grown, CG (1) or IC (0). Each end of a
+ * piece is dimmed by the cloud between it and the eye (16 steps through the cloud texture, the density as the clouds
+ * draw it): deep inside a cloud the channel is not seen, only the cloud's glow; what comes out of it is sharp.
+ */
+export const lightningVertex = /* glsl */`
+${volumeCommon}
+${cloudSampling}
+attribute vec3 aA;
+attribute vec3 aB;
+attribute float aSide;
+attribute float aEnd;
+attribute vec4 aInfo;
+uniform vec4 uFlash[8];
+uniform vec2 uRes;
+uniform float uPx;
+varying float vAcross;
+varying float vCore;
+varying float vHalo;
+varying float vI;
+varying float vCg;
+varying float vSeen;
+
+// Optical depth of the cloud and precipitation between a point and the camera.
+float cloudBetween(vec3 p){
+  vec3 rd = cameraPosition - p;
+  float far = length(rd);
+  rd /= far;
+  vec3 inv = 1.0 / rd, t0 = (uBoxMin - p) * inv, t1 = (uBoxMax - p) * inv, lo = min(t0, t1), hi = max(t0, t1);
+  float a = max(max(max(lo.x, lo.y), lo.z), 0.0), b = min(min(min(hi.x, hi.y), hi.z), far);
+  if(b <= a) return 0.0;
+  float ds = (b - a) / 16.0, od = 0.0;
+  for(int i = 0; i < 16; i++){
+    vec2 c = fields(p + rd * (a + ds * (float(i) + 0.5)));
+    od += clamp(c.r * 1.35 - 0.1, 0.0, 1.0) + c.g * 0.35;
+  }
+  return od * ds * uExtinction;
+}
+
+void main(){
+  vec4 f = uFlash[int(aInfo.x + 0.5)];
+  float I = aInfo.z <= f.z ? mix(f.y, f.x, aInfo.y) : 0.0;
+  vec4 ca = projectionMatrix * viewMatrix * vec4(aA, 1.0), cb = projectionMatrix * viewMatrix * vec4(aB, 1.0);
+  if(I < 0.002 || ca.w <= 0.0 || cb.w <= 0.0){ gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
+  vec2 hr = uRes * 0.5, sa = ca.xy / ca.w * hr, sb = cb.xy / cb.w * hr, d = sb - sa;
+  float len = length(d);
+  vec2 dir = len > 1e-4 ? d / len : vec2(1.0, 0.0), nrm = vec2(-dir.y, dir.x);
+  float b = min(I, 1.0);
+  vCore = uPx * (0.5 + 0.9 * b) * aInfo.w;
+  vHalo = uPx * (8.0 + 22.0 * b) * aInfo.w;
+  vec4 c = aEnd < 0.5 ? ca : cb;
+  // Past the ends by the core's width, so the pieces join without gaps.
+  vec2 s = (aEnd < 0.5 ? sa - dir * vCore : sb + dir * vCore) + nrm * aSide * vHalo;
+  gl_Position = vec4(s / hr * c.w, c.z, c.w);
+  vAcross = aSide * vHalo;
+  vI = I;
+  vCg = f.w;
+  vSeen = exp(-cloudBetween(aEnd < 0.5 ? aA : aB));
+}`
+
+/** A white core (HDR: it saturates to white) and a softer violet-blue glow around it, added to what is behind. */
+export const lightningFragment = /* glsl */`
+precision highp float;
+varying float vAcross;
+varying float vCore;
+varying float vHalo;
+varying float vI;
+varying float vCg;
+varying float vSeen;
+
+void main(){
+  float d = abs(vAcross), k = d / vCore;
+  float core = exp(-k * k);
+  float glow = exp(-4.0 * d / vHalo) * (1.0 - smoothstep(0.7 * vHalo, vHalo, d));
+  vec3 halo = mix(vec3(0.62, 0.55, 1.0), vec3(0.72, 0.78, 1.0), vCg);
+  // Through a thin veil of cloud the core is dimmed more than the glow, which the veil itself scatters.
+  gl_FragColor = vec4(vec3(1.0) * core * vI * 1.4 * vSeen + halo * glow * vI * 0.38 * pow(vSeen, 0.6), 1.0);
 }`
