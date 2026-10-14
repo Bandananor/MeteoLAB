@@ -6,6 +6,7 @@
 //   npx vite build --ssr tests/bench/flashes.ts --outDir .bench/flashes && node .bench/flashes/flashes.js "<scenario>" [minutes=60]
 import { AtmosphereModel, createGrid, domainGrid, DT, SCENARIOS } from '../../src/core'
 import { SUMMER_DAY } from '../../src/core/fixtures'
+import { chargingRate } from '../../src/core/charge'
 
 const [name, minutesArg] = process.argv.slice(2), minutes = Number(minutesArg ?? 60)
 const scenario = SCENARIOS.find(s => s.name === name)
@@ -78,6 +79,22 @@ for (let t = DT; t <= minutes * 60; t += DT) {
     const n = core.length
     coreProfile.push(`${km}(${(tc / n).toFixed(0)}C):${(net / n).toFixed(2)}/g${(gr / n).toFixed(2)}/i${(ic / n).toFixed(2)}`)
   }
+  // The core's charging by level: cloud water and graupel-hail (g/m3), the non-inductive rate gained by the graupel
+  // (pC/m3/s, mean) and the share of nodes where it charges positively.
+  const charging = []
+  for (const km of [3, 4, 5, 6, 7, 8, 9]) {
+    const z = level(km); if (z < 0 || !core.length) continue
+    let lwc = 0, gr = 0, rate = 0, pos = 0, n = 0
+    for (const c of core) {
+      const i = c + z * layer, tc = model.theta[i] * model.env.exner[z] - 273.15, r = chargingRate(tc, rhoAir[z], model.cloud[i], model.ice[i], model.snow[i], model.graupel[i], model.hail[i], 1)
+      lwc += model.cloud[i] * rhoAir[z] * 1e3; gr += (model.graupel[i] + model.hail[i]) * rhoAir[z] * 1e3; rate += r; if (r > 0) pos++; if (r !== 0) n++
+    }
+    const k = core.length
+    charging.push(`${km}:w${(lwc / k).toFixed(1)}/g${(gr / k).toFixed(1)}/${(rate / k * 1e12).toFixed(0)}/${n ? (pos / n * 100).toFixed(0) : '-'}%`)
+  }
+  // The rain shafts: columns with rain over 0.5 g/m3 at 1 km; their mean rain and graupel charge there (nC/m3).
+  { const z = level(1); let n = 0, cr = 0, cg = 0; for (let c = 0; c < layer; c++) { const i = c + z * layer; if (model.rain[i] * rhoAir[z] > 5e-4) { n++; cr += model.chargeRain[i] * rhoAir[z] * 1e9; cg += model.chargeGraupel[i] * rhoAir[z] * 1e9 } }
+    console.log(`   charging in the core (lwc/graupel g/m3, pC/m3/s, % positive): ${charging.join(' ')} | rain shafts ${n} cols at 1 km: rain ${n ? (cr / n).toFixed(2) : '-'} graupel ${n ? (cg / n).toFixed(2) : '-'} nC/m3`) }
   // The whole storm's net charge by level: the mean over the nodes holding any charge.
   const storm = []
   for (const km of [2, 4, 5, 6, 7, 8, 9, 10, 11, 12]) {

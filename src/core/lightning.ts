@@ -53,7 +53,8 @@ export const CLOUD_SIGMA = .1, CLOUDY = 1e-5
  * Point discharge (corona) from the ground under a strong field: ions of the sign that moves away from the ground,
  * CORONA_RATE (|E0| - CORONA_FIELD) A/m² (E0 the field at the ground, V/m): ~2.5 nA/m² at 10 kV/m (Standler & Winn
  * 1979, Chauzy & Soula 1999, by memory). It builds the positive space charge under the storm that limits the ground
- * field to ~5-10 kV/m.
+ * field to ~5-10 kV/m. Over the sea there are no points to discharge from (the field at the surface reaches tens of
+ * kV/m, Toland & Vonnegut 1977, by memory): no corona there (`Lightning.corona`).
  */
 export const CORONA_FIELD = 5e3, CORONA_RATE = 5e-13
 
@@ -110,6 +111,8 @@ export class Lightning {
    * start, C: > 0 when it lost positive charge.
    */
   conducted = 0
+  /** Whether the ground gives corona: over land, not over the sea. */
+  corona = true
   private readonly change: Float64Array; private readonly sigma: Float64Array
   /** Cloud water, ice and snow at the nodes, kg/kg (set by `cloud`; without it the channel knows the cloud by its charge alone). */
   private cloudy?: Float32Array
@@ -172,7 +175,7 @@ export class Lightning {
     }
     // The corona: the field at the ground E0 = -φ1 / dz (positive upwards, under negative charge) beyond CORONA_FIELD
     // drives ions of its sign up into the lowest level.
-    for (let c = 0; c < layer; c++) {
+    if (this.corona) for (let c = 0; c < layer; c++) {
       const e0 = -phi[c + layer] / dzs[0], over = Math.abs(e0) - CORONA_FIELD
       if (over <= 0) continue
       const q = Math.sign(e0) * CORONA_RATE * over * dx * dy * dt

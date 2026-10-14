@@ -771,6 +771,7 @@ export class AtmosphereModel implements TaskModel {
    */
   private discharge(dt: number) {
     this.lightning ??= new Lightning(this.grid, this.env.rho, this.config.seed + 1)
+    this.lightning.corona = this.config.surfaceType !== 'water'
     // The cloud of the channel and the conduction: the droplets, crystals and snow (in the scheme the anvil is mostly snow).
     this.lightning.cloud([this.cloud, this.ice, this.snow])
     for (const flash of this.lightning.discharge([this.chargeIce, this.chargeGraupel, this.chargeRain, this.chargeAir], this.time + dt)) {

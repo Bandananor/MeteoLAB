@@ -55,7 +55,7 @@ describe('lightning (2.3 step 3)', () => {
     expect(first.charge).toBeLessThan(0)
     expect(first.ground).toBeGreaterThanOrEqual(0); expect(first.ground).toBeLessThan(grid.layer)
     // The channel is connected: every node grew from one before it, the first from none.
-    expect(first.parent[0]).toBe(-1)
+    expect(first.parent[0]).toBe(-1); expect(first.polarity.length).toBe(first.nodes.length)
     for (let c = 1; c < first.nodes.length; c++) expect(first.parent[c]).toBeGreaterThanOrEqual(0), expect(first.parent[c]).toBeLessThan(c)
     // What the cloud gained came from the ground (the CG flashes' charges, opposite).
     const lowered = flashes.reduce((s, f) => s + (f.kind === 'CG' ? f.charge : 0), 0)
@@ -126,5 +126,9 @@ describe('conduction and corona (2.7)', () => {
     const weak = storm([[5000, -.01]]), quiet = new Lightning(grid, air, 7)
     quiet.solve(weak)
     expect(Math.abs(quiet.phi[centre(1)] / grid.dzs[0])).toBeLessThan(5e3)
+    // Over the sea: none, the lowest level only gets the conduction current (much smaller).
+    const sea = storm([[5000, -4]]), wet = new Lightning(grid, air, 7)
+    wet.corona = false; wet.solve(sea); wet.conduct(sea[3], 10)
+    expect(net(sea, centre(1))).toBeLessThan(.1 * net(carriers, centre(1)))
   })
 })
