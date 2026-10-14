@@ -10,8 +10,24 @@ import { N0S, RHO_S } from './ice'
 
 /** No charge separation colder than this (Mansell et al. 2005 / Saunders and Peck 1998: no data), °C. */
 export const CHARGING_COLDEST = -33
-/** Upper limit of the charge separated per collision, C — keeps the fit, extrapolated to large aggregates, bounded. */
-export const MAX_COLLISION_CHARGE = 50e-15
+/**
+ * Upper limit of the charge separated per collision, C — keeps the fit, extrapolated to large aggregates and fast
+ * impacts, bounded (20 fC as in Ziegler et al. 1991 and Mansell et al. 2005, by memory).
+ */
+export const MAX_COLLISION_CHARGE = 20e-15
+/**
+ * Collection efficiency of cloud droplets (~10 µm) on graupel of 1-3 mm: the effective water content of the rime
+ * accretion rate is this share of the cloud water (Saunders & Peck 1998 measured RAR = EW V with EW < LWC).
+ */
+export const COLLECTION_EFFICIENCY = .6
+/**
+ * Fall (impact) speed of the rimers that do the charging, at most, m/s: the small graupel of 0.5-2 mm (~5-6 m/s), as
+ * in the laboratory (targets at 2-10 m/s), not the mass-weighted speed of the whole population (~9-12 m/s with the
+ * model's hail-like intercept). With the mass-weighted speed and efficiency 1 the rime accretion rate was 3-6 times too
+ * high, the graupel charged positively almost everywhere and the storm came out inverted (+CG ~90%; the
+ * meteorologist's review 14.10.2026).
+ */
+export const CHARGING_SPEED = 6
 
 /**
  * Critical rime accretion rate of Saunders and Peck (1998), g m⁻² s⁻¹: above it graupel charges positively, below it
@@ -39,11 +55,32 @@ export function collisionCharge(tc: number, rar: number, d: number, v: number) {
   return Math.max(-MAX_COLLISION_CHARGE, Math.min(MAX_COLLISION_CHARGE, dq))
 }
 
-/** Number of ice crystals per m³ at tc °C (Cooper 1986, 5 exp(0.304 (T0 - T)) per m³), at most 250 per litre. */
-export function crystalNumber(tc: number) { return Math.min(250e3, 5 * Math.exp(.304 * Math.max(0, -tc))) }
+/** Reference size of the crystals that charge, m: ~100 µm, as in the laboratory (Takahashi 1978, Saunders et al. 1991). */
+export const CRYSTAL_SIZE = 100e-6
+/**
+ * Most crystals per m³ in a convective core: 150 per litre (10-100+ observed, Dye et al. 1986, by memory: secondary
+ * ice from Hallett-Mossop splintering and homogeneous freezing).
+ */
+export const MAX_CRYSTALS = 150e3
+/** Size range of the crystals for the charge per collision, m (the range of the fit of Saunders et al. 1991). */
+export const CRYSTAL_RANGE = [20e-6, 300e-6] as const
 
-/** Mean volume diameter of crystals of mixing ratio qi (kg/kg) in air of density rho at tc °C, m (solid ice spheres). */
-export function crystalDiameter(qi: number, rho: number, tc: number) { return qi > 0 ? Math.cbrt(6 * rho * qi / (Math.PI * 900 * crystalNumber(tc))) : 0 }
+/**
+ * Number of ice crystals per m³ for the charging: the cloud ice mass (qi kg/kg in air of density rho) in crystals of
+ * CRYSTAL_SIZE, at least as many as primary nucleation gives at tc °C (Cooper 1986, 5 exp(0.304 (T0 - T)) per m³) and
+ * at most MAX_CRYSTALS. With the Cooper number alone (0.03 per litre at -6 °C, 0.5 at -15 °C) there were almost no
+ * crystals warmer than -20 °C: the charging came out 5-10 times too weak and the lower positive charge (positive graupel
+ * at -0…-10 °C) never formed (the meteorologist's review 14.10.2026). Only the charging uses it, not the microphysics.
+ */
+export function crystalNumber(tc: number, qi = 0, rho = 1) {
+  const cooper = Math.min(MAX_CRYSTALS, 5 * Math.exp(.304 * Math.max(0, -tc))), fromMass = rho * qi / (Math.PI / 6 * 900 * CRYSTAL_SIZE ** 3)
+  return Math.min(MAX_CRYSTALS, Math.max(cooper, fromMass))
+}
+
+/** Mean volume diameter of crystals of mixing ratio qi (kg/kg) in air of density rho at tc °C, m (solid ice spheres), within CRYSTAL_RANGE. */
+export function crystalDiameter(qi: number, rho: number, tc: number) {
+  return qi > 0 ? Math.min(CRYSTAL_RANGE[1], Math.max(CRYSTAL_RANGE[0], Math.cbrt(6 * rho * qi / (Math.PI * 900 * crystalNumber(tc, qi, rho))))) : 0
+}
 
 /** A rimer: an exponential size distribution of intercept n0 (m⁻⁴) and particle density rhoX, fall law V = a D^0.5. */
 interface Rimer { n0: number; density: number }
@@ -55,28 +92,30 @@ const CD = .6, GAMMA_45 = 11.6317
  * opposite): every rimer (graupel, hail) meets every crystal kind (cloud ice, snow); the collisions that rebound
  * (1 - exp(0.09 Tc), the sticking efficiency of Lin et al. 1983) each separate collisionCharge. Collisions per m³ and s:
  * N_c E π/4 ∫ (D + d_c)² n(D) dD |V - v_c| with the rimer's mass-weighted fall speed V; the rime accretion rate is the
- * cloud water content (g m⁻³) times V (the riming sweep of the model's microphysics, efficiency 1).
+ * effective water (COLLECTION_EFFICIENCY of the cloud water, g m⁻³) times the impact speed of the charging rimers
+ * (V, at most CHARGING_SPEED), which is also the impact speed of the charge per collision. A rimer in wet growth
+ * (`wetGraupel`, `wetHail`) does not charge: on its wet surface the crystals stick instead of rebounding.
  * Mixing ratios in kg/kg, rho the air density (kg/m³), snowFall the snow's mass-weighted fall speed (m/s).
  */
-export function chargingRate(tc: number, rho: number, cloud: number, ice: number, snow: number, graupel: number, hail: number, snowFall: number) {
+export function chargingRate(tc: number, rho: number, cloud: number, ice: number, snow: number, graupel: number, hail: number, snowFall: number, wetGraupel = false, wetHail = false) {
   if (tc >= 0 || tc < CHARGING_COLDEST || cloud <= 0 || ice + snow <= 0 || graupel + hail <= 0) return 0
   // Called at every mixed-phase node each step: no arrays, two rimers by two crystal kinds written out.
   const rebound = 1 - Math.exp(.09 * tc), water = rho * cloud * 1000
-  const ni = ice > 0 ? crystalNumber(tc) : 0, di = ice > 0 ? crystalDiameter(ice, rho, tc) : 0
+  const ni = ice > 0 ? crystalNumber(tc, ice, rho) : 0, di = ice > 0 ? crystalDiameter(ice, rho, tc) : 0
   const snowSlope = snow > 0 ? (Math.PI * RHO_S * N0S / (rho * snow)) ** .25 : 0, ns = snow > 0 ? N0S / snowSlope : 0, ds = snow > 0 ? 1 / snowSlope : 0
   let rate = 0
-  if (graupel > 0) rate += rimerRate(GRAUPEL, graupel, tc, rho, water, rebound, ni, di, ns, ds, snowFall)
-  if (hail > 0) rate += rimerRate(HAIL, hail, tc, rho, water, rebound, ni, di, ns, ds, snowFall)
+  if (graupel > 0 && !wetGraupel) rate += rimerRate(GRAUPEL, graupel, tc, rho, water, rebound, ni, di, ns, ds, snowFall)
+  if (hail > 0 && !wetHail) rate += rimerRate(HAIL, hail, tc, rho, water, rebound, ni, di, ns, ds, snowFall)
   return rate
 }
 
 /** One rimer's share of chargingRate: its collisions with the cloud ice (ni per m³ of diameter di, at rest) and the snow (ns, ds, falling at vs). */
 function rimerRate(rimer: Rimer, mass: number, tc: number, rho: number, water: number, rebound: number, ni: number, di: number, ns: number, ds: number, vs: number) {
   const lambda = (Math.PI * rimer.density * rimer.n0 / (rho * mass)) ** .25, fall = Math.sqrt(4 * G * rimer.density / (3 * CD * rho)) * GAMMA_45 / 6 / Math.sqrt(lambda)
-  const rar = water * fall, l2 = lambda * lambda, l3 = l2 * lambda, k = Math.PI / 4 * rimer.n0 * rebound
+  const impact = Math.min(fall, CHARGING_SPEED), rar = COLLECTION_EFFICIENCY * water * impact, l2 = lambda * lambda, l3 = l2 * lambda, k = Math.PI / 4 * rimer.n0 * rebound
   let rate = 0
-  if (ni > 0) rate += ni * k * (2 / l3 + 2 * di / l2 + di * di / lambda) * fall * collisionCharge(tc, rar, di, fall)
-  if (ns > 0) { const v = Math.abs(fall - vs); rate += ns * k * (2 / l3 + 2 * ds / l2 + ds * ds / lambda) * v * collisionCharge(tc, rar, ds, v) }
+  if (ni > 0) rate += ni * k * (2 / l3 + 2 * di / l2 + di * di / lambda) * fall * collisionCharge(tc, rar, di, impact)
+  if (ns > 0) { const v = Math.abs(fall - vs); rate += ns * k * (2 / l3 + 2 * ds / l2 + ds * ds / lambda) * v * collisionCharge(tc, rar, ds, Math.abs(impact - vs)) }
   return rate
 }
 

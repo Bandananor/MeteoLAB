@@ -49,6 +49,16 @@ function wetGrowth(lambda: number, a: number, n0: number, tc: number, qv: number
 }
 
 /**
+ * Whether a rimer population (mixing ratio q, intercept n0, density rhoX) is in wet growth at tc °C: it sweeps out
+ * more water (and ice, snow at their efficiencies) than its surface can freeze (Lin 1983, as hailProcesses decides it).
+ */
+export function wetGrowing(q: number, n0: number, rhoX: number, tc: number, qv: number, p: number, rho: number, cloud: number, rain: number, ice: number, snow: number) {
+  if (tc >= 0 || q <= 1e-9) return false
+  const lambda = slope(q, rho, n0, rhoX), a = fallCoefficient(rho, rhoX), k = sweep(lambda, a, n0)
+  return k * (cloud + rain + .1 * ice + Math.exp(.09 * tc) * snow) > wetGrowth(lambda, a, n0, tc, qv, p, rho, k * (ice + snow))
+}
+
+/**
  * Hail processes at cell i over dt. Below 0 °C: graupel in wet growth turns into hail (1/HAIL_CONVERSION_TIME); hail
  * sweeps out cloud water, rain, cloud ice and snow (ice efficiency 0.1, snow exp(0.09 Tc); both 1 when wet) — all of it
  * freezes in dry growth; in wet growth hail grows at the wet-growth rate and sheds the unfrozen water as rain; hail
@@ -59,12 +69,8 @@ export function hailProcesses(theta: Float32Array, q: Float32Array, cloud: Float
   graupel: Float32Array, hail: Float32Array, i: number, exner: number, p: number, rho: number, dt: number) {
   const tk = theta[i] * exner, tc = tk - T0, heat = 1 / (CP * exner)
   let cooling = 0
-  if (tc < 0 && graupel[i] > 1e-9) {
-    const lambda = slope(graupel[i], rho, N0G, RHO_G), a = fallCoefficient(rho, RHO_G), k = sweep(lambda, a, N0G)
-    const dry = k * (cloud[i] + rain[i] + .1 * ice[i] + Math.exp(.09 * tc) * snow[i])
-    if (dry > wetGrowth(lambda, a, N0G, tc, q[i], p, rho, k * (ice[i] + snow[i]))) {
-      const turned = graupel[i] * (1 - Math.exp(-dt / HAIL_CONVERSION_TIME)); graupel[i] -= turned; hail[i] += turned
-    }
+  if (wetGrowing(graupel[i], N0G, RHO_G, tc, q[i], p, rho, cloud[i], rain[i], ice[i], snow[i])) {
+    const turned = graupel[i] * (1 - Math.exp(-dt / HAIL_CONVERSION_TIME)); graupel[i] -= turned; hail[i] += turned
   }
   const qh = hail[i]
   if (qh <= 1e-9) return 0

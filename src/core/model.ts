@@ -12,8 +12,8 @@ import { type Flash, Lightning } from './lightning'
 import { ZONE_DEPTH, ZONE_TIME, zoneMaps, zoneShape } from './zones'
 import { advected } from './largescale'
 import { coldMoisture, FRONT_BLUR, FRONTAL_TIME, frontalDeficit, frontDistance, WARM_BAND } from './fronts'
-import { graupelFallSpeed, graupelProcesses } from './graupel'
-import { hailFallSpeed, hailMaxDiameter, hailProcesses } from './hail'
+import { graupelFallSpeed, graupelProcesses, N0G, RHO_G } from './graupel'
+import { hailFallSpeed, hailMaxDiameter, hailProcesses, N0H, RHO_H, wetGrowing } from './hail'
 import { freezeRain, saturationAdjustMixed, snowFallSpeed, snowProcesses } from './ice'
 import { fallSpeed, rainProcesses, saturationAdjust } from './microphysics'
 import { PressureSolver } from './pressure'
@@ -699,7 +699,9 @@ export class AtmosphereModel implements TaskModel {
               after[0] = ice[i] + snow[i]; after[1] = graupel[i] + hail[i]; after[2] = rain[i]; after[3] = cloud[i]
               cNow[0] = cI[i]; cNow[1] = cG[i]; cNow[2] = cR[i]; cNow[3] = cA[i]
               if (cNow[0] !== 0 || cNow[1] !== 0 || cNow[2] !== 0 || cNow[3] !== 0) transferCharge(cNow, before, after)
-              const separated = chargingRate(theta[i] * exner - 273.15, rhoZ, cloud[i], ice[i], snow[i], graupel[i], hail[i], this.snowFall[i]) * dt / rhoZ
+              const tc = theta[i] * exner - 273.15
+              const wetG = wetGrowing(graupel[i], N0G, RHO_G, tc, q[i], p, rhoZ, cloud[i], rain[i], ice[i], snow[i]), wetH = wetGrowing(hail[i], N0H, RHO_H, tc, q[i], p, rhoZ, cloud[i], rain[i], ice[i], snow[i])
+              const separated = chargingRate(tc, rhoZ, cloud[i], ice[i], snow[i], graupel[i], hail[i], this.snowFall[i], wetG, wetH) * dt / rhoZ
               cI[i] = cNow[0] - separated; cG[i] = cNow[1] + separated; cR[i] = cNow[2]; cA[i] = cNow[3]
             }
           } else cond = saturationAdjust(theta, q, cloud, i, exner, p)
