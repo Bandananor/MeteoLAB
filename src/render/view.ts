@@ -41,6 +41,10 @@ const SWATH_COLORS: [number, [number, number, number]][] = [[1, [150, 200, 240]]
  */
 const ICE_EXTINCTION = .25
 const cloudOpacity = (c: number) => c > .00003 ? 1 - Math.exp(-(c - .00003) / .0004) : 0
+/** The anvil's base in the columns' map: its scale, m, and where the cloud begins (the shader's cloud threshold). */
+const ANVIL_BASE_SCALE = 20_000, ANVIL_OPACITY = .05
+/** Vertical vorticity at the top of the rotation map, 1/s: a mesocyclone (0.01 and more) is at its middle. */
+const ROTATION_SCALE = .02
 /** Updraught that gives the cloud its full billows, m/s (the volume texture's B). */
 const UPDRAUGHT_SCALE = 20
 const FLOW_PARTICLES = 10_000, PRECIP_PARTICLES = 8000, MELT_DEPTH = 600, SNOW_FALL = 2
@@ -84,6 +88,12 @@ export class StormView {
   private readonly light: LightVolume; private readonly flashLight: FlashVolume; private readonly strikeLight: THREE.PointLight
   /** The strongest updraught of each column, and of each column with those beside it (the tower's), m/s. */
   private towerColumn?: Float32Array; private tower?: Float32Array
+  /**
+   * The columns for the cloud's shape (RGBA per column): the rotation, the strongest |vertical vorticity| at 1-6 km of
+   * the column and those beside it (0-255 of ROTATION_SCALE); the base of an anvil over it (of ANVIL_BASE_SCALE m) times
+   * that anvil's presence, and the presence (0-255).
+   */
+  private readonly columnData: Uint8Array; private readonly columnTexture: THREE.DataTexture; private spinColumn?: Float32Array
   /** Baked noise of the cloud's sub-grid detail (noise.ts). */
   private readonly noise: THREE.Data3DTexture
   private readonly volumeData: Uint8Array; private readonly volumeTexture: THREE.Data3DTexture; private readonly volumeMaterial: THREE.ShaderMaterial; private readonly volumeMesh: THREE.Mesh
@@ -178,12 +188,15 @@ export class StormView {
     }
     this.volumeTexture = texture3D(this.volumeData, THREE.RGBAFormat, nx, ny, nz)
     this.noise = noiseTexture()
+    this.columnData = new Uint8Array(nx * ny * 4)
+    this.columnTexture = new THREE.DataTexture(this.columnData, nx, ny, THREE.RGBAFormat)
+    this.columnTexture.minFilter = this.columnTexture.magFilter = THREE.LinearFilter; this.columnTexture.wrapS = this.columnTexture.wrapT = THREE.RepeatWrapping; this.columnTexture.needsUpdate = true
     this.light = new LightVolume(nx, ny, nz, this.shared, this.volumeTexture)
     this.flashLight = new FlashVolume(nx, ny, nz, this.shared, this.volumeTexture)
     this.volumeMaterial = new THREE.ShaderMaterial({
       vertexShader: volumeVertex, fragmentShader: volumeFragment, side: THREE.BackSide, transparent: true, depthWrite: false, depthTest: false, premultipliedAlpha: true,
       uniforms: {
-        ...this.shared, uDensity: { value: this.volumeTexture }, uNoise: { value: this.noise }, uLight: { value: this.light.texture }, uFlashA: { value: this.flashLight.targets[0].texture }, uFlashB: { value: this.flashLight.targets[1].texture }, uFlashIA: { value: new THREE.Vector4() }, uFlashIB: { value: new THREE.Vector4() }, uFlashOn: { value: 0 }, uSunColor: { value: new THREE.Color() }, uAmbientTop: { value: new THREE.Color() }, uAmbientBottom: { value: new THREE.Color() },
+        ...this.shared, uDensity: { value: this.volumeTexture }, uNoise: { value: this.noise }, uColumns: { value: this.columnTexture }, uLight: { value: this.light.texture }, uFlashA: { value: this.flashLight.targets[0].texture }, uFlashB: { value: this.flashLight.targets[1].texture }, uFlashIA: { value: new THREE.Vector4() }, uFlashIB: { value: new THREE.Vector4() }, uFlashOn: { value: 0 }, uSunColor: { value: new THREE.Color() }, uAmbientTop: { value: new THREE.Color() }, uAmbientBottom: { value: new THREE.Color() },
         uFogColor: { value: (this.scene.fog as THREE.FogExp2).color }, uFogDensity: { value: (this.scene.fog as THREE.FogExp2).density }, uTime: { value: 0 }, uOpacity: { value: 1 },
       },
     })
@@ -232,7 +245,7 @@ export class StormView {
 
   dispose() {
     this.controls.dispose()
-    ;[this.volumeTexture, this.noise, this.fieldTexture, this.colormap, this.volumeMaterial, this.fieldMaterial, this.sliceMaterial, this.volumeMesh.geometry, this.sliceH.geometry, this.sliceV.geometry, this.precipGeometry, this.precipMaterial, this.swathTexture, this.cityTexture, this.zoneTexture, this.frontLine?.geometry, this.frontLine?.material as THREE.Material | undefined, this.swath.geometry, this.swath.material as THREE.Material, this.mesoMarker.geometry, this.mesoMarker.material as THREE.Material, this.selectionMarker.geometry, this.selectionMarker.material as THREE.Material, this.stationMarker.geometry, this.stationMarker.material as THREE.Material, this.lightning, this.light, this.flashLight].forEach(r => r?.dispose())
+    ;[this.volumeTexture, this.noise, this.columnTexture, this.fieldTexture, this.colormap, this.volumeMaterial, this.fieldMaterial, this.sliceMaterial, this.volumeMesh.geometry, this.sliceH.geometry, this.sliceV.geometry, this.precipGeometry, this.precipMaterial, this.swathTexture, this.cityTexture, this.zoneTexture, this.frontLine?.geometry, this.frontLine?.material as THREE.Material | undefined, this.swath.geometry, this.swath.material as THREE.Material, this.mesoMarker.geometry, this.mesoMarker.material as THREE.Material, this.selectionMarker.geometry, this.selectionMarker.material as THREE.Material, this.stationMarker.geometry, this.stationMarker.material as THREE.Material, this.lightning, this.light, this.flashLight].forEach(r => r?.dispose())
     this.renderer.dispose()
   }
 
@@ -408,6 +421,30 @@ export class StormView {
       for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) top = Math.max(top, column[(x + dx + nx) % nx + ((y + dy + ny) % ny) * nx])
       tower[x + y * nx] = top
     }
+    // The rotation: the strongest |ζ| of each column at 1-6 km, then of it and the columns beside it.
+    const spin = this.spinColumn ??= new Float32Array(layer), z1 = Math.max(1, levelAt(m.grid, 1000) | 0), z6 = Math.min(nz - 2, Math.ceil(levelAt(m.grid, 6000)))
+    for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++) { let s = 0; for (let z = z1; z <= z6; z++) s = Math.max(s, Math.abs(m.zeta(x, y, z))); spin[x + y * nx] = s }
+    for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++) {
+      let s = 0
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) s = Math.max(s, spin[(x + dx + nx) % nx + ((y + dy + ny) % ny) * nx])
+      this.columnData[(x + y * nx) * 4] = clamp(s / ROTATION_SCALE) * 255
+    }
+    // The anvil over each column, for the mammatus: the lowest level above 5 km where the cloud (as drawn) begins, if
+    // it is ice and there is no tower under it; its base between that level and the one below.
+    const opacity = (i: number) => cloudOpacity(cloud(i) - (1 - ICE_EXTINCTION) * m.ice[i]), z5 = Math.ceil(levelAt(m.grid, 5000))
+    for (let c = 0; c < layer; c++) {
+      let base = 0, presence = 0
+      for (let z = z5 + 1; z < nz; z++) {
+        const i = c + z * layer, o = opacity(i)
+        if (o < ANVIL_OPACITY) continue
+        const below = opacity(i - layer), share = cloud(i) > 0 ? m.ice[i] / cloud(i) : 0
+        base = m.grid.zs[z - 1] + (m.grid.zs[z] - m.grid.zs[z - 1]) * (ANVIL_OPACITY - below) / Math.max(o - below, 1e-6)
+        presence = clamp((share - .6) / .2) * (1 - clamp((tower[c] - 1.6) / 2))
+        break
+      }
+      this.columnData[c * 4 + 1] = clamp(base / ANVIL_BASE_SCALE) * presence * 255; this.columnData[c * 4 + 2] = presence * 255; this.columnData[c * 4 + 3] = 255
+    }
+    this.columnTexture.needsUpdate = true
     const put = (o: number, c: number, p: number, ice: number) => { d[o * 4] = cloudOpacity(c - (1 - ICE_EXTINCTION) * ice) * 255; d[o * 4 + 1] = clamp(p / .0025) * 255; d[o * 4 + 2] = clamp(tower[o % layer] / UPDRAUGHT_SCALE) * 255; d[o * 4 + 3] = (c > 0 ? clamp(ice / c) : 1) * 255 }
     if (!tl) for (let i = 0; i < m.grid.n; i++) put(i, cloud(i), precip(i), m.ice[i])
     else {

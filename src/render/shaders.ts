@@ -226,13 +226,43 @@ float risingBillow(vec3 p, float w){
 // The model grid is ~1 km, so sub-grid noise erodes the edges; its kind follows the cloud. f: fieldsAll. Over a strong
 // updraught, rising cauliflower billows with a sharp edge (liquid cumulus towers); in the ice, fibrous wisps stretched
 // along the horizontal with a soft edge (the anvil, cirrus); elsewhere the soft cumulus texture.
+// The columns (view.ts): R the rotation, the strongest |vertical vorticity| at 1-6 km (0-1 of 0.02 1/s); G the base
+// of an anvil over the column (0-1 of ANVIL_BASE_SCALE km) times B, the presence of that anvil (0-1).
+uniform sampler2D uColumns;
+const float ANVIL_BASE_SCALE = 20.0;
+
+// Mammatus: rounded pouches hanging up to MAMMA_DEPTH km under the base of an anvil (higher than 5 km, of ice, away
+// from a tower: view.ts finds it for each column). The pouches are lobes of the noise's large octave (~1.2 km across)
+// that hang the deeper the stronger the lobe, so their bottoms are round.
+const float MAMMA_DEPTH = 0.75;
+float mammaDensity(vec3 p){
+  vec3 c = texture(uColumns, toTex(p).xy).rgb;
+  if(c.b < 0.02) return 0.0;
+  // The base, km: stored times its presence (B), so that the linear filter between columns with and without an anvil
+  // averages the bases instead of pulling them to the ground.
+  float h = c.g / c.b * ANVIL_BASE_SCALE - p.y;
+  if(h < 0.0 || h > MAMMA_DEPTH) return 0.0;
+  float lobe = octaves(vec3(p.x * 0.8, 0.0, p.z * 0.8) + vec3(3.1, 0.0, 1.7)).r;
+  float reach = smoothstep(0.4, 0.85, lobe) * MAMMA_DEPTH * smoothstep(0.0, 0.6, c.b);
+  // A soft edge wider than the march's fine step (a sharper one came out as a sawtooth), less dense than the anvil.
+  return smoothstep(0.0, 0.4, reach - h + 0.15) * 0.6;
+}
+
+float rotationAt(vec3 p){ return smoothstep(0.3, 0.65, texture(uColumns, toTex(p).xy).r); }
+
 float cloudDensity(vec3 p, vec4 f){
   float base = f.r;
   if(base < 0.004) return 0.0;
   float vigor = smoothstep(0.05, 0.4, f.b), ice = smoothstep(0.5, 0.95, f.a);
   ice *= 1.0 - vigor;
   float n = vigor + ice < 1.0 ? fbm(p * 1.15 + vec3(0.0, -uTime * 0.0015, 0.0)) : 0.0;
-  if(vigor > 0.0) n = mix(n, min(1.0, risingBillow(p, f.b * 0.02) * 1.5), vigor);
+  if(vigor > 0.0){
+    // A rotating updraught (a mesocyclone, 0.01 1/s and more) is smooth, its sides banded like a stack of plates
+    // (the striations of a supercell), not billowing: the turbulent eddies are spun out into horizontal bands.
+    float spin = rotationAt(p), tower = spin < 1.0 ? min(1.0, risingBillow(p, f.b * 0.02) * 1.5) : 0.0;
+    if(spin > 0.0) tower = mix(tower, 0.35 + 0.65 * fbm(p * vec3(0.35, 3.2, 0.35)), spin);
+    n = mix(n, tower, vigor);
+  }
   if(ice > 0.0) n = mix(n, fbm(p * vec3(0.55, 2.8, 0.55) + vec3(uTime * 0.0004, 0.0, 0.0)), ice);
   float d = base * 1.35 - (1.0 - n) * mix(mix(0.42, 0.62, vigor), 0.3, ice) * (1.0 - base * 0.6);
   // Sharp-edged towers, translucent ice.
@@ -278,13 +308,14 @@ void main(){
     if(T < 0.02 || tt > t.y) break;
     vec3 p = ro + rd * tt;
     vec4 f = fieldsAll(p);
-    bool cloudy = f.r >= 0.004 || f.g > 0.01;
+    float mamma = p.y > 5.0 && f.r < 0.004 ? mammaDensity(p) : 0.0;
+    bool cloudy = f.r >= 0.004 || f.g > 0.01 || mamma > 0.0;
     if(!inside){
       if(cloudy && coarse > fine){ inside = true; clearRun = 0; tt = max(t.x, tt - coarse); dt = fine; tt += dt; continue; }
     } else if(!cloudy){
       if(float(++clearRun) * fine > coarse + fine){ inside = false; dt = coarse; }
     } else clearRun = 0;
-    float dc = cloudDensity(p, f);
+    float dc = max(cloudDensity(p, f), mamma);
     float dr = f.g * 0.35;
     float sigma = (dc + dr) * uExtinction;
     if(sigma > 1e-4){
