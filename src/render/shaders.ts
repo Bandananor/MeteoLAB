@@ -56,9 +56,11 @@ vec4 flashDecode(vec4 v){ return -log(max(1.0 - v, vec4(1e-4))) / FLASH_ENCODE; 
  * One layer of a flash light volume: from up to 64 points of the channels of four flashes (uPts: x, y, z in km and the
  * slot 0-3 of the four; uW: each point's share of its flash), the light at the texel's node. Each point is a source
  * whose light falls off with distance (softened within ~0.5 km of the channel) as 1/r^2 through clear air, but in a
- * cloud that scatters without absorbing the light diffuses and lingers: the fluence goes as (1 + 0.75 (1 - g) tau)/r^2
- * (g = 0.85; tau along the way, 8 steps), which turns into ~1/r inside the cloud, where tau grows with r. So a flash
- * deep in a storm lights the whole cloud from inside (capped at 4 times the clear-air light).
+ * cloud that scatters without absorbing the light diffuses and lingers: for a point source the fluence is ~(1 + 3 (1 -
+ * g) tau)/r^2 (diffusion; g = 0.85, so 0.45 tau; tau along the way, 8 steps), ~1/r inside the cloud. The gain is capped
+ * at 3, a choice by eye that stands for the light escaping through the cloud's surfaces (which the infinite-medium
+ * formula ignores): without it a flash would light a whole storm evenly, while photos show the glow strongest near the
+ * channel.
  */
 export const flashVolumeFragment = /* glsl */`
 precision highp float;
@@ -79,7 +81,7 @@ void main(){
     vec3 d = uPts[i].xyz - p;
     float r = length(d), od = 0.0;
     for(int j = 0; j < 8; j++){ vec2 f = fields(p + d * ((float(j) + 0.5) / 8.0)); od += f.r * 1.1 + f.g * 0.3; }
-    E[int(uPts[i].w + 0.5)] += uW[i] * min(1.0 + 0.11 * od * r / 8.0 * uExtinction, 4.0) / (r * r + 0.25);
+    E[int(uPts[i].w + 0.5)] += uW[i] * min(1.0 + 0.45 * od * r / 8.0 * uExtinction, 3.0) / (r * r + 0.25);
   }
   gl_FragColor = 1.0 - exp(-E * FLASH_ENCODE);
 }`
@@ -448,7 +450,11 @@ void main(){
   vSeen = exp(-cloudBetween(aEnd < 0.5 ? aA : aB));
 }`
 
-/** A white core (HDR: it saturates to white) and a softer violet-blue glow around it, added to what is behind. */
+/**
+ * A white core (HDR: it saturates to white) and a softer glow around it, added to what is behind: a CG's blue-white
+ * (the N II and H-alpha lines together look white with blue, as on photos), an IC's neutral white (seen through cloud,
+ * whose Mie scattering is grey).
+ */
 export const lightningFragment = /* glsl */`
 precision highp float;
 varying float vAcross;
@@ -462,7 +468,7 @@ void main(){
   float d = abs(vAcross), k = d / vCore;
   float core = exp(-k * k);
   float glow = exp(-4.0 * d / vHalo) * (1.0 - smoothstep(0.7 * vHalo, vHalo, d));
-  vec3 halo = mix(vec3(0.62, 0.55, 1.0), vec3(0.72, 0.78, 1.0), vCg);
+  vec3 halo = mix(vec3(0.86, 0.86, 0.9), vec3(0.72, 0.78, 1.0), vCg);
   // Through a thin veil of cloud the core is dimmed more than the glow, which the veil itself scatters.
   gl_FragColor = vec4(vec3(1.0) * core * vI * 1.4 * vSeen + halo * glow * vI * 0.38 * pow(vSeen, 0.6), 1.0);
 }`

@@ -12,12 +12,14 @@ const SUBDIVIDE = 3
 const ROUGHNESS = .16
 
 /**
- * The course of one flash in time, ms from its start, as observed (Rakov & Uman 2003, by memory): a CG's stepped leader
- * (20-35 ms) grows down dimly, then the return stroke lights the main channel and, briefly, the branches; a negative CG
- * has 1-8 strokes along the same channel (about 3-4 on average) 15-120 ms apart (median ~45), some followed by a
- * continuing current; a positive CG usually one stroke with a long continuing current. An IC flash lasts 200-500 ms: its
- * channel grows over the first 60-150 ms, and K-changes flicker it. The brightness decays over tens of ms (the eye's and
- * a camera's persistence; the stroke itself is ~0.1 ms).
+ * The course of one flash in time, ms from its start, as observed (Rakov & Uman 2003, Thottappillil et al. 1992, Shindo
+ * & Uman 1989, by memory; checked by the meteorologist review 14.10.2026): a CG's stepped leader (20-35 ms) grows down
+ * dimly, then the return stroke lights the main channel and, briefly, the branches; a negative CG has 1-8 strokes along
+ * the same channel (1 in ~18%, 3.7 on average), log-normally 5-300 ms apart (geometric mean ~60 ms); a long continuing
+ * current follows ~11% of the subsequent strokes (not the first), so ~30% of the flashes have one; a positive CG usually
+ * one stroke with a long continuing current. An IC flash lasts 200-500 ms: its channel grows over the first 60-150 ms,
+ * then K-changes, an order of magnitude dimmer than a return stroke, flicker it. The brightness decays over tens of ms
+ * (the eye's persistence; the stroke itself is ~0.1 ms, as a high-speed camera sees it: `brightness(slow)`).
  */
 export interface Course { leader: number; strokes: { at: number; peak: number; cc: number; ccLength: number }[]; end: number }
 
@@ -25,7 +27,7 @@ export function course(flash: Flash, rng: () => number): Course {
   if (flash.kind === 'IC') {
     // The K-changes once the channel is there, the first as it completes.
     const leader = 60 + rng() * 90, end = 200 + rng() * 300, n = 3 + Math.floor(rng() * 8)
-    const strokes = Array.from({ length: n }, (_, k) => ({ at: k ? leader + rng() * (end - leader) : leader, peak: .35 + rng() * .35, cc: 0, ccLength: 0 })).sort((a, b) => a.at - b.at)
+    const strokes = Array.from({ length: n }, (_, k) => ({ at: k ? leader + rng() * (end - leader) : leader, peak: .15 + rng() * .2, cc: 0, ccLength: 0 })).sort((a, b) => a.at - b.at)
     return { leader, strokes, end: end + 120 }
   }
   const leader = 20 + rng() * 15, positive = flash.charge > 0
@@ -36,28 +38,32 @@ export function course(flash: Flash, rng: () => number): Course {
   const strokes: Course['strokes'] = []
   let at = leader
   for (let k = 0; k < n; k++) {
-    if (k) at += Math.min(120, Math.max(15, 45 * Math.exp((rng() - .5) * 1.4)))
-    const cc = positive ? .35 : rng() < .3 ? .25 : 0, ccLength = positive ? 100 + rng() * 150 : cc ? 40 + rng() * 110 : 0
+    if (k) at += Math.min(300, Math.max(5, 60 * Math.exp(.8 * normal(rng))))
+    const cc = positive ? .35 : k && rng() < .11 ? .25 : 0, ccLength = positive ? 100 + rng() * 150 : cc ? 40 + rng() * 110 : 0
     strokes.push({ at, peak: k ? .6 + rng() * .3 : 1, cc, ccLength })
     at += ccLength
   }
   return { leader, strokes, end: at + 220 }
 }
 
+/** A standard normal number (Box-Muller). */
+const normal = (rng: () => number) => Math.sqrt(-2 * Math.log(1 - rng())) * Math.cos(2 * Math.PI * rng())
+
 /**
  * Brightness at `t` ms of a flash's main channel and of its branches, and how much of the channel has grown (0-1).
- * `slow`: a slowed replay, seen as by a high-speed camera, which shows the faint stepped leader the eye hardly sees.
+ * `slow`: a slowed replay, seen as by a high-speed camera: the faint stepped leader shows, and a return stroke dies in
+ * a few ms (the eye keeps it ~25 ms).
  */
 export function brightness(c: Course, cg: boolean, t: number, slow = false) {
-  const reveal = Math.min(1, t / c.leader)
+  const reveal = Math.min(1, t / c.leader), fade = slow ? 3 : 25
   let main = t < c.leader ? slow ? .35 : .12 : 0, branch = main
   for (const [k, s] of c.strokes.entries()) {
     if (t < s.at) continue
     const after = t - s.at
-    main = Math.max(main, s.peak * Math.exp(-after / 25), after < s.ccLength ? s.cc : s.cc * Math.exp(-(after - s.ccLength) / 30))
+    main = Math.max(main, s.peak * Math.exp(-after / fade), after < s.ccLength ? s.cc : s.cc * Math.exp(-(after - s.ccLength) / 30))
     // A CG's branches light with the first return stroke only; an IC's whole channel is one.
     if (!cg) branch = main
-    else if (k === 0) branch = Math.max(branch, .5 * Math.exp(-after / 15))
+    else if (k === 0) branch = Math.max(branch, .5 * Math.exp(-after / (slow ? 2 : 15)))
   }
   if (!cg && t >= c.leader) main = branch = Math.max(main, .08)
   return { main, branch, reveal }
@@ -137,8 +143,8 @@ export class LightningView {
       if (!s) { flashes[i].set(0, 0, 0, 0); this.bright[i] = 0; continue }
       const cg = s.flash.kind === 'CG', b = brightness(s.course, cg, clock(s), s.rate < 1)
       flashes[i].set(b.main, b.branch, b.reveal, cg ? 1 : 0)
-      // The cloud is lit once the channel is there: the leader's own light is faint. An IC flash lights its cloud as
-      // much as a CG does (at night the whole storm flashes: "heat lightning").
+      // The cloud is lit once the channel is there: the leader's own light is faint. From space (LIS) IC and CG flashes
+      // light their clouds alike; an IC's K-changes are dimmer themselves (course).
       this.bright[i] = enabled ? b.main * (b.reveal < 1 ? .3 : 1) : 0
       glow = Math.max(glow, this.bright[i])
       const p = this.points[i]
