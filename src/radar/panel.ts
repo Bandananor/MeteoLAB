@@ -1,18 +1,23 @@
-import { type AtmosphereModel, beamHeight, type Circulation, DBZ_FLOOR, DUAL_MIN_DBZ, MESO_STRENGTH, type MesoStrength, MesocycloneDetector, PPI, RADAR_TILTS } from '../core'
+import { type AtmosphereModel, type Circulation, DBZ_FLOOR, DUAL_MIN_DBZ, MESO_STRENGTH, type MesoStrength, MesocycloneDetector, PPI, RADAR_TILTS } from '../core'
 import { help, instrumentPalette, instrumentScreen, press, readings, section } from '../instrument'
 import { download } from '../share'
 import { MONO } from '../theme'
 import { cssGradient, extent, KINDS, lookup, lutIndex, type Palette, type PaletteKind, Palettes, parsePal, type RGB, type Stop, ticks, toPal } from './palettes'
 
-type Product = 'Z' | 'V' | 'SRV' | 'CR' | 'ZDR' | 'RHO' | 'KDP' | 'RHI'
-/** What the RHI shows. */
-type RhiField = 'Z' | 'SRV' | 'ZDR' | 'RHO' | 'KDP'
+type Product = 'Z' | 'V' | 'SRV' | 'CR' | 'ZDR' | 'RHO' | 'KDP'
+/** What the vertical section shows. */
+type XsField = 'Z' | 'V' | 'SRV' | 'ZDR' | 'RHO' | 'KDP'
+type Point = { x: number; y: number }
 /** Raster resolution of the scan, m per pixel: half a range gate, so the radial bins' edges fall on pixel edges. */
 const PIXEL = 125
 /** Range gate of the radial bins, m (as NEXRAD's 250 m). */
 const GATE = 250
-/** The vertical section (RHI): gate and row spacing, m, and the highest level shown. */
-const RHI_STEP = 250, RHI_DZ = 250, RHI_TOP = 18_000
+/** The vertical section: point and row spacing, m, the highest level shown, the shortest line, m. */
+const XS_STEP = 250, XS_DZ = 250, XS_TOP = 18_000, XS_MIN = 1000
+/** How near (CSS px) a press must be to an end of the line to drag it. */
+const HANDLE = 16
+/** The isotherms on the section: 0 °C (melting) and -20 °C. */
+const ISO_0 = '#8fd3ff', ISO_20 = '#c9a6ff'
 /** Real time between two runs of the mesocyclone detection (all 14 tilts), ms. */
 const MDA_EVERY = 2000
 /** Shortest signed periodic difference. */
@@ -26,28 +31,41 @@ const PRODUCTS: Record<Product, { label: string; title: string; kind: PaletteKin
   ZDR: { label: 'ZDR — дифференциальная отражаемость', title: 'ZDR · ДИФФ. ОТРАЖАЕМОСТЬ', kind: 'ZDR' },
   RHO: { label: 'ρhv (RHO, CC) — коэффициент корреляции', title: 'ρhv · КОРРЕЛЯЦИЯ', kind: 'RHO' },
   KDP: { label: 'KDP — удельная дифференциальная фаза', title: 'KDP · ДИФФ. ФАЗА', kind: 'KDP' },
-  RHI: { label: 'RHI — вертикальный разрез', title: 'RHI · ВЕРТИКАЛЬНЫЙ РАЗРЕЗ', kind: 'Z' },
 }
-const RHI_FIELDS: Record<RhiField, { name: string; kind: PaletteKind }> = {
-  Z: { name: 'отражаемость', kind: 'Z' }, SRV: { name: 'скорость относительно грозы', kind: 'V' }, ZDR: { name: 'ZDR', kind: 'ZDR' }, RHO: { name: 'ρhv', kind: 'RHO' }, KDP: { name: 'KDP', kind: 'KDP' },
+const XS_FIELDS: Record<XsField, { name: string; short: string; reading: string; kind: PaletteKind }> = {
+  Z: { name: 'отражаемость', short: 'Z', reading: 'Отражаемость', kind: 'Z' }, V: { name: 'скорость вдоль луча', short: 'V', reading: 'Скорость', kind: 'V' },
+  SRV: { name: 'скорость относительно грозы', short: 'SRV', reading: 'Скорость', kind: 'V' }, ZDR: { name: 'ZDR', short: 'ZDR', reading: 'ZDR', kind: 'ZDR' },
+  RHO: { name: 'ρhv', short: 'ρhv', reading: 'ρhv', kind: 'RHO' }, KDP: { name: 'KDP', short: 'KDP', reading: 'KDP', kind: 'KDP' },
 }
+/** The section's values: the vertical section along the line, its size, the line's length (m). */
+type Cut = ReturnType<PPI['crossSection']> & { gates: number; rows: number; length: number }
 const DUAL_NOTE = `Порог эха — ${DUAL_MIN_DBZ} dBZ. Оценка по средним размерам частиц: микрофизика модели одномоментная (размер следует только из массы), поэтому сортировка капель по размеру — дуга ZDR у переднего края суперячейки — почти не видна; точнее станет с двухмоментной схемой.`
 const HELP: Record<Product, string> = {
   Z: 'Луч идёт под углом к горизонту и с дальностью поднимается выше: низкий наклон видит осадки у земли, высокий — ядро грозы и наковальню. Щелчок по экрану переносит радар.',
   V: 'Скорость вдоль луча: зелёное — к радару, красное — от радара. Видна только там, где есть эхо. Движение самой грозы часто маскирует вращение — для мезоциклона смотрите SRV.',
   SRV: '',
   CR: 'Сильнейшее эхо по всем 14 наклонам объёмного скана над каждой точкой — как обычная радарная карта.',
-  ZDR: `Дифференциальная отражаемость: насколько эхо в горизонтальной поляризации сильнее, чем в вертикальной. Крупные капли сплюснуты — ZDR +1…+4 дБ; град и крупа кувыркаются и почти круглые — около 0; сухой снег — 0…+0,5. Колонна ZDR — капли, вынесенные потоком выше 0 °C (высокие наклоны и RHI): признак сильного потока, раньше роста отражаемости. Высокая Z при ZDR около 0 — ядро града. ${DUAL_NOTE}`,
+  ZDR: `Дифференциальная отражаемость: насколько эхо в горизонтальной поляризации сильнее, чем в вертикальной. Крупные капли сплюснуты — ZDR +1…+4 дБ; град и крупа кувыркаются и почти круглые — около 0; сухой снег — 0…+0,5. Колонна ZDR — капли, вынесенные потоком выше 0 °C (высокие наклоны и разрез): признак сильного потока, раньше роста отражаемости. Высокая Z при ZDR около 0 — ядро града. ${DUAL_NOTE}`,
   RHO: `Коэффициент корреляции ρhv: насколько одинаково эхо в двух поляризациях. Чистый дождь или снег — 0,97–1; смесь разных частиц — ниже: полоса таяния (снег и крупа тают в дождь) — около 0,9, град с дождём — 0,85–0,95. Обломки смерча (TDS, ρhv < 0,8) модель не показывает: вихрь мельче её сетки. ${DUAL_NOTE}`,
   KDP: `Удельная дифференциальная фаза, °/км: насколько горизонтальная волна отстаёт от вертикальной в дожде. Растёт с количеством воды и почти не замечает града, поэтому по KDP находят сильный ливень внутри ядра града. Здесь — только от дождя. ${DUAL_NOTE}`,
-  RHI: 'Вертикальный разрез от радара вдоль азимута по всему объёму: видно, как высоко поднимается эхо, свод слабого эха (BWER) над восходящим потоком, нависающее эхо, ядро града, наковальню, колонну ZDR. Тонкие линии — лучи 14 наклонов: так их видит настоящий радар. По вертикали масштаб растянут.',
 }
+const XS_HELP = 'Разрез — вертикальный срез по линии A–B через весь объём: видно, как высоко поднимается эхо, свод слабого эха (BWER) над восходящим потоком, нависающее эхо, ядро града, наковальню, колонну ZDR. Тонкие линии — лучи 14 наклонов там, где они пересекают линию: так их видит радар (вдали от радара лучи выше, между ними — пропуски). Пунктир — изотермы 0 °C (ниже тает снег и крупа) и −20 °C (около неё растёт град и разделяются заряды). Разрез от радара через точку — как RHI настоящего радара; на линии в стороне от радара скорость — всё равно вдоль его луча к каждой точке. По вертикали масштаб растянут.'
 
 /**
  * Range rings, azimuth radials and their labels: steps (0: off), compass points instead of degrees; the data drawn in
  * radial bins (beam width `beam` degrees, 0: smooth pixels).
  */
 interface GridSettings { radials: number; rings: number; labels: boolean; compass: boolean; beam: number }
+const XS_STORE = 'meteolab-radar-section'
+/** The section kept in this browser: shown or not, its field, its line's ends (m from the domain's south-west corner). */
+function loadSection(): { on: boolean; field: XsField; a: Point | null; b: Point | null } {
+  const point = (p: unknown): Point | null => p && typeof p === 'object' && Number.isFinite((p as Point).x) && Number.isFinite((p as Point).y) ? { x: (p as Point).x, y: (p as Point).y } : null
+  try {
+    const s = JSON.parse(localStorage.getItem(XS_STORE) ?? 'null')
+    if (s && typeof s === 'object') return { on: s.on === true, field: typeof s.field === 'string' && s.field in XS_FIELDS ? s.field : 'Z', a: point(s.a), b: point(s.b) }
+  } catch { /* default */ }
+  return { on: false, field: 'Z', a: null, b: null }
+}
 const GRID_STORE = 'meteolab-radar-grid', GRID_DEFAULT: GridSettings = { radials: 30, rings: 5, labels: true, compass: false, beam: .5 }
 const BEAMS = [.5, 1, 0]
 const RADIAL_STEPS = [0, 10, 30, 45], RING_STEPS = [0, 5, 10, 25]
@@ -70,7 +88,7 @@ const fmt = (v: number, digits: number) => (v > 0 && digits === 0 && v % 1 === 0
  * The radar display: a separate screen over the 3D view, like a Doppler radar workstation. A PPI (plan position
  * indicator) at the chosen elevation angle of reflectivity (Z) or Doppler radial velocity (V, inbound green, outbound
  * red: a mesocyclone shows as a couplet), the composite reflectivity of the whole volume scan (CR), the dual-polarisation
- * products (ZDR, rho_hv, KDP; core/polarimetry.ts) or a vertical section (RHI). The beam rises with range (4/3 Earth),
+ * products (ZDR, rho_hv, KDP; core/polarimetry.ts), and under it a vertical section along any line (its ends dragged on the map; from the radar it is an RHI). The beam rises with range (4/3 Earth),
  * so a higher tilt looks at higher levels. Range rings, azimuth radials and their labels as chosen, a cursor readout; a
  * click moves the radar site. Every kind of product has its palette: built-in ones, the user's own (an editor) and
  * imported .pal files (radar/palettes.ts).
@@ -79,20 +97,23 @@ export class RadarPanel {
   private readonly root: HTMLDivElement; private readonly canvas: HTMLCanvasElement; private readonly ctx: CanvasRenderingContext2D
   private readonly raster: HTMLCanvasElement; private readonly rasterCtx: CanvasRenderingContext2D
   private ppi: PPI | null = null; private image: ImageData | null = null
-  private lastTime = -1; private lastDraw = 0; private lastComposite = 0; private hover: { x: number; y: number } | null = null
+  private lastTime = -1; private lastDraw = 0; private lastComposite = 0; private hover: Point | null = null
   private product: Product = 'Z'
   /** Mesocyclone detection over the whole volume scan, rerun every MDA_EVERY ms of real time while the screen is open. */
   private detector = new MesocycloneDetector(); private detections: Circulation[] = []; private lastScan = 0; private scanTime = -1; private showMda = true; private showWeak = false
   /** Storm motion for SRV (the Bunkers right mover of the environment), m/s. */
   private motion: readonly [number, number] = [0, 0]
-  /** The RHI: its azimuth (degrees from north), what it shows, its raster. */
-  private rhiAzimuth = 90; private rhiField: RhiField = 'Z'
-  private readonly rhiRaster: HTMLCanvasElement; private readonly rhiCtx: CanvasRenderingContext2D
-  private rhi: { dbz: Float32Array; velocity: Float32Array; zdr: Float32Array; rho: Float32Array; kdp: Float32Array; gates: number; rows: number } | null = null
+  /** The vertical section: its line and field (kept in this browser), its values and raster, the cursor on it. */
+  private xs = loadSection(); private cut: Cut | null = null; private xsHover: { d: number; h: number } | null = null
+  private readonly xsRaster: HTMLCanvasElement; private readonly xsCtx: CanvasRenderingContext2D
+  /** A press on the map: dragging an end of the line, drawing a new one (Shift), or maybe a click (moves the radar). */
+  private drag: { kind: 'a' | 'b' | 'new' | 'press'; from: Point; sx: number; sy: number } | null = null
+  /** What the next taps on the map give: the line's ends A then B, or the point the line from the radar goes through. */
+  private picking: 'a' | 'b' | 'radial' | null = null
   private grid = loadGrid()
   private readonly palettes = new Palettes()
-  /** The colour lookup of the shown kind's chosen palette. */
-  private lut = new Uint8ClampedArray(0); private lutFor: Palette | null = null
+  /** The colour lookups of the chosen palettes (map and section may show different kinds). */
+  private readonly luts = new Map<Palette, Uint8ClampedArray>()
   /** The palette being edited (a copy) and the stop rows of the editor. */
   private editing: { id?: string; name: string; kind: PaletteKind; stops: Stop[] } | null = null
   private deleteArmed = 0
@@ -102,10 +123,15 @@ export class RadarPanel {
     const strengths = (Object.keys(MESO_STRENGTH) as MesoStrength[]).map((s, i, all) => `<div class="mda--${s}"><i></i><span>${['Циркуляция', 'Слабый', 'Умеренный', 'Сильный'][i]}</span><span class="num">${i ? `≥ ${MESO_STRENGTH[s].vrot}` : `< ${MESO_STRENGTH[all[1]].vrot}`} м/с</span></div>`).join('')
     const seg = (name: string, options: [string, string][]) => `<div class="seg seg--block seg--instrument" data-seg="${name}">${options.map(([v, t]) => `<button data-value="${v}">${t}</button>`).join('')}</div>`
     this.root = instrumentScreen(host, 'radar-app', 'METEOLAB DOPPLER · S-BAND',
-      '<span>ПРОДУКТ <b id="radarProduct">Z · ОТРАЖАЕМОСТЬ</b></span><span>НАКЛОН <b id="radarTilt">0.5°</b></span><span>T+ <b id="radarTime">00:00</b></span>',
+      '<span>ПРОДУКТ <b id="radarProduct">Z · ОТРАЖАЕМОСТЬ</b></span><span>НАКЛОН <b id="radarTilt">0.5°</b></span><span>РАЗРЕЗ <b id="radarCut">нет</b></span><span>T+ <b id="radarTime">00:00</b></span>',
       section('Продукт', `<div class="tilts tilts--4">${(Object.keys(PRODUCTS) as Product[]).map(p => `<button data-product="${p}" title="${PRODUCTS[p].label}">${p}</button>`).join('')}</div>
         <div class="stat" style="border:0;padding:0"><span id="radarProductLabel"></span><span class="unit" id="radarUnits">dBZ</span></div>`)
       + section('Угол наклона', `<div class="tilts">${RADAR_TILTS.map(t => `<button data-tilt="${t}">${t.toFixed(1)}°</button>`).join('')}</div>`)
+      + section('Вертикальный разрез', `<label class="check"><input type="checkbox" id="xsShow"> Показывать разрез под картой</label>
+        <div class="radar-buttons"><button class="btn btn--xs" id="xsDraw" title="Два щелчка или касания по карте: начало A, затем конец B">Провести разрез</button><button class="btn btn--xs" id="xsRadial" title="Щелчок или касание по карте: разрез от радара через эту точку до края области — как RHI настоящего радара">От радара через точку</button><button class="btn btn--xs" id="xsStrongest" title="Разрез от радара через самое сильное эхо объёмного скана">Через самое сильное эхо</button></div>
+        <span class="label">Поле разреза</span>${seg('xs', (Object.keys(XS_FIELDS) as XsField[]).map(f => [f, XS_FIELDS[f].short]))}
+        <span class="t-caption" id="xsInfo"></span>
+        <span class="t-caption">Концы A и B перетаскиваются. Shift + протянуть по карте — новая линия, Shift + щелчок — от радара через точку.</span>`)
       + section('Шкала и палитра', `<div class="colorbar"><div class="colorbar__bar" id="radarLegend"></div><div class="colorbar__ticks" id="radarTicks"></div></div>
         <div class="field"><span class="field__label" id="paletteLabel">Палитра</span><span class="select"><select id="paletteSelect"></select></span></div>
         <div class="radar-buttons"><button class="btn btn--xs" id="paletteEdit" title="Редактор палитры: точки «значение → цвет», плавно или ступенями">Изменить</button><button class="btn btn--xs" id="paletteImport" title="Файл .pal радарных программ (строки Color: / SolidColor:)">Импорт .pal</button><button class="btn btn--xs" id="paletteExport">Экспорт .pal</button><button class="btn btn--xs" id="paletteDelete" hidden>Удалить</button></div>
@@ -116,10 +142,6 @@ export class RadarPanel {
         <span class="label">Кольца дальности</span>${seg('rings', RING_STEPS.map(s => [String(s), s ? `${s} км` : 'нет']))}
         <label class="check"><input type="checkbox" id="gridLabels"> Подписи азимутов и дальностей</label>
         <span class="label">Азимуты</span>${seg('compass', [['0', 'градусы'], ['1', 'румбы']])}`)
-      + section('Разрез RHI', `<label class="field"><span class="field__head"><span class="field__label">Азимут</span><output class="field__value" id="rhiAzOut">90°</output></span><input class="range" type="range" id="rhiAz" min="0" max="359" step="1" value="90"></label>
-        <button class="btn btn--block" id="rhiStrongest" title="Повернуть разрез к самому сильному эху объёмного скана">Через самое сильное эхо</button>
-        <span class="label">Поле разреза</span>${seg('rhi', (Object.keys(RHI_FIELDS) as RhiField[]).map(f => [f, f]))}
-        <span class="t-caption">Shift + щелчок по карте — разрез через эту точку</span>`)
       + section('Мезоциклоны (MDA)', `<label class="check"><input type="checkbox" id="radarMda" checked> Отмечать на экране</label>
         <label class="check" title="Вращение слабее порога мезоциклона (Vrot < 12,5 м/с): на сетке ~1 км их много в любой сильной грозе"><input type="checkbox" id="radarWeak"> И слабые циркуляции</label>
         <div class="mda-list" id="radarMdaList"></div>
@@ -138,22 +160,23 @@ export class RadarPanel {
     </form></dialog>`)
     this.canvas = this.root.querySelector('canvas')!; this.ctx = this.canvas.getContext('2d')!
     this.raster = document.createElement('canvas'); this.rasterCtx = this.raster.getContext('2d')!
-    this.rhiRaster = document.createElement('canvas'); this.rhiCtx = this.rhiRaster.getContext('2d')!
+    this.xsRaster = document.createElement('canvas'); this.xsCtx = this.xsRaster.getContext('2d')!
     const $ = <T extends Element = HTMLElement>(s: string) => this.root.querySelector<T>(s)!
-    const az = $<HTMLInputElement>('#rhiAz')
-    az.addEventListener('input', () => this.setAzimuth(Number(az.value)))
-    $('#rhiStrongest').addEventListener('click', () => this.aimAtStrongest())
+    $<HTMLInputElement>('#xsShow').addEventListener('change', e => this.showSection((e.target as HTMLInputElement).checked))
+    $('#xsDraw').addEventListener('click', () => this.pick(this.picking === 'a' || this.picking === 'b' ? null : 'a'))
+    $('#xsRadial').addEventListener('click', () => this.pick(this.picking === 'radial' ? null : 'radial'))
+    $('#xsStrongest').addEventListener('click', () => this.aimAtStrongest())
     $<HTMLInputElement>('#radarMda').addEventListener('change', e => { this.showMda = (e.target as HTMLInputElement).checked; this.draw() })
     $<HTMLInputElement>('#radarWeak').addEventListener('change', e => { this.showWeak = (e.target as HTMLInputElement).checked; this.listMda(); this.draw() })
     $('.ibar__close').addEventListener('click', () => this.toggle(false))
     this.root.querySelectorAll<HTMLButtonElement>('[data-tilt]').forEach(b => b.addEventListener('click', () => this.setTilt(Number(b.dataset.tilt))))
     this.root.querySelectorAll<HTMLButtonElement>('[data-product]').forEach(b => b.addEventListener('click', () => this.setProduct(b.dataset.product as Product)))
-    // The segmented choices: grid steps, degrees or compass points, the RHI's field.
+    // The segmented choices: grid steps, degrees or compass points, the section's field.
     this.root.querySelectorAll<HTMLElement>('[data-seg]').forEach(s => s.addEventListener('click', e => {
       const b = (e.target as HTMLElement).closest<HTMLButtonElement>('button[data-value]')
       if (!b) return
       const v = b.dataset.value!
-      if (s.dataset.seg === 'rhi') { this.rhiField = v as RhiField; this.setProduct('RHI'); return }
+      if (s.dataset.seg === 'xs') { this.xs.field = v as XsField; this.showSection(true); return }
       if (s.dataset.seg === 'beam') { this.grid.beam = Number(v); this.applyBins(); this.saveGrid(); this.refresh(true); return }
       if (s.dataset.seg === 'radials') this.grid.radials = Number(v)
       else if (s.dataset.seg === 'rings') this.grid.rings = Number(v)
@@ -176,14 +199,16 @@ export class RadarPanel {
     $('#palRows').addEventListener('input', e => this.editRow(e.target as HTMLElement, false))
     $('#palRows').addEventListener('change', e => this.editRow(e.target as HTMLElement, true))
     $('#palRows').addEventListener('click', e => { const b = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-remove]'); if (b && this.editing!.stops.length > 1) { this.editing!.stops.splice(Number(b.dataset.remove), 1); this.editorRows() } })
-    this.canvas.addEventListener('mousemove', e => { this.hover = this.product === 'RHI' ? this.toSection(e) : this.toGround(e); this.draw() })
-    this.canvas.addEventListener('mouseleave', () => { this.hover = null; this.draw() })
-    this.canvas.addEventListener('click', e => {
-      if (this.product === 'RHI') return
-      const g = this.toGround(e); if (!g || !this.ppi) return
-      if (e.shiftKey) { this.setAzimuth(this.ppi.beamAt(g.x, g.y).azimuth); this.setProduct('RHI'); return }
-      this.ppi.site = g; this.ppi.layout(); this.lastComposite = 0; this.scanTime = -1; this.refresh(true)
-    })
+    // The map and the section: mouse and touch alike.
+    const c = this.canvas
+    c.addEventListener('pointerdown', e => this.pointerDown(e))
+    c.addEventListener('pointermove', e => this.pointerMove(e))
+    c.addEventListener('pointerup', e => this.pointerUp(e))
+    c.addEventListener('pointercancel', () => { this.drag = null })
+    c.addEventListener('pointerleave', () => { if (!this.drag) { this.hover = null; this.xsHover = null; this.draw() } })
+    // On a narrow screen a swipe over the canvas scrolls the panel (touch-action: pan-y); a touch on an end of the line,
+    // or while picking points, is a drag or a tap instead.
+    c.addEventListener('touchstart', e => { const t = e.touches[0]; if (t && (this.picking || this.handleAt(t.clientX, t.clientY))) e.preventDefault() }, { passive: false })
     addEventListener('keydown', e => { if (e.key === 'Escape' && this.open && !editor.open) this.toggle(false) })
     addEventListener('resize', () => this.open && this.draw())
     this.showGrid()
@@ -196,16 +221,24 @@ export class RadarPanel {
     const { width, depth } = model.grid, old = this.ppi
     this.ppi = new PPI(model, Math.round(width / PIXEL), Math.round(depth / PIXEL))
     if (old) { this.ppi.site = old.site; this.ppi.tilt = old.tilt }
+    // A section line kept from a larger domain does not fit this one.
+    const inside = (p: Point | null) => !!p && p.x >= 0 && p.y >= 0 && p.x <= width && p.y <= depth
+    if (!inside(this.xs.a) || !inside(this.xs.b)) { this.xs.a = this.xs.b = null; this.cut = null }
     this.applyBins()
     this.raster.width = this.ppi.w; this.raster.height = this.ppi.h; this.image = this.rasterCtx.createImageData(this.ppi.w, this.ppi.h)
-    this.lastTime = -1; this.lastComposite = 0; this.scanTime = -1; this.detector = new MesocycloneDetector(); this.detections = []; this.markTilt()
+    this.lastTime = -1; this.lastComposite = 0; this.scanTime = -1; this.detector = new MesocycloneDetector(); this.detections = []; this.markTilt(); this.markSection()
   }
 
-  toggle(open = !this.open) { this.open = open; this.root.hidden = !open; if (open) this.refresh(true) }
+  toggle(open = !this.open) {
+    this.open = open; this.root.hidden = !open
+    if (!open) { this.picking = null; this.drag = null }
+    if (open) { if (this.xs.on && !this.xs.b) this.aimAtStrongest(); this.markSection(); this.refresh(true) }
+  }
 
-  /** The kind of values on screen now (which palette applies). */
-  private kind(): PaletteKind { return this.product === 'RHI' ? RHI_FIELDS[this.rhiField].kind : PRODUCTS[this.product].kind }
-  private dual() { const k = this.kind(); return k === 'ZDR' || k === 'RHO' || k === 'KDP' }
+  /** The kind of values on the map (which palette the side panel shows) and on the section. */
+  private kind(): PaletteKind { return PRODUCTS[this.product].kind }
+  private xsKind(): PaletteKind { return XS_FIELDS[this.xs.field].kind }
+  private static dual(k: PaletteKind) { return k === 'ZDR' || k === 'RHO' || k === 'KDP' }
 
   /** Called every frame: rescans after new model time, at most ~5 times a second (the composite, 14 tilts, once a second). */
   refresh(force = false) {
@@ -214,12 +247,10 @@ export class RadarPanel {
     const now = performance.now(), time = ppi.model.time, every = this.product === 'CR' ? 1000 : 200
     if (!force && (time === this.lastTime || now - (this.product === 'CR' ? this.lastComposite : this.lastDraw) < every)) return
     this.lastTime = time; this.lastDraw = now
-    ppi.stormMotion = this.product === 'SRV' || (this.product === 'RHI' && this.rhiField === 'SRV') ? this.motion : null
-    ppi.dual = this.dual()
-    if (this.product === 'RHI') {
-      const { width, depth, height } = ppi.model.grid, gates = Math.ceil(Math.hypot(width, depth) / 2 / RHI_STEP), rows = Math.ceil(Math.min(height, RHI_TOP) / RHI_DZ)
-      ppi.prepare(); this.rhi = { ...ppi.section(this.rhiAzimuth, RHI_STEP, gates, RHI_DZ, rows), gates, rows }
-    } else if (this.product === 'CR') { ppi.composite(); this.lastComposite = now } else ppi.sample()
+    ppi.stormMotion = this.product === 'SRV' ? this.motion : null
+    ppi.dual = RadarPanel.dual(this.kind()) || (this.xs.on && RadarPanel.dual(this.xsKind()))
+    if (this.product === 'CR') { ppi.composite(); this.lastComposite = now } else ppi.sample()
+    this.cutSection()
     // New model time (or a new radar site): rescan, at most every MDA_EVERY ms. The detection's prepare() leaves the
     // dual-polarisation nodes as they are (it needs only Z and V).
     if (this.scanTime < 0 || (time !== this.scanTime && now - this.lastScan >= MDA_EVERY)) { ppi.dual = false; this.detections = this.detector.scan(ppi, time, this.motion); this.lastScan = now; this.scanTime = time; this.listMda() }
@@ -227,43 +258,108 @@ export class RadarPanel {
     const s = Math.floor(time); this.root.querySelector<HTMLElement>('#radarTime')!.textContent = `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`
   }
 
-  private setAzimuth(azimuth: number) {
-    this.rhiAzimuth = Math.round((azimuth % 360 + 360) % 360) % 360
-    this.root.querySelector<HTMLInputElement>('#rhiAz')!.value = String(this.rhiAzimuth)
-    this.root.querySelector<HTMLElement>('#rhiAzOut')!.textContent = `${this.rhiAzimuth}°`
-    this.markTilt(); this.refresh(true)
+  /** The section along the line from the nodes the last scan prepared, and its raster; none without a line. */
+  private cutSection() {
+    const ppi = this.ppi, { a, b } = this.xs
+    const length = a && b ? Math.hypot(b.x - a.x, b.y - a.y) : 0
+    if (!ppi || !this.xs.on || !a || !b || length < XS_MIN) { this.cut = null; return }
+    const gates = Math.max(16, Math.ceil(length / XS_STEP)), rows = Math.ceil(Math.min(ppi.model.grid.height, XS_TOP) / XS_DZ)
+    ppi.stormMotion = this.xs.field === 'SRV' ? this.motion : null
+    ppi.dual = RadarPanel.dual(this.xsKind())
+    this.cut = { ...ppi.crossSection(a, b, gates, XS_DZ, rows), gates, rows, length }
+    this.paintSection()
   }
 
-  /** Turns the RHI towards the strongest echo of the volume scan. */
+  /** Shows or hides the section (with no line yet: from the radar through the strongest echo). */
+  private showSection(on: boolean) {
+    this.xs.on = on
+    if (!on) this.picking = null
+    if (on && !(this.xs.a && this.xs.b)) { this.aimAtStrongest(); return }
+    this.saveSection(); this.markSection(); this.showHelp(); this.refresh(true)
+  }
+
+  /** Waits for taps on the map: the two ends of a new line, or the point the line from the radar goes through. */
+  private pick(mode: 'a' | 'radial' | null) {
+    this.picking = mode
+    if (mode === 'a') this.cut = null
+    this.markSection(); this.draw()
+  }
+
+  private tap(g: Point) {
+    if (this.picking === 'radial') { this.picking = null; this.radialThrough(g); return }
+    if (this.picking === 'a') { this.xs.a = g; this.xs.b = null; this.picking = 'b'; this.markSection(); this.draw(); return }
+    const a = this.xs.a!
+    if (Math.hypot(g.x - a.x, g.y - a.y) < XS_MIN) return
+    this.picking = null; this.setLine(a, g)
+  }
+
+  private setLine(a: Point, b: Point) {
+    this.xs.a = a; this.xs.b = b; this.xs.on = true
+    this.saveSection(); this.markSection(); this.showHelp(); this.refresh(true)
+  }
+
+  /** The line from the radar through a point to the edge of the domain: the RHI of a real radar. */
+  private radialThrough(p: Point) {
+    const ppi = this.ppi
+    if (!ppi) return
+    const { width, depth } = ppi.model.grid, s = ppi.site, d = Math.hypot(p.x - s.x, p.y - s.y)
+    const ux = d > 1 ? (p.x - s.x) / d : 1, uy = d > 1 ? (p.y - s.y) / d : 0
+    const tx = ux > 1e-9 ? (width - s.x) / ux : ux < -1e-9 ? -s.x / ux : Infinity, ty = uy > 1e-9 ? (depth - s.y) / uy : uy < -1e-9 ? -s.y / uy : Infinity
+    const length = Math.max(XS_MIN, Math.min(tx, ty))
+    this.setLine({ ...s }, { x: s.x + ux * length, y: s.y + uy * length })
+  }
+
+  /** The section from the radar through the strongest echo of the volume scan. */
   private aimAtStrongest() {
     const ppi = this.ppi
     if (!ppi) return
     ppi.composite()
     let best = 0
     for (let i = 1; i < ppi.compositeDbz.length; i++) if (ppi.compositeDbz[i] > ppi.compositeDbz[best]) best = i
-    const g = ppi.ground(best % ppi.w, Math.floor(best / ppi.w))
-    this.setAzimuth(ppi.beamAt(g.x, g.y).azimuth); this.setProduct('RHI')
+    this.radialThrough(ppi.compositeDbz[best] > DBZ_FLOOR + 1 ? ppi.ground(best % ppi.w, Math.floor(best / ppi.w)) : { x: ppi.site.x + 1000, y: ppi.site.y })
+  }
+
+  private saveSection() { try { localStorage.setItem(XS_STORE, JSON.stringify(this.xs)) } catch { /* not kept */ } }
+
+  /** The section's controls, its line in the bar, and the taller screen while it is shown. */
+  private markSection() {
+    const { on, a, b, field } = this.xs, $ = <T extends Element = HTMLElement>(s: string) => this.root.querySelector<T>(s)!
+    $<HTMLInputElement>('#xsShow').checked = on
+    press(this.root.querySelectorAll<HTMLButtonElement>('[data-seg="xs"] button'), x => x.dataset.value === field)
+    $('#xsDraw').setAttribute('aria-pressed', String(this.picking === 'a' || this.picking === 'b'))
+    $('#xsRadial').setAttribute('aria-pressed', String(this.picking === 'radial'))
+    const length = a && b ? Math.hypot(b.x - a.x, b.y - a.y) : 0, azimuth = a && b ? (Math.atan2(b.x - a.x, b.y - a.y) * 180 / Math.PI + 360) % 360 : 0
+    $('#radarCut').textContent = on && length ? `${(length / 1000).toFixed(0)} КМ · ${azimuth.toFixed(0)}°` : 'НЕТ'
+    $('#xsInfo').textContent = this.picking === 'a' ? 'Щёлкните или коснитесь карты: начало разреза A'
+      : this.picking === 'b' ? 'Теперь конец разреза B'
+        : this.picking === 'radial' ? 'Щёлкните или коснитесь карты: разрез пойдёт от радара через эту точку до края области'
+          : length ? `Линия A → B: ${(length / 1000).toFixed(1)} км, направление ${this.azimuthText(azimuth)}` : 'Линии пока нет'
+    this.root.classList.toggle('is-section', on)
   }
 
   private setTilt(tilt: number) { if (!this.ppi) return; this.ppi.tilt = tilt; if (this.product === 'CR') this.setProduct('Z'); this.markTilt(); this.refresh(true) }
 
   private setProduct(product: Product) {
     this.product = product
+    // The section shows the same kind of product as the map unless chosen otherwise (the composite: reflectivity).
+    this.xs.field = product === 'CR' ? 'Z' : product
     press(this.root.querySelectorAll<HTMLButtonElement>('[data-product]'), b => b.dataset.product === product)
-    press(this.root.querySelectorAll<HTMLButtonElement>('[data-seg="rhi"] button'), b => b.dataset.value === this.rhiField)
-    this.root.querySelector<HTMLElement>('#radarProduct')!.textContent = product === 'RHI' && this.rhiField !== 'Z' ? `RHI · ${this.rhiField}` : PRODUCTS[product].title
+    this.root.querySelector<HTMLElement>('#radarProduct')!.textContent = PRODUCTS[product].title
     this.root.querySelector<HTMLElement>('#radarProductLabel')!.textContent = PRODUCTS[product].label
-    this.root.querySelector<HTMLElement>('#radarHelp')!.textContent = product === 'SRV'
-      ? `То же, что V, но за вычетом движения грозы (по Банкерсу: ${Math.hypot(...this.motion).toFixed(0)} м/с на ${((Math.atan2(this.motion[0], this.motion[1]) * 180 / Math.PI + 360) % 360).toFixed(0)}°). Мезоциклон — пара «зелёное рядом с красным» поперёк луча на высоте 1–6 км.`
-      : product === 'RHI' && this.rhiField !== 'Z' && this.rhiField !== 'SRV' ? `${HELP.RHI} ${HELP[this.rhiField]}` : HELP[product]
-    this.showPalette()
+    this.showHelp(); this.showPalette(); this.markSection()
     this.markTilt(); this.lastComposite = 0; this.refresh(true)
   }
 
-  /** The chosen palette of the kind on screen: its lookup, colour bar, ticks and the palette list. */
+  private showHelp() {
+    const product = this.product
+    this.root.querySelector<HTMLElement>('#radarHelp')!.textContent = (product === 'SRV'
+      ? `То же, что V, но за вычетом движения грозы (по Банкерсу: ${Math.hypot(...this.motion).toFixed(0)} м/с на ${((Math.atan2(this.motion[0], this.motion[1]) * 180 / Math.PI + 360) % 360).toFixed(0)}°). Мезоциклон — пара «зелёное рядом с красным» поперёк луча на высоте 1–6 км.`
+      : HELP[product]) + (this.xs.on ? ` ${XS_HELP}` : '')
+  }
+
+  /** The chosen palette of the map's kind: its colour bar, ticks and the palette list. */
   private showPalette() {
     const kind = this.kind(), k = KINDS[kind], palette = this.palettes.chosen(kind)
-    if (palette !== this.lutFor) { this.lut = lookup(palette); this.lutFor = palette }
     this.root.querySelector<HTMLElement>('#radarUnits')!.textContent = k.units
     this.root.querySelector<HTMLElement>('#paletteLabel')!.textContent = `Палитра · ${k.label}`
     const range = extent(palette)
@@ -277,13 +373,13 @@ export class RadarPanel {
     select.value = palette.id
     const del = this.root.querySelector<HTMLButtonElement>('#paletteDelete')!
     del.hidden = !!palette.builtin; del.textContent = 'Удалить'; this.deleteArmed = 0
-    this.paint(); this.draw()
+    this.paint(); this.paintSection(); this.draw()
   }
 
   private markTilt() {
-    const t = this.ppi?.tilt ?? RADAR_TILTS[0], all = this.product === 'CR' || this.product === 'RHI'
+    const t = this.ppi?.tilt ?? RADAR_TILTS[0], all = this.product === 'CR'
     press(this.root.querySelectorAll<HTMLButtonElement>('[data-tilt]'), b => !all && Number(b.dataset.tilt) === t)
-    this.root.querySelector<HTMLElement>('#radarTilt')!.textContent = this.product === 'RHI' ? `АЗИМУТ ${this.rhiAzimuth}°` : all ? 'ВСЕ' : `${t.toFixed(1)}°`
+    this.root.querySelector<HTMLElement>('#radarTilt')!.textContent = all ? 'ВСЕ' : `${t.toFixed(1)}°`
   }
 
   /** The radial bins of the chosen beam width (or smooth pixels) on the scan. */
@@ -303,17 +399,30 @@ export class RadarPanel {
 
   private saveGrid() { try { localStorage.setItem(GRID_STORE, JSON.stringify(this.grid)) } catch { /* not kept */ } this.showGrid(); this.draw() }
 
-  /** The values of the product on screen (PPI raster or RHI section). */
+  /** The values of the map's product (the PPI raster). */
   private values(): Float32Array | null {
-    if (this.product === 'RHI') { const s = this.rhi; return s ? { Z: s.dbz, SRV: s.velocity, ZDR: s.zdr, RHO: s.rho, KDP: s.kdp }[this.rhiField] : null }
     const ppi = this.ppi
     if (!ppi) return null
     return { Z: ppi.dbz, V: ppi.velocity, SRV: ppi.velocity, CR: ppi.compositeDbz, ZDR: ppi.zdr, RHO: ppi.rho, KDP: ppi.kdp }[this.product]
   }
 
-  /** Colours `values` into `data` (RGBA, pixel i at offset of(i)) through the palette; reflectivity at the noise floor stays empty. */
-  private colour(values: Float32Array, data: Uint8ClampedArray, of: (i: number) => number) {
-    const kind = this.kind(), lut = this.lut, floor = kind === 'Z'
+  /** The values of the section's field. */
+  private xsValues(): Float32Array | null {
+    const s = this.cut
+    return s ? { Z: s.dbz, V: s.velocity, SRV: s.velocity, ZDR: s.zdr, RHO: s.rho, KDP: s.kdp }[this.xs.field] : null
+  }
+
+  /** The colour lookup of the chosen palette of a kind. */
+  private lut(kind: PaletteKind) {
+    const p = this.palettes.chosen(kind)
+    let l = this.luts.get(p)
+    if (!l) { l = lookup(p); this.luts.set(p, l) }
+    return l
+  }
+
+  /** Colours `values` of `kind` into `data` (RGBA, pixel i at offset of(i)) through its palette; reflectivity at the noise floor stays empty. */
+  private colour(values: Float32Array, kind: PaletteKind, data: Uint8ClampedArray, of: (i: number) => number) {
+    const lut = this.lut(kind), floor = kind === 'Z'
     for (let i = 0; i < values.length; i++) {
       const v = values[i], o = of(i), k = floor && v <= DBZ_FLOOR + 1 ? -1 : lutIndex(kind, v)
       if (k < 0) { data[o + 3] = 0; continue }
@@ -324,41 +433,52 @@ export class RadarPanel {
   /** The product raster in its palette (no echo: transparent). */
   private paint() {
     if (!this.ppi || !this.image) return
-    if (this.product === 'RHI') { this.paintRhi(); return }
     const values = this.values()
     if (!values) return
-    this.colour(values, this.image.data, i => i * 4)
+    this.colour(values, this.kind(), this.image.data, i => i * 4)
     this.rasterCtx.putImageData(this.image, 0, 0)
   }
 
-  /** The RHI raster: gates across, rows from the top of the section down. */
-  private paintRhi() {
-    const s = this.rhi, values = this.values()
+  /** The section raster: points across, rows from the top of the section down. */
+  private paintSection() {
+    const s = this.cut, values = this.xsValues()
     if (!s || !values) return
-    if (this.rhiRaster.width !== s.gates || this.rhiRaster.height !== s.rows) { this.rhiRaster.width = s.gates; this.rhiRaster.height = s.rows }
-    const image = this.rhiCtx.createImageData(s.gates, s.rows)
-    this.colour(values, image.data, i => ((s.rows - 1 - Math.floor(i / s.gates)) * s.gates + i % s.gates) * 4)
-    this.rhiCtx.putImageData(image, 0, 0)
+    if (this.xsRaster.width !== s.gates || this.xsRaster.height !== s.rows) { this.xsRaster.width = s.gates; this.xsRaster.height = s.rows }
+    const image = this.xsCtx.createImageData(s.gates, s.rows)
+    this.colour(values, this.xsKind(), image.data, i => ((s.rows - 1 - Math.floor(i / s.gates)) * s.gates + i % s.gates) * 4)
+    this.xsCtx.putImageData(image, 0, 0)
   }
 
-  /** The RHI plot rectangle in CSS pixels. */
-  private sectionBox() {
+  /**
+   * The canvas sized to its box, and where the map and the section go: the whole canvas for the map alone; with the
+   * section, side by side on a wide screen, the section under the map otherwise.
+   */
+  private layout() {
     const box = this.canvas.parentElement!.getBoundingClientRect(), ratio = devicePixelRatio || 1, cw = Math.max(200, box.width), ch = Math.max(150, box.height)
     if (this.canvas.width !== Math.round(cw * ratio) || this.canvas.height !== Math.round(ch * ratio)) { this.canvas.width = Math.round(cw * ratio); this.canvas.height = Math.round(ch * ratio); this.canvas.style.width = `${cw}px`; this.canvas.style.height = `${ch}px` }
-    return { left: 56, top: 20, right: cw - 24, bottom: ch - 36, ratio }
+    if (!this.xs.on) return { ratio, map: { x: 0, y: 0, w: cw, h: ch }, sec: null }
+    if (cw > ch * 1.5) { const w = Math.round(cw * .45); return { ratio, map: { x: 0, y: 0, w, h: ch }, sec: { x: w, y: 0, w: cw - w, h: ch } } }
+    const h = Math.round(ch * .5)
+    return { ratio, map: { x: 0, y: 0, w: cw, h }, sec: { x: 0, y: h, w: cw, h: ch - h } }
   }
 
-  private toSection(e: MouseEvent) {
-    const s = this.rhi
-    if (!s) return null
-    const b = this.sectionBox(), r = this.canvas.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top
+  /** The section plot rectangle in CSS pixels (null while the section is hidden). */
+  private sectionBox() {
+    const l = this.layout(), s = l.sec
+    return s && { left: s.x + 52, top: s.y + 24, right: s.x + s.w - 20, bottom: s.y + s.h - 34, ratio: l.ratio }
+  }
+
+  /** The point of the section under the pointer: distance from A and height, m. */
+  private toSection(e: { clientX: number; clientY: number }) {
+    const s = this.cut, b = this.sectionBox()
+    if (!s || !b) return null
+    const r = this.canvas.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top
     if (x < b.left || x > b.right || y < b.top || y > b.bottom) return null
-    return { x: (x - b.left) / (b.right - b.left) * s.gates * RHI_STEP, y: (b.bottom - y) / (b.bottom - b.top) * s.rows * RHI_DZ }
+    return { d: (x - b.left) / (b.right - b.left) * s.length, h: (b.bottom - y) / (b.bottom - b.top) * s.rows * XS_DZ }
   }
 
-  /** A value of the kind on screen for the cursor readout. */
-  private describe(v: number, inbound = '') {
-    const kind = this.kind()
+  /** A value of a kind for the cursor readout. */
+  private describe(v: number, kind: PaletteKind, inbound = '') {
     if (Number.isNaN(v) || (kind === 'Z' && v < 5)) return 'нет эха'
     if (kind === 'Z') return `${v.toFixed(0)} dBZ`
     if (kind === 'V') return `${v > 0 ? '+' : ''}${v.toFixed(1)} м/с${inbound && ` ${v > 0 ? '(от радара)' : '(к радару)'}`}`
@@ -367,32 +487,58 @@ export class RadarPanel {
     return `${v.toFixed(2)} °/км`
   }
 
+  /** Where the map cursor falls on the line, m from A, if it is within 2 km of it. */
+  private onLine(p: Point | null) {
+    const { a, b } = this.xs
+    if (!p || !a || !b || !this.cut) return null
+    const ex = b.x - a.x, ey = b.y - a.y, length = Math.hypot(ex, ey), t = ((p.x - a.x) * ex + (p.y - a.y) * ey) / (length * length)
+    if (t < 0 || t > 1) return null
+    return Math.hypot(a.x + ex * t - p.x, a.y + ey * t - p.y) < 2000 ? t * length : null
+  }
+
   private drawSection() {
-    const s = this.rhi, ctx = this.ctx, b = this.sectionBox()
-    ctx.setTransform(b.ratio, 0, 0, b.ratio, 0, 0)
+    const s = this.cut, ctx = this.ctx, b = this.sectionBox()
+    if (!b) return
     const pal = instrumentPalette(this.root)
-    ctx.fillStyle = pal.bg; ctx.fillRect(0, 0, this.canvas.width, this.canvas.height)
-    if (!s) return
-    const range = s.gates * RHI_STEP, top = s.rows * RHI_DZ, X = (r: number) => b.left + r / range * (b.right - b.left), Y = (h: number) => b.bottom - h / top * (b.bottom - b.top)
     ctx.fillStyle = pal.bar; ctx.fillRect(b.left, b.top, b.right - b.left, b.bottom - b.top)
-    ctx.imageSmoothingEnabled = false; ctx.drawImage(this.rhiRaster, b.left, b.top, b.right - b.left, b.bottom - b.top)
     ctx.font = `11px ${MONO}`; ctx.lineWidth = 1
-    // Grid: range every 5 km, height every 2 km; the beams of the volume scan.
+    if (!s) { ctx.fillStyle = pal.label; ctx.fillText(this.picking ? 'Отметьте точки на карте' : 'Проведите линию разреза на карте', b.left + 10, b.top + 20); ctx.strokeStyle = pal.gridStrong; ctx.strokeRect(b.left, b.top, b.right - b.left, b.bottom - b.top); return }
+    const length = s.length, top = s.rows * XS_DZ, X = (d: number) => b.left + d / length * (b.right - b.left), Y = (h: number) => b.bottom - h / top * (b.bottom - b.top)
+    const at = (g: number) => (g + .5) / s.gates * length
+    ctx.imageSmoothingEnabled = false; ctx.drawImage(this.xsRaster, b.left, b.top, b.right - b.left, b.bottom - b.top)
+    // Grid: distance from A every 5 km (10 on a long line), height every 2 km.
     ctx.strokeStyle = pal.grid; ctx.fillStyle = pal.label
-    for (let km = 0; km * 1000 <= range; km += 5) { ctx.beginPath(); ctx.moveTo(X(km * 1000), b.top); ctx.lineTo(X(km * 1000), b.bottom); ctx.stroke(); ctx.fillText(`${km}`, X(km * 1000) - 4, b.bottom + 14) }
+    const every = length > 60_000 ? 10 : 5
+    for (let km = 0; km * 1000 <= length; km += every) { ctx.beginPath(); ctx.moveTo(X(km * 1000), b.top); ctx.lineTo(X(km * 1000), b.bottom); ctx.stroke(); ctx.fillText(`${km}`, X(km * 1000) - 4, b.bottom + 14) }
     for (let km = 0; km * 1000 <= top; km += 2) { ctx.beginPath(); ctx.moveTo(b.left, Y(km * 1000)); ctx.lineTo(b.right, Y(km * 1000)); ctx.stroke(); ctx.fillText(`${km}`, b.left - 22, Y(km * 1000) + 3) }
-    ctx.fillText('дальность, км', b.right - 90, b.bottom + 28); ctx.save(); ctx.translate(14, b.top + 70); ctx.rotate(-Math.PI / 2); ctx.fillText('высота, км', 0, 0); ctx.restore()
+    ctx.fillText('A', b.left - 4, b.bottom + 27); ctx.fillText('B', b.right - 4, b.bottom + 27); ctx.fillText('от A, км', b.right - 80, b.bottom + 27)
+    ctx.save(); ctx.translate(b.left - 38, b.top + 70); ctx.rotate(-Math.PI / 2); ctx.fillText('высота, км', 0, 0); ctx.restore()
     ctx.save(); ctx.beginPath(); ctx.rect(b.left, b.top, b.right - b.left, b.bottom - b.top); ctx.clip()
+    // The beams of the volume scan where they cross the line (arcs, unless the line goes through the radar).
     ctx.strokeStyle = 'rgba(232, 240, 242, .22)'
-    for (const tilt of RADAR_TILTS) { ctx.beginPath(); for (let r = 0; r <= range; r += 500) { const x = X(r), y = Y(beamHeight(r, tilt)); if (r) ctx.lineTo(x, y); else ctx.moveTo(x, y) } ctx.stroke() }
+    for (const beam of s.beams) { ctx.beginPath(); for (let g = 0; g < s.gates; g++) { const x = X(at(g)), y = Y(beam[g]); if (g) ctx.lineTo(x, y); else ctx.moveTo(x, y) } ctx.stroke() }
+    // The isotherms, dashed, labelled at their first point.
+    ctx.lineWidth = 1.5; ctx.setLineDash([7, 5])
+    for (const [line, colour, name] of [[s.iso0, ISO_0, '0 °C'], [s.iso20, ISO_20, '−20 °C']] as const) {
+      ctx.strokeStyle = colour; ctx.beginPath()
+      let first = -1
+      for (let g = 0, pen = false; g < s.gates; g++) { const h = line[g]; if (Number.isNaN(h)) { pen = false; continue } if (first < 0) first = g; if (pen) ctx.lineTo(X(at(g)), Y(h)); else ctx.moveTo(X(at(g)), Y(h)); pen = true }
+      ctx.stroke()
+      if (first >= 0) { ctx.fillStyle = colour; ctx.fillText(name, X(at(first)) + 4, Y(line[first]) - 5) }
+    }
+    ctx.setLineDash([]); ctx.lineWidth = 1
     ctx.restore()
     ctx.strokeStyle = pal.gridStrong; ctx.strokeRect(b.left, b.top, b.right - b.left, b.bottom - b.top)
-    ctx.fillStyle = pal.label; ctx.fillText(`азимут ${this.rhiAzimuth}° · ${RHI_FIELDS[this.rhiField].name} · масштаб по вертикали ×${((range / (b.right - b.left)) / (top / (b.bottom - b.top))).toFixed(1)}`, b.left + 6, b.top + 14)
-    const out = this.root.querySelector<HTMLElement>('#radarReadout')!, hv = this.hover, values = this.values()
-    if (!hv || !values) { out.innerHTML = readings([['курсор', 'вне разреза']]); return }
-    const g = Math.min(s.gates - 1, Math.floor(hv.x / RHI_STEP)), k = Math.min(s.rows - 1, Math.floor(hv.y / RHI_DZ)), i = k * s.gates + g
-    ctx.strokeStyle = '#2f7d86'; ctx.setLineDash([2, 3]); ctx.beginPath(); ctx.moveTo(X(hv.x), b.top); ctx.lineTo(X(hv.x), b.bottom); ctx.moveTo(b.left, Y(hv.y)); ctx.lineTo(b.right, Y(hv.y)); ctx.stroke(); ctx.setLineDash([])
-    out.innerHTML = readings([['Дальность', `${(hv.x / 1000).toFixed(1)} км`], ['Высота', `${(hv.y / 1000).toFixed(2)} км`], ['Отражаемость', s.dbz[i] < 5 ? 'нет эха' : `${s.dbz[i].toFixed(0)} dBZ`], ...(this.rhiField === 'Z' ? [] : [[this.rhiField === 'SRV' ? 'Скорость' : this.rhiField, this.describe(values[i])] as [string, string]])])
+    // The caption, shorter on a narrow screen.
+    const caption = [`A → B · ${(length / 1000).toFixed(1)} км`, XS_FIELDS[this.xs.field].name, `масштаб по вертикали ×${((length / (b.right - b.left)) / (top / (b.bottom - b.top))).toFixed(1)}`]
+    while (caption.length > 1 && ctx.measureText(caption.join(' · ')).width > b.right - b.left) caption.pop()
+    ctx.fillStyle = pal.label; ctx.fillText(caption.join(' · '), b.left + 6, b.top - 8)
+    // The cursor: on the section itself, or where the map's cursor falls on the line.
+    const hv = this.xsHover, d = hv ? hv.d : this.onLine(this.hover)
+    if (d === null) return
+    ctx.strokeStyle = '#2f7d86'; ctx.setLineDash([2, 3]); ctx.beginPath(); ctx.moveTo(X(d), b.top); ctx.lineTo(X(d), b.bottom)
+    if (hv) { ctx.moveTo(b.left, Y(hv.h)); ctx.lineTo(b.right, Y(hv.h)) }
+    ctx.stroke(); ctx.setLineDash([])
   }
 
   /** Detections on the screen and in the list: mesocyclones, and the weaker circulations if asked for. */
@@ -420,21 +566,143 @@ export class RadarPanel {
 
   private azimuthText(azimuth: number) { return `${azimuth.toFixed(0)}°${this.grid.compass ? ` (${point(azimuth)})` : ''}` }
 
-  /** Screen rectangle of the domain inside the canvas (aspect kept). */
+  /** Screen rectangle of the domain inside the map's part of the canvas (aspect kept). */
   private frame() {
-    const ppi = this.ppi!, box = this.canvas.parentElement!.getBoundingClientRect(), ratio = devicePixelRatio || 1
-    const cw = Math.max(200, box.width), ch = Math.max(150, box.height)
-    if (this.canvas.width !== Math.round(cw * ratio) || this.canvas.height !== Math.round(ch * ratio)) { this.canvas.width = Math.round(cw * ratio); this.canvas.height = Math.round(ch * ratio); this.canvas.style.width = `${cw}px`; this.canvas.style.height = `${ch}px` }
-    const scale = Math.min((cw - 40) / ppi.w, (ch - 40) / ppi.h)
-    return { x: (cw - ppi.w * scale) / 2, y: (ch - ppi.h * scale) / 2, scale, ratio }
+    const ppi = this.ppi!, l = this.layout(), a = l.map, pad = l.sec ? 24 : 40
+    const scale = Math.min((a.w - pad) / ppi.w, (a.h - pad) / ppi.h)
+    return { x: a.x + (a.w - ppi.w * scale) / 2, y: a.y + (a.h - ppi.h * scale) / 2, scale, ratio: l.ratio }
   }
 
-  private toGround(e: MouseEvent) {
+  /** The ground point under the pointer (null off the map; with `clamp`, the nearest point of the map). */
+  private toGround(e: { clientX: number; clientY: number }, clamp = false) {
     if (!this.ppi) return null
-    const f = this.frame(), r = this.canvas.getBoundingClientRect(), px = (e.clientX - r.left - f.x) / f.scale, py = (e.clientY - r.top - f.y) / f.scale
-    if (px < 0 || py < 0 || px >= this.ppi.w || py >= this.ppi.h) return null
+    const f = this.frame(), r = this.canvas.getBoundingClientRect()
+    let px = (e.clientX - r.left - f.x) / f.scale, py = (e.clientY - r.top - f.y) / f.scale
+    if (clamp) { px = Math.min(this.ppi.w, Math.max(0, px)); py = Math.min(this.ppi.h, Math.max(0, py)) }
+    else if (px < 0 || py < 0 || px >= this.ppi.w || py >= this.ppi.h) return null
     const { width, depth } = this.ppi.model.grid
     return { x: px / this.ppi.w * width, y: depth - py / this.ppi.h * depth }
+  }
+
+  /** The screen position (CSS pixels in the canvas) of a ground point. */
+  private toScreen(p: Point) {
+    const ppi = this.ppi!, f = this.frame(), { width, depth } = ppi.model.grid
+    return [f.x + p.x / width * ppi.w * f.scale, f.y + (depth - p.y) / depth * ppi.h * f.scale] as const
+  }
+
+  /** The end of the shown line under a pointer (client coordinates), if any. */
+  private handleAt(clientX: number, clientY: number) {
+    const { on, a, b } = this.xs
+    if (!on || !a || !b || !this.ppi || this.root.hidden) return null
+    const r = this.canvas.getBoundingClientRect(), x = clientX - r.left, y = clientY - r.top
+    const near = (p: Point) => { const [sx, sy] = this.toScreen(p); return Math.hypot(sx - x, sy - y) }
+    const da = near(a), db = near(b)
+    return Math.min(da, db) > HANDLE ? null : da <= db ? 'a' as const : 'b' as const
+  }
+
+  private pointerDown(e: PointerEvent) {
+    const g = this.toGround(e)
+    if (!this.ppi) return
+    if (this.picking) { if (g) this.tap(g); return }
+    const end = this.handleAt(e.clientX, e.clientY)
+    if (!g && !end) return
+    const kind = end ?? (e.shiftKey ? 'new' : 'press')
+    this.drag = { kind, from: g ?? this.toGround(e, true)!, sx: e.clientX, sy: e.clientY }
+    if (kind === 'press') return
+    this.canvas.setPointerCapture(e.pointerId)
+    if (kind === 'new') { this.xs.a = g; this.xs.b = g }
+  }
+
+  private pointerMove(e: PointerEvent) {
+    const d = this.drag
+    if (d && d.kind !== 'press') {
+      const g = this.toGround(e, true)
+      if (!g) return
+      if (d.kind === 'a') this.xs.a = g; else this.xs.b = g
+      this.hover = g; this.xsHover = null
+      this.cutSection(); this.markSection(); this.draw()
+      return
+    }
+    this.xsHover = this.toSection(e); this.hover = this.xsHover ? null : this.toGround(e); this.draw()
+  }
+
+  private pointerUp(e: PointerEvent) {
+    const d = this.drag
+    this.drag = null
+    if (!d || !this.ppi) return
+    const moved = Math.hypot(e.clientX - d.sx, e.clientY - d.sy) > 6
+    if (d.kind === 'press') {
+      // A click: the radar moves there.
+      if (moved) return
+      this.ppi.site = d.from; this.ppi.layout(); this.lastComposite = 0; this.scanTime = -1; this.refresh(true)
+      return
+    }
+    if (d.kind === 'new' && !moved) { this.radialThrough(d.from); return }
+    const { a, b } = this.xs
+    if (a && b && Math.hypot(b.x - a.x, b.y - a.y) < XS_MIN) { this.radialThrough(b); return }
+    this.setLine(a!, b!)
+  }
+
+  /** The map: the product, the grid, the section's line with its ends, the detections. */
+  private drawMap() {
+    const ppi = this.ppi!, { width } = ppi.model.grid, f = this.frame(), ctx = this.ctx
+    const pal = instrumentPalette(this.root), box = { x: f.x, y: f.y, w: ppi.w * f.scale, h: ppi.h * f.scale }
+    ctx.fillStyle = pal.bar; ctx.fillRect(box.x, box.y, box.w, box.h)
+    ctx.imageSmoothingEnabled = false; ctx.drawImage(this.raster, box.x, box.y, box.w, box.h)
+    ctx.save(); ctx.beginPath(); ctx.rect(box.x, box.y, box.w, box.h); ctx.clip()
+    const [sx, sy] = this.toScreen(ppi.site), kmPx = box.w / (width / 1000)
+    this.drawGrid(sx, sy, kmPx, box)
+    ctx.restore()
+    ctx.strokeStyle = pal.gridStrong; ctx.strokeRect(box.x, box.y, box.w, box.h)
+    ctx.fillStyle = '#e8f0f2'; ctx.beginPath(); ctx.arc(sx, sy, 3.5, 0, Math.PI * 2); ctx.fill()
+    ctx.font = `11px ${MONO}`
+    if (!this.grid.labels) ctx.fillText('N ▲', box.x + box.w - 34, box.y + 16)
+    // MDA detections: a circle of the circulation's diameter (at least 3 km, to stay visible), coloured by strength.
+    if (this.showMda) for (const d of this.shown()) {
+      const [cx, cy] = this.toScreen(d), r = Math.max(1.5, d.diameter / 2000) * kmPx, color = pal.meso[d.strength]
+      ctx.strokeStyle = color; ctx.lineWidth = d.strength === 'circulation' ? 1.5 : 2.5; ctx.setLineDash(d.strength === 'circulation' ? [4, 3] : [])
+      ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([])
+      ctx.fillStyle = color; ctx.fillText(`M${d.id}`, cx + r * .75 + 3, cy - r * .75 - 3)
+      if (!d.hook) continue
+      // The hook: the arc of echo wrapped around the circulation (azimuths clockwise from north; canvas angles from east).
+      const h = d.hook, a0 = (h.from - 90) * Math.PI / 180, a1 = (h.from + h.span - 90) * Math.PI / 180
+      ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 3; ctx.setLineDash([6, 4]); ctx.beginPath(); ctx.arc(cx, cy, h.radius / 1000 * kmPx, a0, a1); ctx.stroke(); ctx.setLineDash([])
+      ctx.fillStyle = '#ffffff'; ctx.fillText('КРЮК', cx - r * .75 - 40, cy + r * .75 + 12)
+    }
+    ctx.lineWidth = 1
+    this.drawLine(kmPx)
+  }
+
+  /** The section's line on the map: A → B with a tick every 5 km, round ends to drag, the section cursor's point. */
+  private drawLine(kmPx: number) {
+    const ctx = this.ctx, { a, b, on } = this.xs
+    const end = (p: Point, name: string) => {
+      const [x, y] = this.toScreen(p)
+      ctx.fillStyle = 'rgba(11, 16, 19, .85)'; ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 2
+      ctx.beginPath(); ctx.arc(x, y, 8, 0, Math.PI * 2); ctx.fill(); ctx.stroke()
+      ctx.fillStyle = '#ffffff'; ctx.font = `bold 10px ${MONO}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(name, x, y + .5)
+      ctx.textAlign = 'start'; ctx.textBaseline = 'alphabetic'; ctx.font = `11px ${MONO}`
+    }
+    if (this.picking === 'b' && a) { end(a, 'A'); return }
+    if (!(on || this.drag?.kind === 'new') || !a || !b) return
+    const [ax, ay] = this.toScreen(a), [bx, by] = this.toScreen(b), length = Math.hypot(b.x - a.x, b.y - a.y)
+    ctx.lineCap = 'round'
+    ctx.strokeStyle = 'rgba(11, 16, 19, .7)'; ctx.lineWidth = 4.5; ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke()
+    ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke()
+    if (length > 0) {
+      const ux = (bx - ax) / Math.hypot(bx - ax, by - ay), uy = (by - ay) / Math.hypot(bx - ax, by - ay)
+      ctx.lineWidth = 1.5; ctx.beginPath()
+      for (let km = 5; km * 1000 < length; km += 5) { const x = ax + ux * km * kmPx, y = ay + uy * km * kmPx; ctx.moveTo(x - uy * 5, y + ux * 5); ctx.lineTo(x + uy * 5, y - ux * 5) }
+      ctx.stroke()
+    }
+    ctx.lineCap = 'butt'
+    end(a, 'A'); end(b, 'B')
+    // The point of the line under the section's cursor.
+    if (this.xsHover && length > 0) {
+      const t = Math.min(1, Math.max(0, this.xsHover.d / length)), [x, y] = this.toScreen({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t })
+      ctx.strokeStyle = '#2f7d86'; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.arc(x, y, 6, 0, Math.PI * 2); ctx.stroke()
+    }
+    ctx.lineWidth = 1
   }
 
   /**
@@ -477,45 +745,30 @@ export class RadarPanel {
   private draw() {
     const ppi = this.ppi
     if (!this.open || !ppi) return
-    if (this.product === 'RHI') { this.drawSection(); return }
-    const { width, depth } = ppi.model.grid, f = this.frame(), ctx = this.ctx
-    const toScreen = (x: number, y: number) => [f.x + x / width * ppi.w * f.scale, f.y + (depth - y) / depth * ppi.h * f.scale]
-    ctx.setTransform(f.ratio, 0, 0, f.ratio, 0, 0)
-    const pal = instrumentPalette(this.root), box = { x: f.x, y: f.y, w: ppi.w * f.scale, h: ppi.h * f.scale }
-    ctx.fillStyle = pal.bg; ctx.fillRect(0, 0, this.canvas.width, this.canvas.height)
-    ctx.fillStyle = pal.bar; ctx.fillRect(box.x, box.y, box.w, box.h)
-    ctx.imageSmoothingEnabled = false; ctx.drawImage(this.raster, box.x, box.y, box.w, box.h)
-    ctx.save(); ctx.beginPath(); ctx.rect(box.x, box.y, box.w, box.h); ctx.clip()
-    const [sx, sy] = toScreen(ppi.site.x, ppi.site.y), kmPx = box.w / (width / 1000)
-    this.drawGrid(sx, sy, kmPx, box)
-    // The line of the RHI section.
-    const az = this.rhiAzimuth * Math.PI / 180, far = Math.hypot(box.w, box.h)
-    ctx.strokeStyle = 'rgba(255, 255, 255, .45)'; ctx.setLineDash([6, 5]); ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(sx + Math.sin(az) * far, sy - Math.cos(az) * far); ctx.stroke(); ctx.setLineDash([])
-    ctx.restore()
-    ctx.strokeStyle = pal.gridStrong; ctx.strokeRect(box.x, box.y, box.w, box.h)
-    ctx.fillStyle = '#e8f0f2'; ctx.beginPath(); ctx.arc(sx, sy, 3.5, 0, Math.PI * 2); ctx.fill()
-    ctx.font = `11px ${MONO}`
-    if (!this.grid.labels) ctx.fillText('N ▲', box.x + box.w - 34, box.y + 16)
-    // MDA detections: a circle of the circulation's diameter (at least 3 km, to stay visible), coloured by strength.
-    if (this.showMda) for (const d of this.shown()) {
-      const [cx, cy] = toScreen(d.x, d.y), r = Math.max(1.5, d.diameter / 2000) * kmPx, color = pal.meso[d.strength]
-      ctx.strokeStyle = color; ctx.lineWidth = d.strength === 'circulation' ? 1.5 : 2.5; ctx.setLineDash(d.strength === 'circulation' ? [4, 3] : [])
-      ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([])
-      ctx.fillStyle = color; ctx.fillText(`M${d.id}`, cx + r * .75 + 3, cy - r * .75 - 3)
-      if (!d.hook) continue
-      // The hook: the arc of echo wrapped around the circulation (azimuths clockwise from north; canvas angles from east).
-      const h = d.hook, a0 = (h.from - 90) * Math.PI / 180, a1 = (h.from + h.span - 90) * Math.PI / 180
-      ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 3; ctx.setLineDash([6, 4]); ctx.beginPath(); ctx.arc(cx, cy, h.radius / 1000 * kmPx, a0, a1); ctx.stroke(); ctx.setLineDash([])
-      ctx.fillStyle = '#ffffff'; ctx.fillText('КРЮК', cx - r * .75 - 40, cy + r * .75 + 12)
+    const l = this.layout(), ctx = this.ctx
+    ctx.setTransform(l.ratio, 0, 0, l.ratio, 0, 0)
+    ctx.fillStyle = instrumentPalette(this.root).bg; ctx.fillRect(0, 0, this.canvas.width, this.canvas.height)
+    this.drawMap()
+    if (this.xs.on) this.drawSection()
+    this.readout()
+  }
+
+  /** The cursor readout: the point of the section under it, or the map's. */
+  private readout() {
+    const ppi = this.ppi!, out = this.root.querySelector<HTMLElement>('#radarReadout')!, s = this.cut, hv = this.xsHover
+    if (hv && s) {
+      const g = Math.min(s.gates - 1, Math.floor(hv.d / s.length * s.gates)), k = Math.min(s.rows - 1, Math.floor(hv.h / XS_DZ)), i = k * s.gates + g, values = this.xsValues(), field = this.xs.field
+      out.innerHTML = readings([['От A', `${(hv.d / 1000).toFixed(1)} км`], ['Высота', `${(hv.h / 1000).toFixed(2)} км`], ['До радара', `${(s.range[g] / 1000).toFixed(1)} км`],
+        ['Отражаемость', s.dbz[i] < 5 ? 'нет эха' : `${s.dbz[i].toFixed(0)} dBZ`], ...(field === 'Z' || !values ? [] : [[XS_FIELDS[field].reading, this.describe(values[i], this.xsKind(), 'in')] as [string, string]])])
+      return
     }
-    ctx.lineWidth = 1
-    // Cursor readout.
-    const out = this.root.querySelector<HTMLElement>('#radarReadout')!, values = this.values()
+    const values = this.values()
     if (!this.hover || !values) { out.innerHTML = readings([['курсор', 'вне экрана']]); return }
+    const { width, depth } = ppi.model.grid
     const b = ppi.beamAt(this.hover.x, this.hover.y), px = Math.min(ppi.w - 1, Math.floor(this.hover.x / width * ppi.w)), py = Math.min(ppi.h - 1, Math.floor((depth - this.hover.y) / depth * ppi.h)), i = px + py * ppi.w
     const kind = this.kind(), name = { Z: 'Отражаемость', V: 'Скорость', ZDR: 'ZDR', RHO: 'ρhv', KDP: 'KDP' }[kind]
     out.innerHTML = readings([['Азимут', this.azimuthText(b.azimuth)], ['Дальность', `${(b.range / 1000).toFixed(1)} км`], ...(this.product === 'CR' ? [] : [['Высота луча', `${(b.height / 1000).toFixed(2)} км`] as [string, string]]),
-      ...(kind === 'Z' ? [] : [['Отражаемость', ppi.dbz[i] < 5 ? 'нет эха' : `${ppi.dbz[i].toFixed(0)} dBZ`] as [string, string]]), [name, this.describe(values[i], 'in')]])
+      ...(kind === 'Z' ? [] : [['Отражаемость', ppi.dbz[i] < 5 ? 'нет эха' : `${ppi.dbz[i].toFixed(0)} dBZ`] as [string, string]]), [name, this.describe(values[i], kind, 'in')]])
   }
 
   // ---- The palette editor: a copy of the chosen palette as rows "value · colour · what follows", previewed live.
@@ -564,7 +817,7 @@ export class RadarPanel {
     const e = this.editing
     if (!e || !e.stops.length) return
     e.name = this.root.querySelector<HTMLInputElement>('#palName')!.value
-    this.palettes.put(e); this.lutFor = null
+    this.palettes.put(e); this.luts.clear()
     this.note(`Палитра «${e.name.trim() || 'Своя'}» сохранена в этом браузере`)
     this.showPalette()
   }
@@ -575,7 +828,7 @@ export class RadarPanel {
     if (!file) return
     file.text().then(text => {
       const parsed = parsePal(text, this.kind(), file.name.replace(/\.[^.]+$/, ''))
-      const saved = this.palettes.put(parsed); this.lutFor = null
+      const saved = this.palettes.put(parsed); this.luts.clear()
       this.note(saved.kind === this.kind() ? `Палитра «${saved.name}» загружена: ${saved.stops.length} точек` : `Палитра «${saved.name}» загружена для продукта ${KINDS[saved.kind].label} — она появится там`)
       this.showPalette()
     }).catch((err: Error) => this.note(`Не удалось прочитать файл: ${err.message}`))
@@ -586,7 +839,7 @@ export class RadarPanel {
     if (p.builtin) return
     // A second click within 4 s deletes (no browser dialog over the instrument).
     if (performance.now() - this.deleteArmed > 4000) { this.deleteArmed = performance.now(); button.textContent = 'Точно удалить?'; setTimeout(() => { if (performance.now() - this.deleteArmed >= 4000) button.textContent = 'Удалить' }, 4100); return }
-    this.palettes.remove(p.id); this.lutFor = null; this.note(`Палитра «${p.name}» удалена`); this.showPalette()
+    this.palettes.remove(p.id); this.luts.clear(); this.note(`Палитра «${p.name}» удалена`); this.showPalette()
   }
 
   private note(text: string) { this.root.querySelector<HTMLElement>('#paletteNote')!.textContent = text }

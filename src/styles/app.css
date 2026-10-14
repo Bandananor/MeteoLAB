@@ -91,6 +91,7 @@ html:not(.layout-phone) .m-only { display: none !important; }
   .instrument-overlay .instrument__screen { aspect-ratio: auto; height: min(100vw, 62dvh); }
   .skewt-app.instrument-overlay .instrument__screen { height: min(calc(100vw - 40px), 62dvh); } /* the square plot and its axis */
   .instrument-overlay .instrument__screen > canvas { touch-action: pan-y; }
+  .radar-app.is-section.instrument-overlay .instrument__screen { height: min(150vw, 84dvh); } /* the map and the section under it */
   .instrument-overlay .instrument__side { position: relative; z-index: 1; overflow: visible; border-left: 0; border-top: 1px solid var(--line); }
 }
 .layout-phone .instrument-overlay { display: flex; flex-direction: column; }
@@ -99,6 +100,7 @@ html:not(.layout-phone) .m-only { display: none !important; }
 .layout-phone .instrument-overlay .instrument__screen { aspect-ratio: auto; height: min(100vw, 62dvh); }
 .layout-phone .skewt-app.instrument-overlay .instrument__screen { height: min(calc(100vw - 40px), 62dvh); }
 .layout-phone .instrument-overlay .instrument__screen > canvas { touch-action: pan-y; }
+.layout-phone .radar-app.is-section.instrument-overlay .instrument__screen { height: min(150vw, 84dvh); }
 .layout-phone .instrument-overlay .instrument__side { position: relative; z-index: 1; overflow: visible; border-left: 0; border-top: 1px solid var(--line); }
 
 /* ---- Phone layout (hud.ts, <html class="layout-phone">; the page root also gets layout.css's .phone frame): the 3D view

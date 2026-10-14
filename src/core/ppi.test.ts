@@ -86,4 +86,30 @@ describe('radar PPI', () => {
     // Northward there is no rain at all.
     expect(Math.max(...north.dbz)).toBeLessThan(5)
   })
+
+  it('cuts a section between any two points: the radial wind from the radar, the beams and the isotherms', () => {
+    const model = new AtmosphereModel({ ...QUIET }, createGrid({ nx: 16, ny: 12, nz: 20, width: 19_200, depth: 13_500, height: 15_000, bottomSpacing: 100 }))
+    const { layer, nx, dx } = model.grid
+    // The same rain shaft 4.8 km east of the radar and 10 m/s from the west; the section runs south to north through it.
+    const cx = 8 + Math.round(4800 / dx), cy = 6, x = cx * dx, y = cy * model.grid.dy
+    for (let z = 0; z < model.grid.nz; z++) { if (model.grid.zs[z] < 3000) model.rain[cx + nx * cy + z * layer] = 1e-3; for (let c = 0; c < layer; c++) model.u[c + z * layer] = 10 }
+    const ppi = new PPI(model, 64, 45), gates = 40, dz = 250, rows = 40
+    ppi.site = { x: model.grid.width / 2, y }; ppi.prepare()
+    const s = ppi.crossSection({ x, y: y - 6000 }, { x, y: y + 6000 }, gates, dz, rows), mid = gates / 2
+    // The shaft in the middle of the line, the wind across the line but along the radar's ray there: outbound.
+    expect(s.dbz[4 * gates + mid]).toBeGreaterThan(30)
+    expect(s.velocity[2 * gates + mid]).toBeGreaterThan(8)
+    // The range from the radar is least in the middle (the line passes it at 4.8 km), the beams rise away from there.
+    expect(s.range[mid]).toBeCloseTo(x - model.grid.width / 2, -3)
+    expect(s.range[0]).toBeGreaterThan(s.range[mid])
+    expect(s.beams[0][0]).toBeGreaterThan(s.beams[0][mid])
+    expect(s.beams[13][mid]).toBeGreaterThan(s.beams[0][mid])
+    // The isotherms where the environment crosses 0 and -20 °C.
+    const e = model.env, cross = (level: number) => { for (let z = 1; z < model.grid.nz; z++) { const a = e.theta[z - 1] * e.exner[z - 1] - 273.15, b = e.theta[z] * e.exner[z] - 273.15; if (a > level && b <= level) return model.grid.zs[z - 1] + (a - level) / (a - b) * (model.grid.zs[z] - model.grid.zs[z - 1]) } return NaN }
+    expect(Math.abs(s.iso0[3] - cross(0))).toBeLessThan(100)
+    expect(Math.abs(s.iso20[3] - cross(-20))).toBeLessThan(100)
+    // The same line backwards is the same section mirrored.
+    const r = ppi.crossSection({ x, y: y + 6000 }, { x, y: y - 6000 }, gates, dz, rows)
+    expect(r.dbz[4 * gates + 3]).toBeCloseTo(s.dbz[4 * gates + gates - 4], 4)
+  })
 })

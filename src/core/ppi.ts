@@ -169,31 +169,57 @@ export class PPI {
 
   /**
    * Vertical section from the site along `azimuth` (degrees clockwise from north), like an RHI scan through the full
-   * volume (call prepare() first): reflectivity and radial velocity at `gates` ranges `step` m apart (gate g at
-   * (g + 0.5) step) and `rows` heights `dz` m apart (row k at (k + 0.5) dz), row-major from the ground up. The radial
-   * velocity is along the ray from the radar to the point (elevation atan(h / r)): ground-relative wind, minus the fall
-   * speed, minus `stormMotion` if set; NaN without echo. With `dual` also ZDR, rho_hv and KDP (NaN below DUAL_MIN_DBZ;
-   * empty arrays without it). Periodic like the model; above the model top: no echo.
+   * volume (call prepare() first): crossSection() from the site to `gates` * `step` m along the azimuth, so gate g lies at
+   * range (g + 0.5) step.
    */
   section(azimuth: number, step: number, gates: number, dz: number, rows: number) {
-    const m = this.model, grid = m.grid, { dx, dy } = grid, a = azimuth * Math.PI / 180, sa = Math.sin(a), ca = Math.cos(a), [ox, oy] = this.shift()
+    const a = azimuth * Math.PI / 180, length = gates * step
+    return this.crossSection(this.site, { x: this.site.x + length * Math.sin(a), y: this.site.y + length * Math.cos(a) }, gates, dz, rows)
+  }
+
+  /**
+   * Vertical section along the straight line from ground point `a` to `b` (m), through the full volume (call prepare()
+   * first): reflectivity and radial velocity at `gates` points (gate g at (g + 0.5) / gates of the way) and `rows`
+   * heights `dz` m apart (row k at (k + 0.5) dz), row-major from the ground up. The radial velocity at each point is
+   * along the ray from the radar to it (azimuth from the site, elevation atan(h / r)): ground-relative wind, minus the fall
+   * speed, minus `stormMotion` if set; NaN without echo. With `dual` also ZDR, rho_hv and KDP (NaN below DUAL_MIN_DBZ;
+   * empty arrays without it). Also per gate: the range from the radar (m), the beam height of every tilt there (m, in
+   * RADAR_TILTS order) and the heights of the 0 °C and -20 °C isotherms in the column (m, the lowest crossing from warm
+   * to cold; NaN if none). Periodic like the model; above the model top: no echo.
+   */
+  crossSection(a: { x: number; y: number }, b: { x: number; y: number }, gates: number, dz: number, rows: number) {
+    const m = this.model, grid = m.grid, { dx, dy, nz } = grid, [ox, oy] = this.shift(), e = m.env
     const [fu, fv] = m.frame, [su, sv] = this.stormMotion ?? [0, 0], cu = fu - su, cv = fv - sv
     const dbz = new Float32Array(gates * rows).fill(DBZ_FLOOR), velocity = new Float32Array(gates * rows).fill(NaN), dual = this.dual
     const nan = () => new Float32Array(dual ? gates * rows : 0).fill(NaN), zdr = nan(), rho = nan(), kdp = nan()
+    const range = new Float32Array(gates), iso0 = new Float32Array(gates).fill(NaN), iso20 = new Float32Array(gates).fill(NaN)
+    const sinAz = new Float32Array(gates), cosAz = new Float32Array(gates), gxs = new Float32Array(gates), gys = new Float32Array(gates)
+    for (let g = 0; g < gates; g++) {
+      const t = (g + .5) / gates, x = a.x + (b.x - a.x) * t, y = a.y + (b.y - a.y) * t, ex = x - this.site.x, ny = y - this.site.y, r = Math.hypot(ex, ny)
+      range[g] = r; sinAz[g] = r > 0 ? ex / r : 0; cosAz[g] = r > 0 ? ny / r : 0; gxs[g] = x / dx - ox; gys[g] = y / dy - oy
+      // The isotherms: the first level where the column turns colder than 0 °C, then -20 °C (interpolated between levels).
+      let below = m.sample(m.theta, gxs[g], gys[g], 0) * e.exner[0] - 273.15
+      for (let z = 1; z < nz && Number.isNaN(iso20[g]); z++) {
+        const tc = m.sample(m.theta, gxs[g], gys[g], z) * e.exner[z] - 273.15
+        for (const [level, out] of [[0, iso0], [-20, iso20]] as const) if (Number.isNaN(out[g]) && below > level && tc <= level) out[g] = grid.zs[z - 1] + (below - level) / (below - tc) * (grid.zs[z] - grid.zs[z - 1])
+        below = tc
+      }
+    }
+    const beams = RADAR_TILTS.map(tilt => Float32Array.from(range, r => beamHeight(r, tilt)))
     for (let k = 0; k < rows; k++) {
       const h = (k + .5) * dz
       if (h > grid.height) break
       const z = levelAt(grid, h)
       for (let g = 0; g < gates; g++) {
-        const r = (g + .5) * step, gx = (this.site.x + r * sa) / dx - ox, gy = (this.site.y + r * ca) / dy - oy, i = k * gates + g, d = m.sample(this.nodeDbz, gx, gy, z)
+        const gx = gxs[g], gy = gys[g], i = k * gates + g, d = m.sample(this.nodeDbz, gx, gy, z)
         dbz[i] = d
         if (dual && d >= DUAL_MIN_DBZ) { zdr[i] = m.sample(this.nodeZdr, gx, gy, z); rho[i] = m.sample(this.nodeRho, gx, gy, z); kdp[i] = m.sample(this.nodeKdp, gx, gy, z) }
         if (d < VELOCITY_MIN_DBZ) continue
-        const el = Math.atan2(h, r)
-        velocity[i] = ((m.sample(m.u, gx, gy, z) + cu) * sa + (m.sample(m.v, gx, gy, z) + cv) * ca) * Math.cos(el) + (m.sample(m.w, gx, gy, z) - m.sample(this.nodeFall, gx, gy, z)) * Math.sin(el)
+        const el = Math.atan2(h, range[g])
+        velocity[i] = ((m.sample(m.u, gx, gy, z) + cu) * sinAz[g] + (m.sample(m.v, gx, gy, z) + cv) * cosAz[g]) * Math.cos(el) + (m.sample(m.w, gx, gy, z) - m.sample(this.nodeFall, gx, gy, z)) * Math.sin(el)
       }
     }
-    return { dbz, velocity, zdr, rho, kdp }
+    return { dbz, velocity, zdr, rho, kdp, range, beams, iso0, iso20 }
   }
 
   /** Reflectivity (dBZ) the beam of `tilt` sees over a ground point, m (call prepare() first; periodic like the model). */

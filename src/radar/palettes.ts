@@ -4,7 +4,7 @@
 // "SolidColor: value R G B" (one colour up to the next stop), Color4 / SolidColor4 with an alpha, "Product:", "Units:",
 // "Scale:" and "Offset:" (file value = value x Scale + Offset), comments after ";".
 
-/** What a palette colours: reflectivity (Z, CR, RHI), radial velocity (V, SRV), ZDR, rho_hv, KDP. */
+/** What a palette colours: reflectivity (Z, CR, the section), radial velocity (V, SRV), ZDR, rho_hv, KDP. */
 export type PaletteKind = 'Z' | 'V' | 'ZDR' | 'RHO' | 'KDP'
 export type RGB = readonly [number, number, number]
 /** A stop: from `value` up, `color` (null: transparent); `solid` holds it to the next stop, otherwise it blends to `to` or to the next stop's colour. */
