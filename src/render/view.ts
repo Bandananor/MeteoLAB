@@ -3,6 +3,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js'
 import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js'
 import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeometry.js'
+import { LightVolume } from './light'
 import { type AtmosphereModel, channelShape, computeScalarField, type Flash, headingVector, heightAt, levelAt, MESO_PERSISTENCE, sunDirection, UH_ROTATING, type UhLayer } from '../core'
 import { clamp, lerp, mod, mulberry32 } from '../core/math'
 import { isPhone } from '../hud'
@@ -67,6 +68,7 @@ export class StormView {
   private readonly ground: THREE.Mesh; private readonly raycaster = new THREE.Raycaster(); private readonly pointer = new THREE.Vector2()
   private readonly sunLight: THREE.DirectionalLight; private readonly hemiLight: THREE.HemisphereLight
   private readonly shared: Record<string, THREE.IUniform>
+  private readonly light: LightVolume
   private readonly volumeData: Uint8Array; private readonly volumeTexture: THREE.Data3DTexture; private readonly volumeMaterial: THREE.ShaderMaterial; private readonly volumeMesh: THREE.Mesh
   private readonly fieldValues: Float32Array; private readonly fieldData: Uint8Array; private readonly fieldTexture: THREE.Data3DTexture
   private colormap: THREE.DataTexture | null = null; private colormapField: FieldMode | null = null
@@ -115,6 +117,7 @@ export class StormView {
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, isPhone() ? 1 : 1.5)); this.renderer.outputColorSpace = THREE.SRGBColorSpace; this.renderer.toneMapping = THREE.ACESFilmicToneMapping; this.renderer.toneMappingExposure = 1.05
     this.scene = new THREE.Scene(); this.scene.background = new THREE.Color(0x172d3b); this.scene.fog = new THREE.FogExp2(0x172d3b, .012 / scale)
     this.camera = new THREE.PerspectiveCamera(42, 1, .1, 180 * scale); this.camera.position.set(38 * scale, 24 * scale, 39 * scale)
+    if (typeof location !== 'undefined' && new URLSearchParams(location.search).has('view-debug')) (globalThis as { __stormView?: StormView }).__stormView = this
     this.controls = new OrbitControls(this.camera, canvas); this.controls.target.set(0, 6, 0); this.controls.enableDamping = true; this.controls.dampingFactor = .07; this.controls.maxPolarAngle = Math.PI * .495; this.controls.minDistance = 15; this.controls.maxDistance = 100 * scale
     this.hemiLight = new THREE.HemisphereLight(0xd9efff, 0x4b4439, 1.35); this.scene.add(this.hemiLight)
     this.sunLight = new THREE.DirectionalLight(0xfff0d2, 2); this.scene.add(this.sunLight)
@@ -161,10 +164,11 @@ export class StormView {
       uSunDir: { value: new THREE.Vector3(0, 1, 0) }, uHeight: { value: H }, uExtinction: { value: 2.2 }, uSliceOn: { value: 0 }, uSliceH: { value: 2 }, uSliceZ: { value: 0 },
     }
     this.volumeTexture = texture3D(this.volumeData, THREE.RGFormat, nx, ny, nz)
+    this.light = new LightVolume(nx, ny, nz, this.shared, this.volumeTexture)
     this.volumeMaterial = new THREE.ShaderMaterial({
       vertexShader: volumeVertex, fragmentShader: volumeFragment, side: THREE.BackSide, transparent: true, depthWrite: false, depthTest: false, premultipliedAlpha: true,
       uniforms: {
-        ...this.shared, uDensity: { value: this.volumeTexture }, uSunColor: { value: new THREE.Color() }, uAmbientTop: { value: new THREE.Color() }, uAmbientBottom: { value: new THREE.Color() },
+        ...this.shared, uDensity: { value: this.volumeTexture }, uLight: { value: this.light.texture }, uSunColor: { value: new THREE.Color() }, uAmbientTop: { value: new THREE.Color() }, uAmbientBottom: { value: new THREE.Color() },
         uFogColor: { value: (this.scene.fog as THREE.FogExp2).color }, uFogDensity: { value: (this.scene.fog as THREE.FogExp2).density }, uTime: { value: 0 }, uOpacity: { value: 1 },
       },
     })
@@ -180,9 +184,9 @@ export class StormView {
     const vertical = new THREE.PlaneGeometry(W, H); vertical.translate(0, H / 2, 0); this.sliceV = new THREE.Mesh(vertical, this.sliceMaterial); this.scene.add(this.sliceV)
 
     groundMat.onBeforeCompile = shader => {
-      Object.assign(shader.uniforms, { ...this.shared, uDensity: this.volumeMaterial.uniforms.uDensity })
+      Object.assign(shader.uniforms, { ...this.shared, uLight: this.volumeMaterial.uniforms.uLight })
       shader.vertexShader = shader.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vCloudWorld;').replace('#include <project_vertex>', '#include <project_vertex>\nvCloudWorld=(modelMatrix*vec4(transformed,1.0)).xyz;')
-      shader.fragmentShader = shader.fragmentShader.replace('#include <common>', `#include <common>\n${groundShadowPars}`).replace('#include <lights_fragment_end>', '#include <lights_fragment_end>\n{float s=cloudShadow(vCloudWorld);reflectedLight.directDiffuse*=s;reflectedLight.directSpecular*=s;}')
+      shader.fragmentShader = shader.fragmentShader.replace('#include <common>', `#include <common>\n${groundShadowPars}`).replace('#include <lights_fragment_end>', '#include <lights_fragment_end>\n{vec2 s=cloudShade(vCloudWorld);reflectedLight.directDiffuse*=s.x;reflectedLight.directSpecular*=s.x;reflectedLight.indirectDiffuse*=s.y;}')
     }
 
     const soft = softParticleTexture()
@@ -214,7 +218,7 @@ export class StormView {
 
   dispose() {
     this.controls.dispose()
-    ;[this.volumeTexture, this.fieldTexture, this.colormap, this.volumeMaterial, this.fieldMaterial, this.sliceMaterial, this.volumeMesh.geometry, this.sliceH.geometry, this.sliceV.geometry, this.precipGeometry, this.precipMaterial, this.swathTexture, this.cityTexture, this.zoneTexture, this.frontLine?.geometry, this.frontLine?.material as THREE.Material | undefined, this.swath.geometry, this.swath.material as THREE.Material, this.mesoMarker.geometry, this.mesoMarker.material as THREE.Material, this.selectionMarker.geometry, this.selectionMarker.material as THREE.Material, this.stationMarker.geometry, this.stationMarker.material as THREE.Material, this.lightningGeometry, this.lightningMaterial].forEach(r => r?.dispose())
+    ;[this.volumeTexture, this.fieldTexture, this.colormap, this.volumeMaterial, this.fieldMaterial, this.sliceMaterial, this.volumeMesh.geometry, this.sliceH.geometry, this.sliceV.geometry, this.precipGeometry, this.precipMaterial, this.swathTexture, this.cityTexture, this.zoneTexture, this.frontLine?.geometry, this.frontLine?.material as THREE.Material | undefined, this.swath.geometry, this.swath.material as THREE.Material, this.mesoMarker.geometry, this.mesoMarker.material as THREE.Material, this.selectionMarker.geometry, this.selectionMarker.material as THREE.Material, this.stationMarker.geometry, this.stationMarker.material as THREE.Material, this.lightningGeometry, this.lightningMaterial, this.light].forEach(r => r?.dispose())
     this.renderer.dispose()
   }
 
@@ -294,8 +298,15 @@ export class StormView {
     return [x / 1000 - width / 2000, z / 1000, depth / 2000 - y / 1000] as const
   }
 
+  /**
+   * For checks of the picture (the page opened with ?view-debug): the view as globalThis.__stormView, a local hour for
+   * the sun instead of the model's, and the camera placed by hand (km, world axes).
+   */
+  debugSunHour: number | null = null
+  debugCamera(position: [number, number, number], target: [number, number, number]) { this.camera.position.set(...position); this.controls.target.set(...target); this.controls.update() }
+
   private updateSun() {
-    const s = sunDirection(this.model.config, this.model.time), dir = new THREE.Vector3(s.x, s.y, s.z)
+    const s = this.debugSunHour === null ? sunDirection(this.model.config, this.model.time) : sunDirection({ ...this.model.config, hour: this.debugSunHour }, 0), dir = new THREE.Vector3(s.x, s.y, s.z)
     const day = THREE.MathUtils.smoothstep(dir.y, -.03, .12), warm = THREE.MathUtils.smoothstep(dir.y, 0, .4), u = this.volumeMaterial.uniforms
     ;(this.shared.uSunDir.value as THREE.Vector3).copy(dir)
     ;(u.uSunColor.value as THREE.Color).setRGB(1, lerp(.55, .94, warm), lerp(.3, .84, warm)).multiplyScalar(2.6 * day)
@@ -469,6 +480,7 @@ export class StormView {
     const glow = this.updateLightning(performance.now())
     if (glow > 0) for (const key of ['uAmbientTop', 'uAmbientBottom'] as const) (this.volumeMaterial.uniforms[key].value as THREE.Color).add(new THREE.Color(.55 * glow, .55 * glow, .7 * glow))
     this.updateVolume(); if (field) this.updateFieldTexture(field)
+    this.light.update(this.renderer, m.time, this.shared.uSunDir.value as THREE.Vector3)
     this.volumeMaterial.uniforms.uOpacity.value = field ? .22 : 1
     const slices = !!field && s.layerMode !== 'volume', wholeVolume = s.layerMode === 'volume'
     this.fieldMesh.visible = !!field && s.layerMode !== 'slices'; this.sliceH.visible = this.sliceV.visible = slices

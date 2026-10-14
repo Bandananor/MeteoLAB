@@ -31,6 +31,62 @@ uniform sampler3D uDensity;
 vec2 fields(vec3 p){ return texture(uDensity, toTex(p)).rg; }
 `
 
+// The light volume (light.ts): R encodes the optical depth to the sun (density units x km, before uExtinction), G the
+// share of the sky seen. LIGHT_OD_SCALE keeps 8 bits enough from a thin edge to the depth of a whole storm.
+const lightEncoding = /* glsl */`
+const float LIGHT_OD_SCALE = 8.0;
+`
+const lightSampling = lightEncoding + /* glsl */`
+uniform sampler3D uLight;
+// x: optical depth to the sun (times uExtinction), y: sky visibility (0-1).
+vec2 lightAt(vec3 p){
+  vec2 l = texture(uLight, toTex(p)).rg;
+  return vec2(-LIGHT_OD_SCALE * log(max(1.0 - l.x, 1e-4)) * uExtinction, l.y);
+}
+`
+
+export const lightVolumeVertex = /* glsl */`
+void main(){ gl_Position = vec4(position.xy, 0.0, 1.0); }`
+
+/**
+ * One layer of the light volume per pass: at the texel's node, the optical depth to the sun through the whole column
+ * (to the top of the domain; the domain is periodic sideways, as the model) and the sky visibility, averaged over the
+ * zenith and four directions 45 degrees up (cosine weighted).
+ */
+export const lightVolumeFragment = /* glsl */`
+precision highp float;
+${volumeCommon}
+${cloudSampling}
+${lightEncoding}
+uniform float uLayer;
+
+float depthAlong(vec3 p, vec3 dir, float far, int n){
+  float ds = far / float(n), od = 0.0;
+  for(int i = 0; i < 48; i++){
+    if(i >= n) break;
+    vec2 f = fields(p + dir * (ds * (float(i) + 0.5)));
+    od += f.r * 1.1 + f.g * 0.3;
+  }
+  return od * ds;
+}
+
+void main(){
+  vec3 s = uBoxMax - uBoxMin;
+  vec3 p = vec3(uBoxMin.x + (gl_FragCoord.x - 0.5) / uGrid.x * s.x, uLayer / (uGrid.z - 1.0) * uHeight, uBoxMax.z - (gl_FragCoord.y - 0.5) / uGrid.y * s.z);
+  float up = max(uHeight - p.y, 0.01);
+  // The sun: to the top of the domain, at most 60 km of slant path (a low sun).
+  float sunOd = uSunDir.y > 0.0 ? depthAlong(p, uSunDir, min(up / max(uSunDir.y, 0.01), 60.0), 48) : 0.0;
+  // The sky.
+  float sky = 0.0, total = 0.0;
+  vec3 dirs[5] = vec3[5](vec3(0.0, 1.0, 0.0), vec3(0.7071, 0.7071, 0.0), vec3(-0.7071, 0.7071, 0.0), vec3(0.0, 0.7071, 0.7071), vec3(0.0, 0.7071, -0.7071));
+  for(int i = 0; i < 5; i++){
+    float w = dirs[i].y;
+    sky += w * exp(-depthAlong(p, dirs[i], up / dirs[i].y, 12) * uExtinction * 0.5);
+    total += w;
+  }
+  gl_FragColor = vec4(1.0 - exp(-sunOd / LIGHT_OD_SCALE), sky / total, 0.0, 1.0);
+}`
+
 const raymarchCommon = volumeCommon + /* glsl */`
 uniform float uSliceOn;
 uniform float uSliceH;
@@ -59,19 +115,14 @@ float pixelJitter(){
 }
 `
 
-// Injected into the ground's MeshStandardMaterial; attenuates only direct sunlight so shaded ground keeps sky light.
-export const groundShadowPars = volumeCommon + cloudSampling + /* glsl */`
+// Injected into the ground's MeshStandardMaterial: the light volume at the ground gives the cloud shadow for the direct
+// sunlight (x) and, under a storm, the sky hidden by the cloud for the sky light (y).
+export const groundShadowPars = volumeCommon + lightSampling + /* glsl */`
 varying vec3 vCloudWorld;
 
-float cloudShadow(vec3 p){
-  const int N = 24;
-  float ds = (uHeight - p.y) / max(uSunDir.y, 0.1) / float(N);
-  float od = 0.0;
-  for(int i = 0; i < N; i++){
-    vec2 f = fields(p + uSunDir * (ds * (float(i) + 0.5)));
-    od += f.r + f.g * 0.3;
-  }
-  return exp(-od * ds * uExtinction * 0.8);
+vec2 cloudShade(vec3 p){
+  vec2 l = lightAt(vec3(p.x, 0.0, p.z));
+  return vec2(exp(-l.x * 0.8), mix(0.22, 1.0, l.y));
 }
 `
 
@@ -87,9 +138,9 @@ uniform float uFogDensity;
 uniform float uTime;
 uniform float uOpacity;
 
+${lightSampling}
+
 const int STEPS = 96;
-const int LIGHT_STEPS = 5;
-const float LIGHT_STEP = 0.6;
 const float PI = 3.14159265;
 
 float hash(vec3 p){
@@ -119,6 +170,15 @@ float hg(float c, float g){
   return (1.0 - g2) / (4.0 * PI * pow(1.0 + g2 - 2.0 * g * c, 1.5));
 }
 
+// Two lobes, relative to isotropic (1): a strong forward one (the silver lining of an edge against the sun) and a weak
+// backward one; k widens the lobes for the multiple-scattering octaves.
+float phase(float c, float k){ return mix(hg(c, -0.15 * k), hg(c, 0.75 * k), 0.3) * 4.0 * PI; }
+
+// Sunlight reaching a point at optical depth od from the sun, with multiple scattering approximated by octaves
+// (Wrenninge 2013, Hillaire 2016): each octave weaker (0.5^i), less extinguished (0.5^i) and with a wider phase. The
+// phases depend only on the ray's angle to the sun: phases holds them, weighted, for the three octaves.
+float sunlight(float od, vec3 phases){ return phases.x * exp(-od) + phases.y * exp(-od * 0.5) + phases.z * exp(-od * 0.25); }
+
 void main(){
   vec3 ro = cameraPosition;
   vec3 rd = normalize(vWorld - cameraPosition);
@@ -131,7 +191,7 @@ void main(){
   float tt = t.x + dt * pixelJitter();
 
   float cosT = dot(rd, uSunDir);
-  float phase = mix(hg(cosT, 0.55), hg(cosT, -0.2), 0.35) * 2.0 * PI + 0.5;
+  vec3 phases = vec3(phase(cosT, 1.0), 0.5 * phase(cosT, 0.5), 0.25 * phase(cosT, 0.25));
 
   float T = 1.0;
   vec3 col = vec3(0.0);
@@ -145,17 +205,13 @@ void main(){
     float dr = f.g * 0.35;
     float sigma = (dc + dr) * uExtinction;
     if(sigma > 1e-4){
-      float od = 0.0;
-      for(int j = 1; j <= LIGHT_STEPS; j++){
-        vec2 lf = fields(p + uSunDir * (float(j) * LIGHT_STEP));
-        od += lf.r * 1.1 + lf.g * 0.3;
-      }
-      float lightT = exp(-od * LIGHT_STEP * uExtinction);
+      vec2 L = lightAt(p);
       float powder = 1.0 - exp(-dc * uExtinction * 1.5);
       float h = clamp(p.y / uHeight * 1.3, 0.0, 1.0);
-      vec3 ambient = mix(uAmbientBottom, uAmbientTop, h);
-      vec3 cloudCol = uSunColor * lightT * phase * mix(0.6, 1.0, powder) + ambient * 0.9;
-      vec3 rainCol = vec3(0.36, 0.42, 0.50) * (0.35 + 0.65 * length(ambient));
+      // Sky light where the sky is seen: dim deep inside and under the cloud, full at its edges.
+      vec3 ambient = mix(uAmbientBottom, uAmbientTop, h) * mix(0.18, 1.0, L.y);
+      vec3 cloudCol = uSunColor * sunlight(L.x, phases) * mix(0.6, 1.0, powder) * 0.55 + ambient * 0.9;
+      vec3 rainCol = vec3(0.40, 0.44, 0.50) * (uSunColor * exp(-L.x) * 0.25 + ambient * 1.1);
       vec3 S = mix(cloudCol, rainCol, dr / (dc + dr));
       float a = exp(-sigma * dt);
       float w = T * (1.0 - a);
