@@ -173,11 +173,14 @@ export class Lightning {
       // Every link from the channel to a node beside it where the field, channel to air, exceeds the propagation
       // threshold; one is chosen with probability in proportion to how far it exceeds it. In clear air only the leader
       // heading for the ground's potential goes on (Mansell et al. 2010: the tip must keep the sign that connects to
-      // the ground), and there is one ground contact per flash.
+      // the ground), and there is one ground contact per flash. Once the channel has touched the ground (its potential
+      // 0) it grows only into the charge of the region its leader came from (the potential of the sign it had before):
+      // the return strokes and what follows drain that region; growing into both signs, a CG took 60-90% of its nodes
+      // after the contact, 40-130 C and sometimes the opposite polarity (the meteorologist's review 14.10.2026).
       let total = 0
       for (let f = 0; f < this.size; f++) {
         const j = frontier[f], clear = Math.abs(this.rho[j]) < RHO_MIN
-        const w = (ground >= 0 && j < layer) || (clear && (phi[j] - potential) * potential >= 0) ? 0 : Math.abs(potential - phi[j]) / scale[j] - 1
+        const w = (ground >= 0 && (j < layer || phi[j] * before <= 0)) || (clear && (phi[j] - potential) * potential >= 0) ? 0 : Math.abs(potential - phi[j]) / scale[j] - 1
         weight[f] = w > 0 ? w : 0; total += weight[f]
       }
       if (total === 0) break
@@ -220,14 +223,16 @@ export class Lightning {
   /**
    * Puts the nodes beside channel node i (index c in the channel) on the growth front of flash `id`. The channel grows
    * through charged cloud (|ρ| at least RHO_MIN) and down through clear air (to the ground); not to the top level (the
-   * conducting upper atmosphere, outside the storm).
+   * conducting upper atmosphere, outside the storm), and not across the domain's sides: the model is periodic there,
+   * but a channel through the edge into the storm's own copy is not a real one (it made CG 48 km wide).
    */
   private extend(i: number, c: number, id: number) {
     const { nx, ny, nz, layer, dx, dy, zs } = this.grid, z = Math.floor(i / layer), y = Math.floor((i - z * layer) / nx), x = i - z * layer - y * nx
     for (let k = Math.max(0, z - 1); k <= Math.min(nz - 2, z + 1); k++) {
       const hz = zs[k] - zs[z], threshold = F_CRIT * .5 * (this.eInit[z] + this.eInit[k])
       for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) {
-        const j = (x + di + nx) % nx + ((y + dj + ny) % ny) * nx + k * layer
+        if (x + di < 0 || x + di >= nx || y + dj < 0 || y + dj >= ny) continue
+        const j = x + di + (y + dj) * nx + k * layer
         if (this.mark[j] === id || (k >= z && Math.abs(this.rho[j]) < RHO_MIN)) continue
         const s = Math.sqrt((di * dx) ** 2 + (dj * dy) ** 2 + hz * hz) * threshold
         if (this.seen[j] !== id) { this.seen[j] = id; this.frontier[this.size++] = j }

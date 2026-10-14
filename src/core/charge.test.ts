@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { chargingRate, collisionCharge, criticalRar, crystalDiameter, crystalNumber, MAX_COLLISION_CHARGE, transferCharge } from './charge'
+import { chargingRate, collisionCharge, criticalRar, crystalDiameter, crystalNumber, inductiveRate, MAX_COLLISION_CHARGE, transferCharge } from './charge'
 
 describe('electrification (2.3): non-inductive charging and charge carried with the water', () => {
   it('the critical rime accretion rate of Saunders and Peck (1998): ~1.1 g/m²/s at -7 °C, rising to ~3.4 at -24 °C', () => {
@@ -72,5 +72,19 @@ describe('electrification (2.3): non-inductive charging and charge carried with 
     // Whatever happens, the total is unchanged.
     c = [3e-9, -5e-9, 1e-9, -2e-10]; const before = sum(c)
     transferCharge(c, [1e-3, 2e-3, 5e-4, 3e-4], [2e-4, 2.6e-3, 0, 1e-4]); expect(sum(c)).toBeCloseTo(before, 22)
+  })
+})
+
+describe('inductive charging (2.7)', () => {
+  it('charges graupel in an upward field positive, ~1 nC/m³ a minute at 50 kV/m, and relaxes its own charge', () => {
+    const rho = .7, perMinute = inductiveRate(-10, rho, 1e-3, 2.9e-3, 0, 5e4, 0) * 60
+    expect(perMinute).toBeGreaterThan(.2e-9); expect(perMinute).toBeLessThan(5e-9)
+    expect(inductiveRate(-10, rho, 1e-3, 2.9e-3, 0, -5e4, 0)).toBeCloseTo(-perMinute / 60, 15)
+    // Without a field a charged rimer loses charge to the droplets (on minutes), never gains it.
+    const relax = inductiveRate(-10, rho, 1e-3, 2.9e-3, 0, 0, 1e-9)
+    expect(relax).toBeLessThan(0); expect(1e-9 / -relax).toBeGreaterThan(30); expect(1e-9 / -relax).toBeLessThan(1000)
+    // No droplets, no rimers, wet growth, above 0 °C: nothing.
+    expect(inductiveRate(-10, rho, 0, 2.9e-3, 0, 5e4, 0)).toBe(0); expect(inductiveRate(-10, rho, 1e-3, 0, 0, 5e4, 0)).toBe(0)
+    expect(inductiveRate(-10, rho, 1e-3, 2.9e-3, 0, 5e4, 0, true)).toBe(0); expect(inductiveRate(5, rho, 1e-3, 2.9e-3, 0, 5e4, 0)).toBe(0)
   })
 })

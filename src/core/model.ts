@@ -7,7 +7,7 @@ import { clamp, lerp, mod, mulberry32 } from './math'
 import { FluxTransport, RK3 } from './advection'
 import { environmentProfile } from './profiles'
 import { SMAGORINSKY, Turbulence } from './turbulence'
-import { chargingRate, transferCharge } from './charge'
+import { chargingRate, inductiveRate, transferCharge } from './charge'
 import { type Flash, Lightning } from './lightning'
 import { ZONE_DEPTH, ZONE_TIME, zoneMaps, zoneShape } from './zones'
 import { advected } from './largescale'
@@ -118,6 +118,8 @@ export class AtmosphereModel implements TaskModel {
   readonly flashes: Flash[] = []
   flashCount = { ic: 0, cg: 0 }
   private lightning?: Lightning
+  /** Vertical electric field at the nodes after the last discharge, V/m, positive upwards (for the inductive charging). */
+  private readonly fieldZ: Float32Array
   private readonly chargeNow = [0, 0, 0, 0]; private readonly massBefore = [0, 0, 0, 0]; private readonly massAfter = [0, 0, 0, 0]
   /** Projection pressure (times dt, per unit density) at the dual-cell centres between nodes; see PressureSolver. */
   readonly pressure: Float64Array
@@ -179,6 +181,7 @@ export class AtmosphereModel implements TaskModel {
     this.u = shared('u'); this.v = shared('v'); this.w = shared('w'); this.theta = shared('theta'); this.q = shared('q'); this.cloud = shared('cloud'); this.rain = shared('rain'); this.cold = shared('cold')
     this.ice = shared('ice'); this.snow = shared('snow'); this.snowFall = shared('snowFall'); this.graupel = shared('graupel'); this.graupelFall = shared('graupelFall'); this.hail = shared('hail'); this.hailFall = shared('hailFall')
     this.condensate = shared('condensate')
+    this.fieldZ = shared('fieldZ')
     this.chargeIce = shared('chargeIce'); this.chargeGraupel = shared('chargeGraupel'); this.chargeRain = shared('chargeRain'); this.chargeAir = shared('chargeAir'); this.chargeFallIce = shared('chargeFallIce'); this.chargeFallGraupel = shared('chargeFallGraupel')
     this.stageStart = Array.from({ length: MAX_CARRIED }, (_, k) => shared(`start${k}`)); this.stageTend = Array.from({ length: MAX_CARRIED }, (_, k) => this.memory.f64(`tend${k}`, grid.n))
     this.taskNegative = this.memory.f64('taskNegative', 32)
@@ -702,7 +705,9 @@ export class AtmosphereModel implements TaskModel {
               const tc = theta[i] * exner - 273.15
               const wetG = wetGrowing(graupel[i], N0G, RHO_G, tc, q[i], p, rhoZ, cloud[i], rain[i], ice[i], snow[i]), wetH = wetGrowing(hail[i], N0H, RHO_H, tc, q[i], p, rhoZ, cloud[i], rain[i], ice[i], snow[i])
               const separated = chargingRate(tc, rhoZ, cloud[i], ice[i], snow[i], graupel[i], hail[i], this.snowFall[i], wetG, wetH) * dt / rhoZ
-              cI[i] = cNow[0] - separated; cG[i] = cNow[1] + separated; cR[i] = cNow[2]; cA[i] = cNow[3]
+              // Inductive charging in the field: the graupel-hail gains what the rebounding droplets take away.
+              const induced = inductiveRate(tc, rhoZ, cloud[i], graupel[i], hail[i], this.fieldZ[i], (cNow[1] + separated) * rhoZ, wetG, wetH) * dt / rhoZ
+              cI[i] = cNow[0] - separated; cG[i] = cNow[1] + separated + induced; cR[i] = cNow[2]; cA[i] = cNow[3] - induced
             }
           } else cond = saturationAdjust(theta, q, cloud, i, exner, p)
           if (cond < 0) cold[i] -= LV / CP / exner * cond * .14
@@ -767,6 +772,9 @@ export class AtmosphereModel implements TaskModel {
       this.flashes.push(flash)
     }
     if (this.flashes.length > RECENT_FLASHES) this.flashes.splice(0, this.flashes.length - RECENT_FLASHES)
+    // The vertical field of the last solve (after the flashes, or as the storm stands), for the inductive charging.
+    const { nz, layer, zs } = this.grid, phi = this.lightning.phi, ez = this.fieldZ
+    for (let z = 1; z < nz - 1; z++) { const h = zs[z + 1] - zs[z - 1]; for (let c = 0, i = z * layer; c < layer; c++, i++) ez[i] = -(phi[i + layer] - phi[i - layer]) / h }
   }
 
   /** Total charge in the domain, C: the three carriers summed with the air mass of every node (rho0 · volume). */

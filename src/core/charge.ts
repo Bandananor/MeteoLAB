@@ -1,4 +1,5 @@
 import { G } from './constants'
+import { EPSILON0 } from './electric'
 import { N0G, RHO_G } from './graupel'
 import { N0H, RHO_H } from './hail'
 import { N0S, RHO_S } from './ice'
@@ -117,6 +118,35 @@ function rimerRate(rimer: Rimer, mass: number, tc: number, rho: number, water: n
   if (ni > 0) rate += ni * k * (2 / l3 + 2 * di / l2 + di * di / lambda) * fall * collisionCharge(tc, rar, di, impact)
   if (ns > 0) { const v = Math.abs(fall - vs); rate += ns * k * (2 / l3 + 2 * ds / l2 + ds * ds / lambda) * v * collisionCharge(tc, rar, ds, Math.abs(impact - vs)) }
   return rate
+}
+
+/**
+ * Inductive charging (Sartor 1967; Ziegler et al. 1991, Mansell et al. 2005, by memory: the coefficients may be off by
+ * 2-10 times): a rimer polarized by the vertical field ez (V/m, positive upwards) loses charge to the cloud droplets
+ * that touch its lower side and rebound. Per rebound the rimer gains (π³/2) ε0 ez <cos θ> d² minus (π²/6) (d/D)² of
+ * its own charge; over the population (n0, λ, V = a D^0.5) and the droplets (n_c of diameter d, collection efficiency
+ * E_c, rebound probability E_r):
+ *   E_c E_r n_c [(π⁴/8) ε0 ez <cos θ> d² a n0 Γ(3.5) / λ^3.5 - (π³/24) d² V ρ_g],
+ * ρ_g the rimers' charge density (C/m³), V their mass-weighted fall speed. Under the main negative charge (field
+ * upwards) graupel turns positive: it builds the lower positive charge that starts the -CG flashes. ~1 nC/m³ a minute
+ * at 50 kV/m in 2 g/m³ of graupel; its own charge relaxes on ~2 minutes. Not in wet growth (no rebounds) nor warmer
+ * than 0 °C. C m⁻³ s⁻¹ gained by the graupel-hail carrier (the droplets get the opposite).
+ */
+export const DROPLET_REBOUND = .01, DROPLET_SIZE = 20e-6, CONTACT_COS = .5
+const GAMMA_35 = 3.3234
+
+export function inductiveRate(tc: number, rho: number, cloud: number, graupel: number, hail: number, ez: number, rimerCharge: number, wetGraupel = false, wetHail = false) {
+  if (tc >= 0 || cloud <= 0) return 0
+  const d = DROPLET_SIZE, droplets = rho * cloud / (Math.PI / 6 * 1000 * d ** 3), k = COLLECTION_EFFICIENCY * DROPLET_REBOUND * droplets
+  let polarize = 0, mass = 0, massFall = 0
+  for (const [rimer, q, wet] of [[GRAUPEL, graupel, wetGraupel], [HAIL, hail, wetHail]] as const) {
+    if (q <= 1e-9 || wet) continue
+    const lambda = (Math.PI * rimer.density * rimer.n0 / (rho * q)) ** .25, a = Math.sqrt(4 * G * rimer.density / (3 * CD * rho))
+    polarize += Math.PI ** 4 / 8 * EPSILON0 * ez * CONTACT_COS * d * d * a * rimer.n0 * GAMMA_35 / lambda ** 3.5
+    mass += q; massFall += q * a * GAMMA_45 / 6 / Math.sqrt(lambda)
+  }
+  if (mass === 0) return 0
+  return k * (polarize - Math.PI ** 3 / 24 * d * d * (massFall / mass) * rimerCharge)
 }
 
 /** Index of the cloud-droplet and ion carrier in transferCharge's arrays. */

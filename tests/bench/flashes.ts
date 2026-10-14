@@ -81,7 +81,8 @@ for (let t = DT; t <= minutes * 60; t += DT) {
   // The storm's total charge in the air (C) and what the precipitation and the CG flashes have taken to the ground.
   let net = 0
   for (let z = 0; z < nz; z++) { const v = dx * dy * grid.hz[z] * rhoAir[z]; for (let c = 0; c < layer; c++) { const i = c + z * layer; net += (model.chargeIce[i] + model.chargeGraupel[i] + model.chargeRain[i] + model.chargeAir[i]) * v } }
-  console.log(`   total in the air ${net.toFixed(1)} C, rain to the ground ${model.chargeGround.toFixed(1)} C, from the ground by CG ${(lt?.fromGround ?? 0).toFixed(1)} C`)
+  // chargeGround holds the precipitation's charge and the CG flashes' together; the precipitation alone is the sum.
+  console.log(`   total in the air ${net.toFixed(1)} C, precipitation to the ground ${(model.chargeGround + (lt?.fromGround ?? 0)).toFixed(1)} C, from the ground by CG ${(lt?.fromGround ?? 0).toFixed(1)} C`)
   console.log(`   core ${core.length} cols: ${coreProfile.join(' ')}`)
   console.log(`   charged air by level (mean nC/m3): ${storm.join(' ')}`)
   console.log(`${t / 60} min: IC ${describe(stats.IC)}; -CG ${describe(stats['-CG'])}; +CG ${describe(stats['+CG'])} | anvil ${anvil.length} cols, net nC/m3 ${profile.join(' ')}, E/Einit anvil ${anvilRatio.toFixed(2)} all ${allRatio.toFixed(2)} [${((performance.now() - t0) / 1000).toFixed(0)} s]`)
