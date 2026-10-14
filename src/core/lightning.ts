@@ -29,8 +29,33 @@ export const CHANNEL_RADIUS = 1
 export const SHIELDING = .25
 /** Most nodes a channel may have. */
 export const MAX_CHANNEL = 3000
+/**
+ * Most strokes of a CG: after its ground contact the channel grows on the field re-solved after each one (a -CG has 3-5
+ * on average, Rakov & Uman 2003).
+ */
+export const STROKES = 4
 /** Most flashes per model step: each re-solves the field; the storm keeps discharging on the next steps if needed. */
 export const MAX_FLASHES = 10
+/**
+ * Conductivity of clear air at the ground, S/m, and its e-folding height, m: σ = 2e-14 exp(z / 6 km) (the small ions;
+ * Gish 1944, as in Mansell et al. 2005 and Helsdon & Farley 1987). The relaxation time ε0/σ is ~7 minutes at the
+ * ground and ~1 minute at 10 km.
+ */
+export const SIGMA_GROUND = 2e-14, SIGMA_SCALE = 6000
+/**
+ * Inside the cloud the droplets and crystals capture the ions: the conductivity is CLOUD_SIGMA of the clear air's where
+ * the cloud water and ice exceed CLOUDY kg/kg. The jump at the cloud's edge is what builds the screening layers: the
+ * current from the clear air into the cloud stops at its boundary, and there it charges the edge with the sign
+ * opposite to the cloud's charge inside.
+ */
+export const CLOUD_SIGMA = .1, CLOUDY = 1e-5
+/**
+ * Point discharge (corona) from the ground under a strong field: ions of the sign that moves away from the ground,
+ * CORONA_RATE (|E0| - CORONA_FIELD) A/m² (E0 the field at the ground, V/m): ~2.5 nA/m² at 10 kV/m (Standler & Winn
+ * 1979, Chauzy & Soula 1999, by memory). It builds the positive space charge under the storm that limits the ground
+ * field to ~5-10 kV/m.
+ */
+export const CORONA_FIELD = 5e3, CORONA_RATE = 5e-13
 
 export interface Flash {
   /** Model time, s. */
@@ -80,6 +105,14 @@ export class Lightning {
   readonly rho: Float64Array; readonly phi: Float64Array
   /** Charge the flashes have taken from the ground since the start, C (a negative CG takes positive charge up: > 0). */
   fromGround = 0
+  /**
+   * Charge the air has lost by conduction (to the ground and the upper atmosphere) and gained from the corona since the
+   * start, C: > 0 when it lost positive charge.
+   */
+  conducted = 0
+  private readonly change: Float64Array; private readonly sigma: Float64Array
+  /** Cloud water, ice and snow at the nodes, kg/kg (set by `cloud`; without it the channel knows the cloud by its charge alone). */
+  private cloudy?: Float32Array
   private readonly air: ArrayLike<number>
   /** Initiation field of each level, V/m, and the capacitance of a node of each level, F. */
   private readonly eInit: Float64Array; private readonly capacitance: Float64Array
@@ -106,6 +139,51 @@ export class Lightning {
     this.seed = seed; this.rng = mulberry32(seed)
     this.frontier = new Int32Array(grid.n); this.weight = new Float64Array(grid.n)
     this.seen = new Int32Array(grid.n); this.scale = new Float64Array(grid.n); this.link = new Int32Array(grid.n)
+    this.change = new Float64Array(grid.n); this.sigma = new Float64Array(grid.n)
+  }
+
+  /**
+   * The conduction current σE of the small ions over dt s and the corona from the ground, from the potential of the last
+   * solve: the charge moves between the nodes through their faces (σ of a face the harmonic mean of its two nodes', as
+   * conductances in series), into the ground and the top (φ = 0, they take what reaches them) and comes out of the
+   * ground as corona. It goes on the ion carrier `air` (C/kg); the cloud is the one `cloud` set (none: all clear air).
+   * Returns the charge the air lost, C (also added to `conducted`).
+   */
+  conduct(air: Float32Array, dt: number) {
+    const { nx, ny, nz, layer, dx, dy, zs, dzs, hz, xp, yp } = this.grid, phi = this.phi, sigma = this.sigma, change = this.change, cloudy = this.cloudy
+    for (let z = 0, i = 0; z < nz; z++) { const clear = SIGMA_GROUND * Math.exp(zs[z] / SIGMA_SCALE); for (let e = i + layer; i < e; i++) sigma[i] = cloudy && cloudy[i] > CLOUDY ? clear * CLOUD_SIGMA : clear }
+    change.fill(0)
+    const series = (a: number, b: number) => 2 * a * b / (a + b)
+    let lost = 0
+    for (let z = 0; z < nz - 1; z++) {
+      const across = dy * hz[z] * dt / dx, along = dx * hz[z] * dt / dy, up = dx * dy * dt / dzs[z]
+      for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++) {
+        const i = x + y * nx + z * layer
+        // Through the side faces (interior levels only: the ground and the top are conductors) and the face above.
+        if (z > 0) {
+          const ix = xp[x] + y * nx + z * layer, iy = x + yp[y] + z * layer
+          const qx = series(sigma[i], sigma[ix]) * (phi[i] - phi[ix]) * across, qy = series(sigma[i], sigma[iy]) * (phi[i] - phi[iy]) * along
+          change[i] -= qx + qy; change[ix] += qx; change[iy] += qy
+        }
+        const j = i + layer, q = series(sigma[i], sigma[j]) * (phi[i] - phi[j]) * up
+        // Into the ground from the lowest level, out at the top level; between the interior levels, from one to the other.
+        if (z === 0) { change[j] += q; lost -= q } else if (z === nz - 2) { change[i] -= q; lost += q } else { change[i] -= q; change[j] += q }
+      }
+    }
+    // The corona: the field at the ground E0 = -φ1 / dz (positive upwards, under negative charge) beyond CORONA_FIELD
+    // drives ions of its sign up into the lowest level.
+    for (let c = 0; c < layer; c++) {
+      const e0 = -phi[c + layer] / dzs[0], over = Math.abs(e0) - CORONA_FIELD
+      if (over <= 0) continue
+      const q = Math.sign(e0) * CORONA_RATE * over * dx * dy * dt
+      change[c + layer] += q; lost -= q
+    }
+    for (let z = 1; z < nz - 1; z++) {
+      const perKg = 1 / (this.air[z] * dx * dy * hz[z])
+      for (let i = z * layer, e = i + layer; i < e; i++) if (change[i] !== 0) air[i] += change[i] * perKg
+    }
+    this.conducted += lost
+    return lost
   }
 
   /** Fills `rho` from the carriers (C/kg) and solves for `phi`. */
@@ -131,6 +209,13 @@ export class Lightning {
     return [best, Math.sqrt(ratio)]
   }
 
+  /** Sets the cloud for the channel and the conduction: the sum of the given mixing ratios (kg/kg) at each node. */
+  cloud(fields: readonly ArrayLike<number>[]) {
+    const c = this.cloudy ??= new Float32Array(this.grid.n)
+    c.fill(0)
+    for (const f of fields) for (let i = 0; i < c.length; i++) c[i] += f[i]
+  }
+
   /**
    * Discharges the storm: while the field somewhere exceeds the initiation threshold (and at most MAX_FLASHES times),
    * one flash there. `carriers` are the charge fields, C/kg (changed in place); returns the flashes.
@@ -138,8 +223,9 @@ export class Lightning {
   discharge(carriers: readonly Float32Array[], time: number): Flash[] {
     const flashes: Flash[] = [], stamp = ++this.flashId
     this.rng = mulberry32(this.seed ^ Math.imul(Math.round(time * 10), 0x9E3779B1))
-    for (let k = 0; k < MAX_FLASHES; k++) {
+    for (let k = 0; k <= MAX_FLASHES; k++) {
       this.solve(carriers)
+      if (k === MAX_FLASHES) break
       const [start, ratio] = this.strongest(stamp)
       if (ratio <= 1) break
       const flash = this.flash(start, carriers, time)
@@ -151,63 +237,99 @@ export class Lightning {
     return flashes
   }
 
-  /** One flash from node `start`: grows the channel, deposits its charge; uses the potential of the last solve. */
+  /**
+   * One flash from node `start`: grows the channel, deposits its charge; starts from the potential of the last solve.
+   * The channel grows in stages, each on a fixed potential until no link exceeds the threshold, then deposits its
+   * charge and the field is solved again: the first time the channel leaves the cloud downwards (the air below a
+   * region it has charged is no longer what the solve before the flash saw: with the potential frozen, the positive end
+   * of a flash started above the main negative charge went through it and on to the ground, ~60% of the CG positive),
+   * and after the ground contact once per stroke (each takes what the field around the channel then still drives, so a
+   * CG drains its region bit by bit and stops by itself, as the strokes of a real one; at most STROKES).
+   */
   flash(start: number, carriers: readonly Float32Array[], time: number): Flash {
-    const { layer, dx, dy } = this.grid, phi = this.phi, id = ++this.flashId, { frontier, weight, scale, link } = this
-    const nodes: number[] = [], parent: number[] = []
-    let sum = 0, potential = 0, ground = -1, before = 0
+    const { layer } = this.grid, id = ++this.flashId, { frontier, weight, scale, link } = this
+    const nodes: number[] = [], parent: number[] = [], polarity: number[] = []
+    let sum = 0, potential = 0, ground = -1, before = 0, touched = false, left = false, neutralized = 0, lowered = 0, strokes = 0
     this.size = 0
     const add = (j: number, from: number) => {
       this.mark[j] = id; nodes.push(j); parent.push(from)
       if (j < layer) {
         // The ground: a CG. The channel takes the ground's potential and the breakdown goes on until it quenches itself.
-        ground = j; before = potential; potential = 0
+        ground = j; before = potential; potential = 0; touched = true
         return
       }
       // Until then the channel is neutral: its potential is the mean of the potentials around it (equal capacitance per node).
-      if (ground < 0) { sum += phi[j]; potential = sum / nodes.length }
+      if (ground < 0) { sum += this.phi[j]; potential = sum / nodes.length }
       this.extend(j, nodes.length - 1, id)
     }
     add(start, -1)
-    while (nodes.length < MAX_CHANNEL) {
-      // Every link from the channel to a node beside it where the field, channel to air, exceeds the propagation
-      // threshold; one is chosen with probability in proportion to how far it exceeds it. In clear air only the leader
-      // heading for the ground's potential goes on (Mansell et al. 2010: the tip must keep the sign that connects to
-      // the ground), and there is one ground contact per flash. Once the channel has touched the ground (its potential
-      // 0) it grows only into the charge of the region its leader came from (the potential of the sign it had before):
-      // the return strokes and what follows drain that region; growing into both signs, a CG took 60-90% of its nodes
-      // after the contact, 40-130 C and sometimes the opposite polarity (the meteorologist's review 14.10.2026).
-      let total = 0
-      for (let f = 0; f < this.size; f++) {
-        const j = frontier[f], clear = Math.abs(this.rho[j]) < RHO_MIN
-        const w = (ground >= 0 && (j < layer || phi[j] * before <= 0)) || (clear && (phi[j] - potential) * potential >= 0) ? 0 : Math.abs(potential - phi[j]) / scale[j] - 1
-        weight[f] = w > 0 ? w : 0; total += weight[f]
+    for (;;) {
+      const grown = nodes.length
+      let event = false
+      while (nodes.length < MAX_CHANNEL) {
+        // Every link from the channel to a node beside it where the field, channel to air, exceeds the propagation
+        // threshold; one is chosen with probability in proportion to how far it exceeds it. In clear air only the leader
+        // heading for the ground's potential goes on (Mansell et al. 2010: the tip must keep the sign that connects to
+        // the ground), and there is one ground contact per flash. Once the channel has touched the ground (its potential
+        // 0) it grows only into the charge of the region its leader came from (the potential of the sign it had before):
+        // the return strokes and what follows drain that region; growing into both signs, a CG took 60-90% of its nodes
+        // after the contact, 40-130 C and sometimes the opposite polarity (the meteorologist's review 14.10.2026).
+        const phi = this.phi
+        let total = 0
+        for (let f = 0; f < this.size; f++) {
+          const j = frontier[f]
+          const w = (ground >= 0 && (j < layer || phi[j] * before <= 0)) || (this.clear(j) && (phi[j] - potential) * potential >= 0) ? 0 : Math.abs(potential - phi[j]) / scale[j] - 1
+          weight[f] = w > 0 ? w : 0; total += weight[f]
+        }
+        if (total === 0) break
+        let pick = this.rng() * total, n = 0
+        while (n < this.size - 1 && (pick -= weight[n]) > 0) n++
+        const j = frontier[n], from = link[j]
+        // The first step out of the cloud: the stage ends there (the link stays on the front for the next one).
+        if (!left && ground < 0 && this.clear(j)) { left = true; event = true; break }
+        frontier[n] = frontier[--this.size]
+        // Through clear air a leader does not branch: the other links from the same clear-air node leave the front.
+        if (this.clear(nodes[from])) for (let f = this.size - 1; f >= 0; f--) if (link[frontier[f]] === from) frontier[f] = frontier[--this.size]
+        add(j, from)
+        if (touched) { touched = false; event = true; break }
       }
-      if (total === 0) break
-      let pick = this.rng() * total, n = 0
-      while (n < this.size - 1 && (pick -= weight[n]) > 0) n++
-      const j = frontier[n], from = link[j]
-      frontier[n] = frontier[--this.size]
-      // Through clear air a leader does not branch: the other links from the same clear-air node leave the front.
-      if (Math.abs(this.rho[nodes[from]]) < RHO_MIN) for (let f = this.size - 1; f >= 0; f--) if (link[frontier[f]] === from) frontier[f] = frontier[--this.size]
-      add(j, from)
+      // Before the contact each stage neutralizes charge of both signs, after it each stroke lowers charge to the ground.
+      if (ground >= 0) lowered += this.deposit(nodes, polarity, potential, true, carriers); else neutralized += this.deposit(nodes, polarity, potential, false, carriers)
+      if (ground >= 0 && (++strokes >= STROKES || (!event && nodes.length === grown))) break
+      if (ground < 0 && !event) break
+      if (nodes.length >= MAX_CHANNEL) break
+      // The field of the charge as it now stands; before the contact the channel stays neutral on it.
+      this.solve(carriers)
+      if (ground < 0) { sum = 0; for (const i of nodes) sum += this.phi[i]; potential = sum / nodes.length }
     }
-    // Charge on each node: its capacitance times the potential difference, limited to neutralizing the charge there.
-    const deposit = new Float64Array(nodes.length), polarity = new Int8Array(nodes.length)
+    return { time, kind: ground >= 0 ? 'CG' : 'IC', start, nodes: Int32Array.from(nodes), parent: Int32Array.from(parent), polarity: Int8Array.from(polarity), potential: ground >= 0 ? before : potential, charge: ground >= 0 ? lowered : neutralized, ground }
+  }
+
+  /** Whether node i is clear air for the channel: not charged cloud (|ρ| below RHO_MIN, or no cloud there when the hydrometeors are known). */
+  private clear(i: number) { return Math.abs(this.rho[i]) < RHO_MIN || (this.cloudy !== undefined && this.cloudy[i] <= CLOUDY) }
+
+  /**
+   * Deposits the charge of the channel at potential V: on each node its capacitance times the potential difference,
+   * limited to neutralizing the charge there. Before the ground contact (`grounded` false) the channel stays neutral:
+   * both signs scaled to the smaller, and the charge of each sign is returned; after it the ground supplies the
+   * difference, and the charge lowered to the ground is returned with its sign. Nodes new since the last deposit get
+   * their leader polarity.
+   */
+  private deposit(nodes: number[], polarity: number[], V: number, grounded: boolean, carriers: readonly Float32Array[]) {
+    const { layer, dx, dy } = this.grid, phi = this.phi, deposit = new Float64Array(nodes.length)
     let positive = 0, negative = 0
     for (let c = 0; c < nodes.length; c++) {
       const i = nodes[c], z = Math.floor(i / layer)
-      if (z === 0) continue
-      const q = this.capacitance[z] * (potential - phi[i]), here = this.rho[i] * dx * dy * this.grid.hz[z]
-      polarity[c] = q > 0 ? 1 : q < 0 ? -1 : 0
+      if (z === 0) { if (c >= polarity.length) polarity.push(0); continue }
+      const q = this.capacitance[z] * (V - phi[i]), here = this.rho[i] * dx * dy * this.grid.hz[z]
+      if (c >= polarity.length) polarity.push(q > 0 ? 1 : q < 0 ? -1 : 0)
       if (q * here >= 0) continue
       const d = Math.sign(q) * Math.min(Math.abs(q), Math.abs(here))
       deposit[c] = d
       if (d > 0) positive += d; else negative -= d
     }
-    // An IC flash stays neutral: both signs scaled to the smaller. A CG takes the difference from the ground.
     let charge: number
-    if (ground < 0) {
+    if (!grounded) {
       const both = Math.min(positive, negative)
       for (let c = 0; c < nodes.length; c++) deposit[c] *= deposit[c] > 0 ? (positive > 0 ? both / positive : 0) : (negative > 0 ? both / negative : 0)
       charge = both
@@ -217,7 +339,7 @@ export class Lightning {
       this.fromGround -= charge
     }
     for (let c = 0; c < nodes.length; c++) if (deposit[c] !== 0) this.neutralize(carriers, nodes[c], deposit[c])
-    return { time, kind: ground >= 0 ? 'CG' : 'IC', start, nodes: Int32Array.from(nodes), parent: Int32Array.from(parent), polarity, potential: ground >= 0 ? before : potential, charge, ground }
+    return charge
   }
 
   /**

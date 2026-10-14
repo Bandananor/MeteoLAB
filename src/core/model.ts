@@ -112,7 +112,11 @@ export class AtmosphereModel implements TaskModel {
   readonly chargeIce: Float32Array; readonly chargeGraupel: Float32Array; readonly chargeRain: Float32Array; readonly chargeAir: Float32Array
   /** Mass-weighted fall speeds of the ice-snow and graupel-hail carriers, m/s. */
   private readonly chargeFallIce: Float32Array; private readonly chargeFallGraupel: Float32Array
-  /** Charge carried to the ground by the falling precipitation since the start, C (counted by the thread that sediments: the main one). */
+  /**
+   * Charge the air has lost since the start, C: carried to the ground by the falling precipitation (counted by the thread
+   * that sediments: the main one) and by the CG flashes, conducted to the ground and the upper atmosphere, less what
+   * the corona gave it.
+   */
   chargeGround = 0
   /** The latest flashes (lightning.ts), oldest first, at most RECENT_FLASHES; and the counts since the start. */
   readonly flashes: Flash[] = []
@@ -767,11 +771,15 @@ export class AtmosphereModel implements TaskModel {
    */
   private discharge(dt: number) {
     this.lightning ??= new Lightning(this.grid, this.env.rho, this.config.seed + 1)
+    // The cloud of the channel and the conduction: the droplets, crystals and snow (in the scheme the anvil is mostly snow).
+    this.lightning.cloud([this.cloud, this.ice, this.snow])
     for (const flash of this.lightning.discharge([this.chargeIce, this.chargeGraupel, this.chargeRain, this.chargeAir], this.time + dt)) {
       if (flash.kind === 'CG') { this.chargeGround += flash.charge; this.flashCount.cg++ } else this.flashCount.ic++
       this.flashes.push(flash)
     }
     if (this.flashes.length > RECENT_FLASHES) this.flashes.splice(0, this.flashes.length - RECENT_FLASHES)
+    // The ions drift in the field and relax the charge (screening layers at the cloud's edges), the ground gives corona.
+    this.chargeGround += this.lightning.conduct(this.chargeAir, dt)
     // The vertical field of the last solve (after the flashes, or as the storm stands), for the inductive charging.
     const { nz, layer, zs } = this.grid, phi = this.lightning.phi, ez = this.fieldZ
     for (let z = 1; z < nz - 1; z++) { const h = zs[z + 1] - zs[z - 1]; for (let c = 0, i = z * layer; c < layer; c++, i++) ez[i] = -(phi[i + layer] - phi[i - layer]) / h }

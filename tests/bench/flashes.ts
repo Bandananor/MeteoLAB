@@ -26,6 +26,14 @@ for (let t = DT; t <= minutes * 60; t += DT) {
     const key = f.kind === 'IC' ? 'IC' : f.charge > 0 ? '+CG' : '-CG'
     stats[key].push({ start: zs[Math.floor(f.start / layer)] / 1000, extent: Math.hypot((x1 - x0) * dx, (y1 - y0) * dy) / 1000, top: top / 1000, charge: Math.abs(f.charge) })
   }
+  // Each CG: its start height, the channel potential before the contact (MV), where its leader left the charged cloud (the
+  // lowest charged cloudy node of the path to the ground, km) and the share of its nodes grown after the contact.
+  for (const f of fresh) if (f.kind === 'CG') {
+    const path = []; for (let c = f.nodes.indexOf(f.ground); c >= 0; c = f.parent[c]) path.push(f.nodes[c])
+    let exit = 0; for (const i of path) { const z = Math.floor(i / layer); if (Math.abs(model.lightning.rho[i]) >= 1e-10 && model.cloud[i] + model.ice[i] + model.snow[i] > 1e-5) { exit = zs[z] / 1000; break } }
+    const after = f.nodes.length - 1 - f.nodes.indexOf(f.ground)
+    console.log(`     CG ${f.charge > 0 ? '+' : '-'} ${Math.abs(f.charge).toFixed(0)} C start ${(zs[Math.floor(f.start / layer)] / 1000).toFixed(1)} km V ${(f.potential / 1e6).toFixed(0)} MV leaves charge at ${exit.toFixed(1)} km, ${f.nodes.length} nodes, ${(after / f.nodes.length * 100).toFixed(0)}% after`)
+  }
   const describe = (list) => list.length ? `${list.length} (start ${(list.reduce((a, s) => a + s.start, 0) / list.length).toFixed(1)} km, extent ${(list.reduce((a, s) => a + s.extent, 0) / list.length).toFixed(1)}/${Math.max(...list.map(s => s.extent)).toFixed(1)} km, top ${Math.max(...list.map(s => s.top)).toFixed(1)} km, ${(list.reduce((a, s) => a + s.charge, 0) / list.length).toFixed(1)} C)` : '0'
   // The anvil: columns with cloud ice above 9 km but no updraught over 2 m/s at 4-10 km (away from the core).
   const anvil = []
@@ -82,7 +90,9 @@ for (let t = DT; t <= minutes * 60; t += DT) {
   let net = 0
   for (let z = 0; z < nz; z++) { const v = dx * dy * grid.hz[z] * rhoAir[z]; for (let c = 0; c < layer; c++) { const i = c + z * layer; net += (model.chargeIce[i] + model.chargeGraupel[i] + model.chargeRain[i] + model.chargeAir[i]) * v } }
   // chargeGround holds the precipitation's charge and the CG flashes' together; the precipitation alone is the sum.
-  console.log(`   total in the air ${net.toFixed(1)} C, precipitation to the ground ${(model.chargeGround + (lt?.fromGround ?? 0)).toFixed(1)} C, from the ground by CG ${(lt?.fromGround ?? 0).toFixed(1)} C`)
+  console.log(`   total in the air ${net.toFixed(1)} C, precipitation to the ground ${(model.chargeGround + (lt?.fromGround ?? 0) - (lt?.conducted ?? 0)).toFixed(1)} C, from the ground by CG ${(lt?.fromGround ?? 0).toFixed(1)} C, conducted out ${(lt?.conducted ?? 0).toFixed(1)} C`)
+  // The potential in the core by level (mean, MV).
+  if (lt && core.length) { const pp = []; for (const km of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14]) { const z = level(km); if (z < 0) continue; let s = 0; for (const c of core) s += lt.phi[c + z * layer]; pp.push(`${km}:${(s / core.length / 1e6).toFixed(0)}`) } console.log(`   core potential MV: ${pp.join(' ')}`) }
   console.log(`   core ${core.length} cols: ${coreProfile.join(' ')}`)
   console.log(`   charged air by level (mean nC/m3): ${storm.join(' ')}`)
   console.log(`${t / 60} min: IC ${describe(stats.IC)}; -CG ${describe(stats['-CG'])}; +CG ${describe(stats['+CG'])} | anvil ${anvil.length} cols, net nC/m3 ${profile.join(' ')}, E/Einit anvil ${anvilRatio.toFixed(2)} all ${allRatio.toFixed(2)} [${((performance.now() - t0) / 1000).toFixed(0)} s]`)

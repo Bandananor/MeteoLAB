@@ -80,3 +80,51 @@ describe('lightning (2.3 step 3)', () => {
     expect(carriers).toEqual(before)
   })
 })
+
+describe('conduction and corona (2.7)', () => {
+  const { nx, ny, nz, layer, zs, dx, dy } = grid
+  const net = (carriers: Float32Array[], i: number) => carriers.reduce((s, c) => s + c[i], 0)
+  const centre = (z: number) => nx / 2 + ny / 2 * nx + z * layer
+  const level = (m: number) => zs.findIndex(h => h >= m)
+
+  it('relaxes charge in clear air on ε0/σ and conserves it with what leaves for the ground and the top', () => {
+    const carriers = storm([[10000, 1]]), start = total(carriers), lightning = new Lightning(grid, air, 7), z = level(10000)
+    const before = net(carriers, centre(z))
+    lightning.solve(carriers)
+    const lost = lightning.conduct(carriers[3], 10)
+    // σ(10 km) = 2e-14 e^(10/6) ≈ 1.06e-13 S/m: ~12% in 10 s at the peak (a little less: the field there is not all its own).
+    const relaxed = 1 - net(carriers, centre(z)) / before
+    expect(relaxed).toBeGreaterThan(.05); expect(relaxed).toBeLessThan(.15)
+    expect(lost).toBe(lightning.conducted)
+    expect(Math.abs(total(carriers) - start + lost)).toBeLessThan(1e-9 * Math.abs(start))
+  })
+
+  it('a charged cloud gets a screening layer of the opposite sign at its edge; inside it relaxes ten times slower', () => {
+    const carriers = storm([[10000, 1]]), lightning = new Lightning(grid, air, 7), cloudy = new Float32Array(grid.n)
+    for (let z = 0; z < nz; z++) for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++)
+      if (Math.hypot((x - nx / 2) * dx, (y - ny / 2) * dy) < 4000 && Math.abs(zs[z] - 10000) < 1500) cloudy[x + y * nx + z * layer] = 1e-3
+    const z = level(10000), before = net(carriers, centre(z))
+    lightning.cloud([cloudy])
+    for (let k = 0; k < 60; k++) { lightning.solve(carriers); lightning.conduct(carriers[3], 10) }
+    // Ten minutes: in clear air the peak would be nearly gone (~e^-6); inside the cloud ~half of it is left.
+    expect(net(carriers, centre(z)) / before).toBeGreaterThan(.3)
+    // Just outside the cloud's top and side the ions have brought negative charge.
+    const top = level(11500 + 200), side = Math.round(4000 / dx) + 1
+    expect(net(carriers, centre(top))).toBeLessThan(0)
+    expect(net(carriers, nx / 2 + side + ny / 2 * nx + z * layer)).toBeLessThan(0)
+  })
+
+  it('under a negative charge the ground gives positive corona once its field exceeds 5 kV/m', () => {
+    const carriers = storm([[5000, -4]]), start = total(carriers), lightning = new Lightning(grid, air, 7)
+    lightning.solve(carriers)
+    const field = -lightning.phi[centre(1)] / grid.dzs[0]
+    expect(field).toBeGreaterThan(5e3)
+    const lost = lightning.conduct(carriers[3], 10)
+    expect(net(carriers, centre(1))).toBeGreaterThan(0)
+    expect(Math.abs(total(carriers) - start + lost)).toBeLessThan(1e-9 * Math.abs(start))
+    // Weak charge: no corona, the lowest level under it only gets the (positive) conduction current from the ground.
+    const weak = storm([[5000, -.01]]), quiet = new Lightning(grid, air, 7)
+    quiet.solve(weak)
+    expect(Math.abs(quiet.phi[centre(1)] / grid.dzs[0])).toBeLessThan(5e3)
+  })
+})
