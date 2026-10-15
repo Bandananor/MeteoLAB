@@ -11,21 +11,22 @@ export const EARTH = 6360, TOP = 6460
 /** Rayleigh scattering at sea level, 1/km (680 / 550 / 440 nm), and its scale height, km. */
 export const RAYLEIGH = [5.802e-3, 13.558e-3, 33.1e-3] as const, RAYLEIGH_SCALE = 8
 /** The aerosol's scale height, km (it fills the boundary layer), its single scattering albedo and phase asymmetry. */
-export const HAZE_SCALE = 1.2, HAZE_ALBEDO = .9, HAZE_G = .8
+export const HAZE_SCALE = 1.2, HAZE_ALBEDO = .9, HAZE_G = .7
 /** Ozone absorption at its peak, 1/km, in a layer 30 km thick round 25 km (Hillaire 2020). */
 const OZONE = [.65e-3, 1.881e-3, .085e-3] as const
 /** The sun's angular radius, rad. */
 export const SUN_RADIUS = .00465
 
 /**
- * The aerosol's extinction at the ground, 1/km, from the relative humidity of the air there (0-1): a dry continental
- * aerosol (0.015/km: clean air, ~140 km visibility) that swells as it takes up water, (1 - RH)^-0.5 (Hänel 1976):
- * ~90 km at 70%, ~45 km in damp air at 95%.
+ * The aerosol's extinction at the ground, 1/km, from the relative humidity of the air there (0-1): a dry summer
+ * continental aerosol (0.05/km: an optical depth ~0.1 over its 1.2 km layer, as AERONET's summer means) that swells as
+ * it takes up water, (1 - RH)^-0.5 (Hänel 1976): visibility ~30 km at 70%, ~13 km in damp air at 95%. Not a haze in
+ * the observer's sense (visibility 1-10 km, near-saturated air): the air's turbidity.
  */
-export function hazeExtinction(rh: number) { return .015 * Math.pow(1 - Math.min(Math.max(rh, 0), .97), -.5) }
+export function hazeExtinction(rh: number) { return .05 * Math.pow(1 - Math.min(Math.max(rh, 0), .97), -.5) }
 
-/** Visibility, km, for an extinction at the ground, 1/km (Koschmieder: a 2% contrast). */
-export const visibility = (extinction: number) => 3.912 / (extinction + RAYLEIGH[1])
+/** The meteorological optical range, km, for an extinction at the ground, 1/km (WMO: a 5% contrast, 3.0 / beta). */
+export const visibility = (extinction: number) => 3.0 / (extinction + RAYLEIGH[1])
 
 type V3 = [number, number, number]
 
@@ -93,7 +94,12 @@ function miePhase(c: number) { const g = HAZE_G, k = 3 / (8 * Math.PI) * (1 - g 
 // Multiple scattering (Hillaire 2020, section 5.5): for a point at height h lit by the sun at cosine mu_s, the light
 // scattered twice and more, as a factor of the scattering coefficient there. A table over (h, mu_s), recomputed when the
 // haze or the ground's albedo changes.
-const MS_ROWS = 16, MS_COLS = 24, MS_TOP = 30, MS_DIRS = 32, MS_STEPS = 12
+// Its columns run over the sun's cosine with a square spacing round 0 (t |t|, t from -1 to 1): fine round the horizon,
+// where the twilight's light falls off by orders of magnitude (with 24 even columns the light at -6° came out ~3x too
+// bright, at -12° ~5x).
+const MS_ROWS = 16, MS_COLS = 64, MS_TOP = 30, MS_DIRS = 32, MS_STEPS = 12
+const msMu = (j: number) => { const x = -1 + 2 * j / (MS_COLS - 1); return x * Math.abs(x) }
+const msCol = (mu: number) => { const m = Math.min(Math.max(mu, -1), 1); return (Math.sign(m) * Math.sqrt(Math.abs(m)) + 1) / 2 * (MS_COLS - 1) }
 function multipleTable(haze: number, albedo: number) {
   const out = new Float32Array(MS_ROWS * MS_COLS * 3), dirs: V3[] = []
   // Directions spread evenly over the sphere (a Fibonacci lattice).
@@ -102,7 +108,7 @@ function multipleTable(haze: number, albedo: number) {
   for (let i = 0; i < MS_ROWS; i++) {
     const h = MS_TOP * (i / (MS_ROWS - 1)) ** 2 + .01, r0 = EARTH + h
     for (let j = 0; j < MS_COLS; j++) {
-      const mus = -1 + 2 * j / (MS_COLS - 1), sx = Math.sqrt(1 - mus * mus)
+      const mus = msMu(j), sx = Math.sqrt(1 - mus * mus)
       L2.fill(0); F.fill(0)
       for (const d of dirs) {
         const ground = toGround(r0, d[1]), len = Number.isNaN(ground) ? toSphere(r0, d[1], TOP) : ground, ds = len / MS_STEPS
@@ -155,7 +161,7 @@ function multiple(haze: number, albedo: number) {
 }
 /** The multiple scattering at height h for the sun at cosine mus, into out (RGB). */
 function multipleAt(table: Float32Array, h: number, mus: number, out: number[]) {
-  const fi = Math.sqrt(Math.min(Math.max(h - .01, 0), MS_TOP) / MS_TOP) * (MS_ROWS - 1), fj = (Math.min(Math.max(mus, -1), 1) + 1) / 2 * (MS_COLS - 1)
+  const fi = Math.sqrt(Math.min(Math.max(h - .01, 0), MS_TOP) / MS_TOP) * (MS_ROWS - 1), fj = msCol(mus)
   const i = Math.min(Math.floor(fi), MS_ROWS - 2), j = Math.min(Math.floor(fj), MS_COLS - 2), a = fi - i, b = fj - j
   const i00 = (i * MS_COLS + j) * 3, i01 = i00 + 3, i10 = i00 + MS_COLS * 3, i11 = i10 + 3
   for (let c = 0; c < 3; c++) out[c] = (table[i00 + c] * (1 - b) + table[i01 + c] * b) * (1 - a) + (table[i10 + c] * (1 - b) + table[i11 + c] * b) * a

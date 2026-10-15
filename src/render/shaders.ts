@@ -124,19 +124,27 @@ float depthAlong(vec3 p, vec3 dir, float far, int n){
   return od * ds;
 }
 
+// How far a ray from p goes before it leaves the domain sideways, km. The model is periodic, but the light is not: past
+// the side the textures wrap round, and a low sun's ray would meet the same storm again, a shadow on its sunny side.
+float toSide(vec3 p, vec3 dir){
+  float tx = dir.x > 1e-4 ? (uBoxMax.x - p.x) / dir.x : dir.x < -1e-4 ? (uBoxMin.x - p.x) / dir.x : 1e4;
+  float tz = dir.z > 1e-4 ? (uBoxMax.z - p.z) / dir.z : dir.z < -1e-4 ? (uBoxMin.z - p.z) / dir.z : 1e4;
+  return max(min(tx, tz), 0.0);
+}
+
 void main(){
   vec3 s = uBoxMax - uBoxMin;
   vec3 p = vec3(uBoxMin.x + (gl_FragCoord.x - 0.5) / uGrid.x * s.x, uLayer / (uGrid.z - 1.0) * uHeight, uBoxMax.z - (gl_FragCoord.y - 0.5) / uGrid.y * s.z);
   float up = max(uHeight - p.y, 0.01);
   // The sun: to the top of the domain, at most 60 km of slant path (a low sun); a sun set for the ground still lights
   // what is high (sky.ts), its ray running down through the box to the ground.
-  float sunOd = uSunDir.y > -0.1 ? depthAlong(p, uSunDir, min(uSunDir.y > 0.0 ? up / max(uSunDir.y, 0.01) : p.y / max(-uSunDir.y, 1e-3), 60.0), 48) : 0.0;
+  float sunOd = uSunDir.y > -0.1 ? depthAlong(p, uSunDir, min(min(uSunDir.y > 0.0 ? up / max(uSunDir.y, 0.01) : p.y / max(-uSunDir.y, 1e-3), 60.0), toSide(p, uSunDir)), 48) : 0.0;
   // The sky.
   float sky = 0.0, total = 0.0;
   vec3 dirs[5] = vec3[5](vec3(0.0, 1.0, 0.0), vec3(0.7071, 0.7071, 0.0), vec3(-0.7071, 0.7071, 0.0), vec3(0.0, 0.7071, 0.7071), vec3(0.0, 0.7071, -0.7071));
   for(int i = 0; i < 5; i++){
     float w = dirs[i].y;
-    sky += w * exp(-depthAlong(p, dirs[i], up / dirs[i].y, 12) * uExtinction * 0.5);
+    sky += w * exp(-depthAlong(p, dirs[i], min(up / dirs[i].y, toSide(p, dirs[i])), 12) * uExtinction * 0.5);
     total += w;
   }
   gl_FragColor = vec4(1.0 - exp(-sunOd / LIGHT_OD_SCALE), sky / total, 0.0, 1.0);
@@ -199,10 +207,11 @@ float layerColumn(float y0, float y1, float len, float H){
   if(abs(dy) < 1e-3 * H) return len * exp(-y0 / H);
   return H * len / dy * (exp(-y0 / H) - exp(-y1 / H));
 }
-// The view thins the air between the camera and what it sees by AIR_SCALE: the camera stands far off to see the whole
-// domain (40-60 km), and through the true air a storm that far fades into the haze (contrast e^-1.3 at 30 km for 90 km
-// of visibility); the sky itself keeps the true air.
-const float AIR_SCALE = 0.5;
+// The view from outside thins the air between the camera and what it sees by uAirScale (0.5): the camera stands far off
+// to see the whole domain (40-60 km), and through the true air a storm that far fades out; the sky itself, and the view
+// from the ground (uAirScale 1), keep the true air.
+uniform float uAirScale;
+#define AIR_SCALE uAirScale
 vec3 airDepth(float y0, float y1, float len){
   return AIR_SCALE * (RAYLEIGH * layerColumn(y0, y1, len, RAYLEIGH_SCALE) + uHaze / HAZE_ALBEDO * layerColumn(y0, y1, len, HAZE_SCALE));
 }
@@ -256,7 +265,7 @@ uniform vec2 uGroundOffset;
 uniform vec2 uGroundSize;
 uniform float uSurface;
 uniform sampler3D uNoise;
-const float GROUND_WATER = 4.0, WIND_SCALE = 40.0;
+const float GROUND_WATER = 16.0, WIND_SCALE = 40.0;
 float gWater, gHail, gSpec;
 
 float hash2(vec2 k){ return fract(sin(dot(k, vec2(127.1, 311.7))) * 43758.5453); }

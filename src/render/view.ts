@@ -9,6 +9,9 @@ import { LightningView } from './lightning'
 import { type AtmosphereModel, computeScalarField, headingVector, heightAt, levelAt, MESO_PERSISTENCE, sunDirection, UH_ROTATING, type UhLayer } from '../core'
 import { clamp, lerp, mod, mulberry32 } from '../core/math'
 import { qsatP } from '../core/microphysics'
+import { N0G, N0R, RHO_G, RHO_W } from '../core/graupel'
+import { N0H, RHO_H } from '../core/hail'
+import { N0S, RHO_S } from '../core/ice'
 import { isPhone } from '../hud'
 import { colormapTexture, type FieldMode, fieldInfo } from './fields'
 import { fieldVolumeFragment, groundShadowPars, groundSurfacePars, precipFragment, precipVertex, skyFragment, skyVertex, sliceFragment, volumeFragment, volumeVertex } from './shaders'
@@ -78,13 +81,23 @@ const AUTO_WINDOW = 2000, AUTO_SLOW = 45, AUTO_FAST = 20, AUTO_RISE = 5
  * view and the look's pitch they start with (a lens of ~35 mm, the storm's tower in view); the radius the camera
  * turns round its eyes on, km (the controls orbit a point this close in front).
  */
-const EYE_HEIGHT = 2, OBSERVER_BACK = 30, OBSERVER_FOV = 60, OBSERVER_PITCH = .2, LOOK_RADIUS = .001
+/** The air between the camera and what it sees, from outside (shaders.ts uAirScale): half the true. */
+const AIR_OUTSIDE = .5
+/** The ways round a storm the observer may stand, looked at for clear sky. */
+const OBSERVER_DIRECTIONS = 16
+const EYE_HEIGHT = 2, OBSERVER_BACK = 25, OBSERVER_FOV = 60, OBSERVER_PITCH = .2, LOOK_RADIUS = .001
 /** The kinds of surface in the ground shader's order (shaders.ts groundSurfacePars uSurface). */
 const SURFACES = ['grass', 'dry', 'water', 'urban'] as const
 /** The ground's state: water, mm, at the top of its texture channel; the wind, m/s (shaders.ts GROUND_WATER, WIND_SCALE). */
-const GROUND_WATER = 4, WIND_SCALE = 40
+const GROUND_WATER = 16, WIND_SCALE = 40
 /** How fast the ground dries (soaking in, evaporating) and hail on it melts, s (e-folding). */
 const DRY_TIME = 2400, MELT_TIME = 1800
+/**
+ * Extinction, 1/km, per (g/m3)^0.75 of an exponential spectrum N0 e^(-lambda D) of particles of density rho: twice the
+ * cross section (diffraction), pi N0 / lambda^3 = (pi N0)^(1/4) rho^(-3/4) M^(3/4), M in kg/m3, per m.
+ */
+const extinction = (n0: number, density: number) => (Math.PI * n0) ** .25 * density ** -.75 * 1e-3 ** .75 * 1000
+const SHAFT_RAIN = extinction(N0R, RHO_W), SHAFT_SNOW = extinction(N0S, RHO_S), SHAFT_GRAUPEL = extinction(N0G, RHO_G), SHAFT_HAIL = extinction(N0H, RHO_H)
 /** The precipitation shafts' extinction at the top of the volume texture's channel, 1/km (shaders.ts SHAFT_MAX). */
 const SHAFT_MAX = 6
 /** The lab's background (as the sky dims to with a field shown; shaders.ts skyFragment). */
@@ -307,7 +320,7 @@ export class StormView {
     // The sky (sky.ts): its table and how bright it is drawn, shared by the dome and the clouds' aerial perspective.
     this.skyTexture = new THREE.DataTexture(new Uint16Array(SKY_COLS * SKY_ROWS * 4), SKY_COLS, SKY_ROWS, THREE.RGBAFormat, THREE.HalfFloatType)
     this.skyTexture.minFilter = this.skyTexture.magFilter = THREE.LinearFilter
-    this.air = { uSky: { value: this.skyTexture }, uSkyGain: { value: 1 }, uSkyFloor: { value: new THREE.Color() }, uCityGlow: { value: new THREE.Color() }, uHaze: { value: .1 } }
+    this.air = { uSky: { value: this.skyTexture }, uSkyGain: { value: 1 }, uSkyFloor: { value: new THREE.Color() }, uCityGlow: { value: new THREE.Color() }, uHaze: { value: .1 }, uAirScale: { value: AIR_OUTSIDE } }
     this.skyMaterial = new THREE.ShaderMaterial({
       vertexShader: skyVertex, fragmentShader: skyFragment, side: THREE.BackSide, depthWrite: false, depthTest: false,
       uniforms: { uSunDir: this.shared.uSunDir, ...this.air, uSunDisc: { value: new THREE.Color() }, uGroundLight: { value: new THREE.Color() }, uStars: { value: 0 }, uLab: { value: 0 }, uWater: { value: model.config.surfaceType === 'water' ? 1 : 0 } },
@@ -358,25 +371,29 @@ export class StormView {
   gWater = st.r * GROUND_WATER; gHail = st.g;
   float blur = min(length(dFdx(q)), length(dFdy(q)));
   if(abs(uSurface - 2.0) < 0.5){
-    // Water: foam from the breaking waves, ~1% of the surface at 20 m/s (Monahan & O'Muircheartaigh 1980).
-    float U = texture(uWind, toTex(vCloudWorld).xy).r * WIND_SCALE;
+    // Water: foam from the breaking waves, 3.84e-6 U^3.41 of the surface (Monahan & O'Muircheartaigh 1980: ~1% at
+    // 10 m/s, ~10% at 20), for the wind at 10 m (the model's lowest level is ~50 m: U10 ~ U50 / 1.15).
+    float U = texture(uWind, toTex(vCloudWorld).xy).r * WIND_SCALE / 1.15;
     diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.6), clamp(3.84e-6 * pow(U, 3.41), 0.0, 0.3));
     gSpec = 1.0;
   } else {
     diffuseColor.rgb *= landPattern(q, blur);
-    // Wet soil is about half as bright (Lekner & Dorf 1988); standing water (over ~1 mm) reflects.
-    diffuseColor.rgb *= mix(1.0, 0.55, smoothstep(0.0, 0.3, gWater));
-    gSpec = smoothstep(1.0, 3.0, gWater);
+    // Wet: bare soil and asphalt about half as bright (Lekner & Dorf 1988), crops and grass hardly darker; water stands
+    // on asphalt after a millimetre or two, on soil (soaking it up) after ~5 mm, in fields after ~10.
+    float urban = step(2.5, uSurface), steppe = step(0.5, uSurface) * (1.0 - urban);
+    float wet = mix(mix(0.88, 0.7, steppe), 0.55, urban), pond = mix(mix(10.0, 5.0, steppe), 1.5, urban);
+    diffuseColor.rgb *= mix(1.0, wet, smoothstep(0.0, 0.3, gWater));
+    gSpec = smoothstep(pond, pond * 2.0, gWater);
   }
   // Hail lying white over the ground.
   diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.72, 0.75, 0.78), gHail);
 }`)
         .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
 if(abs(uSurface - 2.0) < 0.5){
-  // The sea's roughness from the wind over it (Cox & Munk 1954: slope variance 0.003 + 0.00512 U): calm water a sharp
-  // glitter of the sun, a gale a broad one.
-  float U = texture(uWind, toTex(vCloudWorld).xy).r * WIND_SCALE;
-  roughnessFactor = sqrt(sqrt(2.0 * (0.003 + 0.00512 * U)));
+  // The sea's roughness from the wind over it (Cox & Munk 1954: the slopes' variance 0.003 + 0.00512 U10, both axes;
+  // three's GGX alpha is roughness squared, ~ the slopes' rms): calm water a sharp glitter of the sun, a gale a broad one.
+  float U = texture(uWind, toTex(vCloudWorld).xy).r * WIND_SCALE / 1.15;
+  roughnessFactor = sqrt(sqrt(0.003 + 0.00512 * U));
 } else roughnessFactor = mix(roughnessFactor, 0.15, gSpec);`).replace('#include <lights_fragment_end>', '#include <lights_fragment_end>\n{vec3 s=cloudShade(vCloudWorld);reflectedLight.indirectDiffuse=reflectedLight.indirectDiffuse*s.y+reflectedLight.directDiffuse*s.z;reflectedLight.directDiffuse*=s.x;reflectedLight.directSpecular*=s.x;' +
         // Water reflects the sky (Fresnel, n = 1.33), where the sky is seen from it.
         'vec3 V=normalize(cameraPosition-vCloudWorld);float F=0.02+0.98*pow(1.0-max(V.y,0.0),5.0);reflectedLight.indirectSpecular+=skyAt(vec3(-V.x,V.y,-V.z))*F*gSpec*s.y*(1.0-gHail);}')
@@ -604,14 +621,15 @@ if(abs(uSurface - 2.0) < 0.5){
 
   /**
    * The water and hail on the ground, as the model time runs: rain (the model's totals per ground column) wets it, and it
-   * dries in DRY_TIME (soaking in and evaporating: ~an hour to look dry again); hail covers it by the stones' cross
+   * dries in DRY_TIME with the sun high (soaking in and evaporating: ~an hour to look dry again), four times slower at
+   * night (soaking in alone; the clouds' shade is not counted); hail covers it by the stones' cross
    * section (1.5 M / (rho D) of the ground per kg/m2 of stones of diameter D, half the largest) and melts in MELT_TIME.
    * After a jump in time (a loaded state, a rewind) the totals are taken as fresh.
    */
   private updateSurface() {
     const m = this.model, dt = m.time - this.groundTime, { layer } = m.grid, st = this.groundState.image.data as Uint8Array, fresh = !(dt >= 0 && dt < 900)
     if (dt === 0) return
-    const dry = fresh ? 1 : Math.exp(-dt / DRY_TIME), melt = fresh ? 1 : Math.exp(-dt / MELT_TIME)
+    const sun = clamp((this.shared.uSunDir.value as THREE.Vector3).y / .5), dry = fresh ? 1 : Math.exp(-dt * (.25 + .75 * sun) / DRY_TIME), melt = fresh ? 1 : Math.exp(-dt / MELT_TIME)
     for (let i = 0; i < layer; i++) {
       const rain = m.precipitation[i] - (fresh ? 0 : this.lastPrecip[i]), hail = m.hailGround[i] - (fresh ? 0 : this.lastHail[i])
       this.water[i] = fresh ? Math.min(m.precipitation[i], GROUND_WATER) * .5 : Math.min(this.water[i] * dry + Math.max(rain, 0), GROUND_WATER * 2)
@@ -651,9 +669,9 @@ if(abs(uSurface - 2.0) < 0.5){
   /**
    * The view from the ground: the camera at an observer's eyes (EYE_HEIGHT) at a ground point (m from the ground origin),
    * turning round where it stands (drag), the wheel narrowing or widening the field of view; the lab's helpers hidden.
-   * Without a point, OBSERVER_BACK km back toward the camera from the strongest updraught at 5 km (or, without a storm,
-   * the ground under the middle of the view), looking at the storm there — far enough for the whole cumulonimbus to
-   * fit, maybe outside the domain; with one (a double click from the ground: going there) the look is kept. false goes back to the view from outside as it was.
+   * Without a point, OBSERVER_BACK km from the strongest updraught at 5 km (or, without a storm, the ground under the
+   * middle of the view), under clear sky, looking at the storm there — far enough for the whole cumulonimbus to fit,
+   * maybe outside the domain; with one (a double click from the ground: going there) the look is kept. false goes back to the view from outside as it was.
    */
   setObserver(on: boolean, at?: { x: number; y: number }) {
     const c = this.controls, m = this.model
@@ -663,24 +681,33 @@ if(abs(uSurface - 2.0) < 0.5){
       const o = this.orbitView!
       this.camera.position.copy(o.position); c.target.copy(o.target); this.camera.fov = o.fov; this.camera.near = .1; this.camera.updateProjectionMatrix()
       Object.assign(c, { minDistance: 15, minPolarAngle: 0, maxPolarAngle: Math.PI * .495, enablePan: true, enableZoom: true, rotateSpeed: 1 })
-      c.minDistance = 15; c.maxDistance = this.orbitMax; c.update(); this.updateLevels()
+      c.minDistance = 15; c.maxDistance = this.orbitMax; c.update(); this.updateLevels(); this.air.uAirScale.value = AIR_OUTSIDE
       return
     }
     const look = this.stormCentre() ?? this.groundPoint(.5, .5), given = !!at
     if (!this.observer) this.orbitView = { position: this.camera.position.clone(), target: c.target.clone(), fov: this.camera.fov }
     if (!at) {
-      // Back from the storm toward the camera — but across the anvil, not under it: a storm is seen whole from the side
-      // of its anvil's spread (the cloud's ice at ~10 km, from the tower), on the camera's side.
-      const [lx, , lz] = this.toWorld(look.x, look.y, 0), { width, depth } = m.grid
-      let dx = this.camera.position.x - lx, dz = this.camera.position.z - lz
-      const anvil = this.anvilSpread(look)
-      if (anvil) { const side = Math.sign(dx * -anvil[1] + dz * anvil[0]) || 1; dx = -anvil[1] * side; dz = anvil[0] * side }
-      const d = Math.hypot(dx, dz) || 1, sx = lx + dx / d * OBSERVER_BACK, sz = lz + dz / d * OBSERVER_BACK
+      // Back from the storm, where it is seen whole: of OBSERVER_DIRECTIONS ways round it, one with clear sky over the
+      // observer and a third of the way back (not under the anvil, its rain or its neighbours), preferring the storm's
+      // inflow side, right of its motion (the domain follows the storm: its motion is the frame's; there the updraught's
+      // base is seen and the rain core is not in the way), then the sun behind the observer, then the camera's side.
+      const [lx, , lz] = this.toWorld(look.x, look.y, 0), { width, depth } = m.grid, [fu, fv] = m.frame
+      const sun = this.shared.uSunDir.value as THREE.Vector3, cam = new THREE.Vector2(this.camera.position.x - lx, this.camera.position.z - lz).normalize()
+      // Right of the motion (u, v) is (v, -u) on the ground, (v, u) in the world (its z runs south).
+      const right = new THREE.Vector2(fv, fu).divideScalar(Math.max(Math.hypot(fu, fv), 2)), sunFlat = new THREE.Vector2(sun.x, sun.z)
+      let dx = cam.x, dz = cam.y, best = -Infinity
+      for (let j = 0; j < OBSERVER_DIRECTIONS; j++) {
+        const a = j / OBSERVER_DIRECTIONS * 2 * Math.PI, ux = Math.cos(a), uz = Math.sin(a)
+        const over = this.cloudOver(lx + ux * OBSERVER_BACK, lz + uz * OBSERVER_BACK) + this.cloudOver(lx + ux * OBSERVER_BACK * 2 / 3, lz + uz * OBSERVER_BACK * 2 / 3)
+        const score = -10 * over + (ux * right.x + uz * right.y) + .5 * (ux * sunFlat.x + uz * sunFlat.y) + .2 * (ux * cam.x + uz * cam.y)
+        if (score > best) { best = score; dx = ux; dz = uz }
+      }
+      const sx = lx + dx * OBSERVER_BACK, sz = lz + dz * OBSERVER_BACK
       // On the ground (not wrapped into the domain: the observer may stand outside it).
       at = { x: (sx + width / 2000) * 1000 + m.frame[0] * m.time, y: (depth / 2000 - sz) * 1000 + m.frame[1] * m.time }
     }
     const first = !this.observer
-    this.observer = at
+    this.observer = at; this.air.uAirScale.value = 1
     this.camera.near = .005; this.camera.fov = first ? OBSERVER_FOV : this.camera.fov; this.camera.updateProjectionMatrix()
     Object.assign(c, { minPolarAngle: .02 * Math.PI, maxPolarAngle: .98 * Math.PI, enablePan: false, enableZoom: false, rotateSpeed: -.35 })
     c.minDistance = c.maxDistance = LOOK_RADIUS
@@ -705,21 +732,16 @@ if(abs(uSurface - 2.0) < 0.5){
   }
 
   /**
-   * Which way the anvil spreads from a point (m from the domain corner): a unit vector in the world's x, z toward the
-   * centroid of the cloud ice and snow at ~10 km (the shortest way round the periodic domain), or null without one.
+   * How much cloud is over a world point (km; outside the domain none: nothing is drawn there): the drawn cloud's
+   * opacity summed up its column (0 clear, ~1 and more overcast).
    */
-  private anvilSpread(from: { x: number; y: number }) {
-    const m = this.model, { layer, nx, dx, dy, width, depth } = m.grid, k = Math.round(levelAt(m.grid, 10_000))
-    let sx = 0, sy = 0, sum = 0
-    for (let c = 0; c < layer; c++) {
-      const q = m.ice[c + k * layer] + m.snow[c + k * layer]
-      if (q < 1e-5) continue
-      const ox = (c % nx) * dx - from.x, oy = Math.floor(c / nx) * dy - from.y
-      sx += q * (ox - width * Math.round(ox / width)); sy += q * (oy - depth * Math.round(oy / depth)); sum += q
-    }
-    const len = Math.hypot(sx, sy)
-    // World x is east, world z south (toWorld): the domain's +y (north) is -z.
-    return sum > 0 && len / sum > 2000 ? [sx / len, -sy / len] as const : null
+  private cloudOver(wx: number, wz: number) {
+    const m = this.model, { nx, ny, nz, layer, dx, dy, width, depth } = m.grid, x = (wx + width / 2000) * 1000, y = (depth / 2000 - wz) * 1000
+    if (x < 0 || y < 0 || x >= width || y >= depth) return 0
+    const c = Math.min(nx - 1, Math.round(x / dx)) + Math.min(ny - 1, Math.round(y / dy)) * nx
+    let sum = 0
+    for (let z = 0; z < nz; z++) sum += cloudOpacity((this.cloudMass?.[c + z * layer] ?? 0))
+    return sum / 4
   }
 
   /** The column of the strongest updraught at 5 km (m from the domain corner), or null under 5 m/s. */
@@ -765,7 +787,8 @@ if(abs(uSurface - 2.0) < 0.5){
     pos.needsUpdate = true; col.needsUpdate = true
   }
 
-  // Visual only: the model has no ice, so a particle's phase comes from its height relative to the environmental 0 °C level.
+  // Visual only: a particle's phase comes from its height relative to the environmental 0 °C level, not from the model's own
+  // snow, graupel and rain (the shafts in the cloud volume are those).
   private meltFraction(z: number) { const f = this.model.sounding.freezing; return f === null ? 1 : clamp((f * 1000 - z) / MELT_DEPTH) }
 
   private updatePrecip(dt: number) {
@@ -814,11 +837,10 @@ if(abs(uSurface - 2.0) < 0.5){
     for (let z = 0, i = 0; z < nz; z++) for (let c = 0; c < layer; c++, i++) {
       const frozen = m.theta[i] * exner[z] < 273.15, rimers = m.graupel[i] + m.hail[i], icy = m.ice[i] + m.snow[i]
       mass[i] = m.cloud[i] + ICE_EXTINCTION * m.ice[i] + (frozen ? SNOW_EXTINCTION * m.snow[i] + RIMER_EXTINCTION * rimers : 0)
-      // The shafts' extinction, 1/km: rain of Marshall-Palmer drops 2.2 M^0.75 (M in g/m3: pi N0 / Lambda^3, ~1 km
-      // visibility in 3 g/m3 of a cloudburst); below the melting level wet snow (~4 per g/m3) and graupel and hail
-      // (~0.35 per g/m3: few, large stones).
+      // The shafts' extinction, 1/km, each kind from its own size distribution (extinction(): rain 2.2 M^0.75, M in g/m3,
+      // ~1 km visibility in 3 g/m3 of a cloudburst); below the melting level wet snow (~10 M^0.75), graupel and hail.
       const rho = m.env.rho[z] * 1000
-      shafts[i] = 2.2 * Math.pow(m.rain[i] * rho, .75) + (frozen ? 0 : 4 * m.snow[i] * rho + .35 * rimers * rho)
+      shafts[i] = SHAFT_RAIN * Math.pow(m.rain[i] * rho, .75) + (frozen ? 0 : SHAFT_SNOW * Math.pow(m.snow[i] * rho, .75) + SHAFT_GRAUPEL * Math.pow(m.graupel[i] * rho, .75) + SHAFT_HAIL * Math.pow(m.hail[i] * rho, .75))
       share[i] = m.cloud[i] + icy > 0 ? icy / (m.cloud[i] + icy) : 1
     }
     // The tower: the strongest updraught within TOWER_LEVELS levels, then within one column.
