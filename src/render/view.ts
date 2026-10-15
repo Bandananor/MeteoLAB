@@ -11,7 +11,7 @@ import { clamp, lerp, mod, mulberry32 } from '../core/math'
 import { qsatP } from '../core/microphysics'
 import { isPhone } from '../hud'
 import { colormapTexture, type FieldMode, fieldInfo } from './fields'
-import { fieldVolumeFragment, groundShadowPars, precipFragment, precipVertex, skyFragment, skyVertex, sliceFragment, volumeFragment, volumeVertex } from './shaders'
+import { fieldVolumeFragment, groundShadowPars, groundSurfacePars, precipFragment, precipVertex, skyFragment, skyVertex, sliceFragment, volumeFragment, volumeVertex } from './shaders'
 import { adaptation, ADAPT_MAX, computeSky, HAZE_ALBEDO, HAZE_SCALE, hazeExtinction, luminance, RAYLEIGH, RAYLEIGH_SCALE, SKY_COLS, SKY_ROWS, type SkyState, SUN_LEVELS } from './sky'
 
 // The fog of three's own materials (the lines): the aerial perspective of the clouds' (shaders.ts aerial, with its AIR_SCALE) —
@@ -55,6 +55,12 @@ const SUN_GAIN = 3, SKY_GAIN = 14, SUN_DISC = 40
  */
 const NIGHT_SKY = [.008, .012, .026], NIGHT_TOP = [.1, .12, .2], NIGHT_BOTTOM = [.06, .07, .1], NIGHT_GROUND = [.1, .12, .18]
 const CITY_SKY = [.06, .036, .016], CITY_BOTTOM = [.09, .055, .025]
+/** The kinds of surface in the ground shader's order (shaders.ts groundSurfacePars uSurface). */
+const SURFACES = ['grass', 'dry', 'water', 'urban'] as const
+/** The ground's state: water, mm, at the top of its texture channel; the wind, m/s (shaders.ts GROUND_WATER, WIND_SCALE). */
+const GROUND_WATER = 4, WIND_SCALE = 40
+/** How fast the ground dries (soaking in, evaporating) and hail on it melts, s (e-folding). */
+const DRY_TIME = 2400, MELT_TIME = 1800
 /** The precipitation shafts' extinction at the top of the volume texture's channel, 1/km (shaders.ts SHAFT_MAX). */
 const SHAFT_MAX = 6
 /** The lab's background (as the sky dims to with a field shown; shaders.ts skyFragment). */
@@ -152,6 +158,12 @@ export class StormView {
   private readonly skyTexture: THREE.DataTexture; private readonly air: Record<string, THREE.IUniform>; private readonly skyMaterial: THREE.ShaderMaterial; private readonly skyDome: THREE.Mesh
   private sky?: SkyState; private skyKey = ''; private skyGain = 1; private night = 0; private haze = .1
   private readonly groundColor: THREE.Color; private readonly albedo: number
+  /**
+   * The ground's surface: its state texture (water, hail per ground column), the wind over it, their uniforms; the water
+   * lying on each ground column (mm) and the share of it hail covers, from the model's totals since lastTime.
+   */
+  private readonly groundState: THREE.DataTexture; private readonly windTexture: THREE.DataTexture; private readonly groundUniforms: Record<string, THREE.IUniform>
+  private readonly water: Float32Array; private readonly hailCover: Float32Array; private readonly lastPrecip: Float32Array; private readonly lastHail: Float32Array; private groundTime = NaN
   private readonly shared: Record<string, THREE.IUniform>
   private readonly light: LightVolume; private readonly flashLight: FlashVolume; private readonly strikeLight: THREE.PointLight
   /** The strongest updraught of each column, and of each column with those beside it (the tower's), m/s. */
@@ -215,7 +227,7 @@ export class StormView {
     this.hemiLight = new THREE.HemisphereLight(0xd9efff, 0x4b4439, 1); this.scene.add(this.hemiLight)
     this.sunLight = new THREE.DirectionalLight(0xfff0d2, 1); this.scene.add(this.sunLight)
 
-    const ground = ({ grass: 0x596d45, dry: 0x776a51, water: 0x315d70, urban: 0x606469 } as const)[model.config.surfaceType]
+    const ground = ({ grass: 0x596d45, dry: 0x776a51, water: 0x16364a, urban: 0x606469 } as const)[model.config.surfaceType]
     const groundMat = new THREE.MeshStandardMaterial({ color: ground, roughness: .96, metalness: 0 })
     this.groundColor = new THREE.Color(ground); this.albedo = luminance([this.groundColor.r, this.groundColor.g, this.groundColor.b])
     this.ground = new THREE.Mesh(new THREE.PlaneGeometry(W, D), groundMat); this.ground.rotation.x = -Math.PI / 2; this.scene.add(this.ground)
@@ -263,7 +275,7 @@ export class StormView {
     this.air = { uSky: { value: this.skyTexture }, uSkyGain: { value: 1 }, uSkyFloor: { value: new THREE.Color() }, uCityGlow: { value: new THREE.Color() }, uHaze: { value: .1 } }
     this.skyMaterial = new THREE.ShaderMaterial({
       vertexShader: skyVertex, fragmentShader: skyFragment, side: THREE.BackSide, depthWrite: false, depthTest: false,
-      uniforms: { uSunDir: this.shared.uSunDir, ...this.air, uSunDisc: { value: new THREE.Color() }, uGroundLight: { value: new THREE.Color() }, uStars: { value: 0 }, uLab: { value: 0 } },
+      uniforms: { uSunDir: this.shared.uSunDir, ...this.air, uSunDisc: { value: new THREE.Color() }, uGroundLight: { value: new THREE.Color() }, uStars: { value: 0 }, uLab: { value: 0 }, uWater: { value: model.config.surfaceType === 'water' ? 1 : 0 } },
     })
     this.skyDome = new THREE.Mesh(new THREE.SphereGeometry(1, 48, 24), this.skyMaterial); this.skyDome.frustumCulled = false; this.skyDome.renderOrder = -1; this.scene.add(this.skyDome)
     this.volumeTexture = texture3D(this.volumeData, THREE.RGBAFormat, nx, ny, nz)
@@ -291,10 +303,47 @@ export class StormView {
     const horizontal = new THREE.PlaneGeometry(W, D); horizontal.rotateX(-Math.PI / 2); this.sliceH = new THREE.Mesh(horizontal, this.sliceMaterial); this.scene.add(this.sliceH)
     const vertical = new THREE.PlaneGeometry(W, H); vertical.translate(0, H / 2, 0); this.sliceV = new THREE.Mesh(vertical, this.sliceMaterial); this.scene.add(this.sliceV)
 
+    // The ground's surface: its state (water, hail) per ground column, the wind over it per domain column.
+    this.groundState = new THREE.DataTexture(new Uint8Array(nx * ny * 4), nx, ny, THREE.RGBAFormat)
+    this.groundState.magFilter = this.groundState.minFilter = THREE.LinearFilter; this.groundState.wrapS = this.groundState.wrapT = THREE.RepeatWrapping; this.groundState.needsUpdate = true
+    this.windTexture = new THREE.DataTexture(new Uint8Array(nx * ny), nx, ny, THREE.RedFormat)
+    this.windTexture.magFilter = this.windTexture.minFilter = THREE.LinearFilter; this.windTexture.wrapS = this.windTexture.wrapT = THREE.RepeatWrapping; this.windTexture.needsUpdate = true
+    this.water = new Float32Array(nx * ny); this.hailCover = new Float32Array(nx * ny); this.lastPrecip = new Float32Array(nx * ny); this.lastHail = new Float32Array(nx * ny)
+    const surface = SURFACES.indexOf(model.config.surfaceType)
+    this.groundUniforms = { uGround: { value: this.groundState }, uWind: { value: this.windTexture }, uGroundOffset: { value: new THREE.Vector2() }, uGroundSize: { value: new THREE.Vector2(W, D) }, uSurface: { value: surface } }
     groundMat.onBeforeCompile = shader => {
-      Object.assign(shader.uniforms, { ...this.shared, ...this.air, uLight: this.volumeMaterial.uniforms.uLight })
+      Object.assign(shader.uniforms, { ...this.shared, ...this.air, ...this.groundUniforms, uNoise: { value: this.noise }, uLight: this.volumeMaterial.uniforms.uLight })
       shader.vertexShader = shader.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vCloudWorld;').replace('#include <project_vertex>', '#include <project_vertex>\nvCloudWorld=(modelMatrix*vec4(transformed,1.0)).xyz;')
-      shader.fragmentShader = shader.fragmentShader.replace('#include <common>', `#include <common>\n${groundShadowPars}`).replace('#include <lights_fragment_end>', '#include <lights_fragment_end>\n{vec3 s=cloudShade(vCloudWorld);reflectedLight.indirectDiffuse=reflectedLight.indirectDiffuse*s.y+reflectedLight.directDiffuse*s.z;reflectedLight.directDiffuse*=s.x;reflectedLight.directSpecular*=s.x;}')
+      shader.fragmentShader = shader.fragmentShader.replace('#include <common>', `#include <common>\n${groundShadowPars}\n${groundSurfacePars}`)
+        .replace('#include <map_fragment>', `#include <map_fragment>
+{
+  vec2 g = groundAt(vCloudWorld), q = g * uGroundSize;
+  vec4 st = texture(uGround, g);
+  gWater = st.r * GROUND_WATER; gHail = st.g;
+  float blur = length(fwidth(q));
+  if(abs(uSurface - 2.0) < 0.5){
+    // Water: foam from the breaking waves, ~1% of the surface at 20 m/s (Monahan & O'Muircheartaigh 1980).
+    float U = texture(uWind, toTex(vCloudWorld).xy).r * WIND_SCALE;
+    diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.6), clamp(3.84e-6 * pow(U, 3.41), 0.0, 0.3));
+    gSpec = 1.0;
+  } else {
+    diffuseColor.rgb *= landPattern(q, blur);
+    // Wet soil is about half as bright (Lekner & Dorf 1988); standing water (over ~1 mm) reflects.
+    diffuseColor.rgb *= mix(1.0, 0.55, smoothstep(0.0, 0.3, gWater));
+    gSpec = smoothstep(1.0, 3.0, gWater);
+  }
+  // Hail lying white over the ground.
+  diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.72, 0.75, 0.78), gHail);
+}`)
+        .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
+if(abs(uSurface - 2.0) < 0.5){
+  // The sea's roughness from the wind over it (Cox & Munk 1954: slope variance 0.003 + 0.00512 U): calm water a sharp
+  // glitter of the sun, a gale a broad one.
+  float U = texture(uWind, toTex(vCloudWorld).xy).r * WIND_SCALE;
+  roughnessFactor = sqrt(sqrt(2.0 * (0.003 + 0.00512 * U)));
+} else roughnessFactor = mix(roughnessFactor, 0.15, gSpec);`).replace('#include <lights_fragment_end>', '#include <lights_fragment_end>\n{vec3 s=cloudShade(vCloudWorld);reflectedLight.indirectDiffuse=reflectedLight.indirectDiffuse*s.y+reflectedLight.directDiffuse*s.z;reflectedLight.directDiffuse*=s.x;reflectedLight.directSpecular*=s.x;' +
+        // Water reflects the sky (Fresnel, n = 1.33), where the sky is seen from it.
+        'vec3 V=normalize(cameraPosition-vCloudWorld);float F=0.02+0.98*pow(1.0-max(V.y,0.0),5.0);reflectedLight.indirectSpecular+=skyAt(vec3(-V.x,V.y,-V.z))*F*gSpec*s.y*(1.0-gHail);}')
         // The air between the camera and the ground, before the tone mapping as for the clouds and the sky (three's fog
         // comes after it); the air in the storm's shadow scatters less light (shaders.ts airLit).
         .replace('#include <fog_fragment>', '')
@@ -329,7 +378,7 @@ export class StormView {
 
   dispose() {
     this.controls.dispose()
-    ;[this.skyTexture, this.skyMaterial, this.skyDome.geometry, this.volumeTexture, this.noise, this.columnTexture, this.fieldTexture, this.colormap, this.volumeMaterial, this.fieldMaterial, this.sliceMaterial, this.volumeMesh.geometry, this.sliceH.geometry, this.sliceV.geometry, this.precipGeometry, this.precipMaterial, this.swathTexture, this.cityTexture, this.zoneTexture, this.frontLine?.geometry, this.frontLine?.material as THREE.Material | undefined, this.swath.geometry, this.swath.material as THREE.Material, this.mesoMarker.geometry, this.mesoMarker.material as THREE.Material, this.selectionMarker.geometry, this.selectionMarker.material as THREE.Material, this.stationMarker.geometry, this.stationMarker.material as THREE.Material, this.lightning, this.light, this.flashLight].forEach(r => r?.dispose())
+    ;[this.groundState, this.windTexture, this.skyTexture, this.skyMaterial, this.skyDome.geometry, this.volumeTexture, this.noise, this.columnTexture, this.fieldTexture, this.colormap, this.volumeMaterial, this.fieldMaterial, this.sliceMaterial, this.volumeMesh.geometry, this.sliceH.geometry, this.sliceV.geometry, this.precipGeometry, this.precipMaterial, this.swathTexture, this.cityTexture, this.zoneTexture, this.frontLine?.geometry, this.frontLine?.material as THREE.Material | undefined, this.swath.geometry, this.swath.material as THREE.Material, this.mesoMarker.geometry, this.mesoMarker.material as THREE.Material, this.selectionMarker.geometry, this.selectionMarker.material as THREE.Material, this.stationMarker.geometry, this.stationMarker.material as THREE.Material, this.lightning, this.light, this.flashLight].forEach(r => r?.dispose())
     this.renderer.dispose()
   }
 
@@ -350,6 +399,8 @@ export class StormView {
   private updateGround() {
     const { width, depth } = this.model.grid, [ox, oy] = this.model.frameOffset(), step = width / 1000 / Math.round(width / 3000)
     this.swathTexture.offset.set(ox / width, oy / depth); this.cityTexture?.offset.set(ox / width, oy / depth); this.zoneTexture?.offset.set(ox / width, oy / depth)
+    ;(this.groundUniforms.uGroundOffset.value as THREE.Vector2).set(ox / width, oy / depth)
+    this.updateSurface()
     this.groundGrid.position.x = -((ox / 1000) % step); this.groundGrid.position.z = (oy / 1000) % step
   }
 
@@ -468,6 +519,31 @@ export class StormView {
     ;(su.uGroundLight.value as THREE.Color).setRGB(...[0, 1, 2].map(c => [g.r, g.g, g.b][c] / Math.PI * ((S[c] + E[c]) * ground + NIGHT_GROUND[c] * night)) as [number, number, number])
     // The stars come out as the eye adapts to the dark.
     su.uStars.value = night * night
+  }
+
+  /**
+   * The water and hail on the ground, as the model time runs: rain (the model's totals per ground column) wets it, and it
+   * dries in DRY_TIME (soaking in and evaporating: ~an hour to look dry again); hail covers it by the stones' cross
+   * section (1.5 M / (rho D) of the ground per kg/m2 of stones of diameter D, half the largest) and melts in MELT_TIME.
+   * After a jump in time (a loaded state, a rewind) the totals are taken as fresh.
+   */
+  private updateSurface() {
+    const m = this.model, dt = m.time - this.groundTime, { layer } = m.grid, st = this.groundState.image.data as Uint8Array, fresh = !(dt >= 0 && dt < 900)
+    if (dt === 0) return
+    const dry = fresh ? 1 : Math.exp(-dt / DRY_TIME), melt = fresh ? 1 : Math.exp(-dt / MELT_TIME)
+    for (let i = 0; i < layer; i++) {
+      const rain = m.precipitation[i] - (fresh ? 0 : this.lastPrecip[i]), hail = m.hailGround[i] - (fresh ? 0 : this.lastHail[i])
+      this.water[i] = fresh ? Math.min(m.precipitation[i], GROUND_WATER) * .5 : Math.min(this.water[i] * dry + Math.max(rain, 0), GROUND_WATER * 2)
+      const d = Math.max(m.hailSize[i] / 2, 5) / 1000
+      this.hailCover[i] = this.hailCover[i] * melt + Math.max(hail, 0) * 1.5 / (900 * d)
+      this.lastPrecip[i] = m.precipitation[i]; this.lastHail[i] = m.hailGround[i]
+      st[i * 4] = clamp(this.water[i] / GROUND_WATER) * 255; st[i * 4 + 1] = (1 - Math.exp(-this.hailCover[i])) * 255
+    }
+    this.groundTime = m.time; this.groundState.needsUpdate = true
+    // The wind over the ground (the model's in the moving frame plus the frame's motion), at the lowest level.
+    const wd = this.windTexture.image.data as Uint8Array, [fx, fy] = m.frame
+    for (let c = 0; c < layer; c++) wd[c] = clamp(Math.hypot(m.u[c] + fx, m.v[c] + fy) / WIND_SCALE) * 255
+    this.windTexture.needsUpdate = true
   }
 
   /** The fog's colour: the sky's at the horizon in the direction looked in (and the haze's extinction). */
