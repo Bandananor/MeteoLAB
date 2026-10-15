@@ -18,6 +18,8 @@ uniform vec3 uGrid;
 uniform vec3 uSunDir;
 uniform float uHeight;
 uniform float uExtinction;
+// The precipitation shafts' extinction at G = 1 of the volume texture, 1/km (view.ts): heavy rain, ~1 km visibility.
+const float SHAFT_MAX = 6.0;
 
 // Grid node k sits at the box edge, texel centre is at (k+0.5)/N; vertical nodes span 0..H with NZ-1 intervals.
 // Grid y (north) runs toward world -Z so that the right-handed scene is not mirrored.
@@ -44,6 +46,11 @@ const float LIGHT_OD_SCALE = 8.0;
 `
 const lightSampling = lightEncoding + /* glsl */`
 uniform sampler3D uLight;
+// Sunlight through a cloud of optical depth od, direct and diffuse (two-stream, non-absorbing, g = 0.85): the direct
+// beam dies as exp(-od), but the cloud passes on much of it scattered, 1 / (1 + 0.75 (1 - g) tau) — the light under a
+// thin anvil is still bright, under a storm's core dim. The drawn cloud's optical depth is ~15 times below the true one
+// (a cumulonimbus has 50-100 per km; drawn so, its edges would be hard walls), so tau = 15 od.
+float sunThrough(float od){ return max(exp(-od), 1.0 / (1.0 + 1.7 * od)); }
 // x: optical depth to the sun (times uExtinction), y: sky visibility (0-1).
 vec2 lightAt(vec3 p){
   vec2 l = texture(uLight, toTex(p)).rg;
@@ -86,7 +93,7 @@ void main(){
     if(i >= uCount) break;
     vec3 d = uPts[i].xyz - p;
     float r = length(d), od = 0.0;
-    for(int j = 0; j < 8; j++){ vec2 f = fields(p + d * ((float(j) + 0.5) / 8.0)); od += f.r * 1.1 + f.g * 0.3; }
+    for(int j = 0; j < 8; j++){ vec2 f = fields(p + d * ((float(j) + 0.5) / 8.0)); od += f.r * 1.1 + f.g * SHAFT_MAX / uExtinction; }
     E[int(uPts[i].w + 0.5)] += uW[i] * min(1.0 + 0.45 * od * r / 8.0 * uExtinction, 3.0) / (r * r + 0.25);
   }
   gl_FragColor = 1.0 - exp(-E * FLASH_ENCODE);
@@ -112,7 +119,7 @@ float depthAlong(vec3 p, vec3 dir, float far, int n){
   for(int i = 0; i < 48; i++){
     if(i >= n) break;
     vec2 f = fields(p + dir * (ds * (float(i) + 0.5)));
-    od += f.r * 1.1 + f.g * 0.3;
+    od += f.r * 1.1 + f.g * SHAFT_MAX / uExtinction;
   }
   return od * ds;
 }
@@ -227,7 +234,7 @@ float airLit(vec3 ro, vec3 p){
   for(int k = 0; k < 6; k++){
     vec3 q = ro + rd * mix(a, b, (float(k) + 0.5) / 6.0);
     float w = RAYLEIGH.g * exp(-max(q.y, 0.0) / RAYLEIGH_SCALE) + uHaze / HAZE_ALBEDO * exp(-max(q.y, 0.0) / HAZE_SCALE);
-    lit += w * exp(-lightAt(q).x);
+    lit += w * sunThrough(lightAt(q).x);
     wsum += w;
   }
   float inBox = airDepth(ro.y + rd.y * a, ro.y + rd.y * b, b - a).g / max(airDepth(ro.y, p.y, len).g, 1e-6);
@@ -294,9 +301,11 @@ void main(){
 export const groundShadowPars = volumeCommon + lightSampling + atmosphere + airShade + /* glsl */`
 varying vec3 vCloudWorld;
 
-vec2 cloudShade(vec3 p){
+// x: the direct sun, y: the sky light, z: the sunlight the cloud passes on scattered (from its base: as diffuse light).
+vec3 cloudShade(vec3 p){
   vec2 l = lightAt(vec3(p.x, 0.0, p.z));
-  return vec2(exp(-l.x * 0.8), mix(0.22, 1.0, l.y));
+  float od = l.x * 0.8;
+  return vec3(exp(-od), mix(0.22, 1.0, l.y), sunThrough(od) - exp(-od));
 }
 `
 
@@ -428,6 +437,19 @@ float hg(float c, float g){
   return (1.0 - g2) / (4.0 * PI * pow(1.0 + g2 - 2.0 * g * c, 1.5));
 }
 
+// Rain (relative to isotropic, per channel): drops of a millimetre or so send most light forward (diffraction and
+// refraction, g ~ 0.85), little back — except into the rainbow, ~42° from the point opposite the sun (scattering angle
+// ~138°: red outside at 42.3°, blue inside at 40.7°), and the fainter secondary bow at ~51° with its colours reversed;
+// between the bows Alexander's dark band. Widths ~0.6° (the sun's disc and the spread of drop sizes).
+const vec3 BOW1 = vec3(42.3, 41.5, 40.7), BOW2 = vec3(50.4, 51.6, 53.3);
+vec3 rainPhase(float c){
+  float a = degrees(acos(clamp(-c, -1.0, 1.0)));
+  vec3 bow = 0.9 * exp(-0.5 * pow((a - BOW1) / 0.6, vec3(2.0))) + 0.35 * exp(-0.5 * pow((a - BOW2) / 0.8, vec3(2.0)));
+  float back = (hg(c, 0.85) * 0.85 + hg(c, -0.2) * 0.15) * 4.0 * PI;
+  float dark = 1.0 - 0.5 * smoothstep(41.0, 43.0, a) * (1.0 - smoothstep(49.0, 51.0, a));
+  return back * dark + bow;
+}
+
 // Two lobes, relative to isotropic (1): a strong forward one (the silver lining of an edge against the sun) and a weak
 // backward one; k widens the lobes for the multiple-scattering octaves.
 float phase(float c, float k){ return mix(hg(c, -0.15 * k), hg(c, 0.75 * k), 0.3) * 4.0 * PI; }
@@ -458,7 +480,7 @@ void main(){
   int clearRun = 0;
 
   float cosT = dot(rd, uSunDir);
-  vec3 phases = vec3(phase(cosT, 1.0), 0.5 * phase(cosT, 0.5), 0.25 * phase(cosT, 0.25));
+  vec3 phases = vec3(phase(cosT, 1.0), 0.5 * phase(cosT, 0.5), 0.25 * phase(cosT, 0.25)), rainPh = rainPhase(cosT);
 
   float T = 1.0;
   vec3 col = vec3(0.0);
@@ -469,15 +491,22 @@ void main(){
     vec3 p = ro + rd * tt;
     vec4 f = fieldsAll(p);
     float mamma = p.y > 5.0 && f.r < 0.004 ? mammaDensity(p) : 0.0;
-    bool cloudy = f.r >= 0.004 || f.g > 0.01 || mamma > 0.0;
+    // Fine steps for the cloud's billows; the shafts' curtains (~0.7 km) need none.
+    bool cloudy = f.r >= 0.004 || mamma > 0.0;
     if(!inside){
       if(cloudy && coarse > fine){ inside = true; clearRun = 0; tt = max(t.x, tt - coarse); dt = fine; tt += dt; continue; }
     } else if(!cloudy){
       if(float(++clearRun) * fine > coarse + fine){ inside = false; dt = coarse; }
     } else clearRun = 0;
     float dc = max(cloudDensity(p, f), mamma);
-    float dr = f.g * 0.35;
-    float sigma = (dc + dr) * uExtinction;
+    // The shafts: their extinction (1/km) in curtains — streaks stretched down the fall, ~0.7 km across, drifting down
+    // with the rain.
+    float dr = 0.0;
+    if(f.g > 0.0){
+      float streak = octaves(vec3(p.x * 1.4, p.y * 0.12 + uTime * 0.0009, p.z * 1.4) + vec3(5.3, 0.0, 2.9)).g;
+      dr = f.g * SHAFT_MAX * mix(0.35, 1.65, streak);
+    }
+    float sigma = dc * uExtinction + dr;
     if(sigma > 1e-4){
       vec2 L = lightAt(p);
       // The light volume is on the model grid (~1 km): the sub-grid billows would not shade one another. Two short
@@ -491,9 +520,11 @@ void main(){
       float powder = 1.0 - exp(-dc * uExtinction * 1.5);
       float h = clamp(p.y / uHeight * 1.3, 0.0, 1.0);
       // Sky light where the sky is seen: dim deep inside and under the cloud, full at its edges.
-      vec3 ambient = mix(uAmbientBottom + uBounceSun * exp(-L.x), uAmbientTop, h) * mix(0.18, 1.0, L.y);
+      vec3 ambient = mix(uAmbientBottom + uBounceSun * sunThrough(L.x), uAmbientTop, h) * mix(0.18, 1.0, L.y);
       vec3 cloudCol = sunColor * sunlight(L.x, phases) * mix(0.6, 1.0, powder) * 0.55 + ambient * 0.9;
-      vec3 rainCol = vec3(0.40, 0.44, 0.50) * (sunColor * exp(-L.x) * 0.25 + ambient * 1.1);
+      // Water drops absorb nothing: the shafts take the sunlight that reaches them (bright against the sun, the rainbow
+      // opposite it) and the sky's; a shaft under its storm is lit by little but the sky beside it.
+      vec3 rainCol = sunColor * (exp(-L.x) * rainPh + sunThrough(L.x) - exp(-L.x)) * 0.55 + ambient * 0.9;
       if(uFlashOn > 0.5){
         vec3 tp = toTex(p);
         vec3 flash = FLASH_COLOR * FLASH_GAIN * (dot(flashDecode(texture(uFlashA, tp)), uFlashIA) + dot(flashDecode(texture(uFlashB, tp)), uFlashIB));
@@ -501,7 +532,7 @@ void main(){
       }
       // Inside the cloud its droplets set the colour (they scatter far more per gram than the precipitation): the rain's
       // grey only where the cloud is thin or absent, as in the shafts under the base.
-      vec3 S = mix(cloudCol, rainCol, dr / (dc * 6.0 + dr));
+      vec3 S = mix(cloudCol, rainCol, dr / (dc * uExtinction + dr));
       float a = exp(-sigma * dt);
       float w = T * (1.0 - a);
       col += S * w;

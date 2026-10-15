@@ -55,6 +55,8 @@ const SUN_GAIN = 3, SKY_GAIN = 14, SUN_DISC = 40
  */
 const NIGHT_SKY = [.008, .012, .026], NIGHT_TOP = [.1, .12, .2], NIGHT_BOTTOM = [.06, .07, .1], NIGHT_GROUND = [.1, .12, .18]
 const CITY_SKY = [.06, .036, .016], CITY_BOTTOM = [.09, .055, .025]
+/** The precipitation shafts' extinction at the top of the volume texture's channel, 1/km (shaders.ts SHAFT_MAX). */
+const SHAFT_MAX = 6
 /** The lab's background (as the sky dims to with a field shown; shaders.ts skyFragment). */
 const LAB_SKY = new THREE.Color(.009, .026, .044)
 /** The sky's tables are recomputed when the sun's elevation moves by this much, rad (0.1°). */
@@ -292,7 +294,7 @@ export class StormView {
     groundMat.onBeforeCompile = shader => {
       Object.assign(shader.uniforms, { ...this.shared, ...this.air, uLight: this.volumeMaterial.uniforms.uLight })
       shader.vertexShader = shader.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vCloudWorld;').replace('#include <project_vertex>', '#include <project_vertex>\nvCloudWorld=(modelMatrix*vec4(transformed,1.0)).xyz;')
-      shader.fragmentShader = shader.fragmentShader.replace('#include <common>', `#include <common>\n${groundShadowPars}`).replace('#include <lights_fragment_end>', '#include <lights_fragment_end>\n{vec2 s=cloudShade(vCloudWorld);reflectedLight.directDiffuse*=s.x;reflectedLight.directSpecular*=s.x;reflectedLight.indirectDiffuse*=s.y;}')
+      shader.fragmentShader = shader.fragmentShader.replace('#include <common>', `#include <common>\n${groundShadowPars}`).replace('#include <lights_fragment_end>', '#include <lights_fragment_end>\n{vec3 s=cloudShade(vCloudWorld);reflectedLight.indirectDiffuse=reflectedLight.indirectDiffuse*s.y+reflectedLight.directDiffuse*s.z;reflectedLight.directDiffuse*=s.x;reflectedLight.directSpecular*=s.x;}')
         // The air between the camera and the ground, before the tone mapping as for the clouds and the sky (three's fog
         // comes after it); the air in the storm's shadow scatters less light (shaders.ts airLit).
         .replace('#include <fog_fragment>', '')
@@ -555,7 +557,11 @@ export class StormView {
     for (let z = 0, i = 0; z < nz; z++) for (let c = 0; c < layer; c++, i++) {
       const frozen = m.theta[i] * exner[z] < 273.15, rimers = m.graupel[i] + m.hail[i], icy = m.ice[i] + m.snow[i]
       mass[i] = m.cloud[i] + ICE_EXTINCTION * m.ice[i] + (frozen ? SNOW_EXTINCTION * m.snow[i] + RIMER_EXTINCTION * rimers : 0)
-      shafts[i] = m.rain[i] + (frozen ? 0 : m.snow[i] + rimers)
+      // The shafts' extinction, 1/km: rain of Marshall-Palmer drops 2.2 M^0.75 (M in g/m3: pi N0 / Lambda^3, ~1 km
+      // visibility in 3 g/m3 of a cloudburst); below the melting level wet snow (~4 per g/m3) and graupel and hail
+      // (~0.35 per g/m3: few, large stones).
+      const rho = m.env.rho[z] * 1000
+      shafts[i] = 2.2 * Math.pow(m.rain[i] * rho, .75) + (frozen ? 0 : 4 * m.snow[i] * rho + .35 * rimers * rho)
       share[i] = m.cloud[i] + icy > 0 ? icy / (m.cloud[i] + icy) : 1
     }
     // The tower: the strongest updraught within TOWER_LEVELS levels, then within one column.
@@ -616,7 +622,7 @@ export class StormView {
     for (let c = 0; c < layer; c++) this.columnData[c * 4 + 3] = clamp((baseOf[c] < 0 ? median : baseOf[c]) / BASE_SCALE) * 255
     this.columnTexture.needsUpdate = true
     const put = (o: number, i: number, j: number, f: number) => {
-      d[o * 4] = cloudOpacity(lerp(mass[i], mass[j], f)) * 255; d[o * 4 + 1] = clamp(lerp(shafts[i], shafts[j], f) / .0025) * 255
+      d[o * 4] = cloudOpacity(lerp(mass[i], mass[j], f)) * 255; d[o * 4 + 1] = clamp(lerp(shafts[i], shafts[j], f) / SHAFT_MAX) * 255
       d[o * 4 + 2] = clamp(lerp(tower[i], tower[j], f) / UPDRAUGHT_SCALE) * 255; d[o * 4 + 3] = lerp(share[i], share[j], f) * 255
     }
     if (!tl) for (let i = 0; i < n; i++) put(i, i, i, 0)
