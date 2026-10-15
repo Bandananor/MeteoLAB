@@ -11,7 +11,54 @@ import { clamp, lerp, mod, mulberry32 } from '../core/math'
 import { qsatP } from '../core/microphysics'
 import { isPhone } from '../hud'
 import { colormapTexture, type FieldMode, fieldInfo } from './fields'
-import { fieldVolumeFragment, groundShadowPars, precipFragment, precipVertex, sliceFragment, volumeFragment, volumeVertex } from './shaders'
+import { fieldVolumeFragment, groundShadowPars, precipFragment, precipVertex, skyFragment, skyVertex, sliceFragment, volumeFragment, volumeVertex } from './shaders'
+import { adaptation, ADAPT_MAX, computeSky, HAZE_ALBEDO, HAZE_SCALE, hazeExtinction, luminance, RAYLEIGH, RAYLEIGH_SCALE, SKY_COLS, SKY_ROWS, type SkyState, SUN_LEVELS } from './sky'
+
+// The fog of three's own materials (the lines): the aerial perspective of the clouds' (shaders.ts aerial, with its AIR_SCALE) —
+// exponential layers of air and haze over flat ground, per channel — toward the horizon's colour (fogColor, set every
+// frame for the direction looked in); fogDensity is the haze's extinction at the ground, 1/km.
+THREE.ShaderChunk.fog_pars_vertex = '#ifdef USE_FOG\nvarying float vFogDepth;\nvarying vec3 vFogWorld;\n#endif'
+THREE.ShaderChunk.fog_vertex = '#ifdef USE_FOG\nvFogDepth = -mvPosition.z;\nvFogWorld = cameraPosition + transpose(mat3(viewMatrix)) * mvPosition.xyz;\n#endif'
+THREE.ShaderChunk.fog_pars_fragment = `#ifdef USE_FOG
+uniform vec3 fogColor;
+uniform float fogDensity;
+varying float vFogDepth;
+varying vec3 vFogWorld;
+float fogColumn(float y0, float y1, float len, float H){
+  y0 = max(y0, 0.0); y1 = max(y1, 0.0);
+  float dy = y1 - y0;
+  return abs(dy) < 1e-3 * H ? len * exp(-y0 / H) : H * len / dy * (exp(-y0 / H) - exp(-y1 / H));
+}
+#endif`
+THREE.ShaderChunk.fog_fragment = `#ifdef USE_FOG
+{
+  float len = length(vFogWorld - cameraPosition);
+  vec3 od = vec3(${RAYLEIGH.join(', ')}) * fogColumn(cameraPosition.y, vFogWorld.y, len, ${RAYLEIGH_SCALE.toFixed(1)}) + fogDensity / ${HAZE_ALBEDO} * fogColumn(cameraPosition.y, vFogWorld.y, len, ${HAZE_SCALE});
+  vec3 T = exp(-0.5 * od);
+  gl_FragColor.rgb = gl_FragColor.rgb * T + fogColor * (1.0 - T);
+}
+#endif`
+
+/**
+ * The light of the day in the view's units (sky.ts gives it relative to the sun above the air): the clouds' sunlight
+ * (SUN_GAIN; with the step-2 calibration, ~2.6 at noon), the sky's radiance and the light it gives, and the ground's lights
+ * (SKY_GAIN: the ground and the sky in the same units, so the ground is as bright against the sky as it is), the sun's disc (SUN_DISC: far below its true radiance, which no
+ * screen shows, but bright enough to burn white at noon and keep its colour at sunset). All of them times the eye's
+ * adaptation (sky.ts).
+ */
+const SUN_GAIN = 3, SKY_GAIN = 14, SUN_DISC = 40
+/**
+ * The night (the eye adapted to the dark: the airglow and the stars' light, which no table of the sun's scattering
+ * holds): floors for the sky, the clouds' ambient light from above and below and the ground's sky light, and a city's
+ * glow (its lights on the haze, and from under the cloud base). Constant light, so on screen they grow with the
+ * adaptation (its square: they matter only in the deep twilight and the night).
+ */
+const NIGHT_SKY = [.008, .012, .026], NIGHT_TOP = [.1, .12, .2], NIGHT_BOTTOM = [.06, .07, .1], NIGHT_GROUND = [.1, .12, .18]
+const CITY_SKY = [.06, .036, .016], CITY_BOTTOM = [.09, .055, .025]
+/** The lab's background (as the sky dims to with a field shown; shaders.ts skyFragment). */
+const LAB_SKY = new THREE.Color(.009, .026, .044)
+/** The sky's tables are recomputed when the sun's elevation moves by this much, rad (0.1°). */
+const SKY_STEP = .1 * Math.PI / 180
 
 /** How a field layer is drawn: opaque slices with a volume of strong deviations, slices only, or the whole field as a volume. */
 export type LayerMode = 'both' | 'slices' | 'volume'
@@ -99,6 +146,10 @@ export class StormView {
   private readonly groundGrid: THREE.GridHelper
   private readonly ground: THREE.Mesh; private readonly raycaster = new THREE.Raycaster(); private readonly pointer = new THREE.Vector2()
   private readonly sunLight: THREE.DirectionalLight; private readonly hemiLight: THREE.HemisphereLight
+  /** The sky (sky.ts): its table, the uniforms it shares, the dome; the state it was computed for (the sun's step and the haze). */
+  private readonly skyTexture: THREE.DataTexture; private readonly air: Record<string, THREE.IUniform>; private readonly skyMaterial: THREE.ShaderMaterial; private readonly skyDome: THREE.Mesh
+  private sky?: SkyState; private skyKey = ''; private skyGain = 1; private night = 0; private haze = .1
+  private readonly groundColor: THREE.Color; private readonly albedo: number
   private readonly shared: Record<string, THREE.IUniform>
   private readonly light: LightVolume; private readonly flashLight: FlashVolume; private readonly strikeLight: THREE.PointLight
   /** The strongest updraught of each column, and of each column with those beside it (the tower's), m/s. */
@@ -127,7 +178,7 @@ export class StormView {
   /** Ring around the selected cell (see setSelection). */
   private readonly selectionMarker: THREE.Mesh; private selection: { x: number; y: number } | null = null
   private readonly stationMarker: THREE.Mesh; private station: { x: number; y: number } | null = null
-  private frame = 0
+  private frame = 0; private readonly lookScratch = new THREE.Vector3()
   /** The lightning channels (lightning.ts). */
   private readonly lightning: LightningView; private readonly drawingBuffer = new THREE.Vector2()
   /**
@@ -155,15 +206,16 @@ export class StormView {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' })
     // A phone renders at 1 pixel per CSS pixel: its screen is small and its GPU weak (the clouds are ray-marched).
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, isPhone() ? 1 : 1.5)); this.renderer.outputColorSpace = THREE.SRGBColorSpace; this.renderer.toneMapping = THREE.ACESFilmicToneMapping; this.renderer.toneMappingExposure = 1.05
-    this.scene = new THREE.Scene(); this.scene.background = new THREE.Color(0x172d3b); this.scene.fog = new THREE.FogExp2(0x172d3b, .012 / scale)
+    this.scene = new THREE.Scene(); this.scene.fog = new THREE.FogExp2(0x9fb4c4, .1)
     this.camera = new THREE.PerspectiveCamera(42, 1, .1, 180 * scale); this.camera.position.set(38 * scale, 24 * scale, 39 * scale)
     if (typeof location !== 'undefined' && new URLSearchParams(location.search).has('view-debug')) (globalThis as { __stormView?: StormView }).__stormView = this
     this.controls = new OrbitControls(this.camera, canvas); this.controls.target.set(0, 6, 0); this.controls.enableDamping = true; this.controls.dampingFactor = .07; this.controls.maxPolarAngle = Math.PI * .495; this.controls.minDistance = 15; this.controls.maxDistance = 100 * scale
-    this.hemiLight = new THREE.HemisphereLight(0xd9efff, 0x4b4439, 1.35); this.scene.add(this.hemiLight)
-    this.sunLight = new THREE.DirectionalLight(0xfff0d2, 2); this.scene.add(this.sunLight)
+    this.hemiLight = new THREE.HemisphereLight(0xd9efff, 0x4b4439, 1); this.scene.add(this.hemiLight)
+    this.sunLight = new THREE.DirectionalLight(0xfff0d2, 1); this.scene.add(this.sunLight)
 
     const ground = ({ grass: 0x596d45, dry: 0x776a51, water: 0x315d70, urban: 0x606469 } as const)[model.config.surfaceType]
     const groundMat = new THREE.MeshStandardMaterial({ color: ground, roughness: .96, metalness: 0 })
+    this.groundColor = new THREE.Color(ground); this.albedo = luminance([this.groundColor.r, this.groundColor.g, this.groundColor.b])
     this.ground = new THREE.Mesh(new THREE.PlaneGeometry(W, D), groundMat); this.ground.rotation.x = -Math.PI / 2; this.scene.add(this.ground)
     // A city (SimConfig.city): the ground colour blends to the urban grey under it, one texel per ground column like the
     // swath, sliding with the ground in updateGround.
@@ -203,6 +255,15 @@ export class StormView {
       uBoxMin: { value: new THREE.Vector3(-W / 2, 0, -D / 2) }, uBoxMax: { value: new THREE.Vector3(W / 2, H, D / 2) }, uGrid: { value: new THREE.Vector3(nx, ny, nz) },
       uSunDir: { value: new THREE.Vector3(0, 1, 0) }, uHeight: { value: H }, uExtinction: { value: 2.2 }, uSliceOn: { value: 0 }, uSliceH: { value: 2 }, uSliceZ: { value: 0 },
     }
+    // The sky (sky.ts): its table and how bright it is drawn, shared by the dome and the clouds' aerial perspective.
+    this.skyTexture = new THREE.DataTexture(new Uint16Array(SKY_COLS * SKY_ROWS * 4), SKY_COLS, SKY_ROWS, THREE.RGBAFormat, THREE.HalfFloatType)
+    this.skyTexture.minFilter = this.skyTexture.magFilter = THREE.LinearFilter
+    this.air = { uSky: { value: this.skyTexture }, uSkyGain: { value: 1 }, uSkyFloor: { value: new THREE.Color() }, uCityGlow: { value: new THREE.Color() }, uHaze: { value: .1 } }
+    this.skyMaterial = new THREE.ShaderMaterial({
+      vertexShader: skyVertex, fragmentShader: skyFragment, side: THREE.BackSide, depthWrite: false, depthTest: false,
+      uniforms: { uSunDir: this.shared.uSunDir, ...this.air, uSunDisc: { value: new THREE.Color() }, uGroundLight: { value: new THREE.Color() }, uStars: { value: 0 }, uLab: { value: 0 } },
+    })
+    this.skyDome = new THREE.Mesh(new THREE.SphereGeometry(1, 48, 24), this.skyMaterial); this.skyDome.frustumCulled = false; this.skyDome.renderOrder = -1; this.scene.add(this.skyDome)
     this.volumeTexture = texture3D(this.volumeData, THREE.RGBAFormat, nx, ny, nz)
     this.noise = noiseTexture()
     this.columnData = new Uint8Array(nx * ny * 4)
@@ -213,8 +274,8 @@ export class StormView {
     this.volumeMaterial = new THREE.ShaderMaterial({
       vertexShader: volumeVertex, fragmentShader: volumeFragment, side: THREE.BackSide, transparent: true, depthWrite: false, depthTest: false, premultipliedAlpha: true,
       uniforms: {
-        ...this.shared, uDensity: { value: this.volumeTexture }, uNoise: { value: this.noise }, uColumns: { value: this.columnTexture }, uLight: { value: this.light.texture }, uFlashA: { value: this.flashLight.targets[0].texture }, uFlashB: { value: this.flashLight.targets[1].texture }, uFlashIA: { value: new THREE.Vector4() }, uFlashIB: { value: new THREE.Vector4() }, uFlashOn: { value: 0 }, uSunColor: { value: new THREE.Color() }, uAmbientTop: { value: new THREE.Color() }, uAmbientBottom: { value: new THREE.Color() },
-        uFogColor: { value: (this.scene.fog as THREE.FogExp2).color }, uFogDensity: { value: (this.scene.fog as THREE.FogExp2).density }, uTime: { value: 0 }, uOpacity: { value: 1 },
+        ...this.shared, uDensity: { value: this.volumeTexture }, uNoise: { value: this.noise }, uColumns: { value: this.columnTexture }, uLight: { value: this.light.texture }, uFlashA: { value: this.flashLight.targets[0].texture }, uFlashB: { value: this.flashLight.targets[1].texture }, uFlashIA: { value: new THREE.Vector4() }, uFlashIB: { value: new THREE.Vector4() }, uFlashOn: { value: 0 }, uSunByHeight: { value: Array.from({ length: SUN_LEVELS }, () => new THREE.Vector3()) }, uAmbientTop: { value: new THREE.Color() }, uAmbientBottom: { value: new THREE.Color() }, uBounceSun: { value: new THREE.Color() },
+        ...this.air, uTime: { value: 0 }, uOpacity: { value: 1 },
       },
     })
     const volumeBox = new THREE.BoxGeometry(W, H, D); volumeBox.translate(0, H / 2, 0)
@@ -229,9 +290,13 @@ export class StormView {
     const vertical = new THREE.PlaneGeometry(W, H); vertical.translate(0, H / 2, 0); this.sliceV = new THREE.Mesh(vertical, this.sliceMaterial); this.scene.add(this.sliceV)
 
     groundMat.onBeforeCompile = shader => {
-      Object.assign(shader.uniforms, { ...this.shared, uLight: this.volumeMaterial.uniforms.uLight })
+      Object.assign(shader.uniforms, { ...this.shared, ...this.air, uLight: this.volumeMaterial.uniforms.uLight })
       shader.vertexShader = shader.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vCloudWorld;').replace('#include <project_vertex>', '#include <project_vertex>\nvCloudWorld=(modelMatrix*vec4(transformed,1.0)).xyz;')
       shader.fragmentShader = shader.fragmentShader.replace('#include <common>', `#include <common>\n${groundShadowPars}`).replace('#include <lights_fragment_end>', '#include <lights_fragment_end>\n{vec2 s=cloudShade(vCloudWorld);reflectedLight.directDiffuse*=s.x;reflectedLight.directSpecular*=s.x;reflectedLight.indirectDiffuse*=s.y;}')
+        // The air between the camera and the ground, before the tone mapping as for the clouds and the sky (three's fog
+        // comes after it); the air in the storm's shadow scatters less light (shaders.ts airLit).
+        .replace('#include <fog_fragment>', '')
+        .replace('#include <tonemapping_fragment>', '{vec3 T;vec3 ins=aerial(cameraPosition,normalize(vCloudWorld-cameraPosition),length(vCloudWorld-cameraPosition),T);gl_FragColor.rgb=gl_FragColor.rgb*T+ins*airLit(cameraPosition,vCloudWorld);}\n#include <tonemapping_fragment>')
     }
 
     const soft = softParticleTexture()
@@ -262,7 +327,7 @@ export class StormView {
 
   dispose() {
     this.controls.dispose()
-    ;[this.volumeTexture, this.noise, this.columnTexture, this.fieldTexture, this.colormap, this.volumeMaterial, this.fieldMaterial, this.sliceMaterial, this.volumeMesh.geometry, this.sliceH.geometry, this.sliceV.geometry, this.precipGeometry, this.precipMaterial, this.swathTexture, this.cityTexture, this.zoneTexture, this.frontLine?.geometry, this.frontLine?.material as THREE.Material | undefined, this.swath.geometry, this.swath.material as THREE.Material, this.mesoMarker.geometry, this.mesoMarker.material as THREE.Material, this.selectionMarker.geometry, this.selectionMarker.material as THREE.Material, this.stationMarker.geometry, this.stationMarker.material as THREE.Material, this.lightning, this.light, this.flashLight].forEach(r => r?.dispose())
+    ;[this.skyTexture, this.skyMaterial, this.skyDome.geometry, this.volumeTexture, this.noise, this.columnTexture, this.fieldTexture, this.colormap, this.volumeMaterial, this.fieldMaterial, this.sliceMaterial, this.volumeMesh.geometry, this.sliceH.geometry, this.sliceV.geometry, this.precipGeometry, this.precipMaterial, this.swathTexture, this.cityTexture, this.zoneTexture, this.frontLine?.geometry, this.frontLine?.material as THREE.Material | undefined, this.swath.geometry, this.swath.material as THREE.Material, this.mesoMarker.geometry, this.mesoMarker.material as THREE.Material, this.selectionMarker.geometry, this.selectionMarker.material as THREE.Material, this.stationMarker.geometry, this.stationMarker.material as THREE.Material, this.lightning, this.light, this.flashLight].forEach(r => r?.dispose())
     this.renderer.dispose()
   }
 
@@ -353,14 +418,65 @@ export class StormView {
   debugCamera(position: [number, number, number], target: [number, number, number]) { this.camera.position.set(...position); this.controls.target.set(...target); this.controls.update() }
 
   private updateSun() {
-    const s = this.debugSunHour === null ? sunDirection(this.model.config, this.model.time) : sunDirection({ ...this.model.config, hour: this.debugSunHour }, 0), dir = new THREE.Vector3(s.x, s.y, s.z)
-    const day = THREE.MathUtils.smoothstep(dir.y, -.03, .12), warm = THREE.MathUtils.smoothstep(dir.y, 0, .4), u = this.volumeMaterial.uniforms
+    const m = this.model, s = this.debugSunHour === null ? sunDirection(m.config, m.time) : sunDirection({ ...m.config, hour: this.debugSunHour }, 0)
+    // Seen through the air the sun stands higher by the refraction (Sæmundsson 1986: ~0.57° at the horizon), fading out
+    // a few degrees below it (where the sun's own light no longer matters).
+    const geometric = Math.asin(clamp(s.y, -1, 1)) * 180 / Math.PI, e = Math.max(geometric, -1.9)
+    const el = (geometric + 1.02 / Math.tan((e + 10.3 / (e + 5.11)) * Math.PI / 180) / 60 * clamp((geometric + 4) / 2.1)) * Math.PI / 180
+    const flat = Math.hypot(s.x, s.z) || 1, dir = new THREE.Vector3(s.x / flat * Math.cos(el), Math.sin(el), s.z / flat * Math.cos(el))
     ;(this.shared.uSunDir.value as THREE.Vector3).copy(dir)
-    ;(u.uSunColor.value as THREE.Color).setRGB(1, lerp(.55, .94, warm), lerp(.3, .84, warm)).multiplyScalar(2.6 * day)
-    ;(u.uAmbientTop.value as THREE.Color).setRGB(lerp(.08, .62, day), lerp(.1, .72, day), lerp(.16, .84, day))
-    ;(u.uAmbientBottom.value as THREE.Color).setRGB(lerp(.05, .2, day), lerp(.06, .23, day), lerp(.08, .28, day))
-    this.sunLight.position.copy(dir).multiplyScalar(50); this.sunLight.intensity = 2 * day; this.sunLight.color.setRGB(1, lerp(.62, .94, warm), lerp(.4, .82, warm))
-    this.hemiLight.intensity = .45 + .9 * day
+    this.sunLight.position.copy(dir).multiplyScalar(50)
+    if (this.frame % 120 === 0) this.haze = this.hazeNow()
+    const key = `${Math.round(el / SKY_STEP)} ${this.haze}`
+    if (key !== this.skyKey) { this.skyKey = key; this.updateSky(el) }
+    this.updateFog()
+  }
+
+  /**
+   * The aerosol's extinction at the ground, 1/km (sky.ts hazeExtinction), from the relative humidity of the model's
+   * lowest level over the ground: its median over the columns, the air of the place rather than of a storm's cold pool
+   * (a humid day is hazy). Rounded to 0.005/km so the sky's tables are not recomputed for noise.
+   */
+  private hazeNow() {
+    const m = this.model, { layer } = m.grid, z = 1, exner = m.env.exner[z], p = m.env.p[z], rh = new Float32Array(layer)
+    for (let c = 0; c < layer; c++) { const i = c + z * layer; rh[c] = Math.min(1, m.q[i] / qsatP(m.theta[i] * exner - 273.15, p)) }
+    return Math.round(hazeExtinction(rh.sort()[layer >> 1]) * 200) / 200
+  }
+
+  /** The sky's tables for the sun at elevation el, rad, and the light of the day from them. */
+  private updateSky(el: number) {
+    const st = this.sky = computeSky(el, this.haze, this.albedo), half = this.skyTexture.image.data as Uint16Array, toHalf = THREE.DataUtils.toHalfFloat
+    for (let i = 0; i < SKY_ROWS * SKY_COLS; i++) { for (let c = 0; c < 3; c++) half[i * 4 + c] = toHalf(st.sky[i * 3 + c]); half[i * 4 + 3] = toHalf(1) }
+    this.skyTexture.needsUpdate = true
+    const S = st.sunIrradiance, E = st.skyIrradiance, adapt = adaptation(luminance(S) + luminance(E)), u = this.volumeMaterial.uniforms, g = this.groundColor
+    const night = this.night = (adapt / ADAPT_MAX) ** 2, city = clamp((this.model.config.city ?? 0) / 8) * night, sky = this.skyGain = SKY_GAIN * adapt
+    this.air.uSkyGain.value = sky; this.air.uHaze.value = this.haze
+    ;(this.air.uSkyFloor.value as THREE.Color).fromArray(NIGHT_SKY.map(v => v * night)); (this.air.uCityGlow.value as THREE.Color).fromArray(CITY_SKY.map(v => v * city))
+    ;(u.uSunByHeight.value as THREE.Vector3[]).forEach((v, i) => v.fromArray(st.sunByHeight, i * 3).multiplyScalar(SUN_GAIN * adapt))
+    ;(u.uAmbientTop.value as THREE.Color).setRGB(...[0, 1, 2].map(c => E[c] / Math.PI * sky + NIGHT_TOP[c] * night) as [number, number, number])
+    ;(u.uAmbientBottom.value as THREE.Color).setRGB(...[0, 1, 2].map(c => this.albedo * E[c] / Math.PI * sky + NIGHT_BOTTOM[c] * night + CITY_BOTTOM[c] * city) as [number, number, number])
+    ;(u.uBounceSun.value as THREE.Color).setRGB(...[0, 1, 2].map(c => this.albedo * S[c] / Math.PI * sky) as [number, number, number])
+    const ground = SKY_GAIN * adapt
+    this.sunLight.color.setRGB(st.sunByHeight[0] * ground, st.sunByHeight[1] * ground, st.sunByHeight[2] * ground)
+    this.hemiLight.color.setRGB(...[0, 1, 2].map(c => E[c] * ground + NIGHT_GROUND[c] * night) as [number, number, number])
+    this.hemiLight.groundColor.setRGB(...[0, 1, 2].map(c => this.albedo * (S[c] + E[c]) * ground) as [number, number, number])
+    const su = this.skyMaterial.uniforms
+    ;(su.uSunDisc.value as THREE.Color).setRGB(st.sunByHeight[0] * SUN_DISC * adapt, st.sunByHeight[1] * SUN_DISC * adapt, st.sunByHeight[2] * SUN_DISC * adapt)
+    // The ground beyond the domain, as the domain's ground is lit (three's Lambertian: albedo / pi times the irradiance).
+    ;(su.uGroundLight.value as THREE.Color).setRGB(...[0, 1, 2].map(c => [g.r, g.g, g.b][c] / Math.PI * ((S[c] + E[c]) * ground + NIGHT_GROUND[c] * night)) as [number, number, number])
+    // The stars come out as the eye adapts to the dark.
+    su.uStars.value = night * night
+  }
+
+  /** The fog's colour: the sky's at the horizon in the direction looked in (and the haze's extinction). */
+  private updateFog() {
+    const st = this.sky, fog = this.scene.fog as THREE.FogExp2
+    if (!st) return
+    const look = this.camera.getWorldDirection(this.lookScratch), sun = this.shared.uSunDir.value as THREE.Vector3
+    const az = Math.abs(Math.atan2(look.x * sun.z - look.z * sun.x, look.x * sun.x + look.z * sun.z)), col = Math.round(az / Math.PI * (SKY_COLS - 1)), city = clamp((this.model.config.city ?? 0) / 8) * this.night
+    fog.color.setRGB(...[0, 1, 2].map(c => st.sky[col * 3 + c] * this.skyGain + NIGHT_SKY[c] * this.night + CITY_SKY[c] * city) as [number, number, number])
+    if (this.skyMaterial.uniforms.uLab.value > 0) fog.color.lerp(LAB_SKY, this.skyMaterial.uniforms.uLab.value)
+    fog.density = this.haze
   }
 
   private updateLevels() {
@@ -555,6 +671,8 @@ export class StormView {
       this.renderer.setSize(width, height, false); this.camera.aspect = width / height; this.camera.updateProjectionMatrix()
     }
     const field = s.field === 'composite' ? null : s.field
+    // With a field shown the sky dims toward the lab's dark blue (the field's colours read against it).
+    this.skyMaterial.uniforms.uLab.value = field ? .8 : 0
     this.updateSun()
     // A flash lights the cloud from inside.
     const glow = this.lightning.update(performance.now(), s.showLightning, this.renderer.getDrawingBufferSize(this.drawingBuffer), ratio)

@@ -1,3 +1,7 @@
+import { HAZE_ALBEDO, HAZE_SCALE, RAYLEIGH, RAYLEIGH_SCALE, SKY_COLS, SKY_ROWS, SUN_LEVELS, SUN_RADIUS, SUN_TOP } from './sky'
+
+const f = (x: number) => x.toFixed(6)
+
 export const volumeVertex = /* glsl */`
 varying vec3 vWorld;
 void main(){
@@ -117,8 +121,9 @@ void main(){
   vec3 s = uBoxMax - uBoxMin;
   vec3 p = vec3(uBoxMin.x + (gl_FragCoord.x - 0.5) / uGrid.x * s.x, uLayer / (uGrid.z - 1.0) * uHeight, uBoxMax.z - (gl_FragCoord.y - 0.5) / uGrid.y * s.z);
   float up = max(uHeight - p.y, 0.01);
-  // The sun: to the top of the domain, at most 60 km of slant path (a low sun).
-  float sunOd = uSunDir.y > 0.0 ? depthAlong(p, uSunDir, min(up / max(uSunDir.y, 0.01), 60.0), 48) : 0.0;
+  // The sun: to the top of the domain, at most 60 km of slant path (a low sun); a sun set for the ground still lights
+  // what is high (sky.ts), its ray running down through the box to the ground.
+  float sunOd = uSunDir.y > -0.1 ? depthAlong(p, uSunDir, min(uSunDir.y > 0.0 ? up / max(uSunDir.y, 0.01) : p.y / max(-uSunDir.y, 1e-3), 60.0), 48) : 0.0;
   // The sky.
   float sky = 0.0, total = 0.0;
   vec3 dirs[5] = vec3[5](vec3(0.0, 1.0, 0.0), vec3(0.7071, 0.7071, 0.0), vec3(-0.7071, 0.7071, 0.0), vec3(0.0, 0.7071, 0.7071), vec3(0.0, 0.7071, -0.7071));
@@ -158,9 +163,135 @@ float pixelJitter(){
 }
 `
 
+// The sky (sky.ts): its table of radiance over the elevation (square spacing) and the azimuth from the sun, drawn
+// uSkyGain times brighter, with a night floor (the airglow, the stars' light) and a city's glow low over the horizon.
+// The aerial perspective: the air's and the haze's optical depth along a ray in exponential layers (flat ground, as
+// the ~100 km seen), with the sky's own light scattered into it.
+const atmosphere = /* glsl */`
+uniform sampler2D uSky;
+uniform float uSkyGain;
+uniform vec3 uSkyFloor;
+uniform vec3 uCityGlow;
+uniform float uHaze;
+const float SKY_PI = 3.14159265;
+const vec3 RAYLEIGH = vec3(${RAYLEIGH.map(f).join(', ')});
+const float RAYLEIGH_SCALE = ${f(RAYLEIGH_SCALE)}, HAZE_SCALE = ${f(HAZE_SCALE)}, HAZE_ALBEDO = ${f(HAZE_ALBEDO)};
+
+vec3 skyAt(vec3 d){
+  float el = asin(clamp(d.y, 0.0, 1.0)), v = sqrt(el / (0.5 * SKY_PI));
+  vec2 sh = uSunDir.xz, dh = d.xz;
+  float az = length(sh) < 1e-4 || length(dh) < 1e-4 ? 0.0 : acos(clamp(dot(normalize(dh), normalize(sh)), -1.0, 1.0));
+  vec2 uv = vec2((az / SKY_PI * ${f(SKY_COLS - 1)} + 0.5) / ${f(SKY_COLS)}, (v * ${f(SKY_ROWS - 1)} + 0.5) / ${f(SKY_ROWS)});
+  return texture(uSky, uv).rgb * uSkyGain + uSkyFloor + uCityGlow * exp(-el * 10.0);
+}
+
+// The column of an exponential layer (scale H, km) between heights y0 and y1 along len km.
+float layerColumn(float y0, float y1, float len, float H){
+  y0 = max(y0, 0.0); y1 = max(y1, 0.0);
+  float dy = y1 - y0;
+  if(abs(dy) < 1e-3 * H) return len * exp(-y0 / H);
+  return H * len / dy * (exp(-y0 / H) - exp(-y1 / H));
+}
+// The view thins the air between the camera and what it sees by AIR_SCALE: the camera stands far off to see the whole
+// domain (40-60 km), and through the true air a storm that far fades into the haze (contrast e^-1.3 at 30 km for 90 km
+// of visibility); the sky itself keeps the true air.
+const float AIR_SCALE = 0.5;
+vec3 airDepth(float y0, float y1, float len){
+  return AIR_SCALE * (RAYLEIGH * layerColumn(y0, y1, len, RAYLEIGH_SCALE) + uHaze / HAZE_ALBEDO * layerColumn(y0, y1, len, HAZE_SCALE));
+}
+// The air between the camera (ro) and a point len km along rd: its transmittance T, and the light it scatters toward
+// the camera — the sky's in that direction times the share of the whole path's (to the top of the air) that lies
+// before the point.
+vec3 aerial(vec3 ro, vec3 rd, float len, out vec3 T){
+  T = exp(-airDepth(ro.y, ro.y + rd.y * len, len));
+  float y0 = max(ro.y, 0.0);
+  vec3 whole = rd.y > 0.01 ? AIR_SCALE * (RAYLEIGH * RAYLEIGH_SCALE * exp(-y0 / RAYLEIGH_SCALE) + uHaze / HAZE_ALBEDO * HAZE_SCALE * exp(-y0 / HAZE_SCALE)) / rd.y : vec3(1e4);
+  return skyAt(vec3(rd.x, max(rd.y, 0.0), rd.z)) * (1.0 - T) / max(1.0 - exp(-whole), 1e-4);
+}
+`
+
+// The share of the light the air scatters toward the camera between ro and p that it still gives where the cloud
+// shades it from the sun (the dark air under a storm, which leaves its base dark seen from afar): the light volume
+// sampled along the part of the path inside the domain, weighted by the air's density, its share of the path's air;
+// AIR_SKY of the air's light is the sky's own (multiple scattering), which the storm hides less.
+const airShade = /* glsl */`
+const float AIR_SKY = 0.3;
+float airLit(vec3 ro, vec3 p){
+  vec3 rd = p - ro;
+  float len = length(rd);
+  rd /= len;
+  vec3 inv = 1.0 / rd, t0 = (uBoxMin - ro) * inv, t1 = (uBoxMax - ro) * inv, lo = min(t0, t1), hi = max(t0, t1);
+  float a = max(max(max(lo.x, lo.y), lo.z), 0.0), b = min(min(min(hi.x, hi.y), hi.z), len);
+  if(b <= a) return 1.0;
+  float lit = 0.0, wsum = 0.0;
+  for(int k = 0; k < 6; k++){
+    vec3 q = ro + rd * mix(a, b, (float(k) + 0.5) / 6.0);
+    float w = RAYLEIGH.g * exp(-max(q.y, 0.0) / RAYLEIGH_SCALE) + uHaze / HAZE_ALBEDO * exp(-max(q.y, 0.0) / HAZE_SCALE);
+    lit += w * exp(-lightAt(q).x);
+    wsum += w;
+  }
+  float inBox = airDepth(ro.y + rd.y * a, ro.y + rd.y * b, b - a).g / max(airDepth(ro.y, p.y, len).g, 1e-6);
+  return mix(1.0, mix(AIR_SKY, 1.0, lit / wsum), clamp(inBox, 0.0, 1.0));
+}
+`
+
+// The sky's dome: a unit sphere about the camera drawn behind everything. Above the horizon the sky's table, the sun's
+// disc (limb-darkened) and the stars; below it the ground beyond the domain, seen through the air from the camera's
+// height. uLab dims it toward the lab's dark blue while a field is shown (its colours read against a dark ground).
+export const skyVertex = /* glsl */`
+varying vec3 vDir;
+void main(){
+  vDir = position;
+  vec4 p = projectionMatrix * vec4(mat3(viewMatrix) * position, 1.0);
+  gl_Position = vec4(p.xy, p.w * 0.99999, p.w);
+}`
+
+export const skyFragment = /* glsl */`
+precision highp float;
+uniform vec3 uSunDir;
+${atmosphere}
+uniform vec3 uSunDisc;
+uniform vec3 uGroundLight;
+uniform float uStars;
+uniform float uLab;
+varying vec3 vDir;
+const float SUN_RADIUS = ${f(SUN_RADIUS)};
+
+float hash3(vec3 p){ return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453); }
+// Stars: one in a few hundred cells of a lattice over the directions, of random brightness, dimmed through the air.
+vec3 stars(vec3 d){
+  vec3 q = d * 300.0, cell = floor(q);
+  float r = hash3(cell);
+  if(r < 0.996) return vec3(0.0);
+  vec3 at = cell + 0.5 + 0.3 * (vec3(hash3(cell + 1.7), hash3(cell + 3.1), hash3(cell + 5.3)) - 0.5);
+  float b = pow(hash3(cell + 9.2), 6.0) * 2.5 + 0.08;
+  vec3 tint = mix(vec3(1.0, 0.82, 0.65), vec3(0.75, 0.85, 1.0), hash3(cell + 7.7));
+  return tint * b * (1.0 - smoothstep(0.08, 0.22, length(q - at)));
+}
+
+void main(){
+  vec3 d = normalize(vDir), ro = vec3(0.0, cameraPosition.y, 0.0), c;
+  if(d.y >= 0.0){
+    c = skyAt(d);
+    float a = acos(clamp(dot(d, uSunDir), -1.0, 1.0)) / SUN_RADIUS;
+    if(a < 1.0) c += uSunDisc * (1.0 - 0.6 * (1.0 - sqrt(1.0 - a * a)));
+    if(uStars > 0.0){
+      vec3 up = (RAYLEIGH * RAYLEIGH_SCALE + uHaze / HAZE_ALBEDO * HAZE_SCALE) / max(d.y, 0.02);
+      c += stars(d) * uStars * exp(-up);
+    }
+  } else {
+    vec3 T, inscatter = aerial(ro, d, max(ro.y, 0.01) / -d.y, T);
+    c = uGroundLight * T + inscatter;
+  }
+  c = mix(c, vec3(0.009, 0.026, 0.044), uLab);
+  gl_FragColor = vec4(c, 1.0);
+  #include <tonemapping_fragment>
+  #include <colorspace_fragment>
+}`
+
 // Injected into the ground's MeshStandardMaterial: the light volume at the ground gives the cloud shadow for the direct
 // sunlight (x) and, under a storm, the sky hidden by the cloud for the sky light (y).
-export const groundShadowPars = volumeCommon + lightSampling + /* glsl */`
+export const groundShadowPars = volumeCommon + lightSampling + atmosphere + airShade + /* glsl */`
 varying vec3 vCloudWorld;
 
 vec2 cloudShade(vec3 p){
@@ -173,15 +304,19 @@ export const volumeFragment = /* glsl */`
 precision highp float;
 ${raymarchCommon}
 ${cloudSampling}
-uniform vec3 uSunColor;
+// Sunlight at heights 0..SUN_TOP km (sky.ts): the air reddens it at sunset and the Earth's shadow rises through it after.
+uniform vec3 uSunByHeight[${SUN_LEVELS}];
 uniform vec3 uAmbientTop;
+// The light from below: the ground's under the sky (and the night's floors), and under the sun — only where the
+// ground is sunlit: the point's own sunlight stands in for the ground's under it (in a storm's shadow both are dark).
 uniform vec3 uAmbientBottom;
-uniform vec3 uFogColor;
-uniform float uFogDensity;
+uniform vec3 uBounceSun;
+${atmosphere}
 uniform float uTime;
 uniform float uOpacity;
 
 ${lightSampling}
+${airShade}
 ${flashEncoding}
 // Light of the flashes shown (FlashVolume): the volumes of slots 0-3 and 4-7 and each slot's brightness now.
 uniform sampler3D uFlashA;
@@ -302,6 +437,12 @@ float phase(float c, float k){ return mix(hg(c, -0.15 * k), hg(c, 0.75 * k), 0.3
 // phases depend only on the ray's angle to the sun: phases holds them, weighted, for the three octaves.
 float sunlight(float od, vec3 phases){ return phases.x * exp(-od) + phases.y * exp(-od * 0.5) + phases.z * exp(-od * 0.25); }
 
+vec3 sunAt(float y){
+  float l = clamp(y / ${f(SUN_TOP)}, 0.0, 1.0) * ${f(SUN_LEVELS - 1)};
+  int i = int(min(floor(l), ${f(SUN_LEVELS - 2)}));
+  return mix(uSunByHeight[i], uSunByHeight[i + 1], l - float(i));
+}
+
 void main(){
   vec3 ro = cameraPosition;
   vec3 rd = normalize(vWorld - cameraPosition);
@@ -342,16 +483,17 @@ void main(){
       // The light volume is on the model grid (~1 km): the sub-grid billows would not shade one another. Two short
       // probes toward the sun through the detailed density add the optical depth of the lobes in the way, so the
       // sunlit side of a billow is bright and its creases dark.
-      if(dc > 0.02 && uSunDir.y > 0.0){
+      vec3 sunColor = sunAt(p.y);
+      if(dc > 0.02 && uSunDir.y > -0.1){
         vec3 s1 = p + uSunDir * SHADOW_PROBE, s2 = p + uSunDir * (SHADOW_PROBE * 3.0);
         L.x += (cloudDensity(s1, fieldsAll(s1)) + cloudDensity(s2, fieldsAll(s2)) * 2.0) * SHADOW_PROBE * uExtinction;
       }
       float powder = 1.0 - exp(-dc * uExtinction * 1.5);
       float h = clamp(p.y / uHeight * 1.3, 0.0, 1.0);
       // Sky light where the sky is seen: dim deep inside and under the cloud, full at its edges.
-      vec3 ambient = mix(uAmbientBottom, uAmbientTop, h) * mix(0.18, 1.0, L.y);
-      vec3 cloudCol = uSunColor * sunlight(L.x, phases) * mix(0.6, 1.0, powder) * 0.55 + ambient * 0.9;
-      vec3 rainCol = vec3(0.40, 0.44, 0.50) * (uSunColor * exp(-L.x) * 0.25 + ambient * 1.1);
+      vec3 ambient = mix(uAmbientBottom + uBounceSun * exp(-L.x), uAmbientTop, h) * mix(0.18, 1.0, L.y);
+      vec3 cloudCol = sunColor * sunlight(L.x, phases) * mix(0.6, 1.0, powder) * 0.55 + ambient * 0.9;
+      vec3 rainCol = vec3(0.40, 0.44, 0.50) * (sunColor * exp(-L.x) * 0.25 + ambient * 1.1);
       if(uFlashOn > 0.5){
         vec3 tp = toTex(p);
         vec3 flash = FLASH_COLOR * FLASH_GAIN * (dot(flashDecode(texture(uFlashA, tp)), uFlashIA) + dot(flashDecode(texture(uFlashB, tp)), uFlashIB));
@@ -374,8 +516,8 @@ void main(){
   if(alpha < 0.003) discard;
   vec3 c = col / (1.0 - T);
   float dist = depthSum / max(weightSum, 1e-4);
-  float fd = uFogDensity * dist;
-  c = mix(c, uFogColor, 1.0 - exp(-fd * fd));
+  vec3 Ta, inscatter = aerial(ro, rd, dist, Ta);
+  c = c * Ta + inscatter * airLit(ro, ro + rd * dist);
   gl_FragColor = vec4(c, alpha);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
