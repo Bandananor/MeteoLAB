@@ -85,6 +85,8 @@ export class Atmosphere implements ViewSettings {
     this.waiting = 0
   }
   render() { this.view.render() }
+  /** The 3D view as a PNG (StormView.snapshot). */
+  snapshot() { return this.view.snapshot() }
   /** The picture's quality (StormView.setQuality), the level drawn, and a call when the automatic choice changes it. */
   setQuality(q: Quality | 'auto', start?: Quality) { this.view.setQuality(q, start) }
   get level() { return this.view.level }

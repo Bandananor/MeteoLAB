@@ -608,6 +608,15 @@ if(abs(uSurface - 2.0) < 0.5){
     su.uStars.value = night * night
   }
 
+  /**
+   * The view as a PNG: drawn again at its full detail (not the coarser turning one) and read back in the same task —
+   * the drawing buffer is not preserved between frames.
+   */
+  snapshot() {
+    this.turning = false; this.render()
+    return new Promise<Blob | null>(resolve => this.canvas.toBlob(resolve, 'image/png'))
+  }
+
   /** Whether a pointer is held on the view (the controls' own state, not in three's types). */
   private dragging() { return (this.controls as unknown as { state: number }).state !== -1 }
 

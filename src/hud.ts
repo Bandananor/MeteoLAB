@@ -142,6 +142,7 @@ export class Hud {
       <button class="menu__item" role="menuitem" data-tool="#stationOpen"><span class="menu__glyph">⌂</span>Станция</button>
       <div class="menu__sep"></div>
       <button class="menu__item" role="menuitem" data-tool="#groundToggle"><span class="menu__glyph">⛰</span>Вид с земли</button>
+      <button class="menu__item" role="menuitem" data-tool="#snapshotButton"><span class="menu__glyph">◫</span>Снимок</button>
       <button class="menu__item" role="menuitem" data-tool="#immersiveToggle"><span class="menu__glyph">⛶</span>Во весь экран</button>
       <div class="menu__sep"></div>
       <button class="menu__item" role="menuitem" data-tool="#layoutToggle"><span class="menu__glyph">▭</span>Компьютерный вид</button>
