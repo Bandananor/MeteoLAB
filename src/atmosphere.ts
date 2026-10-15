@@ -3,7 +3,7 @@ import { describeConvection } from './describe'
 import { isPhone, PHONE_THREADS } from './hud'
 import type { FieldMode } from './render/fields'
 import type { UhLayer } from './core'
-import { type LayerMode, StormView, type ViewSettings } from './render/view'
+import { type LayerMode, type Quality, StormView, type ViewSettings } from './render/view'
 import { SNAPSHOT_COLUMNS, SNAPSHOT_FIELDS, type Snapshot, type WorkerRequest } from './simulation'
 
 /** How often the live sounding (src/core/live.ts) and everything derived from it is recomputed, s of model time. */
@@ -85,6 +85,10 @@ export class Atmosphere implements ViewSettings {
     this.waiting = 0
   }
   render() { this.view.render() }
+  /** The picture's quality (StormView.setQuality), the level drawn, and a call when the automatic choice changes it. */
+  setQuality(q: Quality | 'auto', start?: Quality) { this.view.setQuality(q, start) }
+  get level() { return this.view.level }
+  set onLevel(f: ((level: Quality) => void) | null) { this.view.onLevel = f }
   /** The last flash again, slowed down (see StormView.replayLightning). */
   replayLightning(rate: number) { return this.view.replayLightning(rate) }
   dispose() { this.worker.terminate(); this.view.dispose() }

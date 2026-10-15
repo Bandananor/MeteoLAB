@@ -223,6 +223,9 @@ vec3 aerial(vec3 ro, vec3 rd, float len, out vec3 T){
 // AIR_SKY of the air's light is the sky's own (multiple scattering), which the storm hides less.
 const airShade = /* glsl */`
 const float AIR_SKY = 0.3;
+#ifndef AIR_SAMPLES
+#define AIR_SAMPLES 6
+#endif
 float airLit(vec3 ro, vec3 p){
   vec3 rd = p - ro;
   float len = length(rd);
@@ -231,8 +234,8 @@ float airLit(vec3 ro, vec3 p){
   float a = max(max(max(lo.x, lo.y), lo.z), 0.0), b = min(min(min(hi.x, hi.y), hi.z), len);
   if(b <= a) return 1.0;
   float lit = 0.0, wsum = 0.0;
-  for(int k = 0; k < 6; k++){
-    vec3 q = ro + rd * mix(a, b, (float(k) + 0.5) / 6.0);
+  for(int k = 0; k < AIR_SAMPLES; k++){
+    vec3 q = ro + rd * mix(a, b, (float(k) + 0.5) / float(AIR_SAMPLES));
     float w = RAYLEIGH.g * exp(-max(q.y, 0.0) / RAYLEIGH_SCALE) + uHaze / HAZE_ALBEDO * exp(-max(q.y, 0.0) / HAZE_SCALE);
     lit += w * sunThrough(lightAt(q).x);
     wsum += w;
@@ -386,9 +389,13 @@ const float FLASH_GAIN = 12.0;
 // The march: coarse steps (STEPS over the ray through the box) through clear air; on reaching the cloud it steps back
 // and goes on in steps of at most FINE_STEP km, back to coarse once out of it, at most MAX_STEPS in all. With the coarse
 // steps alone (0.5-0.8 km) the sub-grid billows were smeared out.
-const int STEPS = 96;
-const int MAX_STEPS = 224;
-const float FINE_STEP = 0.18;
+// They and the shadow probes (SHADOW_PROBES 0-2) are set by the quality (view.ts QUALITY); these are the high level's.
+#ifndef STEPS
+#define STEPS 96
+#define MAX_STEPS 224
+#define FINE_STEP 0.18
+#define SHADOW_PROBES 2
+#endif
 // Length of the first sub-grid shadow probe toward the sun, km (the second goes three times as far).
 const float SHADOW_PROBE = 0.15;
 const float PI = 3.14159265;
@@ -560,10 +567,18 @@ void main(){
       // probes toward the sun through the detailed density add the optical depth of the lobes in the way, so the
       // sunlit side of a billow is bright and its creases dark.
       vec3 sunColor = sunAt(p.y);
+#if SHADOW_PROBES == 2
       if(dc > 0.02 && uSunDir.y > -0.1){
         vec3 s1 = p + uSunDir * SHADOW_PROBE, s2 = p + uSunDir * (SHADOW_PROBE * 3.0);
         L.x += (cloudDensity(s1, fieldsAll(s1)) + cloudDensity(s2, fieldsAll(s2)) * 2.0) * SHADOW_PROBE * uExtinction;
       }
+#elif SHADOW_PROBES == 1
+      // One probe, as far as the two together reach.
+      if(dc > 0.02 && uSunDir.y > -0.1){
+        vec3 s1 = p + uSunDir * (SHADOW_PROBE * 2.0);
+        L.x += cloudDensity(s1, fieldsAll(s1)) * 3.0 * SHADOW_PROBE * uExtinction;
+      }
+#endif
       float powder = 1.0 - exp(-dc * uExtinction * 1.5);
       float h = clamp(p.y / uHeight * 1.3, 0.0, 1.0);
       // Sky light where the sky is seen: dim deep inside and under the cloud, full at its edges.

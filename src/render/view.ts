@@ -55,6 +55,24 @@ const SUN_GAIN = 3, SKY_GAIN = 14, SUN_DISC = 40
  */
 const NIGHT_SKY = [.008, .012, .026], NIGHT_TOP = [.1, .12, .2], NIGHT_BOTTOM = [.06, .07, .1], NIGHT_GROUND = [.1, .12, .18]
 const CITY_SKY = [.06, .036, .016], CITY_BOTTOM = [.09, .055, .025]
+/**
+ * The picture's quality (the clouds' march cost most): the pixels drawn per CSS pixel (from 1 up, at most the
+ * screen's own; below 1, of the screen's CSS pixel, a coarser picture scaled up), the march's coarse steps through the box, its most steps, its fine step in the cloud (km), the shadow
+ * probes toward the sun (shaders.ts), and the samples of the shaded air along a ray.
+ */
+export type Quality = 'low' | 'medium' | 'high'
+export const QUALITIES: Quality[] = ['low', 'medium', 'high']
+const QUALITY: Record<Quality, { pixels: number; steps: number; maxSteps: number; fine: number; probes: number; air: number }> = {
+  low: { pixels: .6, steps: 48, maxSteps: 112, fine: .32, probes: 0, air: 2 },
+  medium: { pixels: .8, steps: 72, maxSteps: 160, fine: .24, probes: 1, air: 3 },
+  high: { pixels: 1.5, steps: 96, maxSteps: 224, fine: .18, probes: 2, air: 6 },
+}
+/**
+ * The automatic quality: over each AUTO_WINDOW ms of frames, a mean frame longer than AUTO_SLOW ms steps down a level
+ * (under ~22 frames per second the view drags); shorter than AUTO_FAST ms for AUTO_RISE windows in a row steps up, but
+ * never back up to a level it has left for being slow (so it does not swing).
+ */
+const AUTO_WINDOW = 2000, AUTO_SLOW = 45, AUTO_FAST = 20, AUTO_RISE = 5
 /** The kinds of surface in the ground shader's order (shaders.ts groundSurfacePars uSurface). */
 const SURFACES = ['grass', 'dry', 'water', 'urban'] as const
 /** The ground's state: water, mm, at the top of its texture channel; the wind, m/s (shaders.ts GROUND_WATER, WIND_SCALE). */
@@ -193,6 +211,11 @@ export class StormView {
   private readonly selectionMarker: THREE.Mesh; private selection: { x: number; y: number } | null = null
   private readonly stationMarker: THREE.Mesh; private station: { x: number; y: number } | null = null
   private frame = 0; private readonly lookScratch = new THREE.Vector3()
+  /** The quality chosen ('auto' or a level), the level drawn, and the automatic choice's state (setQuality). */
+  private qualityChoice: Quality | 'auto' = 'auto'; level: Quality = 'high'
+  private autoFrames = 0; private autoStart = 0; private autoLast = 0; private autoFast = 0; private autoCeiling = 2
+  /** Called when the automatic choice changes the level (for the badge). */
+  onLevel: ((level: Quality) => void) | null = null
   /** The lightning channels (lightning.ts). */
   private readonly lightning: LightningView; private readonly drawingBuffer = new THREE.Vector2()
   /**
@@ -219,7 +242,7 @@ export class StormView {
 
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' })
     // A phone renders at 1 pixel per CSS pixel: its screen is small and its GPU weak (the clouds are ray-marched).
-    this.renderer.setPixelRatio(Math.min(devicePixelRatio, isPhone() ? 1 : 1.5)); this.renderer.outputColorSpace = THREE.SRGBColorSpace; this.renderer.toneMapping = THREE.ACESFilmicToneMapping; this.renderer.toneMappingExposure = 1.05
+ this.renderer.outputColorSpace = THREE.SRGBColorSpace; this.renderer.toneMapping = THREE.ACESFilmicToneMapping; this.renderer.toneMappingExposure = 1.05
     this.scene = new THREE.Scene(); this.scene.fog = new THREE.FogExp2(0x9fb4c4, .1)
     this.camera = new THREE.PerspectiveCamera(42, 1, .1, 180 * scale); this.camera.position.set(38 * scale, 24 * scale, 39 * scale)
     if (typeof location !== 'undefined' && new URLSearchParams(location.search).has('view-debug')) (globalThis as { __stormView?: StormView }).__stormView = this
@@ -374,6 +397,8 @@ if(abs(uSurface - 2.0) < 0.5){
 
     this.updateLevels()
     for (let p = 0; p < FLOW_PARTICLES; p++) this.respawnParticle(p, true)
+    // A phone starts low, a computer high; the automatic choice moves from there.
+    this.applyLevel(isPhone() ? 'low' : 'high')
   }
 
   dispose() {
@@ -519,6 +544,39 @@ if(abs(uSurface - 2.0) < 0.5){
     ;(su.uGroundLight.value as THREE.Color).setRGB(...[0, 1, 2].map(c => [g.r, g.g, g.b][c] / Math.PI * ((S[c] + E[c]) * ground + NIGHT_GROUND[c] * night)) as [number, number, number])
     // The stars come out as the eye adapts to the dark.
     su.uStars.value = night * night
+  }
+
+  /**
+   * The quality: a level, or 'auto' (by the frame time, from `start` — the level the last view settled on — or the
+   * phone's or computer's start).
+   */
+  setQuality(q: Quality | 'auto', start?: Quality) {
+    this.qualityChoice = q; this.autoFrames = 0; this.autoFast = 0; this.autoCeiling = 2
+    this.applyLevel(q === 'auto' ? start ?? (isPhone() ? 'low' : 'high') : q)
+  }
+  get quality() { return this.qualityChoice }
+
+  private applyLevel(level: Quality) {
+    const q = QUALITY[level], defines = { STEPS: q.steps, MAX_STEPS: q.maxSteps, FINE_STEP: q.fine.toFixed(2), SHADOW_PROBES: q.probes, AIR_SAMPLES: q.air }
+    this.level = level
+    this.renderer.setPixelRatio(q.pixels >= 1 ? Math.min(devicePixelRatio, q.pixels) : q.pixels * Math.min(devicePixelRatio, 1))
+    for (const mat of [this.volumeMaterial, this.ground.material as THREE.Material]) { mat.defines = { ...mat.defines, ...defines }; mat.needsUpdate = true }
+    this.onLevel?.(level)
+  }
+
+  /** The automatic quality (AUTO_*): called every frame with its time. */
+  private autoQuality(now: number) {
+    if (this.qualityChoice !== 'auto') return
+    if (this.autoFrames === 0) { this.autoStart = now; this.autoLast = now; this.autoFrames = 1; return }
+    // A pause in the frames (a hidden tab, an instrument's screen over the view) is not a slow frame.
+    if (now - this.autoLast > 1000) { this.autoFrames = 0; return }
+    this.autoLast = now; this.autoFrames++
+    if (now - this.autoStart < AUTO_WINDOW) return
+    const mean = (now - this.autoStart) / (this.autoFrames - 1), i = QUALITIES.indexOf(this.level)
+    this.autoFrames = 0
+    if (mean > AUTO_SLOW && i > 0) { this.autoCeiling = i - 1; this.autoFast = 0; this.applyLevel(QUALITIES[i - 1]) }
+    else if (mean < AUTO_FAST && i < this.autoCeiling) { if (++this.autoFast >= AUTO_RISE) { this.autoFast = 0; this.applyLevel(QUALITIES[i + 1]) } }
+    else this.autoFast = 0
   }
 
   /**
@@ -752,6 +810,7 @@ if(abs(uSurface - 2.0) < 0.5){
     if (this.canvas.width !== Math.floor(width * ratio) || this.canvas.height !== Math.floor(height * ratio)) {
       this.renderer.setSize(width, height, false); this.camera.aspect = width / height; this.camera.updateProjectionMatrix()
     }
+    this.autoQuality(performance.now())
     const field = s.field === 'composite' ? null : s.field
     // With a field shown the sky dims toward the lab's dark blue (the field's colours read against it).
     this.skyMaterial.uniforms.uLab.value = field ? .8 : 0

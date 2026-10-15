@@ -20,7 +20,7 @@ import { ZonesPanel } from './zones/panel'
 import { AdvectionEditor, advectionMarkup } from './largescale-ui'
 import { CELL_STAGES, AIR_MASSES, buildSituation, SHEARS, type StoryStage, storyStage, TRIGGERS, MESO_PERSISTENCE, TORNADO_DEFAULTS, TORNADO_LEVELS, tornadoSigns, type TornadoThresholds, UH_ROTATING, readState, createGrid, describeBalance, DT, Environment, parcelIndices, SCENARIOS, type SimConfig, rotationSummary, SPIN_SUPERCELL, spinProfile, stormIndices, stormMotion, UH_LAYERS, type UhLayer, environmentProfile, parseSounding, soundingProfile, SoundingError, computeSounding, type Sounding } from './core'
 import { type FieldMode, fieldInfo } from './render/fields'
-import type { LayerMode } from './render/view'
+import type { LayerMode, Quality } from './render/view'
 import { cleanSettings, decodeSettings, download, encodeSettings, toCsv } from './share'
 import { HODOGRAPH_NODES, nudgeSounding, sliderNode } from './hodograph'
 import { applyLayout, askGuide, askLayout, Hud, isPhone, savedLayout, suggestedLayout } from './hud'
@@ -184,7 +184,7 @@ app.innerHTML = `<div class="app">
         <div class="cell-labels" id="cellLabels"></div>
         <div class="gl-lost" id="glLost" role="alert" hidden><div><p><b>3D-вид отключён браузером</b> — ему не хватило памяти видеокарты (так бывает на телефоне при многих открытых вкладках или после переключения приложений). Расчёт идёт дальше; вид может вернуться сам.</p><button class="btn btn--primary" id="glReload" type="button">Перезапустить с теми же настройками</button></div></div>
         <div class="ov-tl"><button class="ov-toggle" id="flowToggle" aria-pressed="false">Потоки →</button><button class="ov-toggle" id="precipToggle" aria-pressed="false" title="Снежинки выше уровня 0 °C тают в капли по пути вниз">Снег и дождь</button><button class="ov-toggle" id="mesoToggle" aria-pressed="true" title="Кольцо над вращающимся восходящим потоком (UH 2–5 км выше порога вращения)">Мезоциклон</button><button class="ov-toggle" id="lightningToggle" aria-pressed="true" title="Каналы молний в момент вспышки: видны там, где выходят из облака; внутри облака — только его свечение">Молнии</button><button class="ov-toggle" id="lightningReplay" title="Последний удар в землю ещё раз, в 20 раз медленнее, как на скоростной съёмке: видно, как слабый ступенчатый лидер ветвится вниз, как вспыхивает и за миллисекунды гаснет обратный удар и как идут повторные удары — чаще всего по тому же каналу (отсюда мерцание)">Повтор удара</button><button class="ov-toggle" id="swathToggle" aria-pressed="false" title="Сколько дождя выпало на землю с начала расчёта: голубой до 5 мм, зелёный до 10, жёлтый до 25, оранжевый до 50, красный больше">Сумма осадков</button></div>
-        <div class="ov-bl"><span class="ov-badge" id="surfaceReadout">ТРАВА</span><span class="ov-chip">ЛКМ — вращение · ПКМ — сдвиг · колесо — масштаб · 2× клик — термик</span></div>
+        <div class="ov-bl"><span class="ov-badge" id="surfaceReadout">ТРАВА</span><button class="ov-badge ov-quality" id="qualityToggle" title="Качество картинки: облака считаются лучом по объёму, и это самая дорогая часть кадра. «Авто» само снижает качество, если кадры идут медленнее ~22 в секунду, и повышает, когда запас есть. Нажатие — следующий вариант">КАЧЕСТВО: АВТО</button><span class="ov-chip">ЛКМ — вращение · ПКМ — сдвиг · колесо — масштаб · 2× клик — термик</span></div>
         <div class="ov-br"><div class="ov-legend" id="cloudLegend"><span><i style="--c:#d8e0e3"></i>облачная вода</span><span><i style="--c:#4e7692"></i>осадки</span><span><i style="--c:#b68b59"></i>восходящий</span><span><i style="--c:#7189a5"></i>нисходящий</span></div></div>
         <div class="ov-tr" id="fieldPanel" hidden><div class="field-panel">
           <div class="field-panel__head"><span class="field-panel__title" id="fieldTitle"></span><button class="btn btn--quiet btn--s m-only" id="fieldSettingsToggle" aria-expanded="false" aria-controls="fieldSettings">Настройки ▾</button></div>
@@ -358,6 +358,25 @@ useSeed(Number.isInteger(urlSeed) && urlSeed > 0 ? urlSeed : nextSeed())
 const canvas = document.querySelector<HTMLCanvasElement>('#sim')!
 const view = { field: 'composite' as FieldMode, uhLayer: '2-5' as UhLayer, showVectors: false, showPrecip: false, showRainTotal: false, showMesocyclone: true, showLightning: true, layerMode: 'both' as LayerMode, volumeThreshold: .1, volumeDensity: 1, sliceHeight: 2, sliceNorth: 0 }
 let sim = new Atmosphere(canvas, config)
+// The picture's quality ('auto' or a level), kept in the browser; the view recreated with a restart keeps the level the
+// automatic choice settled on.
+const QUALITY_NAMES = { low: 'НИЗКОЕ', medium: 'СРЕДНЕЕ', high: 'ВЫСОКОЕ' } as const
+const QUALITY_KEY = 'meteolab-quality'
+let quality: Quality | 'auto' = (() => { try { const q = localStorage.getItem(QUALITY_KEY); return q === 'low' || q === 'medium' || q === 'high' ? q : 'auto' } catch { return 'auto' } })()
+const showQuality = () => {
+  document.querySelector('#qualityToggle')!.textContent = quality === 'auto' ? `КАЧЕСТВО: АВТО · ${QUALITY_NAMES[sim.level]}` : `КАЧЕСТВО: ${QUALITY_NAMES[quality]}`
+  document.querySelectorAll<HTMLButtonElement>('[data-quality-set]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.qualitySet === quality)))
+}
+const chooseQuality = (q: Quality | 'auto') => {
+  quality = q
+  try { localStorage.setItem(QUALITY_KEY, quality) } catch { /* the choice lasts this visit */ }
+  useQuality()
+}
+const useQuality = (start?: Quality) => { sim.onLevel = showQuality; sim.setQuality(quality, start); showQuality() }
+useQuality()
+document.querySelector('#qualityToggle')!.addEventListener('click', () => { const order = ['auto', 'low', 'medium', 'high'] as const; chooseQuality(order[(order.indexOf(quality) + 1) % order.length]) })
+// On a phone the choice is in the instruments' menu (hud.ts).
+document.addEventListener('click', e => { const b = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-quality-set]'); if (b) chooseQuality(b.dataset.qualitySet as Quality | 'auto') })
 const radar = new RadarPanel(document.body); radar.attach(sim.model, sim.storm.rightMover)
 document.querySelector('#radarOpen')!.addEventListener('click', () => radar.toggle())
 const skewt = new SkewTPanel(document.body); skewt.attach(sim.model)
@@ -375,7 +394,7 @@ document.querySelector('#analysisOpen')!.addEventListener('click', () => analysi
 document.querySelector('#skewOpen')!.addEventListener('click', () => skewt.toggle())
 let running = true
 let last = performance.now(), frameCount = 0
-const recreate = (seed?: number) => { useSeed(seed ?? nextSeed()); sim.dispose(); sim = Object.assign(new Atmosphere(canvas, config), view); radar.attach(sim.model, sim.storm.rightMover); skewt.attach(sim.model); sim.placeStationAt(stationGround); selectCell(null); showDomain() }
+const recreate = (seed?: number) => { useSeed(seed ?? nextSeed()); const level = sim.level; sim.dispose(); sim = Object.assign(new Atmosphere(canvas, config), view); useQuality(level); radar.attach(sim.model, sim.storm.rightMover); skewt.attach(sim.model); sim.placeStationAt(stationGround); selectCell(null); showDomain() }
 // Zones of the environment (2.4): applied from their screen, the run starts again with them.
 zonesPanel.onApply = (zones, front) => { config.zones = zones.length ? zones : undefined; config.frontLine = front ?? undefined; recreate(); markModified() }
 // Large-scale advection (2.6): changed in the left column, the run starts again with it.
@@ -1041,6 +1060,7 @@ const timeline = new Timeline()
 // The phone layout's overlay and bottom bar (hud.ts; hidden on a desktop by CSS).
 const speedInput = document.querySelector<HTMLInputElement>('input[data-key="speed"]')!
 const hud = new Hud(document.querySelector<HTMLElement>('.viewport')!, document.querySelector<HTMLElement>('.app')!, speed => { speedInput.value = String(speed); speedInput.dispatchEvent(new Event('input')) })
+showQuality()
 showThemeChoice()
 /** The live sounding last handed to the Skew-T screen (a new one every LIVE_EVERY s of model time). */
 let shownLive: Live | null = null
