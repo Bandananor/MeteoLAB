@@ -245,7 +245,7 @@ export class StormView {
  this.renderer.outputColorSpace = THREE.SRGBColorSpace; this.renderer.toneMapping = THREE.ACESFilmicToneMapping; this.renderer.toneMappingExposure = 1.05
     this.scene = new THREE.Scene(); this.scene.fog = new THREE.FogExp2(0x9fb4c4, .1)
     this.camera = new THREE.PerspectiveCamera(42, 1, .1, 180 * scale); this.camera.position.set(38 * scale, 24 * scale, 39 * scale)
-    if (typeof location !== 'undefined' && new URLSearchParams(location.search).has('view-debug')) (globalThis as { __stormView?: StormView }).__stormView = this
+    if (typeof location !== 'undefined' && new URLSearchParams(location.search).has('view-debug')) { (globalThis as { __stormView?: StormView }).__stormView = this; Object.assign(this, { debugQuality: true }) }
     this.controls = new OrbitControls(this.camera, canvas); this.controls.target.set(0, 6, 0); this.controls.enableDamping = true; this.controls.dampingFactor = .07; this.controls.maxPolarAngle = Math.PI * .495; this.controls.minDistance = 15; this.controls.maxDistance = 100 * scale
     this.hemiLight = new THREE.HemisphereLight(0xd9efff, 0x4b4439, 1); this.scene.add(this.hemiLight)
     this.sunLight = new THREE.DirectionalLight(0xfff0d2, 1); this.scene.add(this.sunLight)
@@ -566,7 +566,9 @@ if(abs(uSurface - 2.0) < 0.5){
 
   /** The automatic quality (AUTO_*): called every frame with its time. */
   private autoQuality(now: number) {
-    if (this.qualityChoice !== 'auto') return
+    // The checks of the picture (?view-debug) run on a software renderer: there the automatic choice would always fall
+    // to low, so it keeps the level it starts from.
+    if (this.qualityChoice !== 'auto' || 'debugQuality' in this) return
     if (this.autoFrames === 0) { this.autoStart = now; this.autoLast = now; this.autoFrames = 1; return }
     // A pause in the frames (a hidden tab, an instrument's screen over the view) is not a slow frame.
     if (now - this.autoLast > 1000) { this.autoFrames = 0; return }
