@@ -245,6 +245,50 @@ float airLit(vec3 ro, vec3 p){
 }
 `
 
+// The ground's surface (view.ts): its state per ground column (uGround, sliding with the ground by uGroundOffset: R the
+// water on it, 0-1 of GROUND_WATER mm; G the hail lying on it, the share of the ground it covers), the wind over it
+// (uWind, per column of the domain, 0-1 of WIND_SCALE m/s), the kind of surface, and a pattern fixed to the ground:
+// fields, steppe, a city's blocks, water. The pattern keeps the mean albedo (the sky is computed for it).
+export const groundSurfacePars = /* glsl */`
+uniform sampler2D uGround;
+uniform sampler2D uWind;
+uniform vec2 uGroundOffset;
+uniform vec2 uGroundSize;
+uniform float uSurface;
+uniform sampler3D uNoise;
+const float GROUND_WATER = 4.0, WIND_SCALE = 40.0;
+float gWater, gHail, gSpec;
+
+float hash2(vec2 k){ return fract(sin(dot(k, vec2(127.1, 311.7))) * 43758.5453); }
+// The ground's coordinates, km (fixed to the ground as the domain moves), and its state there.
+vec2 groundAt(vec3 p){ vec3 s = uBoxMax - uBoxMin; return vec2((p.x - uBoxMin.x) / s.x, (uBoxMax.z - p.z) / s.z) + 0.5 / uGrid.xy + uGroundOffset; }
+
+// Brightness of the land's pattern relative to its mean (1), at q km; blur is a pixel's footprint, km (the fine detail
+// fades as it shrinks below a pixel).
+vec3 landPattern(vec2 q, float blur){
+  vec3 n = texture(uNoise, vec3(q * 0.09, 0.31)).rgb;
+  float mottle = 0.85 + 0.3 * n.g + 0.1 * (n.b - 0.5);
+  if(uSurface > 2.5){
+    // A city: blocks ~0.12 km between streets, some of them parks.
+    vec2 b = q / 0.12, cell = floor(b), f = fract(b);
+    float street = 1.0 - smoothstep(0.0, 0.08 + blur / 0.12, min(min(f.x, 1.0 - f.x), min(f.y, 1.0 - f.y)));
+    float r = hash2(cell);
+    vec3 block = r < 0.12 ? vec3(0.75, 1.15, 0.7) : vec3(0.8 + 0.45 * r);
+    return mix(mix(block, vec3(0.75), street * clamp(0.02 / blur, 0.0, 1.0)), vec3(1.0), smoothstep(0.03, 0.2, blur)) * mottle;
+  }
+  // Fields: a grid turned by ~20°, fields 0.8 x 0.5 km, each sown with its own crop.
+  vec2 g = mat2(0.94, 0.34, -0.34, 0.94) * q / vec2(0.8, 0.5), cell = floor(g), f = fract(g);
+  float r = hash2(cell), dry = uSurface > 0.5 ? 1.0 : 0.0;
+  vec3 crop = r < 0.3 ? vec3(0.8, 0.92, 0.75) : r < 0.55 ? vec3(1.05, 1.12, 0.9) : r < 0.72 ? vec3(1.4, 1.25, 0.75) : r < 0.86 ? vec3(1.12, 0.86, 0.78) : vec3(0.95, 1.0, 0.95);
+  crop = mix(vec3(1.0), crop, 0.7);
+  crop = mix(crop, vec3(0.9 + 0.25 * r), dry * 0.7);
+  // The field's edges (hedges, tracks), ~15 m: only while a pixel is not much wider than them.
+  float edge = 1.0 - smoothstep(0.0, 0.03, min(min(f.x, 1.0 - f.x) * 0.8, min(f.y, 1.0 - f.y) * 0.5));
+  crop = mix(crop, vec3(0.7, 0.8, 0.65), edge * clamp(0.015 / blur, 0.0, 1.0));
+  return mix(crop, vec3(1.0), smoothstep(0.2, 1.0, blur)) * mottle;
+}
+`
+
 // The sky's dome: a unit sphere about the camera drawn behind everything. Above the horizon the sky's table, the sun's
 // disc (limb-darkened) and the stars; below it the ground beyond the domain, seen through the air from the camera's
 // height. uLab dims it toward the lab's dark blue while a field is shown (its colours read against a dark ground).
@@ -258,8 +302,9 @@ void main(){
 
 export const skyFragment = /* glsl */`
 precision highp float;
-uniform vec3 uSunDir;
+${volumeCommon}
 ${atmosphere}
+${groundSurfacePars}
 uniform vec3 uSunDisc;
 uniform vec3 uGroundLight;
 uniform float uStars;
@@ -291,7 +336,10 @@ void main(){
       c += stars(d) * uStars * exp(-up);
     }
   } else {
-    vec3 T, inscatter = aerial(ro, d, max(ro.y, 0.01) / -d.y, T), surface = uGroundLight;
+    float len = max(ro.y, 0.01) / -d.y;
+    vec3 T, inscatter = aerial(ro, d, len, T), surface = uGroundLight;
+    // The land's pattern, as on the domain's ground (the same ground going on).
+    if(uWater < 0.5){ vec3 P = vec3(cameraPosition.x, 0.0, cameraPosition.z) + d * len; vec2 q = groundAt(P) * uGroundSize; surface *= landPattern(q, min(length(dFdx(q)), length(dFdy(q)))); }
     // The sea beyond the domain reflects the sky (Fresnel, n = 1.33).
     if(uWater > 0.5){ float F = 0.02 + 0.98 * pow(1.0 + d.y, 5.0); surface = surface * (1.0 - F) + skyAt(vec3(d.x, -d.y, d.z)) * F; }
     c = surface * T + inscatter;
@@ -312,50 +360,6 @@ vec3 cloudShade(vec3 p){
   vec2 l = lightAt(vec3(p.x, 0.0, p.z));
   float od = l.x * 0.8;
   return vec3(exp(-od), mix(0.22, 1.0, l.y), sunThrough(od) - exp(-od));
-}
-`
-
-// The ground's surface (view.ts): its state per ground column (uGround, sliding with the ground by uGroundOffset: R the
-// water on it, 0-1 of GROUND_WATER mm; G the hail lying on it, the share of the ground it covers), the wind over it
-// (uWind, per column of the domain, 0-1 of WIND_SCALE m/s), the kind of surface, and a pattern fixed to the ground:
-// fields, steppe, a city's blocks, water. The pattern keeps the mean albedo (the sky is computed for it).
-export const groundSurfacePars = /* glsl */`
-uniform sampler2D uGround;
-uniform sampler2D uWind;
-uniform vec2 uGroundOffset;
-uniform vec2 uGroundSize;
-uniform float uSurface;
-uniform sampler3D uNoise;
-const float GROUND_WATER = 4.0, WIND_SCALE = 40.0;
-float gWater, gHail, gSpec;
-
-float hash2(vec2 k){ return fract(sin(dot(k, vec2(127.1, 311.7))) * 43758.5453); }
-// The ground's coordinates, km (fixed to the ground as the domain moves), and its state there.
-vec2 groundAt(vec3 p){ return toTex(p).xy + uGroundOffset; }
-
-// Brightness of the land's pattern relative to its mean (1), at q km; blur is a pixel's footprint, km (the fine detail
-// fades as it shrinks below a pixel).
-vec3 landPattern(vec2 q, float blur){
-  vec3 n = texture(uNoise, vec3(q * 0.09, 0.31)).rgb;
-  float mottle = 0.85 + 0.3 * n.g + 0.1 * (n.b - 0.5);
-  if(uSurface > 2.5){
-    // A city: blocks ~0.12 km between streets, some of them parks.
-    vec2 b = q / 0.12, cell = floor(b), f = fract(b);
-    float street = 1.0 - smoothstep(0.0, 0.08 + blur / 0.12, min(min(f.x, 1.0 - f.x), min(f.y, 1.0 - f.y)));
-    float r = hash2(cell);
-    vec3 block = r < 0.12 ? vec3(0.75, 1.15, 0.7) : vec3(0.8 + 0.45 * r);
-    return mix(mix(block, vec3(0.75), street * clamp(0.02 / blur, 0.0, 1.0)), vec3(1.0), smoothstep(0.03, 0.2, blur)) * mottle;
-  }
-  // Fields: a grid turned by ~20°, fields 0.8 x 0.5 km, each sown with its own crop.
-  vec2 g = mat2(0.94, 0.34, -0.34, 0.94) * q / vec2(0.8, 0.5), cell = floor(g), f = fract(g);
-  float r = hash2(cell), dry = uSurface > 0.5 ? 1.0 : 0.0;
-  vec3 crop = r < 0.3 ? vec3(0.8, 0.92, 0.75) : r < 0.55 ? vec3(1.05, 1.12, 0.9) : r < 0.72 ? vec3(1.4, 1.25, 0.75) : r < 0.86 ? vec3(1.12, 0.86, 0.78) : vec3(0.95, 1.0, 0.95);
-  crop = mix(vec3(1.0), crop, 0.7);
-  crop = mix(crop, vec3(0.9 + 0.25 * r), dry * 0.7);
-  // The field's edges (hedges, tracks), ~15 m: only while a pixel is not much wider than them.
-  float edge = 1.0 - smoothstep(0.0, 0.03, min(min(f.x, 1.0 - f.x) * 0.8, min(f.y, 1.0 - f.y) * 0.5));
-  crop = mix(crop, vec3(0.7, 0.8, 0.65), edge * clamp(0.015 / blur, 0.0, 1.0));
-  return mix(crop, vec3(1.0), smoothstep(0.2, 1.0, blur)) * mottle;
 }
 `
 

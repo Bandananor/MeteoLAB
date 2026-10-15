@@ -182,8 +182,9 @@ app.innerHTML = `<div class="app">
       <div class="viewport">
         <canvas id="sim" width="960" height="600"></canvas>
         <div class="cell-labels" id="cellLabels"></div>
+        <button class="immersive-exit" id="immersiveExit" title="Вернуть панели (Esc)">✕ Выйти из полноэкранного</button>
         <div class="gl-lost" id="glLost" role="alert" hidden><div><p><b>3D-вид отключён браузером</b> — ему не хватило памяти видеокарты (так бывает на телефоне при многих открытых вкладках или после переключения приложений). Расчёт идёт дальше; вид может вернуться сам.</p><button class="btn btn--primary" id="glReload" type="button">Перезапустить с теми же настройками</button></div></div>
-        <div class="ov-tl"><button class="ov-toggle" id="flowToggle" aria-pressed="false">Потоки →</button><button class="ov-toggle" id="precipToggle" aria-pressed="false" title="Снежинки выше уровня 0 °C тают в капли по пути вниз">Снег и дождь</button><button class="ov-toggle" id="mesoToggle" aria-pressed="true" title="Кольцо над вращающимся восходящим потоком (UH 2–5 км выше порога вращения)">Мезоциклон</button><button class="ov-toggle" id="lightningToggle" aria-pressed="true" title="Каналы молний в момент вспышки: видны там, где выходят из облака; внутри облака — только его свечение">Молнии</button><button class="ov-toggle" id="lightningReplay" title="Последний удар в землю ещё раз, в 20 раз медленнее, как на скоростной съёмке: видно, как слабый ступенчатый лидер ветвится вниз, как вспыхивает и за миллисекунды гаснет обратный удар и как идут повторные удары — чаще всего по тому же каналу (отсюда мерцание)">Повтор удара</button><button class="ov-toggle" id="swathToggle" aria-pressed="false" title="Сколько дождя выпало на землю с начала расчёта: голубой до 5 мм, зелёный до 10, жёлтый до 25, оранжевый до 50, красный больше">Сумма осадков</button></div>
+        <div class="ov-tl"><button class="ov-toggle" id="flowToggle" aria-pressed="false">Потоки →</button><button class="ov-toggle" id="precipToggle" aria-pressed="false" title="Снежинки выше уровня 0 °C тают в капли по пути вниз">Снег и дождь</button><button class="ov-toggle" id="mesoToggle" aria-pressed="true" title="Кольцо над вращающимся восходящим потоком (UH 2–5 км выше порога вращения)">Мезоциклон</button><button class="ov-toggle" id="lightningToggle" aria-pressed="true" title="Каналы молний в момент вспышки: видны там, где выходят из облака; внутри облака — только его свечение">Молнии</button><button class="ov-toggle" id="lightningReplay" title="Последний удар в землю ещё раз, в 20 раз медленнее, как на скоростной съёмке: видно, как слабый ступенчатый лидер ветвится вниз, как вспыхивает и за миллисекунды гаснет обратный удар и как идут повторные удары — чаще всего по тому же каналу (отсюда мерцание)">Повтор удара</button><button class="ov-toggle" id="groundToggle" aria-pressed="false" title="Встать на землю и смотреть на грозу снизу, как наблюдатель: перетаскивание — поворот головы, колесо — приближение, двойной щелчок по земле — перейти туда. Клавиша G">С земли</button><button class="ov-toggle" id="immersiveToggle" title="Во весь экран без панелей и кнопок. Выйти — той же кнопкой в углу или Esc. Клавиша F">Во весь экран</button><button class="ov-toggle" id="swathToggle" aria-pressed="false" title="Сколько дождя выпало на землю с начала расчёта: голубой до 5 мм, зелёный до 10, жёлтый до 25, оранжевый до 50, красный больше">Сумма осадков</button></div>
         <div class="ov-bl"><span class="ov-badge" id="surfaceReadout">ТРАВА</span><button class="ov-badge ov-quality" id="qualityToggle" title="Качество картинки: облака считаются лучом по объёму, и это самая дорогая часть кадра. «Авто» само снижает качество, если кадры идут медленнее ~22 в секунду, и повышает, когда запас есть. Нажатие — следующий вариант">КАЧЕСТВО: АВТО</button><span class="ov-chip">ЛКМ — вращение · ПКМ — сдвиг · колесо — масштаб · 2× клик — термик</span></div>
         <div class="ov-br"><div class="ov-legend" id="cloudLegend"><span><i style="--c:#d8e0e3"></i>облачная вода</span><span><i style="--c:#4e7692"></i>осадки</span><span><i style="--c:#b68b59"></i>восходящий</span><span><i style="--c:#7189a5"></i>нисходящий</span></div></div>
         <div class="ov-tr" id="fieldPanel" hidden><div class="field-panel">
@@ -394,7 +395,7 @@ document.querySelector('#analysisOpen')!.addEventListener('click', () => analysi
 document.querySelector('#skewOpen')!.addEventListener('click', () => skewt.toggle())
 let running = true
 let last = performance.now(), frameCount = 0
-const recreate = (seed?: number) => { useSeed(seed ?? nextSeed()); const level = sim.level; sim.dispose(); sim = Object.assign(new Atmosphere(canvas, config), view); useQuality(level); radar.attach(sim.model, sim.storm.rightMover); skewt.attach(sim.model); sim.placeStationAt(stationGround); selectCell(null); showDomain() }
+const recreate = (seed?: number) => { useSeed(seed ?? nextSeed()); const level = sim.level; sim.dispose(); sim = Object.assign(new Atmosphere(canvas, config), view); useQuality(level); if (groundToggle.getAttribute('aria-pressed') === 'true') sim.setObserver(true); radar.attach(sim.model, sim.storm.rightMover); skewt.attach(sim.model); sim.placeStationAt(stationGround); selectCell(null); showDomain() }
 // Zones of the environment (2.4): applied from their screen, the run starts again with them.
 zonesPanel.onApply = (zones, front) => { config.zones = zones.length ? zones : undefined; config.frontLine = front ?? undefined; recreate(); markModified() }
 // Large-scale advection (2.6): changed in the left column, the run starts again with it.
@@ -879,13 +880,45 @@ function showDomain() {
 // A thermal where the surface is double-clicked, or double-tapped on a touch screen: the taps are matched here, since
 // mobile browsers (iOS above all) do not reliably send dblclick; the dblclick that may still follow a double tap is
 // ignored.
-const thermalAt = (x: number, y: number) => { const r = canvas.getBoundingClientRect(); sim.perturb((x - r.left) / r.width, (y - r.top) / r.height, 1.25) }
+const thermalAt = (x: number, y: number) => {
+  const r = canvas.getBoundingClientRect(), nx = (x - r.left) / r.width, ny = (y - r.top) / r.height
+  // From the ground a double click goes there (the point must be on the domain's ground: the sky has none).
+  if (sim.fromGround) sim.observeAt(nx, ny); else sim.perturb(nx, ny, 1.25)
+}
 let lastTap: { x: number; y: number; t: number } | null = null, tappedAt = -Infinity
 canvas.addEventListener('pointerup', event => {
   if (event.pointerType !== 'touch') return
   const now = performance.now()
   if (lastTap && now - lastTap.t < 350 && Math.hypot(event.clientX - lastTap.x, event.clientY - lastTap.y) < 30) { thermalAt(event.clientX, event.clientY); lastTap = null; tappedAt = now; return }
   lastTap = { x: event.clientX, y: event.clientY, t: now }
+})
+// The view from the ground: the toggle (and G); a double click or tap on the ground there goes to that point instead
+// of starting a thermal; the wheel narrows the field of view.
+const groundToggle = document.querySelector<HTMLButtonElement>('#groundToggle')!
+const showGround = () => groundToggle.setAttribute('aria-pressed', String(sim.fromGround))
+groundToggle.addEventListener('click', () => { sim.setObserver(!sim.fromGround); showGround() })
+canvas.addEventListener('wheel', event => { if (sim.zoomFromGround(event.deltaY)) event.preventDefault() }, { passive: false })
+// Full screen without the interface (users' request 14.10.2026): the page's own fullscreen where the browser has it (not
+// iOS Safari: there the view just fills the window), the panels hidden; out by the corner button, Esc or F again.
+const immersive = (on: boolean) => {
+  document.documentElement.classList.toggle('immersive', on)
+  if (on) document.documentElement.requestFullscreen?.().catch(() => { /* the view fills the window anyway */ })
+  else if (document.fullscreenElement) document.exitFullscreen().catch(() => {})
+  wakeExit()
+}
+// The exit button fades after a few still seconds and comes back with any move or touch.
+let exitTimer = 0
+const wakeExit = () => { document.documentElement.classList.remove('immersive-still'); clearTimeout(exitTimer); exitTimer = window.setTimeout(() => document.documentElement.classList.add('immersive-still'), 2500) }
+addEventListener('pointermove', () => { if (document.documentElement.classList.contains('immersive')) wakeExit() })
+addEventListener('pointerdown', () => { if (document.documentElement.classList.contains('immersive')) wakeExit() })
+document.querySelector('#immersiveToggle')!.addEventListener('click', () => immersive(true))
+document.querySelector('#immersiveExit')!.addEventListener('click', () => immersive(false))
+document.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement && document.documentElement.classList.contains('immersive')) immersive(false) })
+addEventListener('keydown', e => {
+  if (e.ctrlKey || e.metaKey || e.altKey || (e.target as HTMLElement).closest('input:not([type=range]):not([type=checkbox]), select, textarea, dialog')) return
+  if (e.code === 'Escape' && document.documentElement.classList.contains('immersive')) immersive(false)
+  else if (e.code === 'KeyF') { e.preventDefault(); immersive(!document.documentElement.classList.contains('immersive')) }
+  else if (e.code === 'KeyG') { e.preventDefault(); groundToggle.click() }
 })
 // The browser may take the WebGL context away (a phone short of GPU memory): say so instead of a silent black view.
 // Three.js keeps the context restorable; if the browser gives it back, the view simply goes on. Otherwise the run can

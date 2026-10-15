@@ -73,6 +73,12 @@ const QUALITY: Record<Quality, { pixels: number; steps: number; maxSteps: number
  * never back up to a level it has left for being slow (so it does not swing).
  */
 const AUTO_WINDOW = 2000, AUTO_SLOW = 45, AUTO_FAST = 20, AUTO_RISE = 5
+/**
+ * The observer on the ground: eye height, m; how far back from the middle of the view they stand, km; the field of
+ * view and the look's pitch they start with (a lens of ~35 mm, the storm's tower in view); the radius the camera
+ * turns round its eyes on, km (the controls orbit a point this close in front).
+ */
+const EYE_HEIGHT = 2, OBSERVER_BACK = 30, OBSERVER_FOV = 60, OBSERVER_PITCH = .2, LOOK_RADIUS = .001
 /** The kinds of surface in the ground shader's order (shaders.ts groundSurfacePars uSurface). */
 const SURFACES = ['grass', 'dry', 'water', 'urban'] as const
 /** The ground's state: water, mm, at the top of its texture channel; the wind, m/s (shaders.ts GROUND_WATER, WIND_SCALE). */
@@ -169,7 +175,13 @@ export class StormView {
   /** The moving front's line on the ground (SimConfig.frontLine): blue for a cold front, red for a warm one; null without. */
   private readonly frontLine: LineSegments2 | null = null
   /** Lines on the ground every 3 km; they move with the ground when the domain follows the storm. */
-  private readonly groundGrid: THREE.GridHelper
+  private readonly groundGrid: THREE.GridHelper; private readonly boxEdges: THREE.LineSegments
+  /**
+   * The observer on the ground (setObserver): where they stand, m from the ground origin (fixed to the ground, so a storm
+   * passes over them as the domain follows it), and the orbit view to go back to.
+   */
+  private observer: { x: number; y: number } | null = null; private readonly orbitMax: number
+  private orbitView: { position: THREE.Vector3; target: THREE.Vector3; fov: number } | null = null
   private readonly ground: THREE.Mesh; private readonly raycaster = new THREE.Raycaster(); private readonly pointer = new THREE.Vector2()
   private readonly sunLight: THREE.DirectionalLight; private readonly hemiLight: THREE.HemisphereLight
   /** The sky (sky.ts): its table, the uniforms it shares, the dome; the state it was computed for (the sun's step and the haze). */
@@ -246,7 +258,7 @@ export class StormView {
     this.scene = new THREE.Scene(); this.scene.fog = new THREE.FogExp2(0x9fb4c4, .1)
     this.camera = new THREE.PerspectiveCamera(42, 1, .1, 180 * scale); this.camera.position.set(38 * scale, 24 * scale, 39 * scale)
     if (typeof location !== 'undefined' && new URLSearchParams(location.search).has('view-debug')) { (globalThis as { __stormView?: StormView }).__stormView = this; Object.assign(this, { debugQuality: true }) }
-    this.controls = new OrbitControls(this.camera, canvas); this.controls.target.set(0, 6, 0); this.controls.enableDamping = true; this.controls.dampingFactor = .07; this.controls.maxPolarAngle = Math.PI * .495; this.controls.minDistance = 15; this.controls.maxDistance = 100 * scale
+    this.controls = new OrbitControls(this.camera, canvas); this.controls.target.set(0, 6, 0); this.controls.enableDamping = true; this.controls.dampingFactor = .07; this.controls.maxPolarAngle = Math.PI * .495; this.controls.minDistance = 15; this.controls.maxDistance = this.orbitMax = 100 * scale
     this.hemiLight = new THREE.HemisphereLight(0xd9efff, 0x4b4439, 1); this.scene.add(this.hemiLight)
     this.sunLight = new THREE.DirectionalLight(0xfff0d2, 1); this.scene.add(this.sunLight)
 
@@ -285,7 +297,7 @@ export class StormView {
     }
     const grid = new THREE.GridHelper(W, Math.round(W / 3), 0x71838a, 0x485d66); grid.material.transparent = true; grid.material.opacity = .32; this.scene.add(grid); this.groundGrid = grid
     const box = new THREE.BoxGeometry(W, H, D); box.translate(0, H / 2, 0)
-    this.scene.add(new THREE.LineSegments(new THREE.EdgesGeometry(box), new THREE.LineBasicMaterial({ color: 0x75909c, transparent: true, opacity: .4 })))
+    this.boxEdges = new THREE.LineSegments(new THREE.EdgesGeometry(box), new THREE.LineBasicMaterial({ color: 0x75909c, transparent: true, opacity: .4 })); this.scene.add(this.boxEdges)
     this.levelHelpers = [0xb6d4dd, 0xe1bf7e, 0xd88e74].map(color => { const h = new THREE.GridHelper(W, 12, color, color); h.material.transparent = true; h.material.opacity = .18; this.scene.add(h); return h })
 
     this.shared = {
@@ -334,6 +346,7 @@ export class StormView {
     this.water = new Float32Array(nx * ny); this.hailCover = new Float32Array(nx * ny); this.lastPrecip = new Float32Array(nx * ny); this.lastHail = new Float32Array(nx * ny)
     const surface = SURFACES.indexOf(model.config.surfaceType)
     this.groundUniforms = { uGround: { value: this.groundState }, uWind: { value: this.windTexture }, uGroundOffset: { value: new THREE.Vector2() }, uGroundSize: { value: new THREE.Vector2(W, D) }, uSurface: { value: surface } }
+    Object.assign(this.skyMaterial.uniforms, this.shared, this.groundUniforms, { uNoise: { value: this.noise } })
     groundMat.onBeforeCompile = shader => {
       Object.assign(shader.uniforms, { ...this.shared, ...this.air, ...this.groundUniforms, uNoise: { value: this.noise }, uLight: this.volumeMaterial.uniforms.uLight })
       shader.vertexShader = shader.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vCloudWorld;').replace('#include <project_vertex>', '#include <project_vertex>\nvCloudWorld=(modelMatrix*vec4(transformed,1.0)).xyz;')
@@ -343,7 +356,7 @@ export class StormView {
   vec2 g = groundAt(vCloudWorld), q = g * uGroundSize;
   vec4 st = texture(uGround, g);
   gWater = st.r * GROUND_WATER; gHail = st.g;
-  float blur = length(fwidth(q));
+  float blur = min(length(dFdx(q)), length(dFdy(q)));
   if(abs(uSurface - 2.0) < 0.5){
     // Water: foam from the breaking waves, ~1% of the surface at 20 m/s (Monahan & O'Muircheartaigh 1980).
     float U = texture(uWind, toTex(vCloudWorld).xy).r * WIND_SCALE;
@@ -459,6 +472,14 @@ if(abs(uSurface - 2.0) < 0.5){
     this.pointer.set(nx * 2 - 1, -(ny * 2 - 1)); this.raycaster.setFromCamera(this.pointer, this.camera)
     const hit = this.raycaster.intersectObject(this.ground, false)[0]
     return { x: hit ? clamp((hit.point.x + width / 2000) * 1000, 0, width) : width / 2, y: hit ? clamp((depth / 2000 - hit.point.z) * 1000, 0, depth) : depth / 2 }
+  }
+
+  /** The ground point under normalised screen coordinates, m from the domain corner, or null off the domain's ground. */
+  groundHit(nx: number, ny: number) {
+    const { width, depth } = this.model.grid
+    this.pointer.set(nx * 2 - 1, -(ny * 2 - 1)); this.raycaster.setFromCamera(this.pointer, this.camera)
+    const hit = this.raycaster.intersectObject(this.ground, false)[0]
+    return hit ? { x: clamp((hit.point.x + width / 2000) * 1000, 0, width), y: clamp((depth / 2000 - hit.point.z) * 1000, 0, depth) } : null
   }
 
   /** Rings the selected cell (ground position in m from the domain corner), or removes the ring. */
@@ -618,9 +639,109 @@ if(abs(uSurface - 2.0) < 0.5){
   }
 
   private updateLevels() {
-    const s = this.model.sounding, lv = [s.lcl, s.lfc, s.el]
-    this.levelHelpers.forEach((h, i) => { h.visible = lv[i] !== null; if (lv[i] !== null) h.position.y = lv[i]! })
+    const s = this.model.sounding, lv = [s.lcl, s.lfc, s.el], lab = !this.observer
+    this.levelHelpers.forEach((h, i) => { h.visible = lab && lv[i] !== null; if (lv[i] !== null) h.position.y = lv[i]! })
     this.freezingHelper.position.y = s.freezing ?? 0
+    this.boxEdges.visible = this.groundGrid.visible = lab
+  }
+
+  /** Whether the view is from the ground (setObserver). */
+  get fromGround() { return !!this.observer }
+
+  /**
+   * The view from the ground: the camera at an observer's eyes (EYE_HEIGHT) at a ground point (m from the ground origin),
+   * turning round where it stands (drag), the wheel narrowing or widening the field of view; the lab's helpers hidden.
+   * Without a point, OBSERVER_BACK km back toward the camera from the strongest updraught at 5 km (or, without a storm,
+   * the ground under the middle of the view), looking at the storm there — far enough for the whole cumulonimbus to
+   * fit, maybe outside the domain; with one (a double click from the ground: going there) the look is kept. false goes back to the view from outside as it was.
+   */
+  setObserver(on: boolean, at?: { x: number; y: number }) {
+    const c = this.controls, m = this.model
+    if (!on) {
+      if (!this.observer) return
+      this.observer = null
+      const o = this.orbitView!
+      this.camera.position.copy(o.position); c.target.copy(o.target); this.camera.fov = o.fov; this.camera.near = .1; this.camera.updateProjectionMatrix()
+      Object.assign(c, { minDistance: 15, minPolarAngle: 0, maxPolarAngle: Math.PI * .495, enablePan: true, enableZoom: true, rotateSpeed: 1 })
+      c.minDistance = 15; c.maxDistance = this.orbitMax; c.update(); this.updateLevels()
+      return
+    }
+    const look = this.stormCentre() ?? this.groundPoint(.5, .5), given = !!at
+    if (!this.observer) this.orbitView = { position: this.camera.position.clone(), target: c.target.clone(), fov: this.camera.fov }
+    if (!at) {
+      // Back from the storm toward the camera — but across the anvil, not under it: a storm is seen whole from the side
+      // of its anvil's spread (the cloud's ice at ~10 km, from the tower), on the camera's side.
+      const [lx, , lz] = this.toWorld(look.x, look.y, 0), { width, depth } = m.grid
+      let dx = this.camera.position.x - lx, dz = this.camera.position.z - lz
+      const anvil = this.anvilSpread(look)
+      if (anvil) { const side = Math.sign(dx * -anvil[1] + dz * anvil[0]) || 1; dx = -anvil[1] * side; dz = anvil[0] * side }
+      const d = Math.hypot(dx, dz) || 1, sx = lx + dx / d * OBSERVER_BACK, sz = lz + dz / d * OBSERVER_BACK
+      // On the ground (not wrapped into the domain: the observer may stand outside it).
+      at = { x: (sx + width / 2000) * 1000 + m.frame[0] * m.time, y: (depth / 2000 - sz) * 1000 + m.frame[1] * m.time }
+    }
+    const first = !this.observer
+    this.observer = at
+    this.camera.near = .005; this.camera.fov = first ? OBSERVER_FOV : this.camera.fov; this.camera.updateProjectionMatrix()
+    Object.assign(c, { minPolarAngle: .02 * Math.PI, maxPolarAngle: .98 * Math.PI, enablePan: false, enableZoom: false, rotateSpeed: -.35 })
+    c.minDistance = c.maxDistance = LOOK_RADIUS
+    const eye = this.observerEye()
+    if (first || !given) {
+      // Looking at the storm: toward the middle of the view, a little up.
+      const [lx, , lz] = this.toWorld(look.x, look.y, 0), dir = new THREE.Vector3(lx - eye.x, 0, lz - eye.z)
+      if (dir.lengthSq() < 1e-6) dir.set(0, 0, -1)
+      dir.normalize(); dir.y = Math.tan(OBSERVER_PITCH); dir.normalize()
+      this.camera.position.copy(eye); c.target.copy(eye).addScaledVector(dir, LOOK_RADIUS)
+    }
+    this.updateLevels()
+  }
+
+  /**
+   * The observer's eyes in the world now (the domain moves under the ground point; not wrapped: one outside the domain
+   * stays there, and the storm moves off as the domain follows it).
+   */
+  private observerEye() {
+    const m = this.model, [x, y, z] = this.toWorld(this.observer!.x - m.frame[0] * m.time, this.observer!.y - m.frame[1] * m.time, EYE_HEIGHT)
+    return new THREE.Vector3(x, y, z)
+  }
+
+  /**
+   * Which way the anvil spreads from a point (m from the domain corner): a unit vector in the world's x, z toward the
+   * centroid of the cloud ice and snow at ~10 km (the shortest way round the periodic domain), or null without one.
+   */
+  private anvilSpread(from: { x: number; y: number }) {
+    const m = this.model, { layer, nx, dx, dy, width, depth } = m.grid, k = Math.round(levelAt(m.grid, 10_000))
+    let sx = 0, sy = 0, sum = 0
+    for (let c = 0; c < layer; c++) {
+      const q = m.ice[c + k * layer] + m.snow[c + k * layer]
+      if (q < 1e-5) continue
+      const ox = (c % nx) * dx - from.x, oy = Math.floor(c / nx) * dy - from.y
+      sx += q * (ox - width * Math.round(ox / width)); sy += q * (oy - depth * Math.round(oy / depth)); sum += q
+    }
+    const len = Math.hypot(sx, sy)
+    // World x is east, world z south (toWorld): the domain's +y (north) is -z.
+    return sum > 0 && len / sum > 2000 ? [sx / len, -sy / len] as const : null
+  }
+
+  /** The column of the strongest updraught at 5 km (m from the domain corner), or null under 5 m/s. */
+  private stormCentre() {
+    const m = this.model, { layer, nx, dx, dy } = m.grid, k = Math.round(levelAt(m.grid, 5000))
+    let best = 5, at = -1
+    for (let c = 0; c < layer; c++) if (m.w[c + k * layer] > best) { best = m.w[c + k * layer]; at = c }
+    return at < 0 ? null : { x: (at % nx) * dx, y: Math.floor(at / nx) * dy }
+  }
+
+  /** The observer's place every frame: the eyes at the ground point, the look kept. */
+  private followObserver() {
+    if (!this.observer) return
+    const c = this.controls, eye = this.observerEye(), dir = c.target.clone().sub(this.camera.position).normalize()
+    this.camera.position.copy(eye); c.target.copy(eye).addScaledVector(dir, LOOK_RADIUS)
+  }
+
+  /** The wheel from the ground: the field of view, 10-80°. */
+  zoomFromGround(deltaY: number) {
+    if (!this.observer) return false
+    this.camera.fov = clamp(this.camera.fov * Math.exp(deltaY * .001), 10, 80); this.camera.updateProjectionMatrix()
+    return true
   }
 
   private respawnParticle(p: number, full = false) {
@@ -838,7 +959,7 @@ if(abs(uSurface - 2.0) < 0.5){
     this.swath.visible = s.showRainTotal; if (s.showRainTotal) this.updateSwath()
     this.updateGround(); this.updateFront()
     const r = m.rotation
-    this.mesoMarker.visible = s.showMesocyclone && r.uh >= UH_ROTATING
+    this.mesoMarker.visible = s.showMesocyclone && r.uh >= UH_ROTATING && !this.observer
     if (this.mesoMarker.visible) {
       const [wx, , wz] = this.toWorld(r.x * dx, r.y * dy, 0)
       this.mesoMarker.position.x = wx; this.mesoMarker.position.z = wz
@@ -846,11 +967,12 @@ if(abs(uSurface - 2.0) < 0.5){
     }
     this.selectionMarker.visible = !!this.selection
     if (this.selection) { const [wx, , wz] = this.toWorld(this.selection.x, this.selection.y, 0); this.selectionMarker.position.x = wx; this.selectionMarker.position.z = wz }
-    this.stationMarker.visible = !!this.station
+    this.stationMarker.visible = !!this.station && !this.observer
     if (this.station) { const [wx, , wz] = this.toWorld(this.station.x, this.station.y, 0); this.stationMarker.position.x = wx; this.stationMarker.position.z = wz }
     this.precipPoints.visible = s.showPrecip; this.freezingHelper.visible = s.showPrecip && m.sounding.freezing !== null
     if (s.showPrecip) { this.syncPrecip(); this.precipMaterial.uniforms.uScale.value = this.renderer.getDrawingBufferSize(new THREE.Vector2()).y * .5 }
     if (s.showVectors && this.frame % 4 === 0) this.updateVectors()
+    this.followObserver()
     this.frame++; this.controls.update(); this.renderer.render(this.scene, this.camera)
   }
 }

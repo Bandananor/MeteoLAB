@@ -88,6 +88,11 @@ export class Atmosphere implements ViewSettings {
   /** The picture's quality (StormView.setQuality), the level drawn, and a call when the automatic choice changes it. */
   setQuality(q: Quality | 'auto', start?: Quality) { this.view.setQuality(q, start) }
   get level() { return this.view.level }
+  /** The view from the ground (StormView.setObserver): on or off, or going to the ground under a point of the view. */
+  setObserver(on: boolean) { this.view.setObserver(on) }
+  observeAt(nx: number, ny: number) { const p = this.view.groundHit(nx, ny); if (p) this.view.setObserver(true, groundPoint(this.mirror, p.x, p.y)) }
+  get fromGround() { return this.view.fromGround }
+  zoomFromGround(deltaY: number) { return this.view.zoomFromGround(deltaY) }
   set onLevel(f: ((level: Quality) => void) | null) { this.view.onLevel = f }
   /** The last flash again, slowed down (see StormView.replayLightning). */
   replayLightning(rate: number) { return this.view.replayLightning(rate) }

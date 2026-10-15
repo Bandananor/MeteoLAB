@@ -179,3 +179,12 @@ html:not(.layout-phone) .m-only { display: none !important; }
 
 /* The story's stage over the phone's view (hud.ts, 2.6). */
 .ov-story { margin: 6px 0 0; max-width: min(320px, calc(100vw - 24px)); padding: 6px 10px; border-radius: var(--r-2); background: var(--overlay); box-shadow: inset 0 0 0 1px var(--overlay-line); color: var(--overlay-text); font: var(--fs-label)/1.35 var(--font-text); }
+
+/* Full screen without the interface (main.ts immersive): the 3D view over the whole window, everything else hidden; a
+   button in the corner to come back, fading after a few still seconds. */
+.immersive-exit { display: none; }
+.immersive .viewport { position: fixed; inset: 0; z-index: 100; }
+.immersive .viewport > :not(canvas):not(.immersive-exit) { display: none !important; }
+.immersive .immersive-exit { display: block; position: absolute; top: max(12px, env(safe-area-inset-top)); right: max(12px, env(safe-area-inset-right)); padding: 8px 12px; border: 0; border-radius: var(--r-2); background: var(--overlay); box-shadow: inset 0 0 0 1px var(--overlay-line); color: var(--overlay-text); font: var(--fw-medium) var(--fs-label)/1 var(--font-text); transition: opacity .6s; }
+.immersive-still .immersive-exit { opacity: 0; }
+.immersive .bottombar, .immersive .sheet-scrim, .immersive .menu-anchor { display: none !important; }
