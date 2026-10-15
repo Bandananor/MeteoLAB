@@ -20,7 +20,7 @@ import { ZonesPanel } from './zones/panel'
 import { AdvectionEditor, advectionMarkup } from './largescale-ui'
 import { CELL_STAGES, AIR_MASSES, buildSituation, SHEARS, type StoryStage, storyStage, TRIGGERS, MESO_PERSISTENCE, TORNADO_DEFAULTS, TORNADO_LEVELS, tornadoSigns, type TornadoThresholds, UH_ROTATING, readState, createGrid, describeBalance, DT, Environment, parcelIndices, SCENARIOS, type SimConfig, rotationSummary, SPIN_SUPERCELL, spinProfile, stormIndices, stormMotion, UH_LAYERS, type UhLayer, environmentProfile, parseSounding, soundingProfile, SoundingError, computeSounding, type Sounding } from './core'
 import { type FieldMode, fieldInfo } from './render/fields'
-import type { LayerMode, Quality } from './render/view'
+import { type LayerMode, OBSERVER_BACK, OBSERVER_NEAR, type Quality } from './render/view'
 import { cleanSettings, decodeSettings, download, encodeSettings, toCsv } from './share'
 import { HODOGRAPH_NODES, nudgeSounding, sliderNode } from './hodograph'
 import { applyLayout, askGuide, askLayout, Hud, isPhone, savedLayout, suggestedLayout } from './hud'
@@ -179,12 +179,22 @@ app.innerHTML = `<div class="app">
 
     <section class="workspace">
       <nav class="tabs" role="tablist" aria-label="Отображаемое поле">${([['composite', 'Облака'], ['updraft', 'Вертикальные потоки'], ['theta', 'Температура'], ['moisture', 'Влажность'], ['vorticity', 'Завихренность'], ['helicity', 'Вращение (UH)'], ['coldpool', 'Холодный купол']] as const).map(([f, name]) => `<button class="tab" role="tab" data-field="${f}" aria-selected="${f === 'composite'}"${f === 'helicity' ? ' title="Спиральность восходящего потока: где поднимающийся воздух вращается (слой 2–5 км)"' : ''}>${name}</button>`).join('')}</nav>
+      <div class="popover ground-menu" id="groundMenu" popover>
+        <span class="popover__title">Вид с земли</span>
+        <span class="popover__text">Где встать наблюдателю. Потом перетаскивание — поворот головы, колесо — приближение, двойной щелчок по земле — перейти туда.</span>
+        <button class="ground-menu__item" data-stand="far"><b>Сбоку от грозы, 25 км</b><small>видна вся гроза — башня, наковальня, основание; под ясным небом, со стороны притока, солнце за спиной</small></button>
+        <button class="ground-menu__item" data-stand="near"><b>Ближе, 12 км</b><small>основание потока, полосы дождя и наковальня над головой</small></button>
+        <button class="ground-menu__item" data-stand="station"><b>У метеостанции</b><small data-station-note>там, где стоит станция: смотреть на грозу и на её показания</small></button>
+        <button class="ground-menu__item" data-stand="pick"><b>Выбрать место…</b><small>щёлкните по земле в 3D-виде, где встать</small></button>
+        <button class="ground-menu__item" data-stand="leave"><b>Вернуться к виду сверху</b><small>камера там же, где была</small></button>
+      </div>
       <div class="viewport">
         <canvas id="sim" width="960" height="600"></canvas>
         <div class="cell-labels" id="cellLabels"></div>
+        <div class="ov-pick" id="pickHint" hidden>Щёлкните по земле, где встать · Esc — отмена</div>
         <button class="immersive-exit" id="immersiveExit" title="Вернуть панели (Esc)">✕ Выйти из полноэкранного</button>
         <div class="gl-lost" id="glLost" role="alert" hidden><div><p><b>3D-вид отключён браузером</b> — ему не хватило памяти видеокарты (так бывает на телефоне при многих открытых вкладках или после переключения приложений). Расчёт идёт дальше; вид может вернуться сам.</p><button class="btn btn--primary" id="glReload" type="button">Перезапустить с теми же настройками</button></div></div>
-        <div class="ov-tl"><button class="ov-toggle" id="flowToggle" aria-pressed="false">Потоки →</button><button class="ov-toggle" id="precipToggle" aria-pressed="false" title="Частицы осадков: снежинки, опускаясь ниже уровня 0 °C, тают в капли">Снег и дождь</button><button class="ov-toggle" id="mesoToggle" aria-pressed="true" title="Кольцо над вращающимся восходящим потоком (UH 2–5 км выше порога вращения)">Мезоциклон</button><button class="ov-toggle" id="lightningToggle" aria-pressed="true" title="Каналы молний в момент вспышки: видны там, где выходят из облака; внутри облака — только его свечение">Молнии</button><button class="ov-toggle" id="lightningReplay" title="Последний удар в землю ещё раз, в 20 раз медленнее, как на скоростной съёмке: видно, как слабый ступенчатый лидер ветвится вниз, как вспыхивает и за миллисекунды гаснет обратный удар и как идут повторные удары — чаще всего по тому же каналу (отсюда мерцание)">Повтор удара</button><button class="ov-toggle" id="groundToggle" aria-pressed="false" title="Встать на землю и смотреть на грозу снизу, как наблюдатель: перетаскивание — поворот головы, колесо — приближение, двойной щелчок по земле — перейти туда. Клавиша G">С земли</button><button class="ov-toggle" id="immersiveToggle" title="Во весь экран без панелей и кнопок. Выйти — той же кнопкой в углу или Esc. Клавиша F">Во весь экран</button><button class="ov-toggle" id="swathToggle" aria-pressed="false" title="Сколько дождя выпало на землю с начала расчёта: голубой до 5 мм, зелёный до 10, жёлтый до 25, оранжевый до 50, красный больше">Сумма осадков</button></div>
+        <div class="ov-tl"><button class="ov-toggle" id="flowToggle" aria-pressed="false">Потоки →</button><button class="ov-toggle" id="precipToggle" aria-pressed="false" title="Частицы осадков: снежинки, опускаясь ниже уровня 0 °C, тают в капли">Снег и дождь</button><button class="ov-toggle" id="mesoToggle" aria-pressed="true" title="Кольцо над вращающимся восходящим потоком (UH 2–5 км выше порога вращения)">Мезоциклон</button><button class="ov-toggle" id="lightningToggle" aria-pressed="true" title="Каналы молний в момент вспышки: видны там, где выходят из облака; внутри облака — только его свечение">Молнии</button><button class="ov-toggle" id="lightningReplay" title="Последний удар в землю ещё раз, в 20 раз медленнее, как на скоростной съёмке: видно, как слабый ступенчатый лидер ветвится вниз, как вспыхивает и за миллисекунды гаснет обратный удар и как идут повторные удары — чаще всего по тому же каналу (отсюда мерцание)">Повтор удара</button><button class="ov-toggle" id="groundToggle" aria-pressed="false" popovertarget="groundMenu" title="Встать на землю и смотреть на грозу снизу, как наблюдатель: где встать — в меню. Клавиша G">С земли</button><button class="ov-toggle" id="immersiveToggle" title="Во весь экран без панелей и кнопок. Выйти — той же кнопкой в углу или Esc. Клавиша F">Во весь экран</button><button class="ov-toggle" id="swathToggle" aria-pressed="false" title="Сколько дождя выпало на землю с начала расчёта: голубой до 5 мм, зелёный до 10, жёлтый до 25, оранжевый до 50, красный больше">Сумма осадков</button></div>
         <div class="ov-bl"><span class="ov-badge" id="surfaceReadout">ТРАВА</span><button class="ov-badge ov-quality" id="qualityToggle" title="Качество картинки: облака считаются лучом по объёму, и это самая дорогая часть кадра. «Авто» само снижает качество, если кадры идут медленнее ~22 в секунду, и повышает, когда запас есть. Нажатие — следующий вариант">КАЧЕСТВО: АВТО</button><span class="ov-chip">ЛКМ — вращение · ПКМ — сдвиг · колесо — масштаб · 2× клик — термик</span></div>
         <div class="ov-br"><div class="ov-legend" id="cloudLegend"><span><i style="--c:#d8e0e3"></i>облачная вода</span><span><i style="--c:#4e7692"></i>осадки</span><span><i style="--c:#b68b59"></i>восходящий</span><span><i style="--c:#7189a5"></i>нисходящий</span></div></div>
         <div class="ov-tr" id="fieldPanel" hidden><div class="field-panel">
@@ -314,6 +324,8 @@ document.querySelectorAll<HTMLElement>('.popover[popover]').forEach(pop => pop.a
   let left = r.left - w - 10, top = r.top - 12
   // On a phone (screen-wide) or wherever it does not fit on the left: under the button.
   if (isPhone()) { left = (innerWidth - w) / 2; top = r.bottom + 8 }
+  // The menus over the 3D view (the view from the ground) open under their button.
+  else if (pop.classList.contains('ground-menu')) { left = Math.max(8, Math.min(r.left, innerWidth - w - 8)); top = r.bottom + 8 }
   else if (left < 8) { left = Math.max(8, Math.min(r.left, innerWidth - w - 8)); top = r.bottom + 8 }
   Object.assign(pop.style, { position: 'fixed', left: `${left}px`, top: `${Math.max(8, Math.min(top, innerHeight - h - 8))}px` })
 }))
@@ -395,7 +407,7 @@ document.querySelector('#analysisOpen')!.addEventListener('click', () => analysi
 document.querySelector('#skewOpen')!.addEventListener('click', () => skewt.toggle())
 let running = true
 let last = performance.now(), frameCount = 0
-const recreate = (seed?: number) => { useSeed(seed ?? nextSeed()); const level = sim.level; sim.dispose(); sim = Object.assign(new Atmosphere(canvas, config), view); useQuality(level); if (groundToggle.getAttribute('aria-pressed') === 'true') sim.setObserver(true); radar.attach(sim.model, sim.storm.rightMover); skewt.attach(sim.model); sim.placeStationAt(stationGround); selectCell(null); showDomain() }
+const recreate = (seed?: number) => { useSeed(seed ?? nextSeed()); const level = sim.level; sim.dispose(); sim = Object.assign(new Atmosphere(canvas, config), view); useQuality(level); if (groundToggle.getAttribute('aria-pressed') === 'true') sim.standSuggested(OBSERVER_BACK); radar.attach(sim.model, sim.storm.rightMover); skewt.attach(sim.model); sim.placeStationAt(stationGround); selectCell(null); showDomain() }
 // Zones of the environment (2.4): applied from their screen, the run starts again with them.
 zonesPanel.onApply = (zones, front) => { config.zones = zones.length ? zones : undefined; config.frontLine = front ?? undefined; recreate(); markModified() }
 // Large-scale advection (2.6): changed in the left column, the run starts again with it.
@@ -752,6 +764,7 @@ canvas.addEventListener('pointerup', event => {
   pressed = null
   const r = canvas.getBoundingClientRect(), nx = (event.clientX - r.left) / r.width, ny = (event.clientY - r.top) / r.height
   if (placingStation) { placingStation = false; stationGround = sim.placeStation(nx, ny); station.toggle(true); return }
+  if (pickingGround) { if (sim.standAt(nx, ny)) { picking(false); showGround() } else pickHint.textContent = 'Здесь нет земли области — щёлкните по земле · Esc — отмена'; return }
   const g = sim.groundPoint(nx, ny), cell = sim.cells.nearest(g.x, g.y, sim.model)
   if (cell) selectCell(cell.id)
 })
@@ -882,8 +895,8 @@ function showDomain() {
 // ignored.
 const thermalAt = (x: number, y: number) => {
   const r = canvas.getBoundingClientRect(), nx = (x - r.left) / r.width, ny = (y - r.top) / r.height
-  // From the ground a double click goes there (the point must be on the domain's ground: the sky has none).
-  if (sim.fromGround) sim.observeAt(nx, ny); else sim.perturb(nx, ny, 1.25)
+  // From the ground a double click goes there, keeping the look (the point must be on the domain's ground).
+  if (sim.fromGround) sim.standAt(nx, ny, true); else sim.perturb(nx, ny, 1.25)
 }
 let lastTap: { x: number; y: number; t: number } | null = null, tappedAt = -Infinity
 canvas.addEventListener('pointerup', event => {
@@ -892,11 +905,33 @@ canvas.addEventListener('pointerup', event => {
   if (lastTap && now - lastTap.t < 350 && Math.hypot(event.clientX - lastTap.x, event.clientY - lastTap.y) < 30) { thermalAt(event.clientX, event.clientY); lastTap = null; tappedAt = now; return }
   lastTap = { x: event.clientX, y: event.clientY, t: now }
 })
-// The view from the ground: the toggle (and G); a double click or tap on the ground there goes to that point instead
-// of starting a thermal; the wheel narrows the field of view.
-const groundToggle = document.querySelector<HTMLButtonElement>('#groundToggle')!
+// The view from the ground: the toggle (and G) opens a menu of where to stand — beside the storm (far or near), at the
+// weather station, or a point picked on the ground with a click — and back to the view from above. From the ground a
+// double click or tap on the ground goes there instead of starting a thermal; the wheel narrows the field of view.
+const groundToggle = document.querySelector<HTMLButtonElement>('#groundToggle')!, groundMenu = document.querySelector<HTMLElement>('#groundMenu')!
+const pickHint = document.querySelector<HTMLElement>('#pickHint')!
+/** Waiting for a click on the ground to stand there (the menu's «Выбрать место»). */
+let pickingGround = false
 const showGround = () => groundToggle.setAttribute('aria-pressed', String(sim.fromGround))
-groundToggle.addEventListener('click', () => { sim.setObserver(!sim.fromGround); showGround() })
+const picking = (on: boolean) => { pickingGround = on; pickHint.hidden = !on; pickHint.textContent = 'Щёлкните по земле, где встать · Esc — отмена' }
+groundMenu.addEventListener('beforetoggle', e => {
+  if ((e as ToggleEvent).newState !== 'open') return
+  const station = groundMenu.querySelector<HTMLButtonElement>('[data-stand="station"]')!
+  station.disabled = !sim.station
+  groundMenu.querySelector('[data-station-note]')!.textContent = sim.station ? 'там, где стоит станция: смотреть на грозу и на её показания' : 'сначала поставьте станцию (прибор «Станция»)'
+  groundMenu.querySelector<HTMLElement>('[data-stand="leave"]')!.hidden = !sim.fromGround
+})
+groundMenu.addEventListener('click', e => {
+  const choice = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-stand]')?.dataset.stand
+  if (!choice) return
+  groundMenu.hidePopover(); picking(false)
+  if (choice === 'far') sim.standSuggested(OBSERVER_BACK)
+  else if (choice === 'near') sim.standSuggested(OBSERVER_NEAR)
+  else if (choice === 'station') sim.standAtStation()
+  else if (choice === 'pick') picking(true)
+  else sim.leaveGround()
+  showGround()
+})
 canvas.addEventListener('wheel', event => { if (sim.zoomFromGround(event.deltaY)) event.preventDefault() }, { passive: false })
 // Full screen without the interface (users' request 14.10.2026): the page's own fullscreen where the browser has it (not
 // iOS Safari: there the view just fills the window), the panels hidden; out by the corner button, Esc or F again.
@@ -916,7 +951,8 @@ document.querySelector('#immersiveExit')!.addEventListener('click', () => immers
 document.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement && document.documentElement.classList.contains('immersive')) immersive(false) })
 addEventListener('keydown', e => {
   if (e.ctrlKey || e.metaKey || e.altKey || (e.target as HTMLElement).closest('input:not([type=range]):not([type=checkbox]), select, textarea, dialog')) return
-  if (e.code === 'Escape' && document.documentElement.classList.contains('immersive')) immersive(false)
+  if (e.code === 'Escape' && pickingGround) picking(false)
+  else if (e.code === 'Escape' && document.documentElement.classList.contains('immersive')) immersive(false)
   else if (e.code === 'KeyF') { e.preventDefault(); immersive(!document.documentElement.classList.contains('immersive')) }
   else if (e.code === 'KeyG') { e.preventDefault(); groundToggle.click() }
 })
@@ -1102,7 +1138,7 @@ function frame(now:number){
   text('cape',d.cape.toFixed(0));text('mlcape',d.indices.ml.cape.toFixed(0));text('mlcin',d.indices.ml.cin.toFixed(0));text('mucape',d.indices.mu.cape.toFixed(0));text('dcape',d.indices.dcape.toFixed(0));text('srh01',d.storm.srh01.toFixed(0));text('srh03',d.storm.srh03.toFixed(0));text('scp',d.storm.scp.toFixed(1));text('stp',d.storm.stp.toFixed(1));text('cin',d.cin.toFixed(0));text('updraft',d.updraft.toFixed(1));text('downdraft',d.downdraft.toFixed(1));text('uh',d.updraftHelicity.toFixed(0));text('uhLow',`${d.uh01.toFixed(0)} / ${d.uh03.toFixed(0)}`);text('cloudTop',d.cloudTop.toFixed(1));text('thermalTop',d.thermalTop.toFixed(1));text('cloudWater',d.cloudWater.toFixed(2));text('coldPool',d.coldPool.toFixed(1));text('gust',d.gust.toFixed(1));text('hail',d.hail>=1?(d.hail/10).toFixed(1):'—');text('hailSwath',d.hailSwath>=1?`за прогон до ${(d.hailSwath/10).toFixed(1)} см`:'');showMode(d.hail>=1);text('clipped',String(d.clipped));text('rain',d.rain.toFixed(1));text('rainTotal',d.rainTotal.toFixed(1));text('lcl',d.lcl===null?'—':`${d.lcl.toFixed(1)} км`);text('lfc',d.lfc===null?'—':`${d.lfc.toFixed(1)} км`);text('el',d.el===null?'—':`${d.el.toFixed(1)} км`);text('cellType',d.cellType);text('cellReason',d.cellReason);text('logicText',d.logic);text('sun',`${d.insolation.toFixed(0)} Вт/м²`);text('sunElevation',d.sunElevation>0?`${d.sunElevation.toFixed(0)}° над горизонтом`:'ночь')
   text('surfaceReadout',({grass:'ТРАВА',dry:'СУХАЯ ПОЧВА',water:'ВОДА',urban:'ГОРОД'} as const)[config.surfaceType])
   const b=sim.balance;text('rkw',b?b.ratio.toFixed(1):'—');text('rkwNote',b?`C ${b.c.toFixed(0)} / Δu ${b.deltaU.toFixed(0)} м/с`:'купола нет');const card=document.querySelector<HTMLElement>('#rkwCard')!;card.dataset.base??=card.title;card.title=b?`${card.dataset.base}\n\nСейчас: ${describeBalance(b)}.`:card.dataset.base
-  text('time',runTime(sim.time));text('localTime',timeOfDay(config.hour,sim.time));text('threads',String(sim.threads));text('freezing',d.freezing===null?'—':`${d.freezing.toFixed(1)} км`);if(sim.live!==shownLive){shownLive=sim.live;skewt.setLive(shownLive.env,shownLive)}const sampled=timeline.record({t:sim.time,cape:sim.live.indices.sb.cape,cin:sim.live.indices.sb.cin,updraft:d.updraft,uh:d.updraftHelicity,rain:d.rain,rainTotal:d.rainTotal,rotationHeld:sim.model.rotation.persisted,flashes:sim.model.flashes.filter(f=>f.time>sim.time-60).length});if(frameCount++%20===0){drawSounding();drawHodograph();drawSpin()}if(sampled||frameCount%20===1){const{ctx,w,h}=prepareCanvas('timeline');timeline.draw(ctx,w,h)}updateCells();radar.refresh();const probe=sim.cells.find(selectedCell);skewt.refresh(probe?{id:probe.id,x:probe.x,y:probe.y,u:probe.u+sim.model.frame[0],v:probe.v+sim.model.frame[1]}:null);station.refresh(sim.station,placingStation);detector.refresh(sim.model);analysis.refresh(sim.model);showSpeed();showTornado();zonesPanel.refresh(sim.model);listRewind();markStory();hud.update({time:sim.time,local:timeOfDay(config.hour,sim.time),updraft:d.updraft,rain:d.rain,uh:d.updraftHelicity,mesocyclone:sim.model.rotation.persisted>=MESO_PERSISTENCE,regime:document.querySelector('#cellType')!.textContent??'',running,speed:config.speed,story:storyText()});canvas.style.cursor=placingStation?'crosshair':'';requestAnimationFrame(frame)
+  text('time',runTime(sim.time));text('localTime',timeOfDay(config.hour,sim.time));text('threads',String(sim.threads));text('freezing',d.freezing===null?'—':`${d.freezing.toFixed(1)} км`);if(sim.live!==shownLive){shownLive=sim.live;skewt.setLive(shownLive.env,shownLive)}const sampled=timeline.record({t:sim.time,cape:sim.live.indices.sb.cape,cin:sim.live.indices.sb.cin,updraft:d.updraft,uh:d.updraftHelicity,rain:d.rain,rainTotal:d.rainTotal,rotationHeld:sim.model.rotation.persisted,flashes:sim.model.flashes.filter(f=>f.time>sim.time-60).length});if(frameCount++%20===0){drawSounding();drawHodograph();drawSpin()}if(sampled||frameCount%20===1){const{ctx,w,h}=prepareCanvas('timeline');timeline.draw(ctx,w,h)}updateCells();radar.refresh();const probe=sim.cells.find(selectedCell);skewt.refresh(probe?{id:probe.id,x:probe.x,y:probe.y,u:probe.u+sim.model.frame[0],v:probe.v+sim.model.frame[1]}:null);station.refresh(sim.station,placingStation);detector.refresh(sim.model);analysis.refresh(sim.model);showSpeed();showTornado();zonesPanel.refresh(sim.model);listRewind();markStory();hud.update({time:sim.time,local:timeOfDay(config.hour,sim.time),updraft:d.updraft,rain:d.rain,uh:d.updraftHelicity,mesocyclone:sim.model.rotation.persisted>=MESO_PERSISTENCE,regime:document.querySelector('#cellType')!.textContent??'',running,speed:config.speed,story:storyText()});canvas.style.cursor=placingStation||pickingGround?'crosshair':'';requestAnimationFrame(frame)
 }
 showDomain()
 requestAnimationFrame(frame)

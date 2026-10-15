@@ -6,6 +6,7 @@ import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeome
 import { FlashVolume, LightVolume } from './light'
 import { noiseTexture } from './noise'
 import { LightningView } from './lightning'
+import { type GroundPoint, Observer } from './observer'
 import { type AtmosphereModel, computeScalarField, headingVector, heightAt, levelAt, MESO_PERSISTENCE, sunDirection, UH_ROTATING, type UhLayer } from '../core'
 import { clamp, lerp, mod, mulberry32 } from '../core/math'
 import { qsatP } from '../core/microphysics'
@@ -77,7 +78,7 @@ const QUALITY: Record<Quality, { pixels: number; steps: number; maxSteps: number
  */
 const AUTO_WINDOW = 2000, AUTO_SLOW = 45, AUTO_FAST = 20, AUTO_RISE = 5
 /**
- * The observer on the ground: eye height, m; how far back from the middle of the view they stand, km; the field of
+ * The observer on the ground (observer.ts): how far from the storm they stand by default, km; the field of
  * view and the look's pitch they start with (a lens of ~35 mm, the storm's tower in view); the radius the camera
  * turns round its eyes on, km (the controls orbit a point this close in front).
  */
@@ -85,7 +86,8 @@ const AUTO_WINDOW = 2000, AUTO_SLOW = 45, AUTO_FAST = 20, AUTO_RISE = 5
 const AIR_OUTSIDE = .5
 /** The ways round a storm the observer may stand, looked at for clear sky. */
 const OBSERVER_DIRECTIONS = 16
-const EYE_HEIGHT = 2, OBSERVER_BACK = 25, OBSERVER_FOV = 60, OBSERVER_PITCH = .2, LOOK_RADIUS = .001
+export const OBSERVER_BACK = 25, OBSERVER_NEAR = 12
+const OBSERVER_FOV = 60, OBSERVER_PITCH = .2, LOOK_RADIUS = .001
 /** The kinds of surface in the ground shader's order (shaders.ts groundSurfacePars uSurface). */
 const SURFACES = ['grass', 'dry', 'water', 'urban'] as const
 /** The ground's state: water, mm, at the top of its texture channel; the wind, m/s (shaders.ts GROUND_WATER, WIND_SCALE). */
@@ -193,7 +195,7 @@ export class StormView {
    * The observer on the ground (setObserver): where they stand, m from the ground origin (fixed to the ground, so a storm
    * passes over them as the domain follows it), and the orbit view to go back to.
    */
-  private observer: { x: number; y: number } | null = null; private readonly orbitMax: number
+  private observer: Observer | null = null; private readonly orbitMax: number
   private orbitView: { position: THREE.Vector3; target: THREE.Vector3; fov: number } | null = null
   private readonly ground: THREE.Mesh; private readonly raycaster = new THREE.Raycaster(); private readonly pointer = new THREE.Vector2()
   private readonly sunLight: THREE.DirectionalLight; private readonly hemiLight: THREE.HemisphereLight
@@ -516,6 +518,8 @@ if(abs(uSurface - 2.0) < 0.5){
     if (seconds <= 0) return
     if (this.settings.showVectors) this.updateParticles(seconds)
     if (this.settings.showPrecip) this.updatePrecip(seconds)
+    // The observer moves with the model's time (standing still until sent somewhere: the storm chaser to come).
+    this.observer?.step(seconds)
   }
 
   private toWorld(x: number, y: number, z: number) {
@@ -663,58 +667,65 @@ if(abs(uSurface - 2.0) < 0.5){
     this.boxEdges.visible = this.groundGrid.visible = lab
   }
 
-  /** Whether the view is from the ground (setObserver). */
+  /** Whether the view is from the ground (stand), and the observer there (for the storm chaser to come). */
   get fromGround() { return !!this.observer }
+  get groundObserver() { return this.observer }
 
   /**
-   * The view from the ground: the camera at an observer's eyes (EYE_HEIGHT) at a ground point (m from the ground origin),
-   * turning round where it stands (drag), the wheel narrowing or widening the field of view; the lab's helpers hidden.
-   * Without a point, OBSERVER_BACK km from the strongest updraught at 5 km (or, without a storm, the ground under the
-   * middle of the view), under clear sky, looking at the storm there — far enough for the whole cumulonimbus to fit,
-   * maybe outside the domain; with one (a double click from the ground: going there) the look is kept. false goes back to the view from outside as it was.
+   * A suggested place to stand (m from the ground origin): `distance` km from the strongest updraught at 5 km (or, with
+   * no storm, from the ground under the middle of the view), where the storm is seen whole — of OBSERVER_DIRECTIONS
+   * ways round it, one with clear sky over the observer and a third of the way back (not under the anvil, its rain or
+   * its neighbours), preferring the storm's inflow side, right of its motion (the domain follows the storm: its motion
+   * is the frame's; there the updraught's base is seen and the rain core is not in the way), then the sun behind the
+   * observer, then the camera's side. Maybe outside the domain (the ground goes on there).
    */
-  setObserver(on: boolean, at?: { x: number; y: number }) {
-    const c = this.controls, m = this.model
-    if (!on) {
-      if (!this.observer) return
-      this.observer = null
-      const o = this.orbitView!
-      this.camera.position.copy(o.position); c.target.copy(o.target); this.camera.fov = o.fov; this.camera.near = .1; this.camera.updateProjectionMatrix()
-      Object.assign(c, { minDistance: 15, minPolarAngle: 0, maxPolarAngle: Math.PI * .495, enablePan: true, enableZoom: true, rotateSpeed: 1 })
-      c.minDistance = 15; c.maxDistance = this.orbitMax; c.update(); this.updateLevels(); this.air.uAirScale.value = AIR_OUTSIDE
-      return
+  suggestPlace(distance: number): GroundPoint {
+    const m = this.model, look = this.stormCentre() ?? this.groundPoint(.5, .5), [lx, , lz] = this.toWorld(look.x, look.y, 0), [fu, fv] = m.frame
+    const sun = this.shared.uSunDir.value as THREE.Vector3, cam = new THREE.Vector2(this.camera.position.x - lx, this.camera.position.z - lz).normalize()
+    // Right of the motion (u, v) is (v, -u) on the ground, (v, u) in the world (its z runs south).
+    const right = new THREE.Vector2(fv, fu).divideScalar(Math.max(Math.hypot(fu, fv), 2)), sunFlat = new THREE.Vector2(sun.x, sun.z)
+    let dx = cam.x, dz = cam.y, best = -Infinity
+    for (let j = 0; j < OBSERVER_DIRECTIONS; j++) {
+      const angle = j / OBSERVER_DIRECTIONS * 2 * Math.PI, ux = Math.cos(angle), uz = Math.sin(angle)
+      const over = this.cloudOver(lx + ux * distance, lz + uz * distance) + this.cloudOver(lx + ux * distance * 2 / 3, lz + uz * distance * 2 / 3)
+      const score = -10 * over + (ux * right.x + uz * right.y) + .5 * (ux * sunFlat.x + uz * sunFlat.y) + .2 * (ux * cam.x + uz * cam.y)
+      if (score > best) { best = score; dx = ux; dz = uz }
     }
-    const look = this.stormCentre() ?? this.groundPoint(.5, .5), given = !!at
-    if (!this.observer) this.orbitView = { position: this.camera.position.clone(), target: c.target.clone(), fov: this.camera.fov }
-    if (!at) {
-      // Back from the storm, where it is seen whole: of OBSERVER_DIRECTIONS ways round it, one with clear sky over the
-      // observer and a third of the way back (not under the anvil, its rain or its neighbours), preferring the storm's
-      // inflow side, right of its motion (the domain follows the storm: its motion is the frame's; there the updraught's
-      // base is seen and the rain core is not in the way), then the sun behind the observer, then the camera's side.
-      const [lx, , lz] = this.toWorld(look.x, look.y, 0), { width, depth } = m.grid, [fu, fv] = m.frame
-      const sun = this.shared.uSunDir.value as THREE.Vector3, cam = new THREE.Vector2(this.camera.position.x - lx, this.camera.position.z - lz).normalize()
-      // Right of the motion (u, v) is (v, -u) on the ground, (v, u) in the world (its z runs south).
-      const right = new THREE.Vector2(fv, fu).divideScalar(Math.max(Math.hypot(fu, fv), 2)), sunFlat = new THREE.Vector2(sun.x, sun.z)
-      let dx = cam.x, dz = cam.y, best = -Infinity
-      for (let j = 0; j < OBSERVER_DIRECTIONS; j++) {
-        const a = j / OBSERVER_DIRECTIONS * 2 * Math.PI, ux = Math.cos(a), uz = Math.sin(a)
-        const over = this.cloudOver(lx + ux * OBSERVER_BACK, lz + uz * OBSERVER_BACK) + this.cloudOver(lx + ux * OBSERVER_BACK * 2 / 3, lz + uz * OBSERVER_BACK * 2 / 3)
-        const score = -10 * over + (ux * right.x + uz * right.y) + .5 * (ux * sunFlat.x + uz * sunFlat.y) + .2 * (ux * cam.x + uz * cam.y)
-        if (score > best) { best = score; dx = ux; dz = uz }
-      }
-      const sx = lx + dx * OBSERVER_BACK, sz = lz + dz * OBSERVER_BACK
-      // On the ground (not wrapped into the domain: the observer may stand outside it).
-      at = { x: (sx + width / 2000) * 1000 + m.frame[0] * m.time, y: (depth / 2000 - sz) * 1000 + m.frame[1] * m.time }
-    }
-    const first = !this.observer
-    this.observer = at; this.air.uAirScale.value = 1
-    this.camera.near = .005; this.camera.fov = first ? OBSERVER_FOV : this.camera.fov; this.camera.updateProjectionMatrix()
+    return this.worldToGround(lx + dx * distance, lz + dz * distance)
+  }
+
+  /** The ground point (m from the ground origin) under normalised screen coordinates, or null off the domain's ground. */
+  groundUnder(nx: number, ny: number): GroundPoint | null {
+    const p = this.groundHit(nx, ny), m = this.model
+    return p && { x: p.x + m.frame[0] * m.time, y: p.y + m.frame[1] * m.time }
+  }
+
+  /** World x, z (km) to the ground point under it now (not wrapped into the domain). */
+  private worldToGround(wx: number, wz: number): GroundPoint {
+    const m = this.model, { width, depth } = m.grid
+    return { x: (wx + width / 2000) * 1000 + m.frame[0] * m.time, y: (depth / 2000 - wz) * 1000 + m.frame[1] * m.time }
+  }
+
+  /**
+   * The view from the ground: the camera at an observer's eyes at a ground point (m from the ground origin), turning
+   * round where they stand (drag), the wheel narrowing or widening the field of view; the lab's helpers hidden. Looking
+   * at the storm (the strongest updraught; with none, ahead as before), or with `keepLook` (going a little way from
+   * the ground) as they looked.
+   */
+  stand(at: GroundPoint, keepLook = false) {
+    const c = this.controls, first = !this.observer
+    if (first) this.orbitView = { position: this.camera.position.clone(), target: c.target.clone(), fov: this.camera.fov }
+    if (this.observer) this.observer.standAt(at)
+    else this.observer = new Observer(at)
+    this.air.uAirScale.value = 1
+    this.camera.near = .005; if (first) this.camera.fov = OBSERVER_FOV; this.camera.updateProjectionMatrix()
     Object.assign(c, { minPolarAngle: .02 * Math.PI, maxPolarAngle: .98 * Math.PI, enablePan: false, enableZoom: false, rotateSpeed: -.35 })
     c.minDistance = c.maxDistance = LOOK_RADIUS
-    const eye = this.observerEye()
-    if (first || !given) {
-      // Looking at the storm: toward the middle of the view, a little up.
-      const [lx, , lz] = this.toWorld(look.x, look.y, 0), dir = new THREE.Vector3(lx - eye.x, 0, lz - eye.z)
+    const eye = this.observerEye(), storm = this.stormCentre()
+    if (!keepLook || first) {
+      let dir: THREE.Vector3
+      if (storm) { const [lx, , lz] = this.toWorld(storm.x, storm.y, 0); dir = new THREE.Vector3(lx - eye.x, 0, lz - eye.z) }
+      else dir = first ? new THREE.Vector3(-this.camera.position.x + this.orbitView!.target.x, 0, -this.camera.position.z + this.orbitView!.target.z) : c.target.clone().sub(this.camera.position).setY(0)
       if (dir.lengthSq() < 1e-6) dir.set(0, 0, -1)
       dir.normalize(); dir.y = Math.tan(OBSERVER_PITCH); dir.normalize()
       this.camera.position.copy(eye); c.target.copy(eye).addScaledVector(dir, LOOK_RADIUS)
@@ -722,12 +733,22 @@ if(abs(uSurface - 2.0) < 0.5){
     this.updateLevels()
   }
 
+  /** Back to the view from outside as it was before standing on the ground. */
+  leaveGround() {
+    if (!this.observer) return
+    const c = this.controls, o = this.orbitView!
+    this.observer = null
+    this.camera.position.copy(o.position); c.target.copy(o.target); this.camera.fov = o.fov; this.camera.near = .1; this.camera.updateProjectionMatrix()
+    Object.assign(c, { minPolarAngle: 0, maxPolarAngle: Math.PI * .495, enablePan: true, enableZoom: true, rotateSpeed: 1 })
+    c.minDistance = 15; c.maxDistance = this.orbitMax; c.update(); this.updateLevels(); this.air.uAirScale.value = AIR_OUTSIDE
+  }
+
   /**
    * The observer's eyes in the world now (the domain moves under the ground point; not wrapped: one outside the domain
    * stays there, and the storm moves off as the domain follows it).
    */
   private observerEye() {
-    const m = this.model, [x, y, z] = this.toWorld(this.observer!.x - m.frame[0] * m.time, this.observer!.y - m.frame[1] * m.time, EYE_HEIGHT)
+    const m = this.model, o = this.observer!, [x, y, z] = this.toWorld(o.x - m.frame[0] * m.time, o.y - m.frame[1] * m.time, o.eyeHeight)
     return new THREE.Vector3(x, y, z)
   }
 

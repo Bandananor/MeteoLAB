@@ -188,3 +188,13 @@ html:not(.layout-phone) .m-only { display: none !important; }
 .immersive .immersive-exit { display: block; position: absolute; top: max(12px, env(safe-area-inset-top)); right: max(12px, env(safe-area-inset-right)); padding: 8px 12px; border: 0; border-radius: var(--r-2); background: var(--overlay); box-shadow: inset 0 0 0 1px var(--overlay-line); color: var(--overlay-text); font: var(--fw-medium) var(--fs-label)/1 var(--font-text); transition: opacity .6s; }
 .immersive-still .immersive-exit { opacity: 0; }
 .immersive .bottombar, .immersive .sheet-scrim, .immersive .menu-anchor { display: none !important; }
+
+/* The view from the ground's menu (main.ts): where to stand, each choice with a line on what is seen from there. */
+.ground-menu { gap: 6px; }
+.ground-menu__item { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%; padding: 8px 10px; border: 0; border-radius: var(--r-2); background: var(--surface-2); color: var(--text); text-align: left; font: var(--fs-body-s)/1.3 var(--font-text); cursor: pointer; }
+.ground-menu__item:hover:not(:disabled) { background-image: linear-gradient(var(--hover), var(--hover)); }
+.ground-menu__item:disabled { opacity: .55; cursor: default; }
+.ground-menu__item small { color: var(--text-3); font-size: var(--fs-label); line-height: 1.35; }
+.layout-phone .ground-menu__item { min-height: var(--h-touch); }
+/* The hint while a place on the ground is picked. */
+.ov-pick { position: absolute; bottom: 110px; left: 50%; transform: translateX(-50%); z-index: 3; padding: 6px 12px; border-radius: var(--r-2); background: var(--overlay); box-shadow: inset 0 0 0 1px var(--overlay-line); color: var(--overlay-text); font: var(--fw-medium) var(--fs-label)/1.3 var(--font-text); white-space: nowrap; }

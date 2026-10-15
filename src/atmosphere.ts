@@ -88,10 +88,22 @@ export class Atmosphere implements ViewSettings {
   /** The picture's quality (StormView.setQuality), the level drawn, and a call when the automatic choice changes it. */
   setQuality(q: Quality | 'auto', start?: Quality) { this.view.setQuality(q, start) }
   get level() { return this.view.level }
-  /** The view from the ground (StormView.setObserver): on or off, or going to the ground under a point of the view. */
-  setObserver(on: boolean) { this.view.setObserver(on) }
-  observeAt(nx: number, ny: number) { const p = this.view.groundHit(nx, ny); if (p) this.view.setObserver(true, groundPoint(this.mirror, p.x, p.y)) }
+  /**
+   * The view from the ground (StormView.stand): at a suggested place `distance` km from the storm; on the ground under a
+   * point of the view (false off the domain's ground), keeping the look when already on the ground; at the weather
+   * station (false without one); back to the view from outside. The observer is there for the storm chaser to come.
+   */
+  standSuggested(distance: number) { this.view.stand(this.view.suggestPlace(distance)) }
+  standAt(nx: number, ny: number, keepLook = false) { const p = this.view.groundUnder(nx, ny); if (p) this.view.stand(p, keepLook); return !!p }
+  standAtStation() {
+    if (!this.station) return false
+    // The station's ground point is wrapped into the domain's span; the observer's is not (they may stand outside it).
+    const d = domainPoint(this.mirror, this.station.x, this.station.y), [fu, fv] = this.mirror.frame, t = this.mirror.time
+    this.view.stand({ x: d.x + fu * t, y: d.y + fv * t }); return true
+  }
+  leaveGround() { this.view.leaveGround() }
   get fromGround() { return this.view.fromGround }
+  get groundObserver() { return this.view.groundObserver }
   zoomFromGround(deltaY: number) { return this.view.zoomFromGround(deltaY) }
   set onLevel(f: ((level: Quality) => void) | null) { this.view.onLevel = f }
   /** The last flash again, slowed down (see StormView.replayLightning). */
