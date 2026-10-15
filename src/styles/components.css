@@ -259,6 +259,8 @@
 .ov-num__value { font: var(--fw-medium) 26px/30px var(--font-mono); letter-spacing: -.02em; color: var(--overlay-text); font-variant-numeric: tabular-nums; }
 .ov-mode { display: inline-flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: var(--r-2); background: var(--overlay); box-shadow: inset 0 0 0 1px var(--overlay-line); color: var(--overlay-text); font: var(--fw-semibold) var(--fs-body)/18px var(--font-text); }
 .ov-mode::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--overlay-text-2); }
+.ov-mode__sky { display: block; font: var(--fw-regular) var(--fs-label)/16px var(--font-text); color: inherit; opacity: .8; }
+.ov-mode__sky:empty { display: none; }
 .ov-mode.is-meso { background: var(--overlay-danger); box-shadow: inset 0 0 0 1px var(--overlay-danger-line); color: var(--overlay-danger-text); }
 .ov-mode.is-meso::before { background: var(--overlay-danger-line); }
 .ov-gesture { display: flex; align-items: center; gap: 10px; padding: 10px 6px 10px 12px; border-radius: var(--r-2); background: var(--overlay); box-shadow: inset 0 0 0 1px var(--overlay-line); color: var(--overlay-text); font-size: var(--fs-body-s); line-height: 18px; }
