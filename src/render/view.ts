@@ -66,11 +66,23 @@ const CITY_SKY = [.06, .036, .016], CITY_BOTTOM = [.09, .055, .025]
  */
 export type Quality = 'low' | 'medium' | 'high'
 export const QUALITIES: Quality[] = ['low', 'medium', 'high']
-const QUALITY: Record<Quality, { pixels: number; steps: number; maxSteps: number; fine: number; probes: number; air: number }> = {
-  low: { pixels: .6, steps: 48, maxSteps: 112, fine: .32, probes: 0, air: 2 },
-  medium: { pixels: .8, steps: 72, maxSteps: 160, fine: .24, probes: 1, air: 3 },
-  high: { pixels: 1.5, steps: 96, maxSteps: 224, fine: .18, probes: 2, air: 6 },
+const QUALITY: Record<Quality, { pixels: number; budget: number; steps: number; maxSteps: number; fine: number; probes: number; air: number }> = {
+  low: { pixels: .6, budget: .3e6, steps: 48, maxSteps: 112, fine: .32, probes: 0, air: 2 },
+  medium: { pixels: .8, budget: .6e6, steps: 72, maxSteps: 160, fine: .24, probes: 1, air: 3 },
+  high: { pixels: 1.5, budget: 1.9e6, steps: 96, maxSteps: 224, fine: .18, probes: 2, air: 6 },
 }
+/**
+ * The pixels drawn per CSS pixel for a level and a view of w x h CSS pixels: the level's own, but at most its pixel
+ * budget in all (the march costs per pixel: the full screen has 2.5 times the pixels of the view between the panels,
+ * and at the high level it dragged — the user's 15.10.2026); a bigger view is drawn coarser and scaled up, at the
+ * cost of the panels' view. In steps of 0.05, so a resize does not reallocate the buffer on every frame.
+ */
+function pixelRatioFor(level: Quality, w: number, h: number, moving: boolean) {
+  const q = QUALITY[level], own = q.pixels >= 1 ? Math.min(devicePixelRatio, q.pixels) : q.pixels * Math.min(devicePixelRatio, 1)
+  return Math.max(.25, Math.floor(Math.min(own, Math.sqrt(q.budget / (w * h))) * (moving ? MOVING_PIXELS : 1) * 20) / 20)
+}
+/** The share of the pixels' side drawn while the camera is being turned (a smooth turn, the detail back on release). */
+const MOVING_PIXELS = .6
 /**
  * The automatic quality: over each AUTO_WINDOW ms of frames, a mean frame longer than AUTO_SLOW ms steps down a level
  * (under ~22 frames per second the view drags); shorter than AUTO_FAST ms for AUTO_RISE windows in a row steps up, but
@@ -240,6 +252,8 @@ export class StormView {
   private readonly selectionMarker: THREE.Mesh; private selection: { x: number; y: number } | null = null
   private readonly stationMarker: THREE.Mesh; private station: { x: number; y: number } | null = null
   private frame = 0; private readonly lookScratch = new THREE.Vector3()
+  /** The camera is being turned (OrbitControls between start and end, and the damping's tail after release: turnedAt). */
+  private turning = false; private turnedAt = 0
   /** The quality chosen ('auto' or a level), the level drawn, and the automatic choice's state (setQuality). */
   private qualityChoice: Quality | 'auto' = 'auto'; level: Quality = 'high'
   private autoFrames = 0; private autoStart = 0; private autoLast = 0; private autoFast = 0; private autoCeiling = 2
@@ -276,6 +290,10 @@ export class StormView {
     this.camera = new THREE.PerspectiveCamera(42, 1, .1, 180 * scale); this.camera.position.set(38 * scale, 24 * scale, 39 * scale)
     if (typeof location !== 'undefined' && new URLSearchParams(location.search).has('view-debug')) { (globalThis as { __stormView?: StormView }).__stormView = this; Object.assign(this, { debugQuality: true }) }
     this.controls = new OrbitControls(this.camera, canvas); this.controls.target.set(0, 6, 0); this.controls.enableDamping = true; this.controls.dampingFactor = .07; this.controls.maxPolarAngle = Math.PI * .495; this.controls.minDistance = 15; this.controls.maxDistance = this.orbitMax = 100 * scale
+    // While the camera turns the view is drawn coarser (MOVING_PIXELS); full detail 0.4 s after release (the damping's
+    // tail). Not by the controls' change event: from the ground the camera moves with the domain every frame.
+    this.controls.addEventListener('start', () => { this.turning = true })
+    this.controls.addEventListener('end', () => { this.turnedAt = performance.now() })
     this.hemiLight = new THREE.HemisphereLight(0xd9efff, 0x4b4439, 1); this.scene.add(this.hemiLight)
     this.sunLight = new THREE.DirectionalLight(0xfff0d2, 1); this.scene.add(this.sunLight)
 
@@ -590,6 +608,9 @@ if(abs(uSurface - 2.0) < 0.5){
     su.uStars.value = night * night
   }
 
+  /** Whether a pointer is held on the view (the controls' own state, not in three's types). */
+  private dragging() { return (this.controls as unknown as { state: number }).state !== -1 }
+
   /**
    * The quality: a level, or 'auto' (by the frame time, from `start` — the level the last view settled on — or the
    * phone's or computer's start).
@@ -603,7 +624,7 @@ if(abs(uSurface - 2.0) < 0.5){
   private applyLevel(level: Quality) {
     const q = QUALITY[level], defines = { STEPS: q.steps, MAX_STEPS: q.maxSteps, FINE_STEP: q.fine.toFixed(2), SHADOW_PROBES: q.probes, AIR_SAMPLES: q.air }
     this.level = level
-    this.renderer.setPixelRatio(q.pixels >= 1 ? Math.min(devicePixelRatio, q.pixels) : q.pixels * Math.min(devicePixelRatio, 1))
+    this.renderer.setPixelRatio(pixelRatioFor(level, Math.max(2, this.canvas.clientWidth), Math.max(2, this.canvas.clientHeight), this.turning))
     for (const mat of [this.volumeMaterial, this.ground.material as THREE.Material]) { mat.defines = { ...mat.defines, ...defines }; mat.needsUpdate = true }
     this.onLevel?.(level)
   }
@@ -981,13 +1002,16 @@ if(abs(uSurface - 2.0) < 0.5){
 
   render() {
     const s = this.settings, m = this.model, { dx, dy } = m.grid
-    const width = Math.max(2, this.canvas.clientWidth), height = Math.max(2, this.canvas.clientHeight), ratio = this.renderer.getPixelRatio()
+    const width = Math.max(2, this.canvas.clientWidth), height = Math.max(2, this.canvas.clientHeight), fit = pixelRatioFor(this.level, width, height, this.turning)
+    if (fit !== this.renderer.getPixelRatio()) this.renderer.setPixelRatio(fit)
+    const ratio = this.renderer.getPixelRatio()
     // Against the renderer's own pixel ratio (1 on a phone): compared with 1.5 there, the canvas was resized, and its
     // drawing buffer reallocated, on every frame — on a weak phone GPU until the WebGL context was lost (a black view).
     if (this.canvas.width !== Math.floor(width * ratio) || this.canvas.height !== Math.floor(height * ratio)) {
       this.renderer.setSize(width, height, false); this.camera.aspect = width / height; this.camera.updateProjectionMatrix()
     }
     this.autoQuality(performance.now())
+    if (this.turning && !this.dragging() && performance.now() - this.turnedAt > 400) this.turning = false
     const field = s.field === 'composite' ? null : s.field
     // With a field shown the sky dims toward the lab's dark blue (the field's colours read against it).
     this.skyMaterial.uniforms.uLab.value = field ? .8 : 0
