@@ -339,7 +339,7 @@ export class StormView {
       vertexShader: volumeVertex, fragmentShader: volumeFragment, side: THREE.BackSide, transparent: true, depthWrite: false, depthTest: false, premultipliedAlpha: true,
       uniforms: {
         ...this.shared, uDensity: { value: this.volumeTexture }, uNoise: { value: this.noise }, uColumns: { value: this.columnTexture }, uLight: { value: this.light.texture }, uFlashA: { value: this.flashLight.targets[0].texture }, uFlashB: { value: this.flashLight.targets[1].texture }, uFlashIA: { value: new THREE.Vector4() }, uFlashIB: { value: new THREE.Vector4() }, uFlashOn: { value: 0 }, uSunByHeight: { value: Array.from({ length: SUN_LEVELS }, () => new THREE.Vector3()) }, uAmbientTop: { value: new THREE.Color() }, uAmbientBottom: { value: new THREE.Color() }, uBounceSun: { value: new THREE.Color() },
-        ...this.air, uTime: { value: 0 }, uOpacity: { value: 1 },
+        ...this.air, uTime: { value: 0 }, uOpacity: { value: 1 }, uFreezing: { value: 4 },
       },
     })
     const volumeBox = new THREE.BoxGeometry(W, H, D); volumeBox.translate(0, H / 2, 0)
@@ -857,11 +857,16 @@ if(abs(uSurface - 2.0) < 0.5){
     const vertical = this.towerScratch ??= new Float32Array(n), tower = this.towerField ??= new Float32Array(n)
     for (let z = 0, i = 0; z < nz; z++) for (let c = 0; c < layer; c++, i++) {
       const frozen = m.theta[i] * exner[z] < 273.15, rimers = m.graupel[i] + m.hail[i], icy = m.ice[i] + m.snow[i]
-      mass[i] = m.cloud[i] + ICE_EXTINCTION * m.ice[i] + (frozen ? SNOW_EXTINCTION * m.snow[i] + RIMER_EXTINCTION * rimers : 0)
       // The shafts' extinction, 1/km, each kind from its own size distribution (extinction(): rain 2.2 M^0.75, M in g/m3,
-      // ~1 km visibility in 3 g/m3 of a cloudburst); below the melting level wet snow (~10 M^0.75), graupel and hail.
-      const rho = m.env.rho[z] * 1000
-      shafts[i] = SHAFT_RAIN * Math.pow(m.rain[i] * rho, .75) + (frozen ? 0 : SHAFT_SNOW * Math.pow(m.snow[i] * rho, .75) + SHAFT_GRAUPEL * Math.pow(m.graupel[i] * rho, .75) + SHAFT_HAIL * Math.pow(m.hail[i] * rho, .75))
+      // ~1 km visibility in 3 g/m3 of a cloudburst; snow ~10 M^0.75, graupel, hail). Snow, graupel and hail above the
+      // melting level are cloud inside the cloud (its ice and droplets: there they would only grey it) and shafts
+      // outside it, by the cloud's opacity: so the precipitation falling out of an anvil is a curtain from the anvil's
+      // base down, not one that starts at the melting level (a flat sheet there, 100 times denser than the cloud's
+      // share of the snow over it — the testers' 15.10.2026).
+      const rho = m.env.rho[z] * 1000, frozenShaft = SHAFT_SNOW * Math.pow(m.snow[i] * rho, .75) + SHAFT_GRAUPEL * Math.pow(m.graupel[i] * rho, .75) + SHAFT_HAIL * Math.pow(m.hail[i] * rho, .75)
+      const cloudy = frozen ? cloudOpacity(m.cloud[i] + ICE_EXTINCTION * m.ice[i]) : 0
+      mass[i] = m.cloud[i] + ICE_EXTINCTION * m.ice[i] + (SNOW_EXTINCTION * m.snow[i] + RIMER_EXTINCTION * rimers) * cloudy
+      shafts[i] = SHAFT_RAIN * Math.pow(m.rain[i] * rho, .75) + frozenShaft * (1 - cloudy)
       share[i] = m.cloud[i] + icy > 0 ? icy / (m.cloud[i] + icy) : 1
     }
     // The tower: the strongest updraught within TOWER_LEVELS levels, then within one column.
@@ -930,7 +935,7 @@ if(abs(uSurface - 2.0) < 0.5){
       const base = tl.k0[t] * layer, f = tl.f[t]
       for (let c = 0; c < layer; c++, o++) put(o, base + c, Math.min(base + c + layer, n - 1), f)
     }
-    this.volumeTexture.needsUpdate = true; this.volumeMaterial.uniforms.uTime.value = m.time
+    this.volumeTexture.needsUpdate = true; this.volumeMaterial.uniforms.uTime.value = m.time; this.volumeMaterial.uniforms.uFreezing.value = m.sounding.freezing ?? 0
   }
 
   private updateFieldTexture(field: Exclude<FieldMode, 'composite'>) {

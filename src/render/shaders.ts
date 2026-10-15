@@ -386,6 +386,8 @@ uniform vec3 uBounceSun;
 ${atmosphere}
 uniform float uTime;
 uniform float uOpacity;
+// The melting level, km (the rainbow only in the drops under it, not in the snow over it).
+uniform float uFreezing;
 
 ${lightSampling}
 ${airShade}
@@ -566,12 +568,18 @@ void main(){
       if(float(++clearRun) * fine > coarse + fine){ inside = false; dt = coarse; }
     } else clearRun = 0;
     float dc = max(cloudDensity(p, f), mamma);
-    // The shafts: their extinction (1/km) in curtains — streaks stretched down the fall, ~0.7 km across, drifting down
-    // with the rain.
+    // The shafts: their extinction (1/km) in curtains — streaks stretched down the fall, ~0.4 km across, drifting down
+    // with the rain, with gaps between them (smooth, the shafts came out as glowing puffs hanging under the cloud); the
+    // curtains' edges ragged, where the precipitation thins out.
     float dr = 0.0;
     if(f.g > 0.0){
-      float streak = octaves(vec3(p.x * 1.4, p.y * 0.12 + uTime * 0.0009, p.z * 1.4) + vec3(5.3, 0.0, 2.9)).g;
-      dr = f.g * SHAFT_MAX * mix(0.35, 1.65, streak);
+      vec3 n = octaves(vec3(p.x * 2.4, p.y * 0.08 + uTime * 0.0009, p.z * 2.4) + vec3(5.3, 0.0, 2.9));
+      float streak = smoothstep(0.3, 0.75, n.g * 0.7 + n.b * 0.3);
+      dr = f.g * SHAFT_MAX * mix(0.15, 2.0, streak) * smoothstep(0.0, 0.5, f.g * 12.0 + n.r - 0.5);
+      // Fading out over the last 3 km to the domain's sides: the precipitation under an anvil that reaches the side
+      // was cut there into a wall.
+      vec2 side = min(p.xz - uBoxMin.xz, uBoxMax.xz - p.xz);
+      dr *= smoothstep(0.0, 3.0, min(side.x, side.y));
     }
     float sigma = dc * uExtinction + dr;
     if(sigma > 1e-4){
@@ -599,7 +607,11 @@ void main(){
       vec3 cloudCol = sunColor * sunlight(L.x, phases) * mix(0.6, 1.0, powder) * 0.55 + ambient * 0.9;
       // Water drops absorb nothing: the shafts take the sunlight that reaches them (bright against the sun, the rainbow
       // opposite it) and the sky's; a shaft under its storm is lit by little but the sky beside it.
-      vec3 rainCol = sunColor * (exp(-L.x) * rainPh + sunThrough(L.x) - exp(-L.x)) * 0.55 + ambient * 0.9;
+      // The sky's light on rain greyer than on the cloud's edges: it comes from all round, the bright horizon too.
+      // Under the melting level drops (forward, the rainbow); over it snow, matte (a phase like the cloud's, no bow).
+      float liquid = 1.0 - smoothstep(uFreezing - 0.3, uFreezing + 0.3, p.y);
+      vec3 precipPh = mix(vec3(phases.x), rainPh, liquid);
+      vec3 rainCol = sunColor * (exp(-L.x) * precipPh + sunThrough(L.x) - exp(-L.x)) * 0.55 + mix(ambient, vec3(dot(ambient, vec3(0.3, 0.5, 0.2))), 0.5) * 0.8;
       if(uFlashOn > 0.5){
         vec3 tp = toTex(p);
         vec3 flash = FLASH_COLOR * FLASH_GAIN * (dot(flashDecode(texture(uFlashA, tp)), uFlashIA) + dot(flashDecode(texture(uFlashB, tp)), uFlashIB));
