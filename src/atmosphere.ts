@@ -108,6 +108,7 @@ export class Atmosphere implements ViewSettings {
   get groundObserver() { return this.view.groundObserver }
   zoomFromGround(deltaY: number) { return this.view.zoomFromGround(deltaY) }
   set onLevel(f: ((level: Quality) => void) | null) { this.view.onLevel = f }
+  set onShaderError(f: ((log: string, gpu: string) => void) | null) { this.view.onShaderError = f }
   /** The last flash again, slowed down (see StormView.replayLightning). */
   replayLightning(rate: number) { return this.view.replayLightning(rate) }
   dispose() { this.worker.terminate(); this.view.dispose() }

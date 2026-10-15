@@ -259,6 +259,12 @@ export class StormView {
   private autoFrames = 0; private autoStart = 0; private autoLast = 0; private autoFast = 0; private autoCeiling = 2
   /** Called when the automatic choice changes the level (for the badge). */
   onLevel: ((level: Quality) => void) | null = null
+  /**
+   * Called when the GPU's driver cannot build a shader (a phone's stricter compiler), with its log and the GPU's name:
+   * the view would stay black without a word. The level is lowered once first (fewer loops, smaller shaders).
+   */
+  onShaderError: ((log: string, gpu: string) => void) | null = null
+  private shaderRetry: 'none' | 'pending' | 'done' = 'none'
   /** The lightning channels (lightning.ts). */
   private readonly lightning: LightningView; private readonly drawingBuffer = new THREE.Vector2()
   /**
@@ -284,6 +290,14 @@ export class StormView {
     this.volumeData = new Uint8Array(texels * 4); this.fieldValues = new Float32Array(n); this.fieldData = new Uint8Array(texels)
 
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' })
+    this.renderer.debug.onShaderError = (gl, program, vs, fs) => {
+      const log = [gl.getShaderInfoLog(fs), gl.getShaderInfoLog(vs), gl.getProgramInfoLog(program)].filter(Boolean).join(' | ').trim() || 'без текста ошибки'
+      console.error('MeteoLab shader error:', log)
+      const info = gl.getExtension('WEBGL_debug_renderer_info'), gpu = String(info ? gl.getParameter(info.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER))
+      if (this.shaderRetry === 'pending') return
+      if (this.shaderRetry === 'none' && this.level !== 'low') { this.shaderRetry = 'pending'; setTimeout(() => { this.shaderRetry = 'done'; this.autoCeiling = 0; this.applyLevel('low') }); return }
+      this.onShaderError?.(log, gpu)
+    }
     // A phone renders at 1 pixel per CSS pixel: its screen is small and its GPU weak (the clouds are ray-marched).
  this.renderer.outputColorSpace = THREE.SRGBColorSpace; this.renderer.toneMapping = THREE.ACESFilmicToneMapping; this.renderer.toneMappingExposure = 1.05
     this.scene = new THREE.Scene(); this.scene.fog = new THREE.FogExp2(0x9fb4c4, .1)

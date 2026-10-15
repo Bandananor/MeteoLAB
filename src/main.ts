@@ -195,6 +195,7 @@ app.innerHTML = `<div class="app">
         <div class="ov-pick" id="pickHint" hidden>Щёлкните по земле, где встать · Esc — отмена</div>
         <button class="immersive-exit" id="immersiveExit" title="Вернуть панели (Esc)">✕ Выйти из полноэкранного</button>
         <div class="gl-lost" id="glLost" role="alert" hidden><div><p><b>3D-вид отключён браузером</b> — ему не хватило памяти видеокарты (так бывает на телефоне при многих открытых вкладках или после переключения приложений). Расчёт идёт дальше; вид может вернуться сам.</p><button class="btn btn--primary" id="glReload" type="button">Перезапустить с теми же настройками</button></div></div>
+        <div class="gl-lost" id="glShader" role="alert" hidden><div><p><b>3D-вид не собрался на этой видеокарте</b> — расчёт и приборы работают. Пришлите, пожалуйста, снимок этого сообщения разработчику.</p><pre class="gl-log" id="glShaderLog"></pre></div></div>
         <div class="ov-tl"><button class="ov-toggle" id="flowToggle" aria-pressed="false">Потоки →</button><button class="ov-toggle" id="precipToggle" aria-pressed="false" title="Частицы осадков: снежинки, опускаясь ниже уровня 0 °C, тают в капли">Снег и дождь</button><button class="ov-toggle" id="mesoToggle" aria-pressed="true" title="Кольцо над вращающимся восходящим потоком (UH 2–5 км выше порога вращения)">Мезоциклон</button><button class="ov-toggle" id="lightningToggle" aria-pressed="true" title="Каналы молний в момент вспышки: видны там, где выходят из облака; внутри облака — только его свечение">Молнии</button><button class="ov-toggle" id="lightningReplay" title="Последний удар в землю ещё раз, в 20 раз медленнее, как на скоростной съёмке: видно, как слабый ступенчатый лидер ветвится вниз, как вспыхивает и за миллисекунды гаснет обратный удар и как идут повторные удары — чаще всего по тому же каналу (отсюда мерцание)">Повтор удара</button><button class="ov-toggle" id="groundToggle" aria-pressed="false" popovertarget="groundMenu" title="Встать на землю и смотреть на грозу снизу, как наблюдатель: где встать — в меню. Клавиша G">С земли</button><button class="ov-toggle" id="snapshotButton" title="Сохранить кадр 3D-вида картинкой PNG — без панелей, как он есть сейчас. Клавиша P">Снимок</button><button class="ov-toggle" id="immersiveToggle" title="Во весь экран без панелей и кнопок. Выйти — той же кнопкой в углу или Esc. Клавиша F">Во весь экран</button><button class="ov-toggle" id="swathToggle" aria-pressed="false" title="Сколько дождя выпало на землю с начала расчёта: голубой до 5 мм, зелёный до 10, жёлтый до 25, оранжевый до 50, красный больше">Сумма осадков</button></div>
         <div class="ov-bl"><span class="ov-badge" id="surfaceReadout">ТРАВА</span><button class="ov-badge ov-quality" id="qualityToggle" title="Качество картинки: облака считаются лучом по объёму, и это самая дорогая часть кадра. «Авто» само снижает качество, если кадры идут медленнее ~22 в секунду, и повышает, когда запас есть. Нажатие — следующий вариант">КАЧЕСТВО: АВТО</button><span class="ov-chip">ЛКМ — вращение · ПКМ — сдвиг · колесо — масштаб · 2× клик — термик</span></div>
         <div class="ov-br"><div class="ov-legend" id="cloudLegend"><span><i style="--c:#d8e0e3"></i>облачная вода</span><span><i style="--c:#4e7692"></i>осадки</span><span><i style="--c:#b68b59"></i>восходящий</span><span><i style="--c:#7189a5"></i>нисходящий</span></div></div>
@@ -396,7 +397,12 @@ const chooseQuality = (q: Quality | 'auto') => {
   try { localStorage.setItem(QUALITY_KEY, quality) } catch { /* the choice lasts this visit */ }
   useQuality()
 }
-const useQuality = (start?: Quality) => { shownLevel = null; sim.onLevel = showQuality; sim.setQuality(quality, start); showQuality() }
+const useQuality = (start?: Quality) => {
+  shownLevel = null; sim.onLevel = showQuality
+  sim.onShaderError = (log, gpu) => { document.querySelector('#glShaderLog')!.textContent = `${gpu}
+${log.slice(0, 600)}`; document.querySelector<HTMLElement>('#glShader')!.hidden = false }
+  sim.setQuality(quality, start); showQuality()
+}
 useQuality()
 document.querySelector('#qualityToggle')!.addEventListener('click', () => { const order = ['auto', 'low', 'medium', 'high'] as const; chooseQuality(order[(order.indexOf(quality) + 1) % order.length]) })
 // On a phone the choice is in the instruments' menu (hud.ts).
