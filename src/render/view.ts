@@ -99,6 +99,8 @@ const DRY_TIME = 2400, MELT_TIME = 1800
  * cross section (diffraction), pi N0 / lambda^3 = (pi N0)^(1/4) rho^(-3/4) M^(3/4), M in kg/m3, per m.
  */
 const extinction = (n0: number, density: number) => (Math.PI * n0) ** .25 * density ** -.75 * 1e-3 ** .75 * 1000
+/** The share of the snow's extinction drawn outside the cloud above the melting level (updateVolume). */
+const SNOW_VEIL = .2
 const SHAFT_RAIN = extinction(N0R, RHO_W), SHAFT_SNOW = extinction(N0S, RHO_S), SHAFT_GRAUPEL = extinction(N0G, RHO_G), SHAFT_HAIL = extinction(N0H, RHO_H)
 /** The precipitation shafts' extinction at the top of the volume texture's channel, 1/km (shaders.ts SHAFT_MAX). */
 const SHAFT_MAX = 6
@@ -864,9 +866,13 @@ if(abs(uSurface - 2.0) < 0.5){
       // base down, not one that starts at the melting level (a flat sheet there, 100 times denser than the cloud's
       // share of the snow over it — the testers' 15.10.2026).
       const rho = m.env.rho[z] * 1000, frozenShaft = SHAFT_SNOW * Math.pow(m.snow[i] * rho, .75) + SHAFT_GRAUPEL * Math.pow(m.graupel[i] * rho, .75) + SHAFT_HAIL * Math.pow(m.hail[i] * rho, .75)
-      const cloudy = frozen ? cloudOpacity(m.cloud[i] + ICE_EXTINCTION * m.ice[i]) : 0
+      // Above the melting level, outside the cloud, at SNOW_VEIL of its extinction, rising to the whole over the last 4 K
+      // to 0 °C (~600 m over the melting level, so no step there): the model keeps the snow falling out of an anvil longer than
+      // nature, where most of it sublimates — drawn whole, it hung under the anvil as dense striped walls (the testers'
+      // 15.10.2026). A visual choice, not the model's.
+      const cloudy = frozen ? cloudOpacity(m.cloud[i] + ICE_EXTINCTION * m.ice[i]) : 0, veil = lerp(SNOW_VEIL, 1, clamp((m.theta[i] * exner[z] - 269.15) / 4))
       mass[i] = m.cloud[i] + ICE_EXTINCTION * m.ice[i] + (SNOW_EXTINCTION * m.snow[i] + RIMER_EXTINCTION * rimers) * cloudy
-      shafts[i] = SHAFT_RAIN * Math.pow(m.rain[i] * rho, .75) + frozenShaft * (1 - cloudy)
+      shafts[i] = SHAFT_RAIN * Math.pow(m.rain[i] * rho, .75) + frozenShaft * (1 - cloudy) * veil
       share[i] = m.cloud[i] + icy > 0 ? icy / (m.cloud[i] + icy) : 1
     }
     // The tower: the strongest updraught within TOWER_LEVELS levels, then within one column.

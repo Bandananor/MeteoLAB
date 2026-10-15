@@ -418,7 +418,12 @@ const float PI = 3.14159265;
 // Three octaves of tileable value noise (noise.ts): at x the octaves of lattice spacing 1, 1/2 and 1/4 in R, G, B, in
 // one fetch (the lattice of R is 8 texels).
 uniform sampler3D uNoise;
-vec3 octaves(vec3 x){ return texture(uNoise, x * 0.125).rgb; }
+// The lookup turned off the axes (a rotation about a skew axis): the baked cube repeats every 8 units along its own
+// axes, and seen from above a whole anvil showed the repeats as wallpaper; turned, a horizontal slice of it meets
+// no short period. The stretch of the anisotropic noises (wisps, bands) is applied before, in the world's axes, so it
+// keeps its direction.
+const mat3 NOISE_TURN = mat3(0.5731, 0.7403, -0.3513, -0.6090, 0.6716, 0.4219, 0.5483, -0.0279, 0.8358);
+vec3 octaves(vec3 x){ return texture(uNoise, NOISE_TURN * x * 0.125).rgb; }
 float fbm(vec3 x){ return dot(octaves(x), vec3(0.55, 0.3, 0.15)); }
 
 // Billow noise (|2n - 1| summed over octaves): rounded lobes meeting in creases, the cauliflower of a growing tower.

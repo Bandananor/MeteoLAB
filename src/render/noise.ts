@@ -4,6 +4,11 @@ import { mulberry32 } from '../core/math'
 /** Size of the noise cube, texels; the octaves' lattice periods in texels (R, G, B). */
 export const NOISE_SIZE = 64
 const PERIODS = [8, 16, 32] as const
+/**
+ * Each octave's lattice shifted (texels): nested lattices whose points coincide put a value peak of every octave at the
+ * same places, a regular grid the eye finds (the testers' 15.10.2026, seen from above over a whole anvil).
+ */
+const OFFSETS = [[0, 0, 0], [5, 11, 3], [13, 7, 21]] as const
 
 /**
  * Tileable value noise baked into a 3D texture for the cloud's sub-grid detail: in R, G and B three octaves of lattice
@@ -16,8 +21,9 @@ export function noiseTexture(seed = 7) {
   PERIODS.forEach((period, channel) => {
     const cells = n / period, rng = mulberry32(seed + channel), lattice = Float32Array.from({ length: cells ** 3 }, () => rng())
     const at = (x: number, y: number, z: number) => lattice[x % cells + (y % cells) * cells + (z % cells) * cells * cells]
+    const [ox, oy, oz] = OFFSETS[channel]
     for (let z = 0; z < n; z++) for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
-      const fx = x / period, fy = y / period, fz = z / period, ix = Math.floor(fx), iy = Math.floor(fy), iz = Math.floor(fz)
+      const fx = (x + ox) / period, fy = (y + oy) / period, fz = (z + oz) / period, ix = Math.floor(fx), iy = Math.floor(fy), iz = Math.floor(fz)
       const u = smooth(fx - ix), v = smooth(fy - iy), w = smooth(fz - iz)
       const lerp = (a: number, b: number, t: number) => a + (b - a) * t
       const value = lerp(
