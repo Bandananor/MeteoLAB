@@ -26,6 +26,7 @@ import { HODOGRAPH_NODES, nudgeSounding, sliderNode } from './hodograph'
 import { applyLayout, askGuide, askLayout, Hud, isPhone, savedLayout, suggestedLayout } from './hud'
 import { Timeline } from './timeline'
 import { DEFAULTS as defaults } from './defaults'
+import { hailWord, rainWord } from './describe'
 
 // Settings whose change restarts the run (the rest act on the running model): marked ↻ at their label.
 const resetKeys = new Set<keyof SimConfig>(['surfaceTemp','lapseLow','lapseMid','lapseUpper','tropopause','stratoWarming','capStrength','capHeight','rhSurface','rhLow','rhMid','rhUpper','moistLayer','wind0','wind05','wind1','wind3','wind6','wind10','windDir0','windDir05','windDir1','windDir3','windDir6','windDir10','latitude','bubble','surfaceType','city'])
@@ -216,16 +217,16 @@ app.innerHTML = `<div class="app">
     </section>
 
     <aside class="side side--right diagnostics" aria-label="Данные"><div class="diag">
-      <section class="mode" id="modeCard"><div class="mode__head"><span class="label">Режим грозы</span><span class="badge" id="mesoBadge" hidden>мезоциклон</span></div><div class="mode__title" id="cellType">—</div><div class="mode__reason" id="cellReason">ожидание инициализации</div><div class="mode__cell" id="cellStage"></div></section>
+      <section class="mode" id="modeCard"><div class="mode__head"><span class="label">Режим грозы</span><span class="badge" id="mesoBadge" hidden>мезоциклон</span></div><div class="mode__title" id="cellType">—</div><div class="mode__reason" id="cellReason">ожидание инициализации</div><div class="mode__reason" id="cloudGenus" title="Самое высокое облако по международной классификации: кучевое по толщине, кучево-дождевое — когда вершина холоднее −20 °C (оледенела), с наковальней — когда растекается на уровне равновесия (EL)"></div><div class="mode__reason" id="cloudGenus" title="Самое высокое облако по международной классификации: кучевое по толщине, кучево-дождевое — когда вершина холоднее −20 °C (оледенела), с наковальней — когда растекается на уровне равновесия (EL)"></div><div class="mode__cell" id="cellStage"></div></section>
       <section class="cells"><div class="cells__head"><span class="label" id="cellCount">Ячейки</span><button class="btn btn--quiet btn--s" id="cellAll" aria-pressed="true" title="Показатели по всей области: максимумы по всем ячейкам">Вся область</button></div><div class="cells__list" id="cellList"></div></section>
       <section class="chart"><div class="diag__scope"><span class="label" id="metricScope">Показатели по всей области</span></div>
         <div class="metrics">
           ${metric('updraft', 'Восх. поток, макс.', 'м/с')}
           ${metric('uh', 'Вращение UH 2–5 км', 'м²/с²', 'tip-uh')}
-          ${metric('rain', 'Интенсивность дождя', 'мм/ч', 'tip-rain')}
+          ${metric('rain', 'Интенсивность дождя', 'мм/ч', 'tip-rain', '<div class="t-caption" id="rainWord"></div>')}
           ${metric('rainTotal', 'Сумма осадков, макс.', 'мм', 'tip-rainTotal')}
           ${metric('gust', 'Порыв у земли', 'м/с', 'tip-gust')}
-          ${metric('hail', 'Град у земли', 'см', 'tip-hail', '<div class="t-caption" id="hailSwath"></div>')}
+          ${metric('hail', 'Град у земли', 'см', 'tip-hail', '<div class="t-caption" id="hailWord"></div><div class="t-caption" id="hailSwath"></div>')}
         </div></section>
       <section class="chart"><div class="chart__head"><span class="chart__title">Ход грозы</span><button class="btn btn--xs" id="timelineCsv" title="Выгрузить ряды «Хода грозы» в CSV (таблица или скрипт): время, CAPE и CIN, поток, UH, дождь">CSV</button></div>
         <canvas id="timeline" title="Ход грозы по модельному времени (вся область, точка каждые 30 с): неустойчивость среды сейчас (CAPE и CIN частицы от земли по живому зондированию — вдали от гроз, раз в модельную минуту), самый сильный восходящий поток, вращение потока, дождь у земли и вспышки молний за последнюю минуту. Перезапуск начинает графики заново"></canvas></section>
@@ -376,8 +377,15 @@ let sim = new Atmosphere(canvas, config)
 const QUALITY_NAMES = { low: 'НИЗКОЕ', medium: 'СРЕДНЕЕ', high: 'ВЫСОКОЕ' } as const
 const QUALITY_KEY = 'meteolab-quality'
 let quality: Quality | 'auto' = (() => { try { const q = localStorage.getItem(QUALITY_KEY); return q === 'low' || q === 'medium' || q === 'high' ? q : 'auto' } catch { return 'auto' } })()
+// When the automatic choice lowers the level, the badge says why for a few seconds.
+const QUALITY_RANK = { low: 0, medium: 1, high: 2 } as const
+let shownLevel: Quality | null = null, loweredUntil = 0
 const showQuality = () => {
-  document.querySelector('#qualityToggle')!.textContent = quality === 'auto' ? `КАЧЕСТВО: АВТО · ${QUALITY_NAMES[sim.level]}` : `КАЧЕСТВО: ${QUALITY_NAMES[quality]}`
+  const lowered = quality === 'auto' && shownLevel !== null && QUALITY_RANK[sim.level] < QUALITY_RANK[shownLevel]
+  shownLevel = sim.level
+  if (lowered) { loweredUntil = performance.now() + 3000; setTimeout(showQuality, 3050) }
+  document.querySelector('#qualityToggle')!.textContent = quality === 'auto' && performance.now() < loweredUntil ? `КАЧЕСТВО СНИЖЕНО: КАДРЫ МЕДЛЕННЫЕ · ${QUALITY_NAMES[sim.level]}`
+    : quality === 'auto' ? `КАЧЕСТВО: АВТО · ${QUALITY_NAMES[sim.level]}` : `КАЧЕСТВО: ${QUALITY_NAMES[quality]}`
   document.querySelectorAll<HTMLButtonElement>('[data-quality-set]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.qualitySet === quality)))
 }
 const chooseQuality = (q: Quality | 'auto') => {
@@ -385,7 +393,7 @@ const chooseQuality = (q: Quality | 'auto') => {
   try { localStorage.setItem(QUALITY_KEY, quality) } catch { /* the choice lasts this visit */ }
   useQuality()
 }
-const useQuality = (start?: Quality) => { sim.onLevel = showQuality; sim.setQuality(quality, start); showQuality() }
+const useQuality = (start?: Quality) => { shownLevel = null; sim.onLevel = showQuality; sim.setQuality(quality, start); showQuality() }
 useQuality()
 document.querySelector('#qualityToggle')!.addEventListener('click', () => { const order = ['auto', 'low', 'medium', 'high'] as const; chooseQuality(order[(order.indexOf(quality) + 1) % order.length]) })
 // On a phone the choice is in the instruments' menu (hud.ts).
@@ -825,8 +833,10 @@ function updateCells() {
   const html = `<span class="num">№${cell.id}</span> · ${CELL_STAGES[cell.stage].name}<small>${CELL_STAGES[cell.stage].hint}. Возраст ${age} мин, ${ORIGIN[cell.origin]}${cell.parent ? ` (от №${cell.parent})` : ''}; ${!followed ? 'движение уточняется' : speed < 1 ? 'почти стоит' : `движется на ${heading(gu, gv)}, ${speed.toFixed(0)} м/с`}</small>`
   if (stage.innerHTML !== html) stage.innerHTML = html
   text('updraft', s.updraft.toFixed(1)); text('downdraft', s.downdraft.toFixed(1)); text('uh', s.uh.toFixed(0)); text('uhLow', `${s.uh01.toFixed(0)} / ${s.uh03.toFixed(0)}`)
-  text('cloudTop', s.cloudTop.toFixed(1)); text('coldPool', s.coldPool.toFixed(1)); text('rain', s.rainRate.toFixed(1))
+  text('cloudTop', s.cloudTop.toFixed(1)); text('coldPool', s.coldPool.toFixed(1)); showRain(s.rainRate)
 }
+/** The rain rate with its word (describe.ts). */
+function showRain(rate: number) { text('rain', rate.toFixed(1)); text('rainWord', rainWord(rate)) }
 /** The alarm colour of the storm mode and the UH card: only on the model's signal that the mesocyclone has held
  *  MESO_PERSISTENCE, never on the UH number alone. The mode is the domain's; the UH card follows the selected cell. */
 function showMode(hail: boolean) {
@@ -1158,7 +1168,7 @@ showThemeChoice()
 let shownLive: Live | null = null
 function frame(now:number){
   const elapsed=Math.min(.2,(now-last)/1000);last=now;if(running)sim.advance(elapsed);if(!(radar.open||skewt.open||station.open||detector.open||zonesPanel.open||analysis.open))sim.render();const d=sim.diagnostics()
-  text('cape',d.cape.toFixed(0));text('mlcape',d.indices.ml.cape.toFixed(0));text('mlcin',d.indices.ml.cin.toFixed(0));text('mucape',d.indices.mu.cape.toFixed(0));text('dcape',d.indices.dcape.toFixed(0));text('srh01',d.storm.srh01.toFixed(0));text('srh03',d.storm.srh03.toFixed(0));text('scp',d.storm.scp.toFixed(1));text('stp',d.storm.stp.toFixed(1));text('cin',d.cin.toFixed(0));text('updraft',d.updraft.toFixed(1));text('downdraft',d.downdraft.toFixed(1));text('uh',d.updraftHelicity.toFixed(0));text('uhLow',`${d.uh01.toFixed(0)} / ${d.uh03.toFixed(0)}`);text('cloudTop',d.cloudTop.toFixed(1));text('thermalTop',d.thermalTop.toFixed(1));text('cloudWater',d.cloudWater.toFixed(2));text('coldPool',d.coldPool.toFixed(1));text('gust',d.gust.toFixed(1));text('hail',d.hail>=1?(d.hail/10).toFixed(1):'—');text('hailSwath',d.hailSwath>=1?`за прогон до ${(d.hailSwath/10).toFixed(1)} см`:'');showMode(d.hail>=1);text('clipped',String(d.clipped));text('rain',d.rain.toFixed(1));text('rainTotal',d.rainTotal.toFixed(1));text('lcl',d.lcl===null?'—':`${d.lcl.toFixed(1)} км`);text('lfc',d.lfc===null?'—':`${d.lfc.toFixed(1)} км`);text('el',d.el===null?'—':`${d.el.toFixed(1)} км`);text('cellType',d.cellType);text('cellReason',d.cellReason);text('logicText',d.logic);text('sun',`${d.insolation.toFixed(0)} Вт/м²`);text('sunElevation',d.sunElevation>0?`${d.sunElevation.toFixed(0)}° над горизонтом`:'ночь')
+  text('cape',d.cape.toFixed(0));text('mlcape',d.indices.ml.cape.toFixed(0));text('mlcin',d.indices.ml.cin.toFixed(0));text('mucape',d.indices.mu.cape.toFixed(0));text('dcape',d.indices.dcape.toFixed(0));text('srh01',d.storm.srh01.toFixed(0));text('srh03',d.storm.srh03.toFixed(0));text('scp',d.storm.scp.toFixed(1));text('stp',d.storm.stp.toFixed(1));text('cin',d.cin.toFixed(0));text('updraft',d.updraft.toFixed(1));text('downdraft',d.downdraft.toFixed(1));text('uh',d.updraftHelicity.toFixed(0));text('uhLow',`${d.uh01.toFixed(0)} / ${d.uh03.toFixed(0)}`);text('cloudTop',d.cloudTop.toFixed(1));text('thermalTop',d.thermalTop.toFixed(1));text('cloudWater',d.cloudWater.toFixed(2));text('coldPool',d.coldPool.toFixed(1));text('gust',d.gust.toFixed(1));text('hail',d.hail>=1?(d.hail/10).toFixed(1):'—');text('hailSwath',d.hailSwath>=1?`за прогон до ${(d.hailSwath/10).toFixed(1)} см`:'');showMode(d.hail>=1);text('clipped',String(d.clipped));showRain(d.rain);text('hailWord',hailWord(d.hail));text('cloudGenus',d.cloud);text('rainTotal',d.rainTotal.toFixed(1));text('lcl',d.lcl===null?'—':`${d.lcl.toFixed(1)} км`);text('lfc',d.lfc===null?'—':`${d.lfc.toFixed(1)} км`);text('el',d.el===null?'—':`${d.el.toFixed(1)} км`);text('cellType',d.cellType);text('cellReason',d.cellReason);text('logicText',d.logic);text('sun',`${d.insolation.toFixed(0)} Вт/м²`);text('sunElevation',d.sunElevation>0?`${d.sunElevation.toFixed(0)}° над горизонтом`:'ночь')
   text('surfaceReadout',({grass:'ТРАВА',dry:'СУХАЯ ПОЧВА',water:'ВОДА',urban:'ГОРОД'} as const)[config.surfaceType])
   const b=sim.balance;text('rkw',b?b.ratio.toFixed(1):'—');text('rkwNote',b?`C ${b.c.toFixed(0)} / Δu ${b.deltaU.toFixed(0)} м/с`:'купола нет');const card=document.querySelector<HTMLElement>('#rkwCard')!;card.dataset.base??=card.title;card.title=b?`${card.dataset.base}\n\nСейчас: ${describeBalance(b)}.`:card.dataset.base
   text('time',runTime(sim.time));text('localTime',timeOfDay(config.hour,sim.time));text('threads',String(sim.threads));text('freezing',d.freezing===null?'—':`${d.freezing.toFixed(1)} км`);if(sim.live!==shownLive){shownLive=sim.live;skewt.setLive(shownLive.env,shownLive)}const sampled=timeline.record({t:sim.time,cape:sim.live.indices.sb.cape,cin:sim.live.indices.sb.cin,updraft:d.updraft,uh:d.updraftHelicity,rain:d.rain,rainTotal:d.rainTotal,rotationHeld:sim.model.rotation.persisted,flashes:sim.model.flashes.filter(f=>f.time>sim.time-60).length});if(frameCount++%20===0){drawSounding();drawHodograph();drawSpin()}if(sampled||frameCount%20===1){const{ctx,w,h}=prepareCanvas('timeline');timeline.draw(ctx,w,h)}updateCells();radar.refresh();const probe=sim.cells.find(selectedCell);skewt.refresh(probe?{id:probe.id,x:probe.x,y:probe.y,u:probe.u+sim.model.frame[0],v:probe.v+sim.model.frame[1]}:null);station.refresh(sim.station,placingStation);detector.refresh(sim.model);analysis.refresh(sim.model);showSpeed();showTornado();zonesPanel.refresh(sim.model);listRewind();markStory();hud.update({time:sim.time,local:timeOfDay(config.hour,sim.time),updraft:d.updraft,rain:d.rain,uh:d.updraftHelicity,mesocyclone:sim.model.rotation.persisted>=MESO_PERSISTENCE,regime:document.querySelector('#cellType')!.textContent??'',running,speed:config.speed,story:storyText()});canvas.style.cursor=placingStation||pickingGround?'crosshair':'';requestAnimationFrame(frame)

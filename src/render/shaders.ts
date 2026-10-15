@@ -579,7 +579,11 @@ void main(){
     } else if(!cloudy){
       if(float(++clearRun) * fine > coarse + fine){ inside = false; dt = coarse; }
     } else clearRun = 0;
-    float dc = max(cloudDensity(p, f), mamma);
+    // The cloud fades out over the last ~1 km to the domain's sides: the outermost grid columns hold a thin sheet of
+    // cloud along the side, and seen edge-on it stood out as a bright sliver.
+    vec2 side = min(p.xz - uBoxMin.xz, uBoxMax.xz - p.xz);
+    float toWall = min(side.x, side.y);
+    float dc = max(cloudDensity(p, f), mamma) * smoothstep(0.25, 1.25, toWall);
     // The shafts: their extinction (1/km) in curtains — streaks stretched down the fall, ~0.4 km across, drifting down
     // with the rain, with gaps between them (smooth, the shafts came out as glowing puffs hanging under the cloud); the
     // curtains' edges ragged, where the precipitation thins out.
@@ -589,9 +593,10 @@ void main(){
       float streak = smoothstep(0.3, 0.75, n.g * 0.7 + n.b * 0.3);
       dr = f.g * SHAFT_MAX * mix(0.15, 2.0, streak) * smoothstep(0.0, 0.5, f.g * 12.0 + n.r - 0.5);
       // Fading out over the last 3 km to the domain's sides: the precipitation under an anvil that reaches the side
-      // was cut there into a wall.
-      vec2 side = min(p.xz - uBoxMin.xz, uBoxMax.xz - p.xz);
-      dr *= smoothstep(0.0, 3.0, min(side.x, side.y));
+      // was cut there into a wall. Squared and none in the last 0.5 km: a ray along the side gathers the faint band over
+      // the whole box, and a shaft cut by the side, seen edge-on, stayed a bright sliver.
+      float edge = smoothstep(0.5, 4.0, toWall);
+      dr *= edge * edge;
     }
     float sigma = dc * uExtinction + dr;
     if(sigma > 1e-4){

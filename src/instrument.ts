@@ -8,10 +8,25 @@ export function instrumentScreen(host: HTMLElement, kind: string, name: string, 
   const root = document.createElement('div')
   root.className = `instrument instrument-overlay ${kind}`; root.dataset.theme = 'dark'; root.hidden = true
   root.innerHTML = `
-    <header class="ibar"><span class="ibar__name">${name}</span><span class="ibar__sep"></span><span class="ibar__fields">${fields}</span><button class="btn ibar__close" title="Вернуться к 3D (Esc)">Закрыть <span class="kbd">Esc</span></button></header>
+    <header class="ibar"><span class="ibar__name">${name}</span><span class="ibar__sep"></span><span class="ibar__fields">${fields}</span><button class="btn ibar__snap" title="Сохранить экран прибора картинкой PNG">Снимок</button><button class="btn ibar__close" title="Вернуться к 3D (Esc)">Закрыть <span class="kbd">Esc</span></button></header>
     <div class="instrument__body"><div class="instrument__screen"><canvas></canvas>${screen}</div><aside class="instrument__side">${side}</aside></div>`
   host.appendChild(root)
+  root.querySelector('.ibar__snap')!.addEventListener('click', () => snapshot(root, kind.replace(/-app$/, '')))
   return root
+}
+
+/** The instrument's canvas as a PNG, on the screen's background (a canvas may leave it transparent), named by the time. */
+function snapshot(root: HTMLElement, name: string) {
+  const canvas = root.querySelector<HTMLCanvasElement>('.instrument__screen > canvas')!, out = document.createElement('canvas')
+  out.width = canvas.width; out.height = canvas.height
+  const ctx = out.getContext('2d')!
+  ctx.fillStyle = instrumentPalette(root).bg; ctx.fillRect(0, 0, out.width, out.height); ctx.drawImage(canvas, 0, 0)
+  out.toBlob(blob => {
+    if (!blob) return
+    const a = document.createElement('a'), now = new Date(), two = (n: number) => String(n).padStart(2, '0')
+    a.href = URL.createObjectURL(blob); a.download = `meteolab-${name}-${two(now.getHours())}-${two(now.getMinutes())}-${two(now.getSeconds())}.png`; a.click()
+    setTimeout(() => URL.revokeObjectURL(a.href), 10_000)
+  }, 'image/png')
 }
 
 /** A section of the side panel. */

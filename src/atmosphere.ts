@@ -148,7 +148,7 @@ export class Atmosphere implements ViewSettings {
   perturb(nx: number, ny: number, strength = 1) { const p = this.view.groundPoint(nx, ny); this.post({ type: 'perturb', x: p.x, y: p.y, strength }) }
 
   diagnostics() {
-    const m = this.mirror, d = this.latest, live = this.live, text = describeConvection(d, live.sounding, m.rotation)
+    const m = this.mirror, d = this.latest, live = this.live, text = describeConvection(d, live.sounding, m.rotation, live.env.temperatureEnv(d.cloudTop * 1000))
     return {
       ...live.sounding, ...text, indices: live.indices, storm: live.storm,
       updraft: d.updraft, downdraft: d.downdraft, rain: d.rainRate, rainTotal: d.rainTotal, cloudTop: d.cloudTop, thermalTop: d.thermalTop,

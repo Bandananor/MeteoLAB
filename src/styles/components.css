@@ -275,7 +275,8 @@
 .ibar__sep { width: 1px; height: 20px; background: var(--line); }
 .ibar__fields { display: flex; gap: 18px; min-width: 0; overflow: hidden; font: var(--fs-label)/1 var(--font-mono); color: var(--text-3); font-variant-numeric: tabular-nums; }
 .ibar__fields b { font-weight: var(--fw-regular); color: var(--text); }
-.ibar__close { margin-left: auto; }
+.ibar__snap, .ibar__close { margin-left: auto; }
+.ibar__snap + .ibar__close { margin-left: 0; }
 .psec { display: flex; flex-direction: column; gap: 10px; padding: 14px 16px; border-top: 1px solid var(--line); }
 .psec:first-child { border-top: 0; }
 .psec__title { margin: 0; font: var(--fw-semibold) var(--fs-body-s)/1 var(--font-text); }
