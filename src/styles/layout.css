@@ -66,6 +66,8 @@
 .ov-modeline { position: absolute; left: 12px; top: 92px; }
 .ov-bottom { position: absolute; left: 12px; right: 12px; bottom: 12px; }
 .menu-anchor { position: fixed; right: 8px; bottom: calc(var(--bar-h) + 8px); z-index: 22; }
+/* The menu grew past a phone's screen (the ground view, the quality): it scrolls inside, under the top bar. */
+.menu-anchor > .menu { max-height: calc(100dvh - var(--bar-h) - 72px); overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
 
 /* ================= приборы ================= */
 .instrument { height: 100dvh; display: grid; grid-template-rows: 48px minmax(0,1fr); background: var(--bg); color: var(--text); }

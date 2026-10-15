@@ -350,7 +350,7 @@ void main(){
     // The land's pattern, as on the domain's ground (the same ground going on).
     if(uWater < 0.5){ vec3 P = vec3(cameraPosition.x, 0.0, cameraPosition.z) + d * len; vec2 q = groundAt(P) * uGroundSize; surface *= landPattern(q, min(length(dFdx(q)), length(dFdy(q)))); }
     // The sea beyond the domain reflects the sky (Fresnel, n = 1.33).
-    if(uWater > 0.5){ float F = 0.02 + 0.98 * pow(1.0 + d.y, 5.0); surface = surface * (1.0 - F) + skyAt(vec3(d.x, -d.y, d.z)) * F; }
+    if(uWater > 0.5){ float F = 0.02 + 0.98 * pow(max(1.0 + d.y, 0.0), 5.0); surface = surface * (1.0 - F) + skyAt(vec3(d.x, -d.y, d.z)) * F; }
     c = surface * T + inscatter;
   }
   c = mix(c, vec3(0.009, 0.026, 0.044), uLab);
@@ -513,7 +513,10 @@ float hg(float c, float g){
 const vec3 BOW1 = vec3(42.3, 41.5, 40.7), BOW2 = vec3(50.4, 51.6, 53.3);
 vec3 rainPhase(float c){
   float a = degrees(acos(clamp(-c, -1.0, 1.0)));
-  vec3 bow = 0.9 * exp(-0.5 * pow((a - BOW1) / 0.6, vec3(2.0))) + 0.35 * exp(-0.5 * pow((a - BOW2) / 0.8, vec3(2.0)));
+  // Squares by multiplication: pow() of a negative base is undefined in GLSL (phone GPUs return NaN, per channel —
+  // the coloured garbage over an anvil the testers saw 15.10.2026; desktop GPUs square it).
+  vec3 d1 = (a - BOW1) / 0.6, d2 = (a - BOW2) / 0.8;
+  vec3 bow = 0.9 * exp(-0.5 * d1 * d1) + 0.35 * exp(-0.5 * d2 * d2);
   float back = (hg(c, 0.85) * 0.85 + hg(c, -0.2) * 0.15) * 4.0 * PI;
   float dark = 1.0 - 0.5 * smoothstep(41.0, 43.0, a) * (1.0 - smoothstep(49.0, 51.0, a));
   return back * dark + bow;
