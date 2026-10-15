@@ -933,6 +933,20 @@ groundMenu.addEventListener('click', e => {
   showGround()
 })
 canvas.addEventListener('wheel', event => { if (sim.zoomFromGround(event.deltaY)) event.preventDefault() }, { passive: false })
+// A pinch from the ground narrows or widens the field of view, as the wheel (the field of view scales with the fingers'
+// spread: zoomFromGround takes exp(delta / 1000)).
+const touches = new Map<number, { x: number; y: number }>()
+let pinchSpread = 0
+const spread = () => { const [a, b] = [...touches.values()]; return Math.hypot(a.x - b.x, a.y - b.y) }
+canvas.addEventListener('pointerdown', e => { if (e.pointerType === 'touch') { touches.set(e.pointerId, { x: e.clientX, y: e.clientY }); if (touches.size === 2) pinchSpread = spread() } })
+canvas.addEventListener('pointermove', e => {
+  if (!touches.has(e.pointerId)) return
+  touches.set(e.pointerId, { x: e.clientX, y: e.clientY })
+  if (touches.size !== 2 || !sim.fromGround || pinchSpread <= 0) return
+  const now = spread()
+  if (now > 0) { sim.zoomFromGround(1000 * Math.log(pinchSpread / now)); pinchSpread = now }
+})
+for (const type of ['pointerup', 'pointercancel'] as const) canvas.addEventListener(type, e => { touches.delete(e.pointerId); pinchSpread = touches.size === 2 ? spread() : 0 })
 // Full screen without the interface (users' request 14.10.2026): the page's own fullscreen where the browser has it (not
 // iOS Safari: there the view just fills the window), the panels hidden; out by the corner button, Esc or F again.
 const immersive = (on: boolean) => {

@@ -825,6 +825,12 @@ export class AtmosphereModel implements TaskModel {
     return (this.v[xp[x] + nx * y + l] - this.v[xm[x] + nx * y + l]) / (2 * dx) - (this.u[x + yp[y] + l] - this.u[x + ym[y] + l]) / (2 * dy)
   }
 
+  /**
+   * The rotation diagnostics (UH, the cores' vorticity, where) from the fields as they are, keeping how long the
+   * rotation has held: after a saved state is applied, so the panel does not show UH 0 until a step runs.
+   */
+  refreshRotation() { const held = this.rotation.persisted; this.updateRotation(0); this.rotation.persisted = held }
+
   private updateRotation(dt: number) {
     const { nx, ny, hz, zs, layer } = this.grid, [z0, z1] = this.uhLevels, r = this.rotation, col = this.uhColumn
     // Low layers: the levels up to 1 and 3 km (on the uniform ~650 m grid: one level at ~650 m, w = 0 on the ground; four).

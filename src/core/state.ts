@@ -61,6 +61,8 @@ export function applyState(m: StateModel, state: SavedState) {
   for (const k of fieldsOf(h.version)) { m[k].set(state.data.subarray(o, o + n)); o += n }
   for (const k of STATE_COLUMNS) { m[k].set(state.data.subarray(o, o + layer)); o += layer }
   m.time = h.time; m.rotation.persisted = h.persisted
+  // The rotation diagnostics are not saved: recomputed from the fields (on a model; not on a bare holder of fields).
+  ;(m as { refreshRotation?: () => void }).refreshRotation?.()
   m.chargeGround = h.chargeGround ?? 0; m.flashCount = { ic: h.flashCount?.ic ?? 0, cg: h.flashCount?.cg ?? 0 }
   const kept = m.flashes.findIndex(f => f.time > h.time)
   if (kept >= 0) m.flashes.length = kept
