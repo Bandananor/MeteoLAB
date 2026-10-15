@@ -368,7 +368,11 @@ varying vec3 vCloudWorld;
 vec3 cloudShade(vec3 p){
   vec2 l = lightAt(vec3(p.x, 0.0, p.z));
   float od = l.x * 0.8;
-  return vec3(exp(-od), mix(0.22, 1.0, l.y), sunThrough(od) - exp(-od));
+  vec3 s = vec3(exp(-od), mix(0.22, 1.0, l.y), sunThrough(od) - exp(-od));
+  // Fading out over the last 3 km to the domain's sides: the ground beyond is drawn unshaded (no cloud there), and the
+  // shadow of a storm near the side ended in a straight edge along it.
+  vec2 side = min(p.xz - uBoxMin.xz, uBoxMax.xz - p.xz);
+  return mix(vec3(1.0, 1.0, 0.0), s, smoothstep(0.0, 3.0, min(side.x, side.y)));
 }
 `
 
