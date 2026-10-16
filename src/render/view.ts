@@ -113,6 +113,8 @@ const DRY_TIME = 2400, MELT_TIME = 1800
 const extinction = (n0: number, density: number) => (Math.PI * n0) ** .25 * density ** -.75 * 1e-3 ** .75 * 1000
 /** The share of the snow's extinction drawn outside the cloud above the melting level (updateVolume). */
 const SNOW_VEIL = .2
+/** The fall under the cloud, m, over which the snow outside it thins from whole to SNOW_VEIL (updateVolume). */
+const VEIL_FALL = 2000
 const SHAFT_RAIN = extinction(N0R, RHO_W), SHAFT_SNOW = extinction(N0S, RHO_S), SHAFT_GRAUPEL = extinction(N0G, RHO_G), SHAFT_HAIL = extinction(N0H, RHO_H)
 /** The precipitation shafts' extinction at the top of the volume texture's channel, 1/km (shaders.ts SHAFT_MAX). */
 const SHAFT_MAX = 6
@@ -227,7 +229,7 @@ export class StormView {
   private readonly light: LightVolume; private readonly flashLight: FlashVolume; private readonly strikeLight: THREE.PointLight
   /** The strongest updraught of each column, and of each column with those beside it (the tower's), m/s. */
   /** Scratch of the volume's update, per node: the cloud's extinction-weighted mass, the shafts' mass, the ice share, the tower's updraught. */
-  private cloudMass?: Float32Array; private shaftMass?: Float32Array; private iceShare?: Float32Array; private towerScratch?: Float32Array; private towerField?: Float32Array
+  private cloudMass?: Float32Array; private shaftMass?: Float32Array; private iceShare?: Float32Array; private towerScratch?: Float32Array; private towerField?: Float32Array; private fallenField?: Float32Array
   /**
    * The columns for the cloud's shape (RGBA per column): the rotation, the strongest |vertical vorticity| at 1-6 km of
    * the column and those beside it (0-255 of ROTATION_SCALE); the base of an anvil over it (of ANVIL_BASE_SCALE m) times
@@ -901,6 +903,16 @@ if(abs(uSurface - 2.0) < 0.5){
     const m = this.model, d = this.volumeData, tl = this.texLevels, { nx, ny, nz, layer, n, zs } = m.grid, exner = m.env.exner, pressure = m.env.p
     const mass = this.cloudMass ??= new Float32Array(n), shafts = this.shaftMass ??= new Float32Array(n), share = this.iceShare ??= new Float32Array(n)
     const vertical = this.towerScratch ??= new Float32Array(n), tower = this.towerField ??= new Float32Array(n)
+    // How far each point lies under the cloud over it, m (VEIL_FALL; far: none above).
+    const fallen = this.fallenField ??= new Float32Array(n)
+    for (let c = 0; c < layer; c++) {
+      let base = Infinity
+      for (let z = nz - 1; z >= 0; z--) {
+        const i = c + z * layer
+        if (cloudOpacity(m.cloud[i] + ICE_EXTINCTION * m.ice[i]) > .5) base = zs[z]
+        fallen[i] = base - zs[z]
+      }
+    }
     for (let z = 0, i = 0; z < nz; z++) for (let c = 0; c < layer; c++, i++) {
       const frozen = m.theta[i] * exner[z] < 273.15, rimers = m.graupel[i] + m.hail[i], icy = m.ice[i] + m.snow[i]
       // The shafts' extinction, 1/km, each kind from its own size distribution (extinction(): rain 2.2 M^0.75, M in g/m3,
@@ -910,11 +922,14 @@ if(abs(uSurface - 2.0) < 0.5){
       // base down, not one that starts at the melting level (a flat sheet there, 100 times denser than the cloud's
       // share of the snow over it — the testers' 15.10.2026).
       const rho = m.env.rho[z] * 1000, frozenShaft = SHAFT_SNOW * Math.pow(m.snow[i] * rho, .75) + SHAFT_GRAUPEL * Math.pow(m.graupel[i] * rho, .75) + SHAFT_HAIL * Math.pow(m.hail[i] * rho, .75)
-      // Above the melting level, outside the cloud, at SNOW_VEIL of its extinction, rising to the whole over the last 4 K
-      // to 0 °C (~600 m over the melting level, so no step there): the model keeps the snow falling out of an anvil longer than
-      // nature, where most of it sublimates — drawn whole, it hung under the anvil as dense striped walls (the testers'
-      // 15.10.2026). A visual choice, not the model's.
-      const cloudy = frozen ? cloudOpacity(m.cloud[i] + ICE_EXTINCTION * m.ice[i]) : 0, veil = lerp(SNOW_VEIL, 1, clamp((m.theta[i] * exner[z] - 269.15) / 4))
+      // Above the melting level, outside the cloud, at SNOW_VEIL of its extinction: the model keeps the snow falling out of
+      // an anvil longer than nature, where most of it sublimates — drawn whole, it hung under the anvil as dense striped
+      // walls (the testers' 15.10.2026). Whole just under the cloud, thinning to the veil over VEIL_FALL of the fall (as
+      // virga: the snow sublimates as it falls), and whole again over the last 8 K to 0 °C (~1.2 km): with a sharper
+      // change the rain under it began at the melting level as a flat-topped box apart from the cloud's base (the
+      // testers' 15.10.2026). A visual choice, not the model's.
+      const cloudy = frozen ? cloudOpacity(m.cloud[i] + ICE_EXTINCTION * m.ice[i]) : 0
+      const veil = lerp(SNOW_VEIL, 1, Math.max(clamp((m.theta[i] * exner[z] - 265.15) / 8), 1 - clamp((fallen[i] - 300) / VEIL_FALL)))
       mass[i] = m.cloud[i] + ICE_EXTINCTION * m.ice[i] + (SNOW_EXTINCTION * m.snow[i] + RIMER_EXTINCTION * rimers) * cloudy
       shafts[i] = SHAFT_RAIN * Math.pow(m.rain[i] * rho, .75) + frozenShaft * (1 - cloudy) * veil
       share[i] = m.cloud[i] + icy > 0 ? icy / (m.cloud[i] + icy) : 1
