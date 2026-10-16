@@ -3,7 +3,7 @@ import { cloudGenus, hailWord, rainWord } from './describe'
 
 describe('words for the storm panel (src/describe.ts)', () => {
   it('names the rain rate and the hail', () => {
-    expect([0, 1, 5, 20, 40, 80].map(rainWord)).toEqual(['', 'слабый', 'умеренный', 'сильный', 'ливень', 'очень сильный ливень'])
+    expect([0, 1, 5, 20, 40, 80].map(rainWord)).toEqual(['', 'слабый ливневый дождь', 'умеренный ливневый дождь', 'сильный ливневый дождь', 'сильный ливневый дождь', 'очень сильный ливневый дождь'])
     expect([0, 5, 15, 30, 60].map(hailWord)).toEqual(['', 'мелкий', 'средний', 'крупный', 'очень крупный'])
   })
   it('classifies the cloud from cumulus humilis to cumulonimbus capillatus', () => {
