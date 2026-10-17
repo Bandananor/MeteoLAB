@@ -647,6 +647,10 @@ void main(){
     tt += dt;
   }
 
+  // The march stops at T < 0.02: what is left would let the sun's disc (SUN_DISC times the sky, view.ts) glow through a
+  // dense cloud as a bright spot (the testers' 16.10.2026). The last few per cent go to nothing; thinner cloud still
+  // shows the sun dimmed, as in nature.
+  T *= smoothstep(0.02, 0.1, T);
   float alpha = (1.0 - T) * uOpacity;
   if(alpha < 0.003) discard;
   vec3 c = col / (1.0 - T);
