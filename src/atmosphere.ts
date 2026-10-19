@@ -1,3 +1,4 @@
+import type { CameraGrade } from './camera'
 import { applyState, readState, AtmosphereModel, CellTracker, coldPoolBalance, type SavedState, saveState, type ColdPoolBalance, computeSounding, domainPoint, groundPoint, Station, type Environment, insolation, liveSounding, type ModelDiagnostics, parcelIndices, type ParcelIndices, type SimConfig, type Sounding, stormIndices, type StormIndices, sunDirection } from './core'
 import { describeConvection } from './describe'
 import { isPhone, PHONE_THREADS } from './hud'
@@ -99,7 +100,7 @@ export class Atmosphere implements ViewSettings {
   standAt(nx: number, ny: number, keepLook = false) { const p = this.view.groundUnder(nx, ny); if (p) this.view.stand(p, keepLook); return !!p }
   standAtStation() {
     if (!this.station) return false
-    // The station's ground point is wrapped into the domain's span; the observer's is not (they may stand outside it).
+    // Across periodic edges the station's ground point is wrapped into the domain's span; the observer's is not (they may stand outside it).
     const d = domainPoint(this.mirror, this.station.x, this.station.y), [fu, fv] = this.mirror.frame, t = this.mirror.time
     this.view.stand({ x: d.x + fu * t, y: d.y + fv * t }); return true
   }
@@ -111,6 +112,8 @@ export class Atmosphere implements ViewSettings {
   set onShaderError(f: ((log: string, gpu: string) => void) | null) { this.view.onShaderError = f }
   /** The last flash again, slowed down (see StormView.replayLightning). */
   replayLightning(rate: number) { return this.view.replayLightning(rate) }
+  /** The camera's settings (StormView.setGrade). */
+  setGrade(g: CameraGrade) { this.view.setGrade(g) }
   dispose() { this.worker.terminate(); this.view.dispose() }
   sounding() { return this.live.sounding }
 
@@ -128,7 +131,7 @@ export class Atmosphere implements ViewSettings {
   placeStation(nx: number, ny: number) { const p = this.view.groundPoint(nx, ny), g = groundPoint(this.mirror, p.x, p.y); this.placeStationAt(g); return g }
   /** Places the weather station at a ground position (m), or removes it (null). */
   placeStationAt(g: { x: number; y: number } | null) { this.station = g && new Station(g.x, g.y); if (this.station) this.station.observe(this.mirror); this.markStation() }
-  private markStation() { this.view.setStation(this.station && domainPoint(this.mirror, this.station.x, this.station.y)) }
+  private markStation() { this.view.setStation(this.station && !this.station.outside ? domainPoint(this.mirror, this.station.x, this.station.y) : null) }
   /** Rings the selected cell in the 3D view. */
   setSelection(p: { x: number; y: number } | null) { this.view.setSelection(p) }
 

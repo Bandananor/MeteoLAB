@@ -27,6 +27,7 @@ import { applyLayout, askGuide, askLayout, Hud, isPhone, savedLayout, suggestedL
 import { Timeline } from './timeline'
 import { DEFAULTS as defaults } from './defaults'
 import { hailWord, rainWord } from './describe'
+import { type CameraGrade, GRADE_SLIDERS, loadGrade, NEUTRAL_GRADE, saveGrade } from './camera'
 
 // Settings whose change restarts the run (the rest act on the running model): marked ↻ at their label.
 const resetKeys = new Set<keyof SimConfig>(['surfaceTemp','lapseLow','lapseMid','lapseUpper','tropopause','stratoWarming','capStrength','capHeight','rhSurface','rhLow','rhMid','rhUpper','moistLayer','wind0','wind05','wind1','wind3','wind6','wind10','windDir0','windDir05','windDir1','windDir3','windDir6','windDir10','latitude','bubble','surfaceType','city'])
@@ -194,6 +195,9 @@ app.innerHTML = `<div class="app">
         <div class="cell-labels" id="cellLabels"></div>
         <div class="ov-pick" id="pickHint" hidden>Щёлкните по земле, где встать · Esc — отмена</div>
         <button class="immersive-exit" id="immersiveExit" title="Вернуть панели (Esc)">✕ Выйти из полноэкранного</button>
+        <div class="cam" id="camera"><button class="cam__toggle" id="cameraToggle" aria-expanded="false" title="Экспозиция, яркость, контраст и насыщенность кадра — только в полноэкранном режиме, снимок (P) их сохраняет">Камера</button>
+          <div class="cam__body" id="cameraBody" hidden>${GRADE_SLIDERS.map(s => `<label class="cam__row"><span>${s.label}</span><input type="range" data-grade="${s.key}" min="${s.min}" max="${s.max}" step="${s.step}"><output data-grade-out="${s.key}"></output></label>`).join('')}
+            <button class="cam__reset" id="cameraReset">Сбросить</button></div></div>
         <div class="gl-lost" id="glLost" role="alert" hidden><div><p><b>3D-вид отключён браузером</b> — ему не хватило памяти видеокарты (так бывает на телефоне при многих открытых вкладках или после переключения приложений). Расчёт идёт дальше; вид может вернуться сам.</p><button class="btn btn--primary" id="glReload" type="button">Перезапустить с теми же настройками</button></div></div>
         <div class="gl-lost" id="glShader" role="alert" hidden><div><p><b>3D-вид не собрался на этой видеокарте</b> — расчёт и приборы работают. Пришлите, пожалуйста, снимок этого сообщения разработчику.</p><pre class="gl-log" id="glShaderLog"></pre></div></div>
         <div class="ov-tl"><button class="ov-toggle" id="flowToggle" aria-pressed="false">Потоки →</button><button class="ov-toggle" id="precipToggle" aria-pressed="false" title="Частицы осадков: снежинки, опускаясь ниже уровня 0 °C, тают в капли">Снег и дождь</button><button class="ov-toggle" id="mesoToggle" aria-pressed="true" title="Кольцо над вращающимся восходящим потоком (UH 2–5 км выше порога вращения)">Мезоциклон</button><button class="ov-toggle" id="lightningToggle" aria-pressed="true" title="Каналы молний в момент вспышки: видны там, где выходят из облака; внутри облака — только его свечение">Молнии</button><button class="ov-toggle" id="lightningReplay" title="Последний удар в землю ещё раз, в 20 раз медленнее, как на скоростной съёмке: видно, как слабый ступенчатый лидер ветвится вниз, как вспыхивает и за миллисекунды гаснет обратный удар и как идут повторные удары — чаще всего по тому же каналу (отсюда мерцание)">Повтор удара</button><button class="ov-toggle" id="groundToggle" aria-pressed="false" popovertarget="groundMenu" title="Встать на землю и смотреть на грозу снизу, как наблюдатель: где встать — в меню. Клавиша G">С земли</button><button class="ov-toggle" id="snapshotButton" title="Сохранить кадр 3D-вида картинкой PNG — без панелей, как он есть сейчас. Клавиша P">Снимок</button><button class="ov-toggle" id="immersiveToggle" title="Во весь экран без панелей и кнопок. Выйти — той же кнопкой в углу или Esc. Клавиша F">Во весь экран</button><button class="ov-toggle" id="swathToggle" aria-pressed="false" title="Сколько дождя выпало на землю с начала расчёта: голубой до 5 мм, зелёный до 10, жёлтый до 25, оранжевый до 50, красный больше">Сумма осадков</button></div>
@@ -224,8 +228,8 @@ app.innerHTML = `<div class="app">
         <div class="metrics">
           ${metric('updraft', 'Восх. поток, макс.', 'м/с')}
           ${metric('uh', 'Вращение UH 2–5 км', 'м²/с²', 'tip-uh')}
-          ${metric('rain', 'Интенсивность дождя', 'мм/ч', 'tip-rain', '<div class="t-caption" id="rainWord"></div>')}
-          ${metric('rainTotal', 'Сумма осадков, макс.', 'мм', 'tip-rainTotal')}
+          ${metric('rain', 'Дождь в ядре сейчас', 'мм/ч', 'tip-rain', '<div class="t-caption" id="rainWord"></div>')}
+          ${metric('rainTotal', 'Сумма в самой мокрой точке', 'мм', 'tip-rainTotal')}
           ${metric('gust', 'Порыв у земли', 'м/с', 'tip-gust')}
           ${metric('hail', 'Град у земли', 'см', 'tip-hail', '<div class="t-caption" id="hailWord"></div><div class="t-caption" id="hailSwath"></div>')}
         </div></section>
@@ -264,8 +268,8 @@ app.innerHTML = `<div class="app">
       </div>
     </div>
     ${tip('tip-uh', 'Вращение потока, UH 2–5 км', 'Спиральность восходящего потока: насколько поднимающийся воздух вращается циклонически в слое 2–5 км.', `<dl class="popover__scale"><dt>≥ ${UH_ROTATING}</dt><dd>поток вращается (подсветка в 3D)</dd></dl>`, `Мезоциклон решается не по UH, а по вращению ядра потока: завихренность на 2–5 км ≥ 3·10⁻³ с⁻¹ в течение ${MESO_PERSISTENCE / 60} мин.`)}
-    ${tip('tip-rain', 'Интенсивность дождя', 'Самый сильный дождь у земли сейчас: поток ρ·q_r·V_t.')}
-    ${tip('tip-rainTotal', 'Сумма осадков, макс.', 'Наибольшая сумма дождя на земле с начала расчёта.')}
+    ${tip('tip-rain', 'Дождь в ядре сейчас', 'Самый сильный дождь у земли в эту минуту — где бы он ни шёл, обычно под ядром грозы (поток ρ·q_r·V_t). Ядро движется и проходит над одной точкой за 5–15 минут, поэтому 100 мм/ч в ядре дают в точке не 100 мм за час, а 5–20 мм. Сколько выпало в одном месте — «Сумма в самой мокрой точке» и метеостанция.')}
+    ${tip('tip-rainTotal', 'Сумма в самой мокрой точке', 'Наибольшая сумма дождя на земле с начала расчёта — в той точке, где выпало больше всего (полоса осадков на 3D-виде). В точке, над которой прошло ядро, сумма меньше: интенсивность в ядре держится там лишь минуты. Ход дождя в своей точке показывает метеостанция.')}
     ${tip('tip-gust', 'Порыв у земли', 'Самый сильный ветер на высоте 100 м: оттоки и микропорывы под грозой.')}
     ${tip('tip-hail', 'Град у земли', 'Крупнейшие градины, долетевшие до земли сейчас; ниже — крупнейшие за весь прогон.')}
     </aside>
@@ -397,7 +401,11 @@ const chooseQuality = (q: Quality | 'auto') => {
   try { localStorage.setItem(QUALITY_KEY, quality) } catch { /* the choice lasts this visit */ }
   useQuality()
 }
+// The camera's settings (src/camera.ts): on the view only in the full screen, kept per viewer.
+const cameraGrade = loadGrade()
+const applyGrade = () => sim.setGrade(document.documentElement.classList.contains('immersive') ? cameraGrade : NEUTRAL_GRADE)
 const useQuality = (start?: Quality) => {
+  applyGrade()
   shownLevel = null; sim.onLevel = showQuality
   sim.onShaderError = (log, gpu) => { document.querySelector('#glShaderLog')!.textContent = `${gpu}
 ${log.slice(0, 600)}`; document.querySelector<HTMLElement>('#glShader')!.hidden = false }
@@ -980,8 +988,23 @@ const immersive = (on: boolean) => {
   document.documentElement.classList.toggle('immersive', on)
   if (on) document.documentElement.requestFullscreen?.().catch(() => { /* the view fills the window anyway */ })
   else if (document.fullscreenElement) document.exitFullscreen().catch(() => {})
-  wakeExit()
+  if (!on) showCamera(false)
+  applyGrade(); wakeExit()
 }
+const cameraBody = document.querySelector<HTMLElement>('#cameraBody')!, cameraToggle = document.querySelector<HTMLButtonElement>('#cameraToggle')!
+const showCamera = (open: boolean) => { cameraBody.hidden = !open; cameraToggle.setAttribute('aria-expanded', String(open)); document.documentElement.classList.toggle('camera-open', open) }
+const showGrade = () => GRADE_SLIDERS.forEach(s => {
+  document.querySelector<HTMLInputElement>(`[data-grade="${s.key}"]`)!.value = String(cameraGrade[s.key])
+  const v = cameraGrade[s.key]; document.querySelector(`[data-grade-out="${s.key}"]`)!.textContent = s.unit === 'EV' ? `${v > 0 ? '+' : ''}${v.toFixed(1)} EV` : `${v} %`
+})
+showGrade()
+cameraToggle.addEventListener('click', () => showCamera(cameraBody.hidden !== false))
+cameraBody.addEventListener('input', e => {
+  const input = e.target as HTMLInputElement, key = input.dataset.grade as keyof CameraGrade | undefined
+  if (!key) return
+  cameraGrade[key] = Number(input.value); saveGrade(cameraGrade); showGrade(); applyGrade()
+})
+document.querySelector('#cameraReset')!.addEventListener('click', () => { Object.assign(cameraGrade, NEUTRAL_GRADE); saveGrade(cameraGrade); showGrade(); applyGrade() })
 // The exit button fades after a few still seconds and comes back with any move or touch.
 let exitTimer = 0
 const wakeExit = () => { document.documentElement.classList.remove('immersive-still'); clearTimeout(exitTimer); exitTimer = window.setTimeout(() => document.documentElement.classList.add('immersive-still'), 2500) }

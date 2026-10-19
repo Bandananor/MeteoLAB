@@ -11,6 +11,8 @@ import { dewpointAt } from './skewt'
 /** What the station reads from a model (the running one or the UI's mirror of it). */
 export interface StationSource {
   grid: Grid; env: Environment; frame: readonly [number, number]; time: number
+  /** The side boundaries (AtmosphereModel.edges; absent = periodic): the ground repeats only across periodic ones. */
+  edges?(): 'periodic' | 'relaxed' | 'relaxed-x'
   theta: ArrayLike<number>; q: ArrayLike<number>; u: ArrayLike<number>; v: ArrayLike<number>
   cloud: ArrayLike<number>; rain: ArrayLike<number>; ice: ArrayLike<number>; snow: ArrayLike<number>; graupel: ArrayLike<number>; hail: ArrayLike<number>
   /** Rain and hail on the ground since the start, mm, per ground column (fixed to the ground, see AtmosphereModel). */
@@ -19,15 +21,24 @@ export interface StationSource {
   pressure?: ArrayLike<number>
 }
 
+type Placed = Pick<StationSource, 'grid' | 'frame' | 'time' | 'edges'>
+/**
+ * Whether the ground repeats across the domain's x and y edges. Across periodic edges the domain moving with the storm
+ * comes back over the same ground; across relaxed ones (a moving front) it does not: a station or a city the domain
+ * has left behind stays behind, not brought back on the far side into the other air mass.
+ */
+export function groundRepeats(m: Pick<StationSource, 'edges'>) { const e = m.edges?.() ?? 'periodic'; return [e === 'periodic', e !== 'relaxed'] as const }
 /** A ground point (m from the ground origin) to the domain point (m from the domain corner) over it now, and back. */
-export function domainPoint(m: Pick<StationSource, 'grid' | 'frame' | 'time'>, gx: number, gy: number) {
-  const { width, depth } = m.grid
-  return { x: mod(gx - m.frame[0] * m.time, width), y: mod(gy - m.frame[1] * m.time, depth) }
+export function domainPoint(m: Placed, gx: number, gy: number) {
+  const { width, depth } = m.grid, [rx, ry] = groundRepeats(m), x = gx - m.frame[0] * m.time, y = gy - m.frame[1] * m.time
+  return { x: rx ? mod(x, width) : x, y: ry ? mod(y, depth) : y }
 }
-export function groundPoint(m: Pick<StationSource, 'grid' | 'frame' | 'time'>, x: number, y: number) {
-  const { width, depth } = m.grid
-  return { x: mod(x + m.frame[0] * m.time, width), y: mod(y + m.frame[1] * m.time, depth) }
+export function groundPoint(m: Placed, x: number, y: number) {
+  const { width, depth } = m.grid, [rx, ry] = groundRepeats(m), gx = x + m.frame[0] * m.time, gy = y + m.frame[1] * m.time
+  return { x: rx ? mod(gx, width) : gx, y: ry ? mod(gy, depth) : gy }
 }
+/** Whether a domain point (domainPoint) lies in the domain now. */
+export const inDomain = (m: Pick<StationSource, 'grid'>, p: { x: number; y: number }) => p.x >= 0 && p.x < m.grid.width && p.y >= 0 && p.y < m.grid.depth
 
 /**
  * Surface pressure perturbation of every column, Pa: the model's own pressure (the anelastic projection: buoyancy and
@@ -85,6 +96,8 @@ export class Station {
   private gust = 0; private su = 0; private sv = 0; private n = 0; private start = NaN; private lastTotal = 0
   /** Ground position, m (it stays put while the domain moves over it). */
   readonly x: number; readonly y: number
+  /** The domain has left the station behind (relaxed edges, see groundRepeats): it records nothing while there. */
+  outside = false
   constructor(x: number, y: number) { this.x = x; this.y = y }
 
   /** Bilinear value of a ground-level field at the station now. */
@@ -100,6 +113,8 @@ export class Station {
   /** Call after every model update: keeps the gust and the mean wind, writes a record every STATION_RECORD s. */
   observe(m: StationSource) {
     if (this.records.length && m.time < this.records[this.records.length - 1].t) { this.records.length = 0; this.start = NaN }
+    this.outside = !inDomain(m, domainPoint(m, this.x, this.y))
+    if (this.outside) return
     const u = this.sample(m, m.u) + m.frame[0], v = this.sample(m, m.v) + m.frame[1]
     this.gust = Math.max(this.gust, Math.hypot(u, v)); this.su += u; this.sv += v; this.n++
     if (Number.isNaN(this.start)) { this.start = m.time; this.lastTotal = m.precipitation[this.groundColumn(m)]; this.write(m, 0); return }

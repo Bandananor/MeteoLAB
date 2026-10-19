@@ -4,6 +4,7 @@ import { Environment, type EnvironmentProfile } from './environment'
 import { createGrid, domainGrid, type Grid, shiftedLevel } from './grid'
 import { domainMotion } from './kinematics'
 import { clamp, lerp, mod, mulberry32 } from './math'
+import { groundRepeats } from './station'
 import { FluxTransport, RK3 } from './advection'
 import { environmentProfile } from './profiles'
 import { SMAGORINSKY, Turbulence } from './turbulence'
@@ -356,13 +357,19 @@ export class AtmosphereModel implements TaskModel {
 
   /** The city's share of each ground column: 1 inside its radius, 0 outside, a 1 km linear transition (periodic distances). */
   private cityMap() {
-    const { nx, ny, dx, dy, width: W, depth: D } = this.grid, r = (this.config.city ?? 0) * 1000, map = new Float32Array(nx * ny)
-    if (!(r > 0)) return map
-    for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++) {
-      const ex = Math.abs((x + .5) * dx - W / 2), ey = Math.abs((y + .5) * dy - D / 2)
-      map[x + nx * y] = Math.max(0, Math.min(1, .5 - (Math.hypot(Math.min(ex, W - ex), Math.min(ey, D - ey)) - r) / 1000))
-    }
+    const { nx, ny, dx, dy } = this.grid, map = new Float32Array(nx * ny)
+    if ((this.config.city ?? 0) > 0) for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++) map[x + nx * y] = this.cityShare((x + .5) * dx, (y + .5) * dy)
     return map
+  }
+
+  /**
+   * The city's share at a ground point (m from the ground origin): the distance from the ground's centre is periodic
+   * along the axes where the ground repeats (groundRepeats), so across relaxed edges the city stays where it was built.
+   */
+  private cityShare(gx: number, gy: number) {
+    const { width: W, depth: D } = this.grid, [rx, ry] = groundRepeats(this), r = (this.config.city ?? 0) * 1000
+    const ex = rx ? Math.abs(mod(gx, W) - W / 2) : Math.abs(gx - W / 2), ey = ry ? Math.abs(mod(gy, D) - D / 2) : Math.abs(gy - D / 2)
+    return Math.max(0, Math.min(1, .5 - (Math.hypot(rx ? Math.min(ex, W - ex) : ex, ry ? Math.min(ey, D - ey) : ey) - r) / 1000))
   }
 
   /** Distance the domain has moved over the ground since the start (m east, m north). */
@@ -376,13 +383,13 @@ export class AtmosphereModel implements TaskModel {
   private updateGround() {
     const { nx, ny, dx, dy } = this.grid, [ox, oy] = this.frameOffset(), sx = mod(ox / dx, nx), sy = mod(oy / dy, ny)
     const x0 = Math.floor(sx), y0 = Math.floor(sy), fx = sx - x0, fy = sy - y0, c = this.groundCell, w = this.groundWeight, pattern = this.surfacePattern
-    const city = (this.config.city ?? 0) > 0 ? this.cityGround : null, zones = this.zoneGround
+    const city = (this.config.city ?? 0) > 0 ? this.cityGround : null, zones = this.zoneGround, [rx, ry] = groundRepeats(this)
     for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++) {
       const i = x + nx * y, ax = (x + x0) % nx, bx = (ax + 1) % nx, ay = (y + y0) % ny * nx, by = (ay / nx + 1) % ny * nx, k = i * 4
       c[k] = ax + ay; c[k + 1] = bx + ay; c[k + 2] = ax + by; c[k + 3] = bx + by
       w[k] = (1 - fx) * (1 - fy); w[k + 1] = fx * (1 - fy); w[k + 2] = (1 - fx) * fy; w[k + 3] = fx * fy
       this.patternNow[i] = w[k] * pattern[c[k]] + w[k + 1] * pattern[c[k + 1]] + w[k + 2] * pattern[c[k + 2]] + w[k + 3] * pattern[c[k + 3]]
-      if (city) this.cityNow[i] = w[k] * city[c[k]] + w[k + 1] * city[c[k + 1]] + w[k + 2] * city[c[k + 2]] + w[k + 3] * city[c[k + 3]]
+      if (city) this.cityNow[i] = rx && ry ? w[k] * city[c[k]] + w[k + 1] * city[c[k + 1]] + w[k + 2] * city[c[k + 2]] + w[k + 3] * city[c[k + 3]] : this.cityShare((x + .5) * dx + ox, (y + .5) * dy + oy)
       if (zones) for (const [now, map] of [[this.zoneShareNow, zones.share], [this.zoneThetaNow, zones.theta], [this.zoneVapourNow, zones.vapour]] as const)
         now[i] = w[k] * map[c[k]] + w[k + 1] * map[c[k + 1]] + w[k + 2] * map[c[k + 2]] + w[k + 3] * map[c[k + 3]]
     }

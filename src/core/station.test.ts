@@ -12,6 +12,20 @@ describe('virtual weather station', () => {
     expect(g.x).toBeCloseTo(5000 + 7200, 6)
   })
 
+  it('is left behind, not brought back on the far side, when the domain with relaxed edges moves away (a front, 19.10.2026)', () => {
+    const grid = smallGrid(), at = (time: number, edges: 'periodic' | 'relaxed') => ({ grid, frame: [8, -3] as const, time, edges: () => edges })
+    // Placed 2 km inside the western edge; 2000 s later the domain has gone 16 km east.
+    const g = groundPoint(at(0, 'relaxed'), 2000, 7000)
+    expect(domainPoint(at(2000, 'relaxed'), g.x, g.y).x).toBeCloseTo(2000 - 16000, 6)
+    expect(domainPoint(at(2000, 'periodic'), g.x, g.y).x).toBeCloseTo(2000 - 16000 + grid.width, 6)
+    const model = new AtmosphereModel({ ...SUMMER_DAY, bubble: 0, frameMotion: [8, 0], edges: 'relaxed', city: 3 }, smallGrid()), station = new Station(2000, 7000)
+    station.observe(model); expect(station.outside).toBe(false)
+    model.time = 2000; station.observe(model)
+    expect(station.outside).toBe(true); expect(station.records.length).toBe(1)
+    // The city stays at the ground's centre: the domain's centre is over it at the start, 16 km west of it later.
+    expect(model.cityGround[grid.nx / 2 + grid.nx * grid.ny / 2]).toBe(1)
+  })
+
   it('reads the starting environment, then a cold pool as colder air, higher pressure and the gust', () => {
     const model = new AtmosphereModel({ ...SUMMER_DAY, bubble: 0, followStorm: false }, smallGrid()), { layer, nx, dx, dy, zs } = model.grid
     const station = new Station(4.5 * dx, 5.5 * dy)

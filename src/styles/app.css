@@ -185,9 +185,19 @@ html:not(.layout-phone) .m-only { display: none !important; }
    button in the corner to come back, fading after a few still seconds. */
 .immersive-exit { display: none; }
 .immersive .viewport { position: fixed; inset: 0; z-index: 100; }
-.immersive .viewport > :not(canvas):not(.immersive-exit) { display: none !important; }
+.immersive .viewport > :not(canvas):not(.immersive-exit):not(.cam) { display: none !important; }
 .immersive .immersive-exit { display: block; position: absolute; top: max(12px, env(safe-area-inset-top)); right: max(12px, env(safe-area-inset-right)); padding: 8px 12px; border: 0; border-radius: var(--r-2); background: var(--overlay); box-shadow: inset 0 0 0 1px var(--overlay-line); color: var(--overlay-text); font: var(--fw-medium) var(--fs-label)/1 var(--font-text); transition: opacity .6s; }
-.immersive-still .immersive-exit { opacity: 0; }
+.immersive-still .immersive-exit, .immersive-still:not(.camera-open) .cam { opacity: 0; }
+/* The camera's settings (main.ts, src/camera.ts) in the opposite corner: a button and its sliders. */
+.cam { display: none; }
+.immersive .cam { display: block; position: absolute; top: max(12px, env(safe-area-inset-top)); left: max(12px, env(safe-area-inset-left)); width: min(280px, calc(100vw - 24px)); transition: opacity .6s; }
+.cam__toggle, .cam__reset { padding: 8px 12px; border: 0; border-radius: var(--r-2); background: var(--overlay); box-shadow: inset 0 0 0 1px var(--overlay-line); color: var(--overlay-text); font: var(--fw-medium) var(--fs-label)/1 var(--font-text); }
+.cam__body { display: grid; gap: 8px; margin-top: 6px; padding: 10px 12px; border-radius: var(--r-2); background: var(--overlay); box-shadow: inset 0 0 0 1px var(--overlay-line); color: var(--overlay-text); font: var(--fs-label)/1.2 var(--font-text); }
+.cam__body[hidden] { display: none; }
+.cam__row { display: grid; grid-template-columns: 92px 1fr 56px; align-items: center; gap: 8px; }
+.cam__row input { width: 100%; min-width: 0; accent-color: var(--overlay-text); }
+.cam__row output { text-align: right; font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.cam__reset { justify-self: start; }
 .immersive .bottombar, .immersive .sheet-scrim, .immersive .menu-anchor { display: none !important; }
 
 /* The view from the ground's menu (main.ts): where to stand, each choice with a line on what is seen from there. */

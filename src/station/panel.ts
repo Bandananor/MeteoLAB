@@ -21,7 +21,7 @@ const ROWS: Row[] = [
  */
 export class StationPanel {
   private readonly root: HTMLDivElement; private readonly canvas: HTMLCanvasElement; private readonly ctx: CanvasRenderingContext2D
-  private station: Station | null = null; private shown = -1; private placing = false
+  private station: Station | null = null; private shown = -1; private placing = false; private outside = false
   open = false
   /** Called with true when the user asks to place the station (the next click on the 3D view places it), false to remove it. */
   onPlace: (place: boolean) => void = () => {}
@@ -53,8 +53,8 @@ export class StationPanel {
 
   /** Called every frame with the current station (or null) and whether the next click places one. */
   refresh(station: Station | null, placing: boolean) {
-    const changed = station !== this.station || placing !== this.placing
-    this.station = station; this.placing = placing
+    const changed = station !== this.station || placing !== this.placing || !!station?.outside !== this.outside
+    this.station = station; this.placing = placing; this.outside = !!station?.outside
     if (!this.open) return
     const n = station?.records.length ?? 0
     if (!changed && n === this.shown) return
@@ -70,7 +70,7 @@ export class StationPanel {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.fillStyle = pal.bg; ctx.fillRect(0, 0, w, h); ctx.font = `11px ${MONO}`
     const s = this.station, recs = s?.records ?? [], text = (id: string, v: string) => { (this.root.querySelector(`#${id}`) as HTMLElement).innerHTML = v }
     text('stationWhere', s ? `${(s.x / 1000).toFixed(1)}, ${(s.y / 1000).toFixed(1)} КМ` : this.placing ? 'ЖДЁТ ЩЕЛЧКА' : 'НЕТ'); text('stationCount', String(recs.length))
-    text('stationHint', s ? `Станция в ${(s.x / 1000).toFixed(1)} км к востоку и ${(s.y / 1000).toFixed(1)} км к северу от начала координат земли (отмечена на 3D-виде). Перезапуск начинает запись заново.` : this.placing ? 'Щёлкните по земле на 3D-виде.' : 'Станции нет. Поставьте её щелчком по 3D-виду — лучше на пути грозы.')
+    text('stationHint', s?.outside ? 'Область ушла вслед за грозой, а станция стоит на земле и осталась позади: записи остановлены. Чтобы станция и город оставались в области, снимите «Область движется вместе с грозой» в настройках расчёта.' : s ? `Станция в ${(s.x / 1000).toFixed(1)} км к востоку и ${(s.y / 1000).toFixed(1)} км к северу от начала координат земли (отмечена на 3D-виде). Перезапуск начинает запись заново.` : this.placing ? 'Щёлкните по земле на 3D-виде.' : 'Станции нет. Поставьте её щелчком по 3D-виду — лучше на пути грозы.')
     const last = recs[recs.length - 1]
     text('stationNow', last ? numbers([['T', last.temp.toFixed(1), '°'], ['Td', last.dew.toFixed(1), '°'], ['порыв', last.gust.toFixed(1), 'м/с'], ['осадки', last.rainRate.toFixed(1), 'мм/ч']])
       + `<dl class="kv">${readings([['давление', `${last.pressure > 0 ? '+' : ''}${last.pressure.toFixed(1)} гПа`], ['ветер', `${last.wind.toFixed(1)} м/с с ${last.dir.toFixed(0)}°`], ['сумма', `${last.rainTotal.toFixed(1)} мм`], ...(last.hail > .05 ? [['град', `${last.hail.toFixed(1)} мм`] as [string, string]] : [])])}</dl>` : '<span class="t-caption">записей пока нет</span>')

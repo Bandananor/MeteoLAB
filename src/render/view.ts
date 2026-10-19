@@ -7,7 +7,8 @@ import { FlashVolume, LightVolume } from './light'
 import { noiseTexture } from './noise'
 import { LightningView } from './lightning'
 import { type GroundPoint, Observer } from './observer'
-import { type AtmosphereModel, computeScalarField, headingVector, heightAt, levelAt, MESO_PERSISTENCE, sunDirection, UH_ROTATING, type UhLayer } from '../core'
+import { type CameraGrade, gradeFilter, NEUTRAL_GRADE } from '../camera'
+import { type AtmosphereModel, computeScalarField, groundRepeats, headingVector, heightAt, levelAt, MESO_PERSISTENCE, sunDirection, UH_ROTATING, type UhLayer } from '../core'
 import { clamp, lerp, mod, mulberry32 } from '../core/math'
 import { qsatP } from '../core/microphysics'
 import { N0G, N0R, RHO_G, RHO_W } from '../core/graupel'
@@ -163,6 +164,8 @@ const TOWER_LEVELS = 2
 const SPIN_UPDRAUGHT = 5, MESO_HELD = 600
 /** Mammatus only over air drier than this relative humidity under the anvil's base. */
 const MAMMA_RH = .9
+/** The tone mapping's exposure with the camera's settings neutral. */
+const EXPOSURE = 1.05
 const cloudOpacity = (c: number) => c > .00003 ? 1 - Math.exp(-(c - .00003) / .0004) : 0
 /** The cloud base in the columns' map: its scale, m, and how high it is looked for, m (a microburst's base is ~4 km). */
 const BASE_SCALE = 10_000, BASE_SEARCH = 6000
@@ -253,6 +256,8 @@ export class StormView {
   /** Ring around the selected cell (see setSelection). */
   private readonly selectionMarker: THREE.Mesh; private selection: { x: number; y: number } | null = null
   private readonly stationMarker: THREE.Mesh; private station: { x: number; y: number } | null = null
+  /** The camera's settings (setGrade). */
+  private grade: CameraGrade = NEUTRAL_GRADE
   private frame = 0; private readonly lookScratch = new THREE.Vector3()
   /** The camera is being turned (OrbitControls between start and end, and the damping's tail after release: turnedAt). */
   private turning = false; private turnedAt = 0
@@ -301,7 +306,7 @@ export class StormView {
       this.onShaderError?.(log, gpu)
     }
     // A phone renders at 1 pixel per CSS pixel: its screen is small and its GPU weak (the clouds are ray-marched).
- this.renderer.outputColorSpace = THREE.SRGBColorSpace; this.renderer.toneMapping = THREE.ACESFilmicToneMapping; this.renderer.toneMappingExposure = 1.05
+ this.renderer.outputColorSpace = THREE.SRGBColorSpace; this.renderer.toneMapping = THREE.ACESFilmicToneMapping; this.renderer.toneMappingExposure = EXPOSURE
     this.scene = new THREE.Scene(); this.scene.fog = new THREE.FogExp2(0x9fb4c4, .1)
     this.camera = new THREE.PerspectiveCamera(42, 1, .1, 180 * scale); this.camera.position.set(38 * scale, 24 * scale, 39 * scale)
     if (typeof location !== 'undefined' && new URLSearchParams(location.search).has('view-debug')) { (globalThis as { __stormView?: StormView }).__stormView = this; Object.assign(this, { debugQuality: true }) }
@@ -318,12 +323,13 @@ export class StormView {
     this.groundColor = new THREE.Color(ground); this.albedo = luminance([this.groundColor.r, this.groundColor.g, this.groundColor.b])
     this.ground = new THREE.Mesh(new THREE.PlaneGeometry(W, D), groundMat); this.ground.rotation.x = -Math.PI / 2; this.scene.add(this.ground)
     // A city (SimConfig.city): the ground colour blends to the urban grey under it, one texel per ground column like the
-    // swath, sliding with the ground in updateGround.
+    // swath, sliding with the ground in updateGround; repeated only along the axes where the ground repeats (groundRepeats).
     if ((model.config.city ?? 0) > 0) {
       const data = new Uint8Array(nx * ny * 4), a = new THREE.Color(ground), b = new THREE.Color(0x6e7175), mix = new THREE.Color(), rgb = { r: 0, g: 0, b: 0 }
       model.cityGround.forEach((share, i) => { mix.lerpColors(a, b, share).getRGB(rgb, THREE.SRGBColorSpace); data.set([rgb.r * 255, rgb.g * 255, rgb.b * 255, 255], i * 4) })
       this.cityTexture = new THREE.DataTexture(data, nx, ny, THREE.RGBAFormat); this.cityTexture.colorSpace = THREE.SRGBColorSpace
-      this.cityTexture.magFilter = this.cityTexture.minFilter = THREE.LinearFilter; this.cityTexture.wrapS = this.cityTexture.wrapT = THREE.RepeatWrapping; this.cityTexture.needsUpdate = true
+      this.cityTexture.magFilter = this.cityTexture.minFilter = THREE.LinearFilter; const [rx, ry] = groundRepeats(model)
+      this.cityTexture.wrapS = rx ? THREE.RepeatWrapping : THREE.ClampToEdgeWrapping; this.cityTexture.wrapT = ry ? THREE.RepeatWrapping : THREE.ClampToEdgeWrapping; this.cityTexture.needsUpdate = true
       groundMat.map = this.cityTexture; groundMat.color.set(0xffffff)
     }
     // Rain swath: one texel per ground column (row 0 is the southern edge, as the plane's v runs north).
@@ -630,7 +636,16 @@ if(abs(uSurface - 2.0) < 0.5){
    */
   snapshot() {
     this.turning = false; this.render()
-    return new Promise<Blob | null>(resolve => this.canvas.toBlob(resolve, 'image/png'))
+    // The camera's grade is a filter on the canvas (setGrade): the picture is drawn through the same filter.
+    const filter = gradeFilter(this.grade), out = filter === 'none' ? this.canvas : document.createElement('canvas')
+    if (out !== this.canvas) { out.width = this.canvas.width; out.height = this.canvas.height; const ctx = out.getContext('2d')!; ctx.filter = filter; ctx.drawImage(this.canvas, 0, 0) }
+    return new Promise<Blob | null>(resolve => out.toBlob(resolve, 'image/png'))
+  }
+
+  /** The camera's settings (src/camera.ts): the exposure into the tone mapping, the rest as a filter over the frame. */
+  setGrade(g: CameraGrade) {
+    this.grade = { ...g }; this.renderer.toneMappingExposure = EXPOSURE * 2 ** g.exposure
+    const filter = gradeFilter(g); this.canvas.style.filter = filter === 'none' ? '' : filter
   }
 
   /** Whether a pointer is held on the view (the controls' own state, not in three's types). */
