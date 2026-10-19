@@ -2,6 +2,7 @@
 // at the ground as isobars with its highs and lows, and station plots (temperature, dew point, pressure, wind, weather).
 // The domain is ~50-150 km: these are the mesoscale features (the mesohigh under a storm's cold pool, the pressure
 // jump behind a front, the mesolow ahead); a cyclone's isobars, hundreds of km across, do not fit in it.
+import { type FrontConfig, frontDistance } from './fronts'
 import type { Flash } from './lightning'
 import { fallSpeed } from './microphysics'
 import { mod } from './math'
@@ -19,6 +20,42 @@ export function surfacePressureField(m: StationSource, passes = 2) {
       let s = 0
       for (let j = -1; j <= 1; j++) for (let i = -1; i <= 1; i++) s += (2 - Math.abs(i)) * (2 - Math.abs(j)) * field[mod(x + i, nx) + nx * mod(y + j, ny)]
       next[x + nx * y] = s / 16
+    }
+    field = next
+  }
+  return field
+}
+
+/** Within this distance of the set front line, km, the analysis looks for the edge of the cold air (behind, ahead). */
+export const FRONT_SEARCH = [-20, 30] as const
+
+/**
+ * Where the cold air really is at the ground (the roadmap's «front by the gradient of θ», 2.8): each column's θ at the
+ * lowest level above the ground below the warm sector's (the 75th percentile of the columns ahead of the set line, so
+ * neither the storms' cold pools nor a warm spot set it), smoothed like the isobars, K. The front is its contour at
+ * half the set contrast: the edge of the air mass as it moves by itself (a density current runs at ~0.7 √(g' h),
+ * ~19 m/s for 9 K over 2.5 km, against the line's set speed), not the line the forcing keeps. Outside FRONT_SEARCH of
+ * the line, and within `edgeX`, `edgeY` m of relaxed domain edges (the transport is periodic: the cold air leaving the
+ * west edge comes in at the east one, where the edge zone damps it — a false front): the full contrast behind, none
+ * ahead (an outflow far from the front is no front).
+ */
+export function coldAirDeficit(m: StationSource & { theta: ArrayLike<number> }, f: FrontConfig, time: number, frame: readonly [number, number], edgeX = 0, edgeY = 0) {
+  const { nx, ny, layer, dx, dy, width, depth } = m.grid, s = new Float64Array(layer), theta = new Float64Array(layer), ahead: number[] = []
+  for (let c = 0; c < layer; c++) {
+    s[c] = frontDistance(f, (c % nx) * dx + frame[0] * time, Math.floor(c / nx) * dy + frame[1] * time, time, width, depth)
+    theta[c] = m.theta[c + layer]
+  }
+  const inEdge = (c: number) => { const x = (c % nx + .5) * dx, y = (Math.floor(c / nx) + .5) * dy; return Math.min(x, width - x) < edgeX || Math.min(y, depth - y) < edgeY }
+  for (let c = 0; c < layer; c++) if (s[c] > 5 && s[c] < FRONT_SEARCH[1] && !inEdge(c)) ahead.push(theta[c])
+  ahead.sort((a, b) => a - b)
+  const warm = ahead.length ? ahead[Math.floor(ahead.length * .75)] : Math.max(...theta)
+  let field = Float64Array.from(theta, (t, c) => s[c] < FRONT_SEARCH[0] || (inEdge(c) && s[c] < 0) ? f.contrast : s[c] > FRONT_SEARCH[1] || inEdge(c) ? 0 : warm - t)
+  for (let pass = 0; pass < 2; pass++) {
+    const next = new Float64Array(layer)
+    for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++) {
+      let sum = 0
+      for (let j = -1; j <= 1; j++) for (let i = -1; i <= 1; i++) sum += (2 - Math.abs(i)) * (2 - Math.abs(j)) * field[Math.min(nx - 1, Math.max(0, x + i)) + nx * Math.min(ny - 1, Math.max(0, y + j))]
+      next[x + nx * y] = sum / 16
     }
     field = next
   }

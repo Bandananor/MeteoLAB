@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { AtmosphereModel, contour, createGrid, DEFAULT_GRID, isobarStep, pressureCentres, stationPlots, surfacePressureField } from '.'
-import { QUIET } from './fixtures'
+import { AtmosphereModel, coldAirDeficit, contour, EDGE_ZONE, createGrid, DEFAULT_GRID, frontDistance, isobarStep, pressureCentres, SCENARIOS, stationPlots, surfacePressureField } from '.'
+import { QUIET, SUMMER_DAY } from './fixtures'
 
 describe('the surface analysis (2.6)', () => {
   it('contours of a cone are a closed ring at the right distance', () => {
@@ -43,5 +43,20 @@ describe('the surface analysis (2.6)', () => {
     const near = plots.find(s => Math.hypot(s.x - 9000, s.y - 9000) < 1)!, far = plots.find(s => s.x === 21_000 && s.y === 15_000)!
     expect(near.temp).toBeLessThan(far.temp - 3); expect(near.pressure).toBeGreaterThan(far.pressure)
     expect(far.dew).toBeLessThanOrEqual(far.temp); expect(far.rain).toBe(0); expect(far.thunder).toBe(false); expect(far.cloud).toBe(0)
+  })
+})
+
+describe('the front on the surface analysis: the cold air’s edge at the ground', () => {
+  it('starts on the set line, from the model’s own cold air (not the line)', () => {
+    const s = SCENARIOS.find(x => x.name === 'Холодный фронт')!, config = { ...SUMMER_DAY, ...s.values }, m = new AtmosphereModel(config), f = config.frontLine!
+    const { nx, ny, dx, dy, width, depth } = m.grid
+    const edge = () => {
+      const segs = contour(coldAirDeficit(m, f, m.time, m.frame, EDGE_ZONE, EDGE_ZONE), nx, ny, f.contrast / 2)
+      return segs.reduce((a, [x1, y1, x2, y2]) => a + frontDistance(f, (x1 + x2) / 2 * dx + m.frame[0] * m.time, (y1 + y2) / 2 * dy + m.frame[1] * m.time, m.time, width, depth), 0) / segs.length
+    }
+    expect(Math.abs(edge())).toBeLessThan(2)
+    // Cold air nowhere ahead: a uniform warm sector gives no line there.
+    const segs = contour(coldAirDeficit(m, f, m.time, m.frame, EDGE_ZONE, EDGE_ZONE), nx, ny, f.contrast / 2)
+    expect(segs.length).toBeGreaterThan(ny / 2); expect(segs.length).toBeLessThan(3 * ny)
   })
 })
