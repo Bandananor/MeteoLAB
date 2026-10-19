@@ -45,6 +45,10 @@ export function describeConvection(d: ModelDiagnostics, s: Sounding, r: Rotation
   // supercell at its height: the meteorologist's review 16.10.2026).
   if (coldMax > 3) logic += coldMax > 7 && up < 10 ? L(' Холодный купол подтекает под приток тёплого воздуха и гасит исходное ядро.', ' The cold pool undercuts the warm inflow and chokes the original core.') : L(' Фронт порывов поднимает тёплый воздух по краю холодного купола.', ' The gust front lifts warm air along the edge of the cold pool.')
   if (d.gust > 20 && d.coldMax > 2) logic += L(` Холодный отток растекается у земли: порывы до ${d.gust.toFixed(0)} м/с.`, ` The cold outflow spreads along the ground: gusts up to ${d.gust.toFixed(0)} m/s.`)
+  // A heavy shower under a weak updraught is the dissipating stage, not a fault (a tester 19.10.2026: «under 10 m/s the
+  // rain is 100 mm/h»): the water the updraught held falls at once and drags the air down; an ordinary cell's heaviest
+  // rain comes some 10 minutes after its strongest updraught (tests/bench/rainstage.ts: 34 m/s at 17 min, 104 mm/h at 30).
+  if (up < 10 && d.rainRate >= 30) logic += L(' Поток ослаб, а ливень в разгаре — стадия распада: вода, которую поток держал в облаке, выпадает разом, и дождь сам тянет воздух вниз. Самый сильный ливень обычной ячейки — через ~10 минут после пика потока.', ' The updraught has weakened while the shower is at its height — the dissipating stage: the water the updraught held in the cloud falls at once, and the rain itself drags the air down. An ordinary cell’s heaviest rain comes ~10 minutes after its updraught peaks.')
   if (d.hail >= 5) logic += L(` Из ядра у земли выпадает град до ${(d.hail / 10).toFixed(1)} см.`, ` Hail up to ${(d.hail / 10).toFixed(1)} cm falls from the core to the ground.`)
 
   const meso = r.persisted >= MESO_PERSISTENCE, rotating = r.uh >= UH_ROTATING

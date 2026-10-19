@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { cloudGenus, hailWord, rainWord } from './describe'
+import type { ModelDiagnostics, RotationState, Sounding } from './core'
+import { cloudGenus, describeConvection, hailWord, rainWord } from './describe'
 
 describe('words for the storm panel (src/describe.ts)', () => {
   it('names the rain rate and the hail', () => {
@@ -14,5 +15,11 @@ describe('words for the storm panel (src/describe.ts)', () => {
     expect(cloudGenus(5.5, lcl, -12, el)).toMatch(/^Cu cong/)
     expect(cloudGenus(8, lcl, -30, el)).toMatch(/^Cb calv/)
     expect(cloudGenus(11.8, lcl, -55, el)).toMatch(/^Cb cap/)
+  })
+  it('names a heavy shower under a weak updraught as the dissipating stage', () => {
+    const d = { cores: 1, coldMax: 2, updraft: 6, cloudTop: 11, shear06: 10, gust: 12, hail: 0, rainRate: 90 } as ModelDiagnostics
+    const s = { lcl: 1.2, lfc: 2, el: 12 } as Sounding, r = { persisted: 0, uh: 0, coreAnti: 0 } as RotationState
+    expect(describeConvection(d, s, r).logic).toMatch(/стадия распада/)
+    expect(describeConvection({ ...d, updraft: 25 }, s, r).logic).not.toMatch(/стадия распада/)
   })
 })

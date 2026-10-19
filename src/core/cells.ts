@@ -35,7 +35,7 @@ export type CellStage = 'growing' | 'mature' | 'dissipating' | 'rotating' | 'sup
 export const CELL_STAGES: Record<CellStage, { name: string; hint: string }> = {
   growing: { name: L('Кучевая стадия', 'Cumulus stage'), hint: L('восходящий поток растёт, осадки ещё не дошли до земли', 'the updraught grows, the precipitation has not reached the ground yet') },
   mature: { name: L('Зрелая стадия', 'Mature stage'), hint: L('дождь у земли; восходящий и нисходящий потоки рядом', 'rain at the ground; the updraught and the downdraught side by side') },
-  dissipating: { name: L('Распад', 'Dissipating'), hint: L('восходящий поток ослаб, преобладают нисходящий поток и дождь', 'the updraught has weakened, the downdraught and the rain prevail') },
+  dissipating: { name: L('Распад', 'Dissipating'), hint: L('восходящий поток ослаб, преобладают нисходящий поток и дождь — накопленная вода выпадает, ливень бывает сильнейшим', 'the updraught has weakened, the downdraught and the rain prevail — the stored water falls out, the shower may be at its heaviest') },
   rotating: { name: L('Развитие мезоциклона', 'Mesocyclone forming'), hint: L('восходящий поток сам вращается циклонически (завихренность ядра на 2–5 км выше порога)', 'the updraught itself rotates cyclonically (the core’s vorticity at 2–5 km above the threshold)') },
   supercell: { name: L('Суперячейка: зрелая', 'Supercell: mature'), hint: L('мезоциклон держится 10 минут и дольше', 'the mesocyclone has held for 10 minutes or more') },
   occluding: { name: L('Суперячейка: окклюзия', 'Supercell: occluding'), hint: L('холодный отток подтёк под низкое вращение, мезоциклон слабеет', 'the cold outflow has undercut the low-level rotation, the mesocyclone weakens') },
