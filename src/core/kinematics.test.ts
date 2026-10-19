@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createGrid, Environment, parcelIndices, type SimConfig, stormIndices } from '.'
+import { createGrid, domainGrid, Environment, hailParameter, parcelIndices, SCENARIOS, type SimConfig, stormIndices } from '.'
 import { CAPPED, SUMMER_DAY, SUPERCELL } from './fixtures'
 
 // MetPy 1.7.1 (bunkers_storm_motion, storm_relative_helicity for the right mover, supercell_composite with SRH 0-3 km
@@ -20,4 +20,25 @@ describe('supercell indices against MetPy', () => {
       expect(Math.abs(s.scp / ref.scp - 1)).toBeLessThan(.03); expect(Math.abs(s.stp / ref.stp - 1)).toBeLessThan(.03)
     })
   }
+})
+
+describe('significant hail parameter (SPC SHIP v1.1)', () => {
+  it('multiplies its terms within their caps and scales down weak CAPE, lapse rate and a low freezing level', () => {
+    // MUCAPE 3000, 13 g/kg, 7.5 °C/km, -12 °C at 500 hPa, 25 m/s: 2.09.
+    expect(hailParameter(3000, .013, 7.5, -12, 25, 3500)).toBeCloseTo(2.09, 2)
+    // Caps: moisture 11-13.6 g/kg, shear 7-27 m/s, T500 at most -5.5 °C.
+    expect(hailParameter(3000, .02, 7.5, -12, 40, 3500)).toBeCloseTo(3000 * 13.6 * 7.5 * 12 * 27 / 42e6, 6)
+    expect(hailParameter(3000, .013, 7.5, -2, 25, 3500)).toBeCloseTo(hailParameter(3000, .013, 7.5, -5.5, 25, 3500), 9)
+    expect(hailParameter(650, .013, 7.5, -12, 25, 3500)).toBeCloseTo(650 * 13 * 7.5 * 12 * 25 / 42e6 * .5, 6)
+    expect(hailParameter(3000, .013, 5.8 / 2, -12, 25, 3500)).toBeCloseTo(3000 * 13 * 2.9 * 12 * 25 / 42e6 * .5, 6)
+    expect(hailParameter(3000, .013, 7.5, -12, 25, 1200)).toBeCloseTo(2.09 / 2, 2)
+  })
+
+  it('is high for the classic supercell (~4.7), below 1 for the summer day and low in the tropics (moist-adiabatic aloft)', () => {
+    const ship = (name: string) => {
+      const config = { ...SUMMER_DAY, ...SCENARIOS.find(s => s.name === name)!.values }, env = new Environment(config, createGrid(domainGrid(config.domain, config.top, config.domainSize)))
+      return stormIndices(env, parcelIndices(env, 18_000)).ship
+    }
+    expect(ship('Классическая суперячейка')).toBeGreaterThan(3); expect(ship('Летний день')).toBeLessThan(1); expect(ship('Тропическая конвекция')).toBeLessThan(.5)
+  })
 })

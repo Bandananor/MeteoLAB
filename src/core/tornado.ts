@@ -36,6 +36,18 @@ export interface TornadoCheck { name: string; ok: boolean; value: string }
 export type TornadoLevel = 0 | 1 | 2 | 3
 export const TORNADO_LEVELS: Record<TornadoLevel, string> = { 0: L('нет', 'none'), 1: L('благоприятная среда', 'favourable environment'), 2: L('низкий мезоциклон', 'low-level mesocyclone'), 3: L('признаки смерчеобразования', 'signs of tornadogenesis') }
 
+/**
+ * What each level means and does not (a tester 19.10.2026: an LCL of 300 m and a high SRH, yet no tornado): the ~1 km
+ * grid does not resolve a tornado (hundreds of metres), so the model never shows one, only the signs forecasters judge
+ * by; and in nature most storms in a favourable environment do not produce one either.
+ */
+export const TORNADO_NOTES: Record<TornadoLevel, string> = {
+  0: L('Среда и вращение у земли далеки от смерчевых.', 'The environment and the rotation at the ground are far from tornadic.'),
+  1: L('Среда благоприятна для смерча — но это ещё не смерч: нужна суперячейка с вращением у самой земли. И в природе в такой среде смерч дают немногие грозы.', 'The environment favours a tornado — but that is not a tornado yet: it takes a supercell rotating right at the ground. In nature, too, few storms in such an environment produce one.'),
+  2: L('Восходящий поток вращается у земли (низкий мезоциклон) — так бывает перед смерчем, но условия ещё не все.', 'The updraught rotates near the ground (a low-level mesocyclone) — as before a tornado, but not every condition is met.'),
+  3: L('Всё как перед смерчем. Сам смерч (сотни метров) сетка ~1 км не разрешает: модель его не покажет — это признаки, по которым синоптик даёт предупреждение.', 'Everything as before a tornado. The ~1 km grid does not resolve the tornado itself (hundreds of metres): the model will not show it — these are the signs a forecaster warns by.'),
+}
+
 /** The level and every condition with its value. */
 export function tornadoSigns(s: TornadoInput, t: TornadoThresholds = TORNADO_DEFAULTS): { level: TornadoLevel; checks: TornadoCheck[] } {
   const low = s.uh01 >= t.uh01 && s.lowHeld >= t.held * 60, meso = s.mesoHeld >= MESO_PERSISTENCE

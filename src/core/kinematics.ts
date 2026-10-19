@@ -1,5 +1,5 @@
 import type { Environment } from './environment'
-import type { ParcelIndices } from './sounding'
+import { heightOf, type ParcelIndices } from './sounding'
 
 export interface StormIndices {
   /** Bunkers right-mover motion (u, v), m/s. */ rightMover: readonly [number, number]
@@ -8,6 +8,22 @@ export interface StormIndices {
   /** Bulk wind difference 0-6 km, m/s. */ shear06: number
   /** Supercell composite parameter (MUCAPE, SRH 0-3 km, bulk shear 0-6 km). */ scp: number
   /** Significant tornado parameter, fixed layer (SBCAPE, SB LCL, SRH 0-1 km, bulk shear 0-6 km). */ stp: number
+  /** Significant hail parameter (MUCAPE, the MU parcel's mixing ratio, 700-500 hPa lapse rate, T at 500 hPa, bulk shear 0-6 km). */ ship: number
+  /** Temperature lapse rate between 700 and 500 hPa, °C/km. */ lapse75: number
+}
+
+/**
+ * Significant hail parameter, SPC's version 1.1 (Johnson & Sugden 2014): MUCAPE (J/kg) × the MU parcel's mixing ratio
+ * (g/kg, within 11-13.6) × the 700-500 hPa lapse rate (°C/km) × -T500 (°C, at least 5.5) × 0-6 km shear (m/s, within
+ * 7-27) / 42 000 000, scaled down by MUCAPE below 1300 J/kg, the lapse rate below 5.8 °C/km and the freezing level
+ * below 2400 m. Above 1 — hail of 5 cm and larger becomes likely (the tester's 2023 day of 7-8 cm stones: ~3).
+ */
+export function hailParameter(muCape: number, muMixing: number, lapse75: number, t500: number, shear06: number, freezing: number) {
+  let ship = muCape * clamp(muMixing * 1000, 11, 13.6) * lapse75 * -Math.min(t500, -5.5) * clamp(shear06, 7, 27) / 42e6
+  if (muCape < 1300) ship *= muCape / 1300
+  if (lapse75 < 5.8) ship *= lapse75 / 5.8
+  if (freezing < 2400) ship *= Math.max(0, freezing) / 2400
+  return Math.max(0, ship)
 }
 
 const STEP = 10
@@ -65,5 +81,10 @@ export function stormIndices(env: Environment, parcels: ParcelIndices): StormInd
   // STP: LCL term 1 below 1 km and 0 above 2 km; shear term 0 below 12.5 m/s and capped at 1.5 above 30 m/s.
   const lcl = (parcels.sb.lcl ?? 99) * 1000
   const stp = parcels.sb.cape / 1500 * clamp((2000 - lcl) / 1000, 0, 1) * (srh01 / 150) * (shear06 < 12.5 ? 0 : Math.min(1.5, shear06 / 20))
-  return { rightMover, leftMover, srh01, srh03, shear06, scp, stp }
+  // SHIP: the environment's 700 and 500 hPa levels and its freezing level (the first height at or below 0 °C).
+  const height = 20_000, z7 = heightOf(env, 70000, height), z5 = heightOf(env, 50000, height), t5 = env.temperatureEnv(z5)
+  const lapse75 = (env.temperatureEnv(z7) - t5) / ((z5 - z7) / 1000)
+  let freezing = 0; while (freezing < height && env.temperatureEnv(freezing) > 0) freezing += 10
+  const ship = hailParameter(parcels.mu.cape, env.qEnv(parcels.mu.start * 1000), lapse75, t5, shear06, freezing)
+  return { rightMover, leftMover, srh01, srh03, shear06, scp, stp, ship, lapse75 }
 }
