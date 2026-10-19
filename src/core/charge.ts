@@ -71,7 +71,7 @@ export const CRYSTAL_RANGE = [20e-6, 300e-6] as const
  * CRYSTAL_SIZE, at least as many as primary nucleation gives at tc °C (Cooper 1986, 5 exp(0.304 (T0 - T)) per m³) and
  * at most MAX_CRYSTALS. With the Cooper number alone (0.03 per litre at -6 °C, 0.5 at -15 °C) there were almost no
  * crystals warmer than -20 °C: the charging came out 5-10 times too weak and the lower positive charge (positive graupel
- * at -0…-10 °C) never formed (the meteorologist's review 14.10.2026). Only the charging uses it, not the microphysics.
+ * at -0…-10 °C) never formed (the meteorologist's review 14.10.2026). Since 2.7.2 the model carries its own crystals (ice.ts) and passes them to chargingRate; this estimate is for callers without them.
  */
 export function crystalNumber(tc: number, qi = 0, rho = 1) {
   const cooper = Math.min(MAX_CRYSTALS, 5 * Math.exp(.304 * Math.max(0, -tc))), fromMass = rho * qi / (Math.PI / 6 * 900 * CRYSTAL_SIZE ** 3)
@@ -98,11 +98,13 @@ const CD = .6, GAMMA_45 = 11.6317
  * (`wetGraupel`, `wetHail`) does not charge: on its wet surface the crystals stick instead of rebounding.
  * Mixing ratios in kg/kg, rho the air density (kg/m³), snowFall the snow's mass-weighted fall speed (m/s).
  */
-export function chargingRate(tc: number, rho: number, cloud: number, ice: number, snow: number, graupel: number, hail: number, snowFall: number, wetGraupel = false, wetHail = false) {
+export function chargingRate(tc: number, rho: number, cloud: number, ice: number, snow: number, graupel: number, hail: number, snowFall: number, wetGraupel = false, wetHail = false, crystals?: number) {
   if (tc >= 0 || tc < CHARGING_COLDEST || cloud <= 0 || ice + snow <= 0 || graupel + hail <= 0) return 0
   // Called at every mixed-phase node each step: no arrays, two rimers by two crystal kinds written out.
   const rebound = 1 - Math.exp(.09 * tc), water = rho * cloud * 1000
-  const ni = ice > 0 ? crystalNumber(tc, ice, rho) : 0, di = ice > 0 ? crystalDiameter(ice, rho, tc) : 0
+  // The model's own crystals (per m³) when it carries them, else the number estimated from the mass.
+  const ni = ice <= 0 ? 0 : crystals ?? crystalNumber(tc, ice, rho)
+  const di = ice <= 0 ? 0 : crystals ? Math.min(CRYSTAL_RANGE[1], Math.max(CRYSTAL_RANGE[0], Math.cbrt(6 * rho * ice / (Math.PI * 900 * crystals)))) : crystalDiameter(ice, rho, tc)
   const snowSlope = snow > 0 ? (Math.PI * RHO_S * N0S / (rho * snow)) ** .25 : 0, ns = snow > 0 ? N0S / snowSlope : 0, ds = snow > 0 ? 1 / snowSlope : 0
   let rate = 0
   if (graupel > 0 && !wetGraupel) rate += rimerRate(GRAUPEL, graupel, tc, rho, water, rebound, ni, di, ns, ds, snowFall)

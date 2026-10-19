@@ -6,10 +6,13 @@ import { L } from '../i18n'
 import type { SimConfig } from './config'
 import type { AtmosphereModel } from './model'
 
-export const STATE_FIELDS = ['u', 'v', 'w', 'theta', 'q', 'cloud', 'rain', 'cold', 'ice', 'snow', 'graupel', 'hail', 'chargeIce', 'chargeGraupel', 'chargeRain', 'chargeAir'] as const
+export const STATE_FIELDS = ['u', 'v', 'w', 'theta', 'q', 'cloud', 'rain', 'cold', 'ice', 'snow', 'graupel', 'hail', 'chargeIce', 'chargeGraupel', 'chargeRain', 'chargeAir', 'iceNumber'] as const
 export const STATE_COLUMNS = ['precipitation', 'hailGround', 'hailSize'] as const
-/** Version 2 (2.3) adds the four charge fields and the lightning counts; version 1 files still load, without charge. */
-const MAGIC = 'MLAB', VERSION = 2, V1_FIELDS = 12
+/**
+ * Version 2 (2.3) adds the four charge fields and the lightning counts, version 3 (2.7.2) the number of ice crystals;
+ * older files still load, without charge (version 1) and with the crystals rebuilt from the ice by the first step.
+ */
+const MAGIC = 'MLAB', VERSION = 3, V1_FIELDS = 12, V2_FIELDS = 16
 
 export interface StateHeader {
   format: 'meteolab-state'; version: number; config: unknown; time: number; persisted: number; nx: number; ny: number; nz: number
@@ -21,7 +24,7 @@ export interface SavedState { header: StateHeader; data: Float32Array }
 type StateModel = Pick<AtmosphereModel, 'grid' | 'time' | 'rotation' | 'chargeGround' | 'flashCount' | 'flashes' | (typeof STATE_FIELDS)[number] | (typeof STATE_COLUMNS)[number]>
 
 /** The fields a file of this version holds. */
-const fieldsOf = (version: number) => version === 1 ? STATE_FIELDS.slice(0, V1_FIELDS) : STATE_FIELDS
+const fieldsOf = (version: number) => version === 1 ? STATE_FIELDS.slice(0, V1_FIELDS) : version === 2 ? STATE_FIELDS.slice(0, V2_FIELDS) : STATE_FIELDS
 
 export function saveState(m: StateModel, config: SimConfig): ArrayBuffer {
   const { nx, ny, nz, n, layer } = m.grid
@@ -43,7 +46,7 @@ export function readState(buffer: ArrayBuffer): SavedState {
   if (8 + length > buffer.byteLength) throw new Error(L('файл обрезан', 'the file is truncated'))
   let header: StateHeader
   try { header = JSON.parse(new TextDecoder().decode(new Uint8Array(buffer, 8, length))) } catch { throw new Error(L('заголовок файла повреждён', 'the file’s header is damaged')) }
-  if (header?.format !== 'meteolab-state' || (header.version !== VERSION && header.version !== 1)) throw new Error(L('неизвестный формат или версия файла', 'unknown file format or version'))
+  if (header?.format !== 'meteolab-state' || (header.version !== VERSION && header.version !== 2 && header.version !== 1)) throw new Error(L('неизвестный формат или версия файла', 'unknown file format or version'))
   for (const k of ['time', 'persisted', 'nx', 'ny', 'nz'] as const) if (!Number.isFinite(header[k]) || header[k] < 0) throw new Error(L('заголовок файла повреждён', 'the file’s header is damaged'))
   const start = Math.ceil((8 + length) / 4) * 4, cells = header.nx * header.ny, size = fieldsOf(header.version).length * cells * header.nz + STATE_COLUMNS.length * cells
   if (buffer.byteLength !== start + size * 4) throw new Error(L('размер файла не сходится с сеткой', 'the file’s size does not match the grid'))

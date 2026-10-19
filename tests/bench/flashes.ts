@@ -86,7 +86,7 @@ for (let t = DT; t <= minutes * 60; t += DT) {
     const z = level(km); if (z < 0 || !core.length) continue
     let lwc = 0, gr = 0, rate = 0, pos = 0, n = 0
     for (const c of core) {
-      const i = c + z * layer, tc = model.theta[i] * model.env.exner[z] - 273.15, r = chargingRate(tc, rhoAir[z], model.cloud[i], model.ice[i], model.snow[i], model.graupel[i], model.hail[i], 1)
+      const i = c + z * layer, tc = model.theta[i] * model.env.exner[z] - 273.15, r = chargingRate(tc, rhoAir[z], model.cloud[i], model.ice[i], model.snow[i], model.graupel[i], model.hail[i], 1, false, false, model.iceNumber[i] * rhoAir[z])
       lwc += model.cloud[i] * rhoAir[z] * 1e3; gr += (model.graupel[i] + model.hail[i]) * rhoAir[z] * 1e3; rate += r; if (r > 0) pos++; if (r !== 0) n++
     }
     const k = core.length

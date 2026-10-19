@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { CP, KAPPA } from './constants'
-import { iceFraction, LF, partitionCondensate, qsatIce, saturationAdjustMixed, snowFallSpeed, snowProcesses } from './ice'
+import { cooperCrystals, CRYSTAL_MASS, fragmentsPerKg, freezeRain, iceProcesses, LF, LS, qsatIce, saturationAdjustMixed, snowFallSpeed, snowProcesses, SPLINTERS, splintering } from './ice'
 import { qsatP } from './microphysics'
 
 const one = (x: number) => Float32Array.of(x)
@@ -11,8 +11,17 @@ describe('ice microphysics (stage 1)', () => {
     expect(qsatIce(-1e-9, 80000) / qsatP(0, 80000)).toBeCloseTo(1, 3)
   })
 
-  it('freezes cloud condensate linearly between 0 and -40 °C', () => {
-    expect(iceFraction(280)).toBe(0); expect(iceFraction(253.15)).toBeCloseTo(.5, 9); expect(iceFraction(230)).toBe(1)
+  it('nucleates crystals below -5 °C, more in colder air (Cooper 1986), at most 250 per litre', () => {
+    expect(cooperCrystals(-3)).toBe(0)
+    expect(cooperCrystals(-20) / 1e3).toBeCloseTo(2.2, 1); expect(cooperCrystals(-60)).toBe(250e3)
+  })
+
+  it('makes secondary ice: 350 splinters per mg of rime at -5 °C, none outside -3…-8 °C; tens of fragments per freezing millimetre drop', () => {
+    expect(splintering(-5) * SPLINTERS * 1e-6).toBeCloseTo(350, 6); expect(splintering(-2)).toBe(0); expect(splintering(-9)).toBe(0)
+    expect(splintering(-4)).toBeCloseTo(.5, 9); expect(splintering(-6.5)).toBeCloseTo(.5, 9)
+    // Rain of mean drop size 1 / λ = 0.5 mm: per drop of the mass-weighted size (~3.5 mm by Bigg's law) its D⁴ fragments.
+    const perDrop = fragmentsPerKg(2000) * 1000 * Math.PI / 6 * (7 / 2000) ** 3
+    expect(perDrop).toBeCloseTo(2.5e13 * (7 / 2000) ** 4, 0)
   })
 
   it('lets 1 g/m3 of snow fall at about 1 m/s near the ground', () => {
@@ -20,22 +29,54 @@ describe('ice microphysics (stage 1)', () => {
     expect(v).toBeGreaterThan(.8); expect(v).toBeLessThan(1.5)
   })
 
-  it('releases exactly L_f per kilogram frozen and conserves the condensate', () => {
-    const exner = (60000 / 1e5) ** KAPPA, theta = one(253.15 / exner), cloud = one(.002), ice = one(0)
-    const frozen = partitionCondensate(theta, cloud, ice, 0, exner)
-    expect(frozen).toBeCloseTo(.001, 6)
-    expect(cloud[0] + ice[0]).toBeCloseTo(.002, 9)
-    expect((theta[0] - 253.15 / exner) * exner).toBeCloseTo(LF / CP * frozen, 4)
-  })
-
-  it('adjusts to the ice-weighted saturation in a cold cloud and conserves water', () => {
-    const p = 40000, exner = (p / 1e5) ** KAPPA, theta = one(243.15 / exner), q = one(1.2 * qsatP(-30, p)), cloud = one(0), ice = one(0)
-    const total = q[0]
+  it('keeps cloud water liquid down to -38 °C, at water saturation', () => {
+    const p = 40000, exner = (p / 1e5) ** KAPPA, theta = one(243.15 / exner), q = one(1.2 * qsatP(-30, p)), cloud = one(0), ice = one(1e-5)
+    const total = q[0] + cloud[0] + ice[0]
     saturationAdjustMixed(theta, q, cloud, ice, 0, exner, p)
     expect(q[0] + cloud[0] + ice[0]).toBeCloseTo(total, 9)
-    expect(ice[0]).toBeGreaterThan(cloud[0])
-    const t = theta[0] * exner - 273.15, f = iceFraction(theta[0] * exner)
-    expect(q[0] / ((1 - f) * qsatP(t, p) + f * qsatIce(t, p))).toBeCloseTo(1, 3)
+    expect(cloud[0]).toBeGreaterThan(0); expect(ice[0]).toBe(Math.fround(1e-5))
+    expect(q[0] / qsatP(theta[0] * exner - 273.15, p)).toBeCloseTo(1, 3)
+  })
+
+  it('freezes the droplets at once below -38 °C (L_f) and holds the vapour at ice saturation', () => {
+    const p = 25000, exner = (p / 1e5) ** KAPPA, theta = one(228.15 / exner), q = one(qsatP(-45, p)), cloud = one(5e-4), ice = one(0)
+    const total = q[0] + cloud[0], before = theta[0]
+    saturationAdjustMixed(theta, q, cloud, ice, 0, exner, p)
+    expect(cloud[0]).toBe(0); expect(q[0] + ice[0]).toBeCloseTo(total, 9)
+    expect(q[0] / qsatIce(theta[0] * exner - 273.15, p)).toBeCloseTo(1, 3)
+    expect((theta[0] - before) * exner).toBeCloseTo((LF * 5e-4 + LS * (ice[0] - 5e-4)) / CP, 3)
+  })
+
+  it('melts cloud ice above 0 °C into cloud water with L_f', () => {
+    const p = 80000, exner = (p / 1e5) ** KAPPA, theta = one(275.15 / exner), q = one(qsatP(2, p)), cloud = one(0), ice = one(1e-3)
+    saturationAdjustMixed(theta, q, cloud, ice, 0, exner, p)
+    expect(ice[0]).toBe(0); expect(cloud[0]).toBeGreaterThan(9e-4)
+    expect(theta[0] * exner).toBeLessThan(275.15)
+  })
+
+  it('freezes rain below -38 °C into graupel with L_f', () => {
+    const exner = (25000 / 1e5) ** KAPPA, theta = one(230 / exner), rain = one(1e-3), graupel = one(0)
+    freezeRain(theta, rain, graupel, 0, exner)
+    expect(rain[0]).toBe(0); expect(graupel[0]).toBeCloseTo(1e-3, 9); expect((theta[0] - 230 / exner) * exner).toBeCloseTo(LF / CP * 1e-3, 5)
+  })
+
+  it('grows ice at the droplets’ expense in a supercooled cloud (Bergeron) and conserves water', () => {
+    const p = 50000, exner = (p / 1e5) ** KAPPA, rho = .7, s = { theta: one(253.15 / exner), q: one(qsatP(-20, p)), cloud: one(1e-3), ice: one(0), snow: one(0), n: one(0) }
+    const water = () => s.q[0] + s.cloud[0] + s.ice[0] + s.snow[0], before = water()
+    iceProcesses(s.theta, s.q, s.ice, s.snow, s.n, 0, exner, p, rho, 1)
+    // The nucleated crystals, and their first second of growth.
+    expect(s.ice[0]).toBeGreaterThan(cooperCrystals(-20) * CRYSTAL_MASS / rho); expect(s.ice[0]).toBeLessThan(2 * cooperCrystals(-20) * CRYSTAL_MASS / rho)
+    for (let k = 0; k < 600; k++) { iceProcesses(s.theta, s.q, s.ice, s.snow, s.n, 0, exner, p, rho, 1); saturationAdjustMixed(s.theta, s.q, s.cloud, s.ice, 0, exner, p) }
+    expect(s.ice[0] + s.snow[0]).toBeGreaterThan(1e-6); expect(s.cloud[0]).toBeLessThan(1e-3)
+    expect(water()).toBeCloseTo(before, 7)
+    // Supercooled water survives ten minutes of it: the Cooper crystals alone glaciate a cloud slowly.
+    expect(s.cloud[0]).toBeGreaterThan(5e-4)
+  })
+
+  it('sublimates cloud ice in air dry over ice, cooling it', () => {
+    const p = 30000, exner = (p / 1e5) ** KAPPA, theta = one(243.15 / exner), q = one(.5 * qsatIce(-30, p)), ice = one(1e-4), snow = one(0)
+    const n = one(1e-4 / 1e-11), cooling = iceProcesses(theta, q, ice, snow, n, 0, exner, p, .45, 10)
+    expect(ice[0]).toBeLessThan(1e-4); expect(cooling).toBeGreaterThan(0); expect(n[0]).toBeLessThan(1e-4 / 1e-11)
   })
 
   it('grows snow at water saturation below 0 °C, melts it above 0 °C with L_f, and conserves total water', () => {

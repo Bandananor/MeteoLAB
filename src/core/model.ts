@@ -13,9 +13,9 @@ import { type Flash, Lightning } from './lightning'
 import { ZONE_DEPTH, ZONE_TIME, zoneMaps, zoneShape } from './zones'
 import { advected } from './largescale'
 import { coldMoisture, FRONT_BLUR, FRONTAL_TIME, frontalDeficit, frontDistance, WARM_BAND } from './fronts'
-import { graupelFallSpeed, graupelProcesses, N0G, RHO_G } from './graupel'
+import { graupelFallSpeed, graupelProcesses, N0G, N0R, RHO_G, RHO_W } from './graupel'
 import { hailFallSpeed, hailMaxDiameter, hailProcesses, N0H, RHO_H, wetGrowing } from './hail'
-import { freezeRain, saturationAdjustMixed, snowFallSpeed, snowProcesses } from './ice'
+import { CRYSTAL_MASS, fragmentsPerKg, freezeRain, iceProcesses, saturationAdjustMixed, settleCrystals, snowFallSpeed, snowProcesses, SPLINTERS, splintering } from './ice'
 import { fallSpeed, rainProcesses, saturationAdjust } from './microphysics'
 import { PressureSolver } from './pressure'
 import { dragCoefficient, surfaceFluxes } from './surface'
@@ -25,7 +25,7 @@ import { type Memory, type Phase, PRIVATE_MEMORY, type StepRunner, type TaskMode
 /** One field a step transports: WENO (monotone) or linear upwind, with the positivity fix or not, and a decay factor per second. */
 interface Carried { field: Float32Array; monotone: boolean; conserve: boolean; decay: number }
 /** At most this many fields are transported (rain, snow, graupel, hail, u, v, w, theta, vapour, cloud, ice, cold pool, 4 charges). */
-const MAX_CARRIED = 16
+const MAX_CARRIED = 17
 /** Flashes the model keeps (the latest). */
 const RECENT_FLASHES = 2000
 /**
@@ -104,6 +104,8 @@ export class AtmosphereModel implements TaskModel {
   readonly cold: Float32Array
   /** Cloud ice, snow, graupel and hail mixing ratios, kg/kg (ice microphysics, src/core/ice.ts, graupel.ts, hail.ts). */
   readonly ice: Float32Array; readonly snow: Float32Array; readonly graupel: Float32Array; readonly hail: Float32Array
+  /** Cloud-ice crystals per kg of air (2.7.2, ice.ts iceProcesses): transported and mixed like the cloud ice. */
+  readonly iceNumber: Float32Array
   /**
    * Charge carried by the hydrometeors (2.3, charge.ts), C per kg of air: on cloud ice with snow, on graupel with hail,
    * on rain, and on the cloud droplets with the small ions (chargeAir: moves with the air, does not fall). Transported
@@ -184,7 +186,7 @@ export class AtmosphereModel implements TaskModel {
     this.patternNow = shared('patternNow', grid.layer); this.cityNow = shared('cityNow', grid.layer); this.zoneShareNow = shared('zoneShareNow', grid.layer); this.zoneThetaNow = shared('zoneThetaNow', grid.layer); this.zoneVapourNow = shared('zoneVapourNow', grid.layer); this.groundCell = new Int32Array(grid.layer * 4); this.groundWeight = new Float64Array(grid.layer * 4)
     const f = () => new Float32Array(grid.n)
     this.u = shared('u'); this.v = shared('v'); this.w = shared('w'); this.theta = shared('theta'); this.q = shared('q'); this.cloud = shared('cloud'); this.rain = shared('rain'); this.cold = shared('cold')
-    this.ice = shared('ice'); this.snow = shared('snow'); this.snowFall = shared('snowFall'); this.graupel = shared('graupel'); this.graupelFall = shared('graupelFall'); this.hail = shared('hail'); this.hailFall = shared('hailFall')
+    this.ice = shared('ice'); this.iceNumber = shared('iceNumber'); this.snow = shared('snow'); this.snowFall = shared('snowFall'); this.graupel = shared('graupel'); this.graupelFall = shared('graupelFall'); this.hail = shared('hail'); this.hailFall = shared('hailFall')
     this.condensate = shared('condensate')
     this.fieldZ = shared('fieldZ')
     this.chargeIce = shared('chargeIce'); this.chargeGraupel = shared('chargeGraupel'); this.chargeRain = shared('chargeRain'); this.chargeAir = shared('chargeAir'); this.chargeFallIce = shared('chargeFallIce'); this.chargeFallGraupel = shared('chargeFallGraupel')
@@ -224,7 +226,7 @@ export class AtmosphereModel implements TaskModel {
       const alt = zs[z], [ue, ve] = this.env.windUV(alt)
       this.u[i] = ue - this.frame[0]; this.v[i] = ve - this.frame[1]; this.w[i] = 0
       this.theta[i] = this.env.thetaEnv(alt) + (this.rng() - .5) * .018; this.q[i] = this.env.qEnv(alt)
-      this.cloud[i] = this.rain[i] = this.cold[i] = this.ice[i] = this.snow[i] = this.graupel[i] = this.hail[i] = 0
+      this.cloud[i] = this.rain[i] = this.cold[i] = this.ice[i] = this.iceNumber[i] = this.snow[i] = this.graupel[i] = this.hail[i] = 0
       this.chargeIce[i] = this.chargeGraupel[i] = this.chargeRain[i] = this.chargeAir[i] = 0
     }
     // The moving front's cold air, from the start.
@@ -532,7 +534,7 @@ export class AtmosphereModel implements TaskModel {
       }
       this.computeBacktrace(dt)
       const carry = (a: Float32Array, decay: number, conserve = false) => { this.advectBacktrace(a); this.commit(a, decay, conserve) }
-      carry(this.u, 1); carry(this.v, 1); carry(this.w, 1); carry(this.theta, 1); carry(this.q, 1, true); carry(this.cloud, 1, true); if (withIce) carry(this.ice, 1, true); carry(this.cold, .9992 ** dt)
+      carry(this.u, 1); carry(this.v, 1); carry(this.w, 1); carry(this.theta, 1); carry(this.q, 1, true); carry(this.cloud, 1, true); if (withIce) { carry(this.ice, 1, true); carry(this.iceNumber, 1) } carry(this.cold, .9992 ** dt)
       // Charges fall with their carriers and move with the air (not mass-fixed: the fast transport does not conserve them exactly).
       if (this.electrified()) { for (const [field, vt] of this.chargeFalls()) { this.advectFalling(field, dt, vt); this.commit(field, 1) } carry(this.chargeAir, 1) }
     }
@@ -652,7 +654,7 @@ export class AtmosphereModel implements TaskModel {
     water(this.rain); if (withIce) { water(this.snow); water(this.graupel); water(this.hail) }
     // WENO for water and the cold-pool indicator (no overshoots); linear 5th-order upwind for the smooth u, v, w, theta.
     for (const field of [this.u, this.v, this.w, this.theta]) c.push({ field, monotone: false, conserve: false, decay: 1 })
-    water(this.q); water(this.cloud); if (withIce) water(this.ice)
+    water(this.q); water(this.cloud); if (withIce) { water(this.ice); c.push({ field: this.iceNumber, monotone: true, conserve: false, decay: 1 }) }
     c.push({ field: this.cold, monotone: true, conserve: false, decay: .9992 })
     // Charges: WENO (no overshoots; signed, so no positivity fix, and no cut of the tails: the charge is kept exactly).
     // The four fields cost ~30 % of a step in a mature storm (single-threaded, 20-30 min of the classic supercell).
@@ -664,7 +666,7 @@ export class AtmosphereModel implements TaskModel {
   private mixed(): [Float32Array, ArrayLike<number> | null, number][] {
     const scalars = this.fixedViscosity === null ? 3 : 1, e = this.env
     const list: [Float32Array, ArrayLike<number> | null, number][] = [[this.u, this.uEnv, 1], [this.v, this.vEnv, 1], [this.w, null, 1], [this.theta, e.theta, scalars], [this.q, e.q, scalars], [this.cloud, null, scalars]]
-    if (this.withIce()) list.push([this.ice, null, scalars])
+    if (this.withIce()) list.push([this.ice, null, scalars], [this.iceNumber, null, scalars])
     return list
   }
 
@@ -672,7 +674,7 @@ export class AtmosphereModel implements TaskModel {
   private physics(z: number, dt: number) {
     const { nx, ny, zs, height: H, layer } = this.grid, withIce = this.withIce()
     const cfg = this.config, e = this.env, u = this.u, v = this.v, w = this.w, theta = this.theta, q = this.q, cloud = this.cloud, rain = this.rain, cold = this.cold
-    const ice = this.ice, snow = this.snow, graupel = this.graupel, hail = this.hail, rhoGround = e.rho[0]
+    const ice = this.ice, iceNumber = this.iceNumber, snow = this.snow, graupel = this.graupel, hail = this.hail, rhoGround = e.rho[0]
     const electric = withIce && this.electrified(), cI = this.chargeIce, cG = this.chargeGraupel, cR = this.chargeRain, cA = this.chargeAir, cNow = this.chargeNow, before = this.massBefore, after = this.massAfter
     const flux = surfaceFluxes(cfg, this.time), urban = (cfg.city ?? 0) > 0 ? surfaceFluxes(cfg, this.time, 'urban') : flux, f = 2 * OMEGA * Math.sin(cfg.latitude * Math.PI / 180)
     const spongeStart = Math.max(cfg.tropopause * 1000 + 2500, 14_000), keep = Math.exp(-this.windRelaxation * dt)
@@ -696,17 +698,35 @@ export class AtmosphereModel implements TaskModel {
           const evap = this.rainFormation ? rainProcesses(q, cloud, rain, i, theta[i] * exner, p, rhoZ, dt) : 0
           // Evaporation takes exactly L/cp per unit mass from the air (no strength multiplier): energy is conserved.
           if (evap > 0) { const cool = LV / CP / exner * evap; theta[i] -= cool; cold[i] += cool }
-          // Ice: rain freezes (Bigg into graupel, below -40 °C at once into snow), snow aggregates, rimes, grows by
-          // deposition, sublimates and melts, graupel rimes, collects and melts; melting and sublimation feed the cold-pool
-          // indicator like evaporation.
+          // Ice: rain freezes (Bigg into graupel, below -38 °C at once), crystals nucleate and grow by deposition (at the
+          // droplets' expense in a cloud) or sublimate, snow aggregates, rimes, grows by deposition, sublimates and
+          // melts, graupel rimes, collects and melts; melting and sublimation feed the cold-pool indicator like evaporation.
           let cond: number
           if (withIce) {
-            freezeRain(theta, rain, snow, i, exner)
+            freezeRain(theta, rain, graupel, i, exner)
+            // The crystals first match the ice the transport (or a loaded state without them) left.
+            settleCrystals(ice, iceNumber, i)
+            cold[i] += iceProcesses(theta, q, ice, snow, iceNumber, i, exner, p, rhoZ, dt)
+            const iceBefore = ice[i], cloudBefore = cloud[i]
             cold[i] += snowProcesses(theta, q, cloud, ice, snow, rain, i, exner, p, rhoZ, rhoGround, dt)
+            const rainBefore = rain[i]
             cold[i] += graupelProcesses(theta, q, cloud, ice, snow, rain, graupel, i, exner, p, rhoZ, dt)
+            const rainFrozen = theta[i] * exner < 273.15 ? Math.max(0, rainBefore - rain[i]) : 0
             cold[i] += hailProcesses(theta, q, cloud, ice, snow, rain, graupel, hail, i, exner, p, rhoZ, dt)
-            // Mixed-phase saturation adjustment: water saturation above 0 °C, ice-weighted below, condensate frozen by T.
-            cond = saturationAdjustMixed(theta, q, cloud, ice, i, exner, p)
+            // Crystals aggregated or collected by snow, graupel and hail go with their mass.
+            if (iceBefore > 0) iceNumber[i] *= ice[i] / iceBefore
+            // Secondary ice: rime splintering at -3…-8 °C (the droplets the snow, graupel and hail froze on throw off
+            // crystals) and the raindrops shattering as they freeze into graupel (on their own or on graupel).
+            const splinters = splintering(theta[i] * exner - 273.15) * SPLINTERS * Math.max(0, cloudBefore - cloud[i])
+              + (rainFrozen > 0 ? fragmentsPerKg((Math.PI * RHO_W * N0R / (rhoZ * rainBefore)) ** .25) * rainFrozen : 0)
+            if (splinters > 0) {
+              // The splinters' mass from the rimers (graupel, then snow): a tiny share of the frozen water (350 per mg weigh 0.035 %).
+              const fromG = Math.min(graupel[i], splinters * CRYSTAL_MASS), fromS = Math.min(snow[i], splinters * CRYSTAL_MASS - fromG)
+              graupel[i] -= fromG; snow[i] -= fromS; ice[i] += fromG + fromS; iceNumber[i] += (fromG + fromS) / CRYSTAL_MASS
+            }
+            // Saturation adjustment: water saturation down to -38 °C (supercooled droplets), ice saturation below.
+            cond = saturationAdjustMixed(theta, q, cloud, ice, i, exner, p, iceNumber)
+            settleCrystals(ice, iceNumber, i)
             if (electric) {
               // The charge follows the water the microphysics moved between the carriers, then the rebounding
               // graupel-crystal collisions separate new charge (graupel-hail gains it, ice-snow the opposite).
@@ -715,7 +735,7 @@ export class AtmosphereModel implements TaskModel {
               if (cNow[0] !== 0 || cNow[1] !== 0 || cNow[2] !== 0 || cNow[3] !== 0) transferCharge(cNow, before, after)
               const tc = theta[i] * exner - 273.15
               const wetG = wetGrowing(graupel[i], N0G, RHO_G, tc, q[i], p, rhoZ, cloud[i], rain[i], ice[i], snow[i]), wetH = wetGrowing(hail[i], N0H, RHO_H, tc, q[i], p, rhoZ, cloud[i], rain[i], ice[i], snow[i])
-              const separated = chargingRate(tc, rhoZ, cloud[i], ice[i], snow[i], graupel[i], hail[i], this.snowFall[i], wetG, wetH) * dt / rhoZ
+              const separated = chargingRate(tc, rhoZ, cloud[i], ice[i], snow[i], graupel[i], hail[i], this.snowFall[i], wetG, wetH, iceNumber[i] * rhoZ) * dt / rhoZ
               // Inductive charging in the field: the graupel-hail gains what the rebounding droplets take away.
               const induced = inductiveRate(tc, rhoZ, cloud[i], graupel[i], hail[i], this.fieldZ[i], (cNow[1] + separated) * rhoZ, wetG, wetH) * dt / rhoZ
               cI[i] = cNow[0] - separated; cG[i] = cNow[1] + separated + induced; cR[i] = cNow[2]; cA[i] = cNow[3] - induced
@@ -762,7 +782,7 @@ export class AtmosphereModel implements TaskModel {
               const s = 1 - Math.exp(-dt / EDGE_TIME * (1 - d / EDGE_ZONE) ** 2), k = 1 - s
               u[i] = lerp(u[i], ue, s); v[i] = lerp(v[i], ve, s); w[i] *= k; const fd = frontTop > alt ? this.frontalAt(x, y, alt)[0] : 0
               theta[i] = lerp(theta[i], thEnv - this.frontDeficit(x, y, alt) - fd, s); q[i] = lerp(q[i], qEnv * coldMoisture(fd), s)
-              cloud[i] *= k; rain[i] *= k; ice[i] *= k; snow[i] *= k; graupel[i] *= k; hail[i] *= k; cold[i] *= k
+              cloud[i] *= k; rain[i] *= k; ice[i] *= k; iceNumber[i] *= k; snow[i] *= k; graupel[i] *= k; hail[i] *= k; cold[i] *= k
               if (electric) { cI[i] *= k; cG[i] *= k; cR[i] *= k; cA[i] *= k }
             }
           }

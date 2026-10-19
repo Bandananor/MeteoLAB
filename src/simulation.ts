@@ -3,7 +3,7 @@ import type { Lang } from './i18n'
 import type { Flash, ModelDiagnostics, RotationState, SimConfig } from './core'
 
 /** Grid-sized fields copied into every snapshot, then the column fields; the order is the buffer layout. */
-export const SNAPSHOT_FIELDS = ['u', 'v', 'w', 'theta', 'q', 'cloud', 'rain', 'cold', 'fallSpeed', 'ice', 'snow', 'graupel', 'hail', 'chargeIce', 'chargeGraupel', 'chargeRain', 'chargeAir'] as const
+export const SNAPSHOT_FIELDS = ['u', 'v', 'w', 'theta', 'q', 'cloud', 'rain', 'cold', 'fallSpeed', 'ice', 'iceNumber', 'snow', 'graupel', 'hail', 'chargeIce', 'chargeGraupel', 'chargeRain', 'chargeAir'] as const
 export const SNAPSHOT_COLUMNS = ['uhColumn', 'precipitation', 'coreW', 'coreWZ', 'hailGround', 'hailSize'] as const
 /** Most model steps run for one batch; time beyond that is dropped instead of piling up after slow frames. */
 export const MAX_STEPS_PER_BATCH = 12

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { AtmosphereModel, DT } from '.'
 import { QUIET } from './fixtures'
+import { qsatP } from './microphysics'
 
 /** A quiet model with a block of mixed-phase cloud (cloud water, ice, snow, graupel) at the levels between z0 and z1, m. */
 function mixedPhase(lightning = true, z0 = 5500, z1 = 7500) {
@@ -8,8 +9,8 @@ function mixedPhase(lightning = true, z0 = 5500, z1 = 7500) {
   for (let z = 0; z < nz; z++) if (zs[z] >= z0 && zs[z] <= z1) for (let y = ny / 2 - 3; y < ny / 2 + 3; y++) for (let x = nx / 2 - 3; x < nx / 2 + 3; x++) {
     const i = x + y * nx + z * layer
     m.cloud[i] = 1e-3; m.ice[i] = 5e-4; m.snow[i] = 5e-4; m.graupel[i] = 2e-3
-    // Saturated, so the block neither evaporates nor grows much in a few steps.
-    m.q[i] = Math.max(m.q[i], m.env.q[z])
+    // Saturated over water, so the droplets neither evaporate nor grow much in a few steps.
+    m.q[i] = Math.max(m.q[i], qsatP(m.theta[i] * m.env.exner[z] - 273.15, m.env.p[z]))
   }
   return m
 }

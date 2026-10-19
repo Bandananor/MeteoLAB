@@ -73,7 +73,7 @@ console.log(model.rotation.uh, model.diagnostics().updraft)</code></pre>
         <ul>
           <li><b>Cloud.</b> Vapour beyond saturation condenses at once, cloud in unsaturated air evaporates; below 0 °C saturation is taken over a mix of water and ice.</li>
           <li><b>Rain</b> after Kessler: cloud droplets merge into rain, rain collects cloud, falls at a speed depending on its amount and evaporates in dry air, cooling it.</li>
-          <li><b>Ice, snow and graupel</b> after Lin, Farley and Orville (1983): crystals stick together into snow, snow gets rimed with supercooled droplets and becomes graupel, graupel melts into rain below the 0 °C level.</li>
+          <li><b>Ice, snow and graupel</b> after Lin, Farley and Orville (1983): crystals stick together into snow, snow gets rimed with supercooled droplets and becomes graupel, graupel melts into rain below the 0 °C level. Since 2.7.2 the ice comes from processes rather than a share by temperature: droplets stay liquid down to −38 °C and freeze at once there; crystals nucleate on ice nuclei (Cooper 1986) and grow at the droplets’ expense (the Bergeron process), and their number is a field of its own, fed by splinters from riming at −3…−8 °C (Hallett and Mossop 1974) and from freezing raindrops (Lawson et al. 2015). The charging uses that number.</li>
           <li><b>Hail</b> — separate dense ice: born from graupel when it collects more supercooled water than it can freeze, it grows and melts. At the ground the hail swath and the largest hailstones are computed — up to about 2 cm: a single-moment scheme gives no giant hail.</li>
         </ul>
         <p>The “Warm rain” mode keeps only drops: cheaper, but no anvil of crystals and no latent heat of freezing.</p>
