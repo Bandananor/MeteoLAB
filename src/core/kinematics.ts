@@ -10,7 +10,15 @@ export interface StormIndices {
   /** Significant tornado parameter, fixed layer (SBCAPE, SB LCL, SRH 0-1 km, bulk shear 0-6 km). */ stp: number
   /** Significant hail parameter (MUCAPE, the MU parcel's mixing ratio, 700-500 hPa lapse rate, T at 500 hPa, bulk shear 0-6 km). */ ship: number
   /** Temperature lapse rate between 700 and 500 hPa, °C/km. */ lapse75: number
+  /** Derecho composite parameter (DCAPE, MUCAPE, bulk shear and mean wind 0-6 km). */ dcp: number
 }
+
+/**
+ * Derecho composite parameter (Evans & Doswell 2001, as SPC): DCAPE / 980 J/kg × MUCAPE / 2000 J/kg × 0-6 km shear / 20 kt ×
+ * 0-6 km mean wind / 16 kt. Above 2 — cold pools strong enough and a flow fast enough for a long-lived wind storm (a
+ * derecho or a bow echo) once storms organize into a line; it says nothing of whether they will.
+ */
+export const derechoParameter = (dcape: number, muCape: number, shear06: number, meanWind06: number) => dcape / 980 * (muCape / 2000) * (shear06 / 10.29) * (meanWind06 / 8.23)
 
 /**
  * Significant hail parameter, SPC's version 1.1 (Johnson & Sugden 2014): MUCAPE (J/kg) × the MU parcel's mixing ratio
@@ -86,5 +94,6 @@ export function stormIndices(env: Environment, parcels: ParcelIndices): StormInd
   const lapse75 = (env.temperatureEnv(z7) - t5) / ((z5 - z7) / 1000)
   let freezing = 0; while (freezing < height && env.temperatureEnv(freezing) > 0) freezing += 10
   const ship = hailParameter(parcels.mu.cape, env.qEnv(parcels.mu.start * 1000), lapse75, t5, shear06, freezing)
-  return { rightMover, leftMover, srh01, srh03, shear06, scp, stp, ship, lapse75 }
+  const dcp = derechoParameter(parcels.dcape, parcels.mu.cape, shear06, Math.hypot(...meanWind(env, 0, 6000)))
+  return { rightMover, leftMover, srh01, srh03, shear06, scp, stp, ship, lapse75, dcp }
 }

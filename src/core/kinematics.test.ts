@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createGrid, domainGrid, Environment, hailParameter, parcelIndices, SCENARIOS, type SimConfig, stormIndices } from '.'
+import { createGrid, domainGrid, Environment, derechoParameter, hailParameter, parcelIndices, SCENARIOS, type SimConfig, stormIndices } from '.'
 import { CAPPED, SUMMER_DAY, SUPERCELL } from './fixtures'
 
 // MetPy 1.7.1 (bunkers_storm_motion, storm_relative_helicity for the right mover, supercell_composite with SRH 0-3 km
@@ -40,5 +40,22 @@ describe('significant hail parameter (SPC SHIP v1.1)', () => {
       return stormIndices(env, parcelIndices(env, 18_000)).ship
     }
     expect(ship('Классическая суперячейка')).toBeGreaterThan(3); expect(ship('Летний день')).toBeLessThan(1); expect(ship('Тропическая конвекция')).toBeLessThan(.5)
+  })
+})
+
+describe('derecho composite parameter (2.8)', () => {
+  it('is the product of its four terms, 1 at 980 J/kg DCAPE, 2000 MUCAPE, 20 kt of shear and 16 kt of mean wind', () => {
+    expect(derechoParameter(980, 2000, 10.29, 8.23)).toBeCloseTo(1, 6)
+    expect(derechoParameter(1470, 3000, 20.58, 8.23)).toBeCloseTo(1.5 * 1.5 * 2, 6)
+    expect(derechoParameter(1000, 0, 20, 15)).toBe(0)
+  })
+
+  it('is high under fast flow with strong downdraughts (the supercells ~8-10, the multicell storm ~2.7), low in a calm summer day and a microburst’s weak flow', () => {
+    const dcp = (name: string) => {
+      const config = { ...SUMMER_DAY, ...SCENARIOS.find(s => s.name === name)!.values }, env = new Environment(config, createGrid(domainGrid(config.domain, config.top, config.domainSize)))
+      return stormIndices(env, parcelIndices(env, 18_000)).dcp
+    }
+    expect(dcp('Классическая суперячейка')).toBeGreaterThan(4); expect(dcp('Многоячейковая гроза')).toBeGreaterThan(2)
+    expect(dcp('Летний день')).toBeLessThan(1); expect(dcp('Микропорыв')).toBeLessThan(1)
   })
 })
