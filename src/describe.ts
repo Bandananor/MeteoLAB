@@ -33,7 +33,9 @@ export function cloudGenus(top: number, lcl: number | null, topTemp: number, el:
 
 /** Human-readable storm mode and a short explanation of what the model is doing right now. */
 export function describeConvection(d: ModelDiagnostics, s: Sounding, r: RotationState, topTemp = 0) {
-  const { cores, coldMax, updraft: up, cloudTop: top, shear06: shear } = d
+  // The outflow's true cold (θv at the ground, rkw.ts), since 2.8; the thresholds kept: the indicator they were set on
+  // peaked at ~10 K under the classic supercell as the true deficit does (tests/bench/outflow.ts).
+  const { cores, outflow: coldMax, updraft: up, cloudTop: top, shear06: shear } = d
   const cellType = coldMax > 7 && up < 2 ? L('Отток подавил ячейку', 'The outflow has choked the cell') : cores >= 3 ? L('Многоячейковая гроза', 'Multicell storm') : cores === 2 ? L('Две взаимодействующие ячейки', 'Two interacting cells') : cores === 1 && shear > 18 ? L('Наклонённая организованная ячейка', 'Tilted organized cell') : cores === 1 ? L('Одноячейковая гроза', 'Single-cell storm') : top > 1 ? L('Растущие кучевые облака', 'Growing cumulus') : L('Термики пограничного слоя', 'Boundary-layer thermals')
   const cellReason = cores ? L(`${cores} ${cores === 1 ? 'восходящее ядро' : cores < 5 ? 'восходящих ядра' : 'восходящих ядер'}`, `${cores} updraught core${cores === 1 ? '' : 's'}`) : L('глубокое ядро ещё не сформировано', 'no deep core yet')
 
@@ -41,10 +43,10 @@ export function describeConvection(d: ModelDiagnostics, s: Sounding, r: Rotation
   if (top >= (s.lcl ?? 99)) logic = L('На LCL объём воздуха насыщается; сухое вовлечение размывает края облака.', 'At the LCL the air saturates; dry entrainment frays the cloud’s edges.')
   if (top >= (s.lfc ?? 99)) logic = L('Выше LFC восходящий поток ускоряется и наклоняется сдвигом ветра.', 'Above the LFC the updraught accelerates and is tilted by the wind shear.')
   if (top >= (s.el ?? 99) - .6) logic = L('У EL плавучесть исчезает: поток расходится во всех горизонтальных направлениях, формируя наковальню.', 'At the EL the buoyancy vanishes: the updraught spreads out in every horizontal direction, forming the anvil.')
-  // The cold pool undercuts the core only when the core is weakening too (the indicator alone ran past 7 K under a
-  // supercell at its height: the meteorologist's review 16.10.2026).
+  // The cold pool undercuts the core only when the core is weakening too (it runs past 7 K under a supercell at its
+  // height: the meteorologist's review 16.10.2026).
   if (coldMax > 3) logic += coldMax > 7 && up < 10 ? L(' Холодный купол подтекает под приток тёплого воздуха и гасит исходное ядро.', ' The cold pool undercuts the warm inflow and chokes the original core.') : L(' Фронт порывов поднимает тёплый воздух по краю холодного купола.', ' The gust front lifts warm air along the edge of the cold pool.')
-  if (d.gust > 20 && d.coldMax > 2) logic += L(` Холодный отток растекается у земли: порывы до ${d.gust.toFixed(0)} м/с.`, ` The cold outflow spreads along the ground: gusts up to ${d.gust.toFixed(0)} m/s.`)
+  if (d.gust > 20 && coldMax > 2) logic += L(` Холодный отток растекается у земли: порывы до ${d.gust.toFixed(0)} м/с.`, ` The cold outflow spreads along the ground: gusts up to ${d.gust.toFixed(0)} m/s.`)
   // A heavy shower under a weak updraught is the dissipating stage, not a fault (a tester 19.10.2026: «under 10 m/s the
   // rain is 100 mm/h»): the water the updraught held falls at once and drags the air down; an ordinary cell's heaviest
   // rain comes some 10 minutes after its strongest updraught (tests/bench/rainstage.ts: 34 m/s at 17 min, 104 mm/h at 30).

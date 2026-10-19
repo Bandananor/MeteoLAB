@@ -20,6 +20,7 @@ import { fallSpeed, rainProcesses, saturationAdjust } from './microphysics'
 import { PressureSolver } from './pressure'
 import { dragCoefficient, surfaceFluxes } from './surface'
 import { computeSounding, type Sounding } from './sounding'
+import { deficitNear, outflowDeficit } from './rkw'
 import { type Memory, type Phase, PRIVATE_MEMORY, type StepRunner, type TaskModel } from './threads'
 
 /** One field a step transports: WENO (monotone) or linear upwind, with the positivity fix or not, and a decay factor per second. */
@@ -78,6 +79,8 @@ export interface RotationState {
   coreAnti: number
   /** Largest cyclonic updraft helicity of the 0-1 and 0-3 km layers (low-level mesocyclone), m2/s2. */
   uh01: number; uh03: number
+  /** Ground column (x + nx y) of the largest UH 0-1 km. */
+  low: number
 }
 
 export interface ModelDiagnostics {
@@ -85,6 +88,8 @@ export interface ModelDiagnostics {
   /** Largest rain total on the ground since the start, mm. */ rainTotal: number
   updraft: number; downdraft: number; cloudTop: number; thermalTop: number
   maxCloud: number; coldMax: number; cores: number; shear06: number
+  /** The outflow's cold at the ground (rkw.ts outflowDeficit): the largest θv deficit, and the largest within OUTFLOW_NEAR of the low-level rotation, K. */
+  outflow: number; outflowLow: number
   /**
    * Strongest wind over the ground at the ground node (its half layer, ~0-50 m, with the surface drag), m/s: outflow and
    * downburst gusts, the level the weather station reads too (was ~100 m, the station z = 0: a tester saw two winds).
@@ -149,7 +154,7 @@ export class AtmosphereModel implements TaskModel {
    * of the largest stones that have fallen there, mm (see hailMaxDiameter): the hail swath.
    */
   readonly hailGround: Float32Array; readonly hailSize: Float32Array
-  readonly rotation: RotationState = { uh: 0, x: 0, y: 0, anticyclonic: 0, persisted: 0, uh01: 0, uh03: 0, coreZeta: 0, coreUH: 0, coreAnti: 0 }
+  readonly rotation: RotationState = { uh: 0, x: 0, y: 0, anticyclonic: 0, persisted: 0, uh01: 0, uh03: 0, low: 0, coreZeta: 0, coreUH: 0, coreAnti: 0 }
   readonly sounding: Sounding
   /** Lowest and highest level of the 2-5 km updraft-helicity layer. */
   readonly uhLevels: readonly [number, number]
@@ -866,11 +871,11 @@ export class AtmosphereModel implements TaskModel {
     const { nx, ny, hz, zs, layer } = this.grid, [z0, z1] = this.uhLevels, r = this.rotation, col = this.uhColumn
     // Low layers: the levels up to 1 and 3 km (on the uniform ~650 m grid: one level at ~650 m, w = 0 on the ground; four).
     const top1 = zs.findLastIndex(z => z <= 1000), top3 = zs.findLastIndex(z => z <= 3000)
-    let max = 0, min = 0, bx = 0, by = 0, max01 = 0, max03 = 0
+    let max = 0, min = 0, bx = 0, by = 0, max01 = 0, max03 = 0, low01 = 0
     const coreW = this.coreW, coreWZ = this.coreWZ
     for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++) {
       let uh = 0, low = 0, sw = 0, swz = 0
-      for (let z = 1; z <= top3; z++) { low += this.w[x + nx * y + z * layer] * this.zeta(x, y, z) * hz[z]; if (z === top1) max01 = Math.max(max01, low) }
+      for (let z = 1; z <= top3; z++) { low += this.w[x + nx * y + z * layer] * this.zeta(x, y, z) * hz[z]; if (z === top1 && low > max01) { max01 = low; low01 = x + nx * y } }
       max03 = Math.max(max03, low)
       for (let z = z0; z <= z1; z++) {
         const w = this.w[x + nx * y + z * layer], wz = w * this.zeta(x, y, z) * hz[z]
@@ -900,7 +905,7 @@ export class AtmosphereModel implements TaskModel {
       coreAnti = Math.max(coreAnti, -swz / sw)
     }
     r.coreZeta = coreZeta; r.coreUH = coreUH; r.coreAnti = coreAnti
-    r.uh = max; r.anticyclonic = -min; r.uh01 = max01; r.uh03 = max03; r.x = bx; r.y = by; r.persisted = coreZeta >= MESO_CORE_ZETA ? r.persisted + dt : 0
+    r.uh = max; r.anticyclonic = -min; r.uh01 = max01; r.uh03 = max03; r.low = low01; r.x = bx; r.y = by; r.persisted = coreZeta >= MESO_CORE_ZETA ? r.persisted + dt : 0
   }
 
   private countCores() {
@@ -944,7 +949,8 @@ export class AtmosphereModel implements TaskModel {
     for (let i = 0; i < this.grid.layer; i++) { rainRate = Math.max(rainRate, rho0 * (this.rain[i] * fallSpeed(this.rain[i], rho0, rho0) + this.snow[i] * snowFallSpeed(this.snow[i], rho0, rho0) + this.graupel[i] * graupelFallSpeed(this.graupel[i], rho0) + this.hail[i] * hailFallSpeed(this.hail[i], rho0)) * 3600); rainTotal = Math.max(rainTotal, this.precipitation[i]) }
     // Largest hailstones reaching the ground now (falling through the ground node), mm.
     let hail = 0
+    const cold = outflowDeficit(this)
     for (let i = 0; i < this.grid.layer; i++) hail = Math.max(hail, hailMaxDiameter(this.hail[i], rho0) * 1000)
-    return { updraft: up, downdraft: down, rainRate, rainTotal, cloudTop: top, thermalTop, maxCloud, coldMax, cores: this.countCores(), shear06: Math.hypot(u6 - u0, v6 - v0), gust, hail, clipped: this.clipped }
+    return { updraft: up, downdraft: down, rainRate, rainTotal, cloudTop: top, thermalTop, maxCloud, coldMax, cores: this.countCores(), shear06: Math.hypot(u6 - u0, v6 - v0), outflow: cold.max, outflowLow: deficitNear(cold, this.grid, this.rotation.low), gust, hail, clipped: this.clipped }
   }
 }

@@ -4,6 +4,7 @@ import { hailFallSpeed } from './hail'
 import { snowFallSpeed } from './ice'
 import { fallSpeed } from './microphysics'
 import { type AtmosphereModel, MESO_CORE_ZETA, MESO_PERSISTENCE, UH_ROTATING } from './model'
+import { outflowDeficit } from './rkw'
 
 /** Updraught core of a cell: columns with w above this (m/s) in cloud somewhere between CORE_BASE and CORE_TOP. */
 export const CELL_W = 4
@@ -14,7 +15,10 @@ const CORE_BASE = 1500, CORE_TOP = 10_000
 export const CELL_REACH = 10_000
 /** Rain (and melting ice) reaching the ground in the storm area that makes a cell mature, mm/h. */
 export const MATURE_RAIN = 1
-/** Cold-pool indicator at the ground (K) under the low-level rotation that marks an occlusion: the RFD gust front under it. */
+/**
+ * The outflow's θv deficit at the ground (K) under the low-level rotation that marks an occlusion: the RFD gust front
+ * under it. Was the cold-pool indicator's 2 K; the true deficit there is within ~30 % of it (tests/bench/outflow.ts).
+ */
 export const OCCLUSION_COLD = 2
 /** A new stage must hold this long (s of model time) before the cell switches to it, so noise does not flip it back and forth. */
 export const STAGE_HOLD = 60
@@ -52,8 +56,8 @@ export interface CellStats {
   /** Largest cyclonic updraft helicity 0-1 and 0-3 km, m2/s2. */ uh01: number; uh03: number
   /** Highest cloud (water or ice), km. */ cloudTop: number
   /** Heaviest precipitation at the ground, mm/h. */ rainRate: number
-  /** Strongest cold-pool indicator below 1.5 km, K. */ coldPool: number
-  /** Cold-pool indicator at the ground under the low-level rotation (or the updraught when there is none), K. */ coldUnder: number
+  /** The outflow's cold: the largest θv deficit at the ground in the storm area (rkw.ts outflowDeficit), K. */ coldPool: number
+  /** The θv deficit at the ground under the low-level rotation (or the updraught when there is none), K. */ coldUnder: number
   /** Area of the updraught core, km2. */ area: number
   /**
    * Rotation of the updraught core itself: w-weighted mean vertical vorticity at 2-5 km over the core's columns (s-1;
@@ -135,7 +139,7 @@ export class CellTracker {
     this.time = time; this.ended = []
     // Per column: the updraught core, the strongest up/downdraught, cloud top, ground rain, cold pool and low-level UH.
     const core = new Float32Array(layer), coreTop = new Float32Array(layer), up = new Float32Array(layer), down = new Float32Array(layer), top = new Float32Array(layer)
-    const rain = new Float32Array(layer), cold = new Float32Array(layer), uh01 = new Float32Array(layer), uh03 = new Float32Array(layer)
+    const outflow = outflowDeficit(m), rain = new Float32Array(layer), cold = new Float32Array(layer), uh01 = new Float32Array(layer), uh03 = new Float32Array(layer)
     const rho0 = m.env.rho[0], top1 = zs.findLastIndex(z => z <= 1000), top3 = zs.findLastIndex(z => z <= 3000)
     for (let c = 0; c < layer; c++) {
       const r = m.rain[c], s = m.snow[c], g = m.graupel[c], h = m.hail[c]
@@ -233,7 +237,7 @@ export class CellTracker {
     const add = (k: number, c: number) => {
       const s = stats[k], uh = m.uhColumn[c]
       s.updraft = Math.max(s.updraft, up[c]); s.downdraft = Math.max(s.downdraft, down[c]); s.cloudTop = Math.max(s.cloudTop, top[c])
-      s.rainRate = Math.max(s.rainRate, rain[c]); s.coldPool = Math.max(s.coldPool, cold[c]); s.uh = Math.max(s.uh, uh); s.anticyclonic = Math.max(s.anticyclonic, -uh)
+      s.rainRate = Math.max(s.rainRate, rain[c]); s.coldPool = Math.max(s.coldPool, outflow.deficit[c]); s.uh = Math.max(s.uh, uh); s.anticyclonic = Math.max(s.anticyclonic, -uh)
       s.uh01 = Math.max(s.uh01, uh01[c]); s.uh03 = Math.max(s.uh03, uh03[c])
       if (uh03[c] > lowest[k]) { lowest[k] = uh03[c]; lowAt[k] = c }
     }
@@ -248,7 +252,7 @@ export class CellTracker {
       const s = stats[k]
       // Under the low-level rotation if there is any, else under the strongest part of the core.
       const under = lowest[k] > 0 ? lowAt[k] : cell.columns.reduce((a, b) => core[b] > core[a] ? b : a, cell.columns[0])
-      s.coldUnder = m.cold[under]; s.area = cell.columns.length * dx * dy / 1e6
+      s.coldUnder = outflow.deficit[under]; s.area = cell.columns.length * dx * dy / 1e6
       let sw = 0, swz = 0
       for (const c of cell.columns) { sw += m.coreW[c]; swz += m.coreWZ[c] }
       s.coreZeta = sw > 0 ? swz / sw : 0

@@ -1,5 +1,6 @@
 import { L } from '../i18n'
 import type { AtmosphereModel } from './model'
+import { OUTFLOW_WARM } from './rkw'
 
 export type ScalarField = 'updraft' | 'theta' | 'moisture' | 'vorticity' | 'helicity' | 'coldpool'
 
@@ -16,11 +17,14 @@ export const UH_LAYERS: Record<UhLayer, { label: string; from: number; to: numbe
 /**
  * Fills `out` (one value per grid node) with a diagnostic field in physical units:
  * updraft m/s, theta = temperature departure from the environment K, moisture = RH %,
- * vorticity 1e-3 s-1, helicity = column UH m2/s2 of `uhLayer` drawn only in that layer, coldpool K.
+ * vorticity 1e-3 s-1, helicity = column UH m2/s2 of `uhLayer` drawn only in that layer, coldpool K: the θv deficit
+ * below COLD_POOL_TOP against the warm air of the level (its OUTFLOW_WARM percentile), as rkw.ts outflowDeficit at the
+ * ground (2.8: was the cold-pool indicator, the cooling gathered, which can be half or twice the real difference).
  */
 export function computeScalarField(model: AtmosphereModel, field: ScalarField, out: Float32Array, uhLayer: UhLayer = '2-5') {
   const { nx, ny, nz } = model.grid, env = model.env, [uh0, uh1] = model.uhLevels
   if (field === 'helicity' && uhLayer !== '2-5') { columnHelicity(model, uhLayer, out); return }
+  if (field === 'coldpool') { coldPool(model, out); return }
   for (let z = 0, i = 0; z < nz; z++) {
     const alt = model.grid.zs[z], exner = env.exner[z], thEnv = model.envNow(z)[0]
     for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++, i++) {
@@ -30,9 +34,22 @@ export function computeScalarField(model: AtmosphereModel, field: ScalarField, o
         case 'moisture': out[i] = 100 * model.q[i] / Math.max(1e-5, env.qsat(model.theta[i] * exner - 273.15, alt)); break
         case 'vorticity': out[i] = 1000 * model.zeta(x, y, z); break
         case 'helicity': out[i] = z >= uh0 && z <= uh1 ? model.uhColumn[x + nx * y] : 0; break
-        case 'coldpool': out[i] = model.cold[i]; break
       }
     }
+  }
+}
+
+/** The cold pool is looked for up to this height, m (outflows are 1-3 km deep; above, the anvil's cool air is not one). */
+export const COLD_POOL_TOP = 3000
+
+function coldPool(model: AtmosphereModel, out: Float32Array) {
+  const { nz, layer, zs } = model.grid, thv = new Float32Array(layer)
+  out.fill(0)
+  for (let z = 0; z < nz && zs[z] <= COLD_POOL_TOP; z++) {
+    const at = z * layer
+    for (let c = 0; c < layer; c++) thv[c] = model.theta[at + c] * (1 + .61 * model.q[at + c])
+    const warm = Float32Array.from(thv).sort()[Math.floor((layer - 1) * OUTFLOW_WARM)]
+    for (let c = 0; c < layer; c++) out[at + c] = Math.max(0, warm - thv[c])
   }
 }
 

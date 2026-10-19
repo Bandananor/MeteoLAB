@@ -49,6 +49,46 @@ export function coldPoolBalance(m: RkwSource): ColdPoolBalance | null {
   return { c, cMax: max, depth: depthSum / n, deltaU, ratio: c / Math.max(deltaU, .1), area: n / layer }
 }
 
+/**
+ * The air of the undisturbed environment at the ground is this percentile of the ground node's θv over the domain (the
+ * outflow and the rain-cooled air take up a minority of it; a percentile follows the day's heating, which the initial
+ * profile does not).
+ */
+export const OUTFLOW_WARM = .75
+/** How far from the low-level rotation the outflow under it is looked for, m (the rotation's column and its neighbours). */
+export const OUTFLOW_NEAR = 2000
+
+export interface OutflowDeficit {
+  /** θv of the environment at the ground minus that of each ground column, K, at least 0. */ deficit: Float32Array
+  /** θv of the environment at the ground, K. */ warm: number
+  /** The largest deficit, K. */ max: number
+}
+
+/**
+ * The true cold of the outflow (2.8): the ground air's virtual potential temperature θv = θ (1 + 0.61 q) below that of
+ * the environment, as the RFD's θv′ is measured (Markowski et al. 2002), instead of the cold-pool indicator, which
+ * gathers the cooling the air has had and can be half or twice the real difference.
+ */
+export function outflowDeficit(m: Pick<RkwSource, 'grid' | 'theta' | 'q'>): OutflowDeficit {
+  const { layer } = m.grid, thv = new Float32Array(layer)
+  for (let c = 0; c < layer; c++) thv[c] = m.theta[c] * (1 + .61 * m.q[c])
+  const warm = Float32Array.from(thv).sort()[Math.floor((layer - 1) * OUTFLOW_WARM)], deficit = new Float32Array(layer)
+  let max = 0
+  for (let c = 0; c < layer; c++) { deficit[c] = Math.max(0, warm - thv[c]); max = Math.max(max, deficit[c]) }
+  return { deficit, warm, max }
+}
+
+/** The largest deficit within `radius` (m) of the ground column `c`, across the periodic edges. */
+export function deficitNear(d: OutflowDeficit, grid: Grid, c: number, radius = OUTFLOW_NEAR) {
+  const { nx, ny, dx, dy } = grid, x0 = c % nx, y0 = Math.floor(c / nx), rx = Math.floor(radius / dx), ry = Math.floor(radius / dy)
+  let max = 0
+  for (let j = -ry; j <= ry; j++) for (let i = -rx; i <= rx; i++) {
+    if ((i * dx) ** 2 + (j * dy) ** 2 > radius ** 2) continue
+    max = Math.max(max, d.deficit[(x0 + i + nx) % nx + nx * ((y0 + j + ny) % ny)])
+  }
+  return max
+}
+
 /** What the balance means, in a few words. */
 export function describeBalance(b: ColdPoolBalance) {
   if (b.ratio > 1.5) return L('купол сильнее сдвига: фронт порывов убегает вперёд, ячейки заваливаются назад над оттоком и слабеют', 'the cold pool is stronger than the shear: the gust front runs ahead, the cells lean back over the outflow and weaken')

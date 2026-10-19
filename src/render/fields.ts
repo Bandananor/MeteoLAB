@@ -14,7 +14,7 @@ export const FIELDS: Record<ScalarField, FieldInfo> = {
   moisture: { title: L('Относительная влажность', 'Relative humidity'), units: '%', min: 0, max: 100, diverging: false, threshold: .85, stops: ['#7a5a33', '#b89a63', '#e3dcc0', '#9ccbbd', '#4b9aa3', '#1f5d78'] },
   vorticity: { title: L('Вертикальная завихренность', 'Vertical vorticity'), units: L('10⁻³ с⁻¹', '10⁻³ s⁻¹'), min: -4, max: 4, diverging: true, threshold: .3, stops: DIVERGING },
   helicity: { title: L('Вращение восходящего потока UH (слой 2–5 км)', 'Updraught rotation UH (2–5 km layer)'), units: L('м²/с²', 'm²/s²'), min: -300, max: 300, diverging: true, threshold: .3, stops: DIVERGING },
-  coldpool: { title: L('Охлаждение от испарения осадков', 'Cooling by evaporating precipitation'), units: 'K', min: 0, max: 8, diverging: false, threshold: .15, stops: ['#f1efe9', '#b9d7e6', '#6ea6cc', '#3769a0', '#1d3565'] },
+  coldpool: { title: L('Холод оттока: на сколько воздух холоднее окружающего (θv)', 'Outflow cold: how much colder the air is than around it (θv)'), units: 'K', min: 0, max: 8, diverging: false, threshold: .15, stops: ['#f1efe9', '#b9d7e6', '#6ea6cc', '#3769a0', '#1d3565'] },
 }
 
 /** A field's description, with the title and colour scale of the chosen UH layer for the helicity map. */

@@ -157,7 +157,7 @@ export class Atmosphere implements ViewSettings {
     return {
       ...live.sounding, ...text, indices: live.indices, storm: live.storm,
       updraft: d.updraft, downdraft: d.downdraft, rain: d.rainRate, rainTotal: d.rainTotal, cloudTop: d.cloudTop, thermalTop: d.thermalTop,
-      cloudWater: d.maxCloud * 1000, coldPool: d.coldMax, gust: d.gust, hail: d.hail, hailSwath: m.hailSize.reduce((a, b) => Math.max(a, b), 0), clipped: d.clipped, updraftHelicity: m.rotation.uh, uh01: m.rotation.uh01, uh03: m.rotation.uh03,
+      cloudWater: d.maxCloud * 1000, coldPool: d.outflow, outflowLow: d.outflowLow, gust: d.gust, hail: d.hail, hailSwath: m.hailSize.reduce((a, b) => Math.max(a, b), 0), clipped: d.clipped, updraftHelicity: m.rotation.uh, uh01: m.rotation.uh01, uh03: m.rotation.uh03,
       insolation: insolation(m.config, m.time), sunElevation: Math.asin(Math.max(-1, Math.min(1, sunDirection(m.config, m.time).y))) * 180 / Math.PI,
     }
   }

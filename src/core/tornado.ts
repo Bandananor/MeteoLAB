@@ -12,12 +12,18 @@ export interface TornadoThresholds {
   uh01: number; held: number
   /** STP and SRH 0-1 km (m²/s²) of the environment at least, the cloud base (LCL, km) at most. */
   stp: number; srh01: number; lcl: number
-  /** The outflow at most this cold, K (the cold pool's deficit). */
+  /** The outflow at most this cold, K: its θv deficit at the ground near the low-level rotation. */
   cold: number
 }
 
-/** Defaults: the model's low-mesocyclone level (spin.ts), the usual forecasting thresholds (Thompson et al. 2003, Markowski & Richardson 2010). */
-export const TORNADO_DEFAULTS: TornadoThresholds = { uh01: UH01_LOW_MESO, held: 3, stp: 1, srh01: 100, lcl: 1.5, cold: 6 }
+/**
+ * Defaults: the model's low-mesocyclone level (spin.ts), the usual forecasting thresholds (Thompson et al. 2003,
+ * Markowski & Richardson 2010). The outflow: the RFDs of significant tornadoes were mostly within 3-4 K of the inflow's
+ * θv, of non-tornadic storms colder (Markowski et al. 2002); was 6 K of the cold-pool indicator's largest value over the
+ * whole domain (2.8). The model's supercell outflows run too cold (6-10 K within 2 km of the rotation, tests/bench/
+ * outflow.ts; the roadmap's 2.13), so the last level comes mostly before the outflow wraps around the rotation.
+ */
+export const TORNADO_DEFAULTS: TornadoThresholds = { uh01: UH01_LOW_MESO, held: 3, stp: 1, srh01: 100, lcl: 1.5, cold: 4 }
 
 /** What the detector reads: the storm now and the environment around it. */
 export interface TornadoInput {
@@ -26,7 +32,7 @@ export interface TornadoInput {
   /** How long (s) the mid-level mesocyclone has held (RotationState.persisted). */
   mesoHeld: number
   stp: number; srh01: number; lcl: number | null
-  /** The strongest cold-pool deficit, K. */
+  /** The outflow's θv deficit at the ground within OUTFLOW_NEAR of the low-level rotation (ModelDiagnostics.outflowLow), K. */
   cold: number
 }
 
