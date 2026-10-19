@@ -35,6 +35,15 @@ export const DUAL_MIN_DBZ = 10
 /** The echo top's reflectivity, dBZ (NWS enhanced echo tops), and the reflectivity VIL counts at most, dBZ (hail above it). */
 export const ECHO_TOP_DBZ = 18, VIL_MAX_DBZ = 56
 
+/**
+ * Nyquist velocities of the folding option, m/s: a pulsed Doppler radar measures the radial velocity only within
+ * ±v_N = λ PRF / 4; faster wind folds over to the other sign. An S-band radar (λ 10 cm) as the NEXRAD's low tilts ~28;
+ * a C-band one (λ 5.3 cm) at a PRF of 1000 Hz ~13, as many European radars, where folding is common.
+ */
+export const NYQUIST = { S: 28, C: 13 } as const
+/** The radial velocity as a radar of Nyquist velocity n measures it: within ±n (NaN stays NaN). */
+export const fold = (v: number, n: number) => v - 2 * n * Math.round(v / (2 * n))
+
 export class PPI {
   readonly w: number; readonly h: number
   readonly dbz: Float32Array; readonly velocity: Float32Array; readonly compositeDbz: Float32Array

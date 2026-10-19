@@ -1,5 +1,5 @@
 import { L } from '../i18n'
-import { type AtmosphereModel, type Circulation, DBZ_FLOOR, DUAL_MIN_DBZ, MESO_STRENGTH, type MesoStrength, MesocycloneDetector, PPI, RADAR_TILTS, TDA_LOW_DV, TDA_MAX_DV } from '../core'
+import { type AtmosphereModel, type Circulation, DBZ_FLOOR, DUAL_MIN_DBZ, MESO_STRENGTH, type MesoStrength, MesocycloneDetector, fold, NYQUIST, PPI, RADAR_TILTS, TDA_LOW_DV, TDA_MAX_DV } from '../core'
 import { help, instrumentPalette, instrumentScreen, press, readings, section } from '../instrument'
 import { download } from '../share'
 import { MONO } from '../theme'
@@ -48,7 +48,7 @@ type Cut = ReturnType<PPI['crossSection']> & { gates: number; rows: number; leng
 const DUAL_NOTE = L(`Порог эха — ${DUAL_MIN_DBZ} dBZ. Оценка по средним размерам частиц: микрофизика модели одномоментная (размер следует только из массы), поэтому сортировка капель по размеру — дуга ZDR у переднего края суперячейки — почти не видна; точнее станет с двухмоментной схемой.`, `Echo threshold — ${DUAL_MIN_DBZ} dBZ. An estimate from the particles’ mean sizes: the model’s microphysics is single-moment (the size follows from the mass alone), so the size sorting of drops — the ZDR arc at the supercell’s forward edge — is hardly visible; it will be more accurate with a two-moment scheme.`)
 const HELP: Record<Product, string> = {
   Z: L('Луч идёт под углом к горизонту и с дальностью поднимается выше: низкий наклон видит осадки у земли, высокий — ядро грозы и наковальню. Щелчок по экрану переносит радар.', 'The beam leaves at an angle to the horizon and rises with range: a low tilt sees the precipitation near the ground, a high one the storm’s core and the anvil. A click on the screen moves the radar.'),
-  V: L('Скорость вдоль луча: зелёное — к радару, красное — от радара. Видна только там, где есть эхо. Движение самой грозы часто маскирует вращение — для мезоциклона смотрите SRV.', 'The velocity along the beam: green — towards the radar, red — away from it. Seen only where there is an echo. The storm’s own motion often masks the rotation — for a mesocyclone look at SRV.'),
+  V: L('Скорость вдоль луча: зелёное — к радару, красное — от радара. Видна только там, где есть эхо. Движение самой грозы часто маскирует вращение — для мезоциклона смотрите SRV. С «Складыванием скоростей» — как на настоящем радаре: быстрее предела (±28 м/с у S-диапазона, ±13 у C) цвет перескакивает в противоположный (ярко-красное прямо посреди ярко-зелёного без серой полосы нуля между ними), под курсором — и скорость без складывания.', 'The velocity along the beam: green — towards the radar, red — away from it. Seen only where there is an echo. The storm’s own motion often masks the rotation — for a mesocyclone look at SRV. With «Velocity folding» — as on a real radar: beyond the limit (±28 m/s in S-band, ±13 in C) the colour jumps to the opposite one (bright red right amid bright green, with no grey zero band between them); under the cursor also the unfolded speed.'),
   SRV: '',
   CR: L('Сильнейшее эхо по всем 14 наклонам объёмного скана над каждой точкой — как обычная радарная карта.', 'The strongest echo over all 14 tilts of the volume scan above each point — like an ordinary radar map.'),
   ZDR: L(`Дифференциальная отражаемость: насколько эхо в горизонтальной поляризации сильнее, чем в вертикальной. Крупные капли сплюснуты — ZDR +1…+4 дБ; град и крупа кувыркаются и почти круглые — около 0; сухой снег — 0…+0,5. Колонна ZDR — капли, вынесенные потоком выше 0 °C (высокие наклоны и разрез): признак сильного потока, раньше роста отражаемости. Высокая Z при ZDR около 0 — ядро града. ${DUAL_NOTE}`, `Differential reflectivity: how much stronger the echo is in horizontal polarization than in vertical. Large drops are flattened — ZDR +1…+4 dB; hail and graupel tumble and are nearly round — about 0; dry snow — 0…+0.5. A ZDR column — drops lofted by the updraught above 0 °C (high tilts and the cross-section): a sign of a strong updraught, ahead of the reflectivity’s growth. High Z with ZDR near 0 — a hail core. ${DUAL_NOTE}`),
@@ -110,6 +110,8 @@ export class RadarPanel {
   private lastTime = -1; private lastDraw = 0; private lastComposite = 0; private hover: Point | null = null
   private product: Product = 'Z'
   /** Mesocyclone detection over the whole volume scan, rerun every MDA_EVERY ms of real time while the screen is open. */
+  /** The Nyquist velocity the base velocity folds at (V and its section; 0: none), and the buffers it is folded into. */
+  private nyquist = 0; private foldedMap = new Float32Array(0); private foldedCut = new Float32Array(0)
   private detector = new MesocycloneDetector(); private detections: Circulation[] = []; private lastScan = 0; private scanTime = -1; private showMda = true; private showWeak = false
   /** Storm motion for SRV (the Bunkers right mover of the environment), m/s. */
   private motion: readonly [number, number] = [0, 0]
@@ -135,7 +137,8 @@ export class RadarPanel {
     this.root = instrumentScreen(host, 'radar-app', 'METEOLAB DOPPLER · S-BAND',
       `<span>${L('ПРОДУКТ', 'PRODUCT')} <b id="radarProduct">${PRODUCTS.Z.title}</b></span><span>${L('НАКЛОН', 'TILT')} <b id="radarTilt">0.5°</b></span><span>${L('РАЗРЕЗ', 'SECTION')} <b id="radarCut">${L('нет', 'none')}</b></span><span>T+ <b id="radarTime">00:00</b></span>`,
       section(L('Продукт', 'Product'), `<div class="tilts tilts--4">${(Object.keys(PRODUCTS) as Product[]).map(p => `<button data-product="${p}" title="${PRODUCTS[p].label}">${p}</button>`).join('')}</div>
-        <div class="stat" style="border:0;padding:0"><span id="radarProductLabel"></span><span class="unit" id="radarUnits">dBZ</span></div>`)
+        <div class="stat" style="border:0;padding:0"><span id="radarProductLabel"></span><span class="unit" id="radarUnits">dBZ</span></div>
+        <span class="label" title="${L(`Как у настоящего импульсного радара: скорость вдоль луча измеряется только в пределах ±v_N = λ·PRF/4 (Найквист), быстрее — «заворачивается» в другой знак: красное посреди зелёного. S-диапазон (λ 10 см, как NEXRAD) — ±${NYQUIST.S} м/с, C-диапазон (λ 5 см, PRF 1000 Гц, как многие европейские) — ±${NYQUIST.C}. Только для V: SRV и MDA считаются по раскрученной скорости, как у NWS`, `As on a real pulsed radar: the velocity along the beam is measured only within ±v_N = λ·PRF/4 (Nyquist), faster wind folds over to the other sign: red amid green. S-band (λ 10 cm, as the NEXRAD) — ±${NYQUIST.S} m/s, C-band (λ 5 cm, PRF 1000 Hz, as many European radars) — ±${NYQUIST.C}. V only: SRV and the MDA use the unfolded velocity, as the NWS`)}">${L('Складывание скоростей (V)', 'Velocity folding (V)')}</span>${seg('fold', [['0', L('нет', 'none')], [String(NYQUIST.S), `S ±${NYQUIST.S}`], [String(NYQUIST.C), `C ±${NYQUIST.C}`]])}`)
       + section(L('Угол наклона', 'Tilt angle'), `<div class="tilts">${RADAR_TILTS.map(t => `<button data-tilt="${t}">${t.toFixed(1)}°</button>`).join('')}</div>`)
       + section(L('Вертикальный разрез', 'Vertical cross-section'), `<label class="check"><input type="checkbox" id="xsShow"> ${L('Показывать разрез под картой', 'Show the section under the map')}</label>
         <div class="radar-buttons"><button class="btn btn--xs" id="xsDraw" title="${L('Два щелчка или касания по карте: начало A, затем конец B', 'Two clicks or taps on the map: the start A, then the end B')}">${L('Провести разрез', 'Draw a section')}</button><button class="btn btn--xs" id="xsRadial" title="${L('Щелчок или касание по карте: разрез от радара через эту точку до края области — как RHI настоящего радара', 'A click or tap on the map: a section from the radar through that point to the domain’s edge — like a real radar’s RHI')}">${L('От радара через точку', 'From the radar through a point')}</button><button class="btn btn--xs" id="xsStrongest" title="${L('Разрез от радара через самое сильное эхо объёмного скана', 'A section from the radar through the volume scan’s strongest echo')}">${L('Через самое сильное эхо', 'Through the strongest echo')}</button></div>
@@ -186,6 +189,7 @@ export class RadarPanel {
       const b = (e.target as HTMLElement).closest<HTMLButtonElement>('button[data-value]')
       if (!b) return
       const v = b.dataset.value!
+      if (s.dataset.seg === 'fold') { this.nyquist = Number(v); press(s.querySelectorAll<HTMLButtonElement>('button'), x => x === b); this.refresh(true); return }
       if (s.dataset.seg === 'xs') { this.xs.field = v as XsField; this.showSection(true); return }
       if (s.dataset.seg === 'beam') { this.grid.beam = Number(v); this.applyBins(); this.saveGrid(); this.refresh(true); return }
       if (s.dataset.seg === 'radials') this.grid.radials = Number(v)
@@ -193,6 +197,7 @@ export class RadarPanel {
       else this.grid.compass = v === '1'
       this.saveGrid()
     }))
+    press(this.root.querySelectorAll<HTMLButtonElement>('[data-seg="fold"] button'), b => b.dataset.value === '0')
     $<HTMLInputElement>('#gridLabels').addEventListener('change', e => { this.grid.labels = (e.target as HTMLInputElement).checked; this.saveGrid() })
     // Palettes.
     $<HTMLSelectElement>('#paletteSelect').addEventListener('change', e => { this.palettes.choose(this.kind(), (e.target as HTMLSelectElement).value); this.showPalette() })
@@ -413,13 +418,23 @@ export class RadarPanel {
   private values(): Float32Array | null {
     const ppi = this.ppi
     if (!ppi) return null
+    if (this.product === 'V' && this.nyquist) return this.folded(ppi.velocity, 'map')
     return { Z: ppi.dbz, V: ppi.velocity, SRV: ppi.velocity, CR: ppi.compositeDbz, ZDR: ppi.zdr, RHO: ppi.rho, KDP: ppi.kdp, VIL: ppi.vil, ET: ppi.echoTop, MESH: ppi.mesh }[this.product]
   }
 
   /** The values of the section's field. */
   private xsValues(): Float32Array | null {
     const s = this.cut
+    if (s && this.xs.field === 'V' && this.nyquist) return this.folded(s.velocity, 'cut')
     return s ? { Z: s.dbz, V: s.velocity, SRV: s.velocity, ZDR: s.zdr, RHO: s.rho, KDP: s.kdp }[this.xs.field] : null
+  }
+
+  /** `values` folded at the chosen Nyquist velocity into the map's or the section's buffer. */
+  private folded(values: Float32Array, into: 'map' | 'cut') {
+    let out = into === 'map' ? this.foldedMap : this.foldedCut
+    if (out.length !== values.length) { out = new Float32Array(values.length); if (into === 'map') this.foldedMap = out; else this.foldedCut = out }
+    for (let i = 0; i < values.length; i++) out[i] = fold(values[i], this.nyquist)
+    return out
   }
 
   /** The colour lookup of the chosen palette of a kind. */
@@ -792,6 +807,8 @@ export class RadarPanel {
     out.innerHTML = readings([[L('Азимут', 'Azimuth'), this.azimuthText(b.azimuth)], [L('Дальность', 'Range'), `${(b.range / 1000).toFixed(1)} ${L('км', 'km')}`], ...(volume ? [] : [[L('Высота луча', 'Beam height'), `${(b.height / 1000).toFixed(2)} ${L('км', 'km')}`] as [string, string]]),
       ...(kind === 'Z' ? [] : [[volume ? L('Сильнейшее эхо', 'Strongest echo') : L('Отражаемость', 'Reflectivity'), (volume ? ppi.compositeDbz : ppi.dbz)[i] < 5 ? NO_ECHO : `${(volume ? ppi.compositeDbz : ppi.dbz)[i].toFixed(0)} dBZ`] as [string, string]]),
       // VIL density (VIL over the echo top): from ~3.5 g/m³ large hail is likely (Amburn & Wolf 1997).
+      // Folded: what the wind really is there, to learn to see folding (a real radar would need dealiasing for it).
+      ...(this.product === 'V' && this.nyquist && Math.abs(ppi.velocity[i]) > this.nyquist ? [[L('Без складывания', 'Unfolded'), this.describe(ppi.velocity[i], 'V')] as [string, string]] : []),
       ...(this.product === 'VIL' && ppi.vil[i] >= 1 && ppi.echoTop[i] > 0 ? [[L('Плотность VIL', 'VIL density'), `${(ppi.vil[i] / ppi.echoTop[i]).toFixed(1)} ${L('г/м³', 'g/m³')}`] as [string, string]] : []), [name, this.product === 'ET' && ppi.echoTopped[i] ? L(`≥ ${this.describe(values[i], kind)}: верх не виден, выше верхнего наклона`, `≥ ${this.describe(values[i], kind)}: the top is not seen, above the highest tilt`) : this.describe(values[i], kind, 'in')]])
   }
 

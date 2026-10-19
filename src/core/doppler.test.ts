@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { AtmosphereModel, beamHeight, createGrid, ECHO_TOP_DBZ, PPI, RADAR_TILTS, VIL_MAX_DBZ } from '.'
+import { AtmosphereModel, beamHeight, createGrid, ECHO_TOP_DBZ, fold, NYQUIST, PPI, RADAR_TILTS, VIL_MAX_DBZ } from '.'
 import { QUIET } from './fixtures'
 
 // A domain fixed to the ground: the model winds set below are the winds over the ground.
@@ -94,6 +94,11 @@ describe('Doppler velocity and composite reflectivity', () => {
     const big = Math.max(...far.mesh)
     expect(big).toBeGreaterThan(19); expect(big).toBeLessThan(150)
     // Echo above VIL_MAX_DBZ counts as VIL_MAX_DBZ: hail adds no more.
+    // Folding: within ±v_N as measured, beyond it over to the other sign by 2 v_N (2.8); S-band 28 m/s, C-band 13.
+    const n = NYQUIST.S
+    expect(fold(20, n)).toBe(20); expect(fold(-27, n)).toBe(-27); expect(fold(30, n)).toBeCloseTo(30 - 2 * n, 9); expect(fold(-40, n)).toBeCloseTo(-40 + 2 * n, 9)
+    expect(fold(70, n)).toBeCloseTo(70 - 2 * n, 9); expect(fold(100, n)).toBeCloseTo(100 - 4 * n, 9); expect(fold(NaN, n)).toBeNaN()
+    expect(fold(20, NYQUIST.C)).toBeCloseTo(20 - 2 * NYQUIST.C, 9)
     expect(VIL_MAX_DBZ).toBe(56); expect(ECHO_TOP_DBZ).toBe(18)
   })
 })
