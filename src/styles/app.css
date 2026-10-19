@@ -73,7 +73,7 @@ html:not(.layout-phone) .m-only { display: none !important; }
    palette), the grid's choices; the palette editor's rows "value · colour · what follows · remove". */
 .tilts--4 { grid-template-columns: repeat(4, minmax(0,1fr)); }
 .radar-buttons { display: flex; flex-wrap: wrap; gap: 6px; }
-.radar-app .colorbar__ticks, .pal-editor .colorbar__ticks { position: relative; display: block; height: 12px; }
+.radar-app .colorbar__ticks, .pal-editor .colorbar__ticks, .satellite-app .colorbar__ticks { position: relative; display: block; height: 12px; }
 .radar-app .colorbar__bar, .pal-editor .colorbar__bar { box-shadow: inset 0 0 0 1px var(--line); background-color: var(--instrument-bar); }
 .radar-app [data-seg] + .label, .radar-app .psec .label + [data-seg] { margin-top: 2px; }
 .pal-editor { max-height: calc(100dvh - 32px); overflow: auto; }

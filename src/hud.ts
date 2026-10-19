@@ -142,6 +142,7 @@ export class Hud {
       <button class="menu__item" role="menuitem" data-tool="#zonesOpen"><span class="menu__glyph">▦</span>${L('Зоны', 'Zones')}</button>
       <button class="menu__item" role="menuitem" data-tool="#detectorOpen"><span class="menu__glyph">ϟ</span>${L('Молнии', 'Lightning')}</button>
       <button class="menu__item" role="menuitem" data-tool="#analysisOpen"><span class="menu__glyph">≋</span>${L('Анализ', 'Analysis')}</button>
+      <button class="menu__item" role="menuitem" data-tool="#satelliteOpen"><span class="menu__glyph">◐</span>${L('Спутник', 'Satellite')}</button>
       <button class="menu__item" role="menuitem" data-tool="#stationOpen"><span class="menu__glyph">⌂</span>${L('Станция', 'Station')}</button>
       <div class="menu__sep"></div>
       <button class="menu__item" role="menuitem" data-tool="#groundToggle"><span class="menu__glyph">⛰</span>${L('Вид с земли', 'View from the ground')}</button>
