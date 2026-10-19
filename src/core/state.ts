@@ -2,6 +2,7 @@
 // later or passed on. Layout: 'MLAB', the header length (uint32), a JSON header (format, version, settings, model time,
 // grid size), padding to 4 bytes, then the fields as float32 in STATE_FIELDS / STATE_COLUMNS order. Everything else the
 // step needs (fall speeds, pressure, the ground under the moving domain) it recomputes from these.
+import { L } from '../i18n'
 import type { SimConfig } from './config'
 import type { AtmosphereModel } from './model'
 
@@ -37,15 +38,15 @@ export function saveState(m: StateModel, config: SimConfig): ArrayBuffer {
 
 /** Reads a saved state; throws with a readable message if the file is not one (or of an unknown version). */
 export function readState(buffer: ArrayBuffer): SavedState {
-  if (buffer.byteLength < 8 || new TextDecoder().decode(new Uint8Array(buffer, 0, 4)) !== MAGIC) throw new Error('это не файл состояния MeteoLab')
+  if (buffer.byteLength < 8 || new TextDecoder().decode(new Uint8Array(buffer, 0, 4)) !== MAGIC) throw new Error(L('это не файл состояния MeteoLab', 'this is not a MeteoLab state file'))
   const length = new DataView(buffer).getUint32(4, true)
-  if (8 + length > buffer.byteLength) throw new Error('файл обрезан')
+  if (8 + length > buffer.byteLength) throw new Error(L('файл обрезан', 'the file is truncated'))
   let header: StateHeader
-  try { header = JSON.parse(new TextDecoder().decode(new Uint8Array(buffer, 8, length))) } catch { throw new Error('заголовок файла повреждён') }
-  if (header?.format !== 'meteolab-state' || (header.version !== VERSION && header.version !== 1)) throw new Error('неизвестный формат или версия файла')
-  for (const k of ['time', 'persisted', 'nx', 'ny', 'nz'] as const) if (!Number.isFinite(header[k]) || header[k] < 0) throw new Error('заголовок файла повреждён')
+  try { header = JSON.parse(new TextDecoder().decode(new Uint8Array(buffer, 8, length))) } catch { throw new Error(L('заголовок файла повреждён', 'the file’s header is damaged')) }
+  if (header?.format !== 'meteolab-state' || (header.version !== VERSION && header.version !== 1)) throw new Error(L('неизвестный формат или версия файла', 'unknown file format or version'))
+  for (const k of ['time', 'persisted', 'nx', 'ny', 'nz'] as const) if (!Number.isFinite(header[k]) || header[k] < 0) throw new Error(L('заголовок файла повреждён', 'the file’s header is damaged'))
   const start = Math.ceil((8 + length) / 4) * 4, cells = header.nx * header.ny, size = fieldsOf(header.version).length * cells * header.nz + STATE_COLUMNS.length * cells
-  if (buffer.byteLength !== start + size * 4) throw new Error('размер файла не сходится с сеткой')
+  if (buffer.byteLength !== start + size * 4) throw new Error(L('размер файла не сходится с сеткой', 'the file’s size does not match the grid'))
   return { header, data: new Float32Array(buffer, start, size) }
 }
 
@@ -55,7 +56,7 @@ export function readState(buffer: ArrayBuffer): SavedState {
  */
 export function applyState(m: StateModel, state: SavedState) {
   const { nx, ny, nz, n, layer } = m.grid, h = state.header
-  if (h.nx !== nx || h.ny !== ny || h.nz !== nz) throw new Error(`сетка файла ${h.nx}×${h.ny}×${h.nz}, а у модели ${nx}×${ny}×${nz}`)
+  if (h.nx !== nx || h.ny !== ny || h.nz !== nz) throw new Error(L(`сетка файла ${h.nx}×${h.ny}×${h.nz}, а у модели ${nx}×${ny}×${nz}`, `the file’s grid is ${h.nx}×${h.ny}×${h.nz}, the model’s ${nx}×${ny}×${nz}`))
   let o = 0
   for (const k of STATE_FIELDS.slice(fieldsOf(h.version).length)) m[k].fill(0)
   for (const k of fieldsOf(h.version)) { m[k].set(state.data.subarray(o, o + n)); o += n }

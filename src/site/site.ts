@@ -11,12 +11,18 @@ import '../styles/components.css'
 import '../styles/layout.css'
 import './site.css'
 import { applyTheme, themeChoice, type ThemeChoice, toggleTheme } from '../theme'
+import { lang, otherLanguagePath, rememberLang } from '../i18n'
 
 const showChoice = () => document.querySelectorAll<HTMLButtonElement>('[data-theme-set]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.themeSet === themeChoice())))
 document.addEventListener('click', e => {
   const target = e.target as HTMLElement, set = target.closest<HTMLButtonElement>('[data-theme-set]')
   if (set) applyTheme(set.dataset.themeSet as ThemeChoice)
   if (target.closest('[data-theme-toggle]')) toggleTheme()
+  // The same page in the other language, remembered so the home page no longer guesses.
+  if (target.closest('[data-lang-switch]')) {
+    e.preventDefault(); rememberLang(lang() === 'en' ? 'ru' : 'en')
+    location.href = otherLanguagePath(location.pathname, import.meta.env.BASE_URL) + location.hash
+  }
   // The header menu (narrow screens): the toggle opens it, anything else closes it.
   const menu = document.querySelector<HTMLElement>('#siteMenu'), toggle = target.closest('[data-menu-toggle]')
   if (menu) { menu.hidden = toggle ? !menu.hidden : true; document.querySelector('[data-menu-toggle]')?.setAttribute('aria-expanded', String(!menu.hidden)) }

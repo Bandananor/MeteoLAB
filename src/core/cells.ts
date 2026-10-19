@@ -1,3 +1,4 @@
+import { L } from '../i18n'
 import { graupelFallSpeed } from './graupel'
 import { hailFallSpeed } from './hail'
 import { snowFallSpeed } from './ice'
@@ -32,16 +33,16 @@ const MOTION_WINDOW = 300
 export type CellStage = 'growing' | 'mature' | 'dissipating' | 'rotating' | 'supercell' | 'occluding' | 'cycling' | 'supercell-weak' | 'supercell-decay' | 'left-supercell'
 
 export const CELL_STAGES: Record<CellStage, { name: string; hint: string }> = {
-  growing: { name: 'Кучевая стадия', hint: 'восходящий поток растёт, осадки ещё не дошли до земли' },
-  mature: { name: 'Зрелая стадия', hint: 'дождь у земли; восходящий и нисходящий потоки рядом' },
-  dissipating: { name: 'Распад', hint: 'восходящий поток ослаб, преобладают нисходящий поток и дождь' },
-  rotating: { name: 'Развитие мезоциклона', hint: 'восходящий поток сам вращается циклонически (завихренность ядра на 2–5 км выше порога)' },
-  supercell: { name: 'Суперячейка: зрелая', hint: 'мезоциклон держится 10 минут и дольше' },
-  occluding: { name: 'Суперячейка: окклюзия', hint: 'холодный отток подтёк под низкое вращение, мезоциклон слабеет' },
-  cycling: { name: 'Суперячейка: новый мезоциклон', hint: 'после окклюзии вращение снова усилилось — циклический перезапуск' },
-  'supercell-weak': { name: 'Суперячейка: вращение ослабло', hint: 'поток ещё сильный, но вращение ядра ниже порога мезоциклона' },
-  'supercell-decay': { name: 'Суперячейка: распад', hint: 'и восходящий поток, и вращение ослабли' },
-  'left-supercell': { name: 'Левая суперячейка', hint: 'антициклоническое вращение 10+ минут — левая ячейка после расщепления' },
+  growing: { name: L('Кучевая стадия', 'Cumulus stage'), hint: L('восходящий поток растёт, осадки ещё не дошли до земли', 'the updraught grows, the precipitation has not reached the ground yet') },
+  mature: { name: L('Зрелая стадия', 'Mature stage'), hint: L('дождь у земли; восходящий и нисходящий потоки рядом', 'rain at the ground; the updraught and the downdraught side by side') },
+  dissipating: { name: L('Распад', 'Dissipating'), hint: L('восходящий поток ослаб, преобладают нисходящий поток и дождь', 'the updraught has weakened, the downdraught and the rain prevail') },
+  rotating: { name: L('Развитие мезоциклона', 'Mesocyclone forming'), hint: L('восходящий поток сам вращается циклонически (завихренность ядра на 2–5 км выше порога)', 'the updraught itself rotates cyclonically (the core’s vorticity at 2–5 km above the threshold)') },
+  supercell: { name: L('Суперячейка: зрелая', 'Supercell: mature'), hint: L('мезоциклон держится 10 минут и дольше', 'the mesocyclone has held for 10 minutes or more') },
+  occluding: { name: L('Суперячейка: окклюзия', 'Supercell: occluding'), hint: L('холодный отток подтёк под низкое вращение, мезоциклон слабеет', 'the cold outflow has undercut the low-level rotation, the mesocyclone weakens') },
+  cycling: { name: L('Суперячейка: новый мезоциклон', 'Supercell: new mesocyclone'), hint: L('после окклюзии вращение снова усилилось — циклический перезапуск', 'after the occlusion the rotation strengthened again — cyclic regeneration') },
+  'supercell-weak': { name: L('Суперячейка: вращение ослабло', 'Supercell: rotation weakened'), hint: L('поток ещё сильный, но вращение ядра ниже порога мезоциклона', 'the updraught is still strong, but the core’s rotation is below the mesocyclone threshold') },
+  'supercell-decay': { name: L('Суперячейка: распад', 'Supercell: decaying'), hint: L('и восходящий поток, и вращение ослабли', 'both the updraught and the rotation have weakened') },
+  'left-supercell': { name: L('Левая суперячейка', 'Left-moving supercell'), hint: L('антициклоническое вращение 10+ минут — левая ячейка после расщепления', 'anticyclonic rotation for 10+ minutes — the left mover after a split') },
 }
 
 /** Statistics of one cell over its storm area (the core plus the columns around it that are nearest to it). */

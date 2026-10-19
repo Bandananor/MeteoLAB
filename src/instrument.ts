@@ -1,6 +1,7 @@
 // The instrument screens (radar, Skew-T, weather station) share one shell from the design system (styles/layout.css
 // .instrument): a bar with the instrument's name and readings, the screen, and a side panel of sections. They are
 // always dark (data-theme="dark" on their root, whatever the page's theme) and lie over the simulator.
+import { L } from './i18n'
 import type { MesoStrength } from './core'
 
 /** Builds a hidden instrument screen in `host`; `screen` goes over its canvas, `side` is the side panel's markup. */
@@ -8,7 +9,7 @@ export function instrumentScreen(host: HTMLElement, kind: string, name: string, 
   const root = document.createElement('div')
   root.className = `instrument instrument-overlay ${kind}`; root.dataset.theme = 'dark'; root.hidden = true
   root.innerHTML = `
-    <header class="ibar"><span class="ibar__name">${name}</span><span class="ibar__sep"></span><span class="ibar__fields">${fields}</span><button class="btn ibar__snap" title="Сохранить экран прибора картинкой PNG">Снимок</button><button class="btn ibar__close" title="Вернуться к 3D (Esc)">Закрыть <span class="kbd">Esc</span></button></header>
+    <header class="ibar"><span class="ibar__name">${name}</span><span class="ibar__sep"></span><span class="ibar__fields">${fields}</span><button class="btn ibar__snap" title="${L('Сохранить экран прибора картинкой PNG', 'Save the instrument’s screen as a PNG image')}">${L('Снимок', 'Snapshot')}</button><button class="btn ibar__close" title="${L('Вернуться к 3D (Esc)', 'Back to 3D (Esc)')}">${L('Закрыть', 'Close')} <span class="kbd">Esc</span></button></header>
     <div class="instrument__body"><div class="instrument__screen"><canvas></canvas>${screen}</div><aside class="instrument__side">${side}</aside></div>`
   host.appendChild(root)
   root.querySelector('.ibar__snap')!.addEventListener('click', () => snapshot(root, kind.replace(/-app$/, '')))
@@ -32,7 +33,7 @@ function snapshot(root: HTMLElement, name: string) {
 /** A section of the side panel. */
 export const section = (title: string, body: string, id = '') => `<section class="psec"${id ? ` id="${id}"` : ''}><h3 class="psec__title">${title}</h3>${body}</section>`
 /** The help at the bottom of the side panel. */
-export const help = (text: string, id = '') => `<details class="group" open><summary><span class="group__title">Справка</span></summary><div class="group__body"><p class="help"${id ? ` id="${id}"` : ''}>${text}</p></div></details>`
+export const help = (text: string, id = '') => `<details class="group" open><summary><span class="group__title">${L('Справка', 'Help')}</span></summary><div class="group__body"><p class="help"${id ? ` id="${id}"` : ''}>${text}</p></div></details>`
 /** Two large numbers side by side. */
 export const numbers = (items: [label: string, value: string, unit: string][]) =>
   `<div class="metrics">${items.map(([label, value, unit]) => `<div class="metric"><span class="label">${label}</span><span class="metric__value"><span class="metric__num">${value}</span><span class="unit">${unit}</span></span></div>`).join('')}</div>`

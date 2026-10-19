@@ -1,3 +1,4 @@
+import { L } from '../i18n'
 import type { AtmosphereModel } from './model'
 
 export type ScalarField = 'updraft' | 'theta' | 'moisture' | 'vorticity' | 'helicity' | 'coldpool'
@@ -6,10 +7,10 @@ export type ScalarField = 'updraft' | 'theta' | 'moisture' | 'vorticity' | 'heli
 export type UhLayer = '2-5' | '0-1' | '0-3' | 'deep'
 /** Heights (m), a label and the colour scale (m²/s²) of each UH layer. */
 export const UH_LAYERS: Record<UhLayer, { label: string; from: number; to: number; scale: number }> = {
-  '2-5': { label: '2–5 км: средний мезоциклон', from: 2000, to: 5000, scale: 300 },
-  '0-1': { label: '0–1 км: вращение у земли, признак смерчевой опасности', from: 0, to: 1000, scale: 75 },
-  '0-3': { label: '0–3 км: нижний мезоциклон', from: 0, to: 3000, scale: 200 },
-  deep: { label: 'весь восходящий поток, где w > 0', from: 0, to: Infinity, scale: 600 },
+  '2-5': { label: L('2–5 км: средний мезоциклон', '2–5 km: mid-level mesocyclone'), from: 2000, to: 5000, scale: 300 },
+  '0-1': { label: L('0–1 км: вращение у земли, признак смерчевой опасности', '0–1 km: rotation at the ground, a sign of tornado danger'), from: 0, to: 1000, scale: 75 },
+  '0-3': { label: L('0–3 км: нижний мезоциклон', '0–3 km: low-level mesocyclone'), from: 0, to: 3000, scale: 200 },
+  deep: { label: L('весь восходящий поток, где w > 0', 'the whole updraught, where w > 0'), from: 0, to: Infinity, scale: 600 },
 }
 
 /**

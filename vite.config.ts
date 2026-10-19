@@ -5,6 +5,8 @@ import { defineConfig } from 'vite'
 // src/core/threads.ts). Without these headers the page still works, with the physics on one thread.
 const isolation = { 'Cross-Origin-Opener-Policy': 'same-origin', 'Cross-Origin-Embedder-Policy': 'require-corp' }
 
+const PAGES = ['', 'simulator/', 'guide/', 'guide/meteo/', 'guide/start/', 'guide/recipes/', 'about/']
+
 export default defineConfig({
   // The site's path: '/' locally, '/MeteoLAB/' on GitHub Pages (BASE_PATH, set by .github/workflows/pages.yml).
   base: process.env.BASE_PATH ?? '/',
@@ -13,6 +15,6 @@ export default defineConfig({
   // The physics worker starts the helper workers itself: module workers inside a module worker.
   worker: { format: 'es' },
   // The pages: the home page, the simulator, the guides (the interface, meteorology from zero, first steps, recipes)
-  // and the article about the model.
-  build: { rolldownOptions: { input: { home: 'index.html', simulator: 'simulator/index.html', guide: 'guide/index.html', guideMeteo: 'guide/meteo/index.html', guideStart: 'guide/start/index.html', guideRecipes: 'guide/recipes/index.html', about: 'about/index.html' } } },
+  // and the article about the model — in Russian at the root and in English under en/ (src/i18n.ts).
+  build: { rolldownOptions: { input: Object.fromEntries(['', 'en/'].flatMap(lang => PAGES.map(page => [`${lang}${page || 'index'}`.replace(/\/$/, ''), `${lang}${page}index.html`]))) } },
 })

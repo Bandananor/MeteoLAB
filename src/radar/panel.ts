@@ -1,3 +1,4 @@
+import { L } from '../i18n'
 import { type AtmosphereModel, type Circulation, DBZ_FLOOR, DUAL_MIN_DBZ, MESO_STRENGTH, type MesoStrength, MesocycloneDetector, PPI, RADAR_TILTS } from '../core'
 import { help, instrumentPalette, instrumentScreen, press, readings, section } from '../instrument'
 import { download } from '../share'
@@ -24,32 +25,33 @@ const MDA_EVERY = 2000
 const wrap = (d: number, size: number) => d - size * Math.round(d / size)
 
 const PRODUCTS: Record<Product, { label: string; title: string; kind: PaletteKind }> = {
-  Z: { label: 'Z — отражаемость', title: 'Z · ОТРАЖАЕМОСТЬ', kind: 'Z' },
-  V: { label: 'V — радиальная скорость', title: 'V · СКОРОСТЬ', kind: 'V' },
-  SRV: { label: 'SRV — относительно грозы', title: 'SRV · СКОРОСТЬ ОТНОСИТЕЛЬНО ГРОЗЫ', kind: 'V' },
-  CR: { label: 'CR — составная', title: 'CR · СОСТАВНАЯ ОТРАЖАЕМОСТЬ', kind: 'Z' },
-  ZDR: { label: 'ZDR — дифференциальная отражаемость', title: 'ZDR · ДИФФ. ОТРАЖАЕМОСТЬ', kind: 'ZDR' },
-  RHO: { label: 'ρhv (RHO, CC) — коэффициент корреляции', title: 'ρhv · КОРРЕЛЯЦИЯ', kind: 'RHO' },
-  KDP: { label: 'KDP — удельная дифференциальная фаза', title: 'KDP · ДИФФ. ФАЗА', kind: 'KDP' },
+  Z: { label: L('Z — отражаемость', 'Z — reflectivity'), title: L('Z · ОТРАЖАЕМОСТЬ', 'Z · REFLECTIVITY'), kind: 'Z' },
+  V: { label: L('V — радиальная скорость', 'V — radial velocity'), title: L('V · СКОРОСТЬ', 'V · VELOCITY'), kind: 'V' },
+  SRV: { label: L('SRV — относительно грозы', 'SRV — storm-relative'), title: L('SRV · СКОРОСТЬ ОТНОСИТЕЛЬНО ГРОЗЫ', 'SRV · STORM-RELATIVE VELOCITY'), kind: 'V' },
+  CR: { label: L('CR — составная', 'CR — composite'), title: L('CR · СОСТАВНАЯ ОТРАЖАЕМОСТЬ', 'CR · COMPOSITE REFLECTIVITY'), kind: 'Z' },
+  ZDR: { label: L('ZDR — дифференциальная отражаемость', 'ZDR — differential reflectivity'), title: L('ZDR · ДИФФ. ОТРАЖАЕМОСТЬ', 'ZDR · DIFF. REFLECTIVITY'), kind: 'ZDR' },
+  RHO: { label: L('ρhv (RHO, CC) — коэффициент корреляции', 'ρhv (RHO, CC) — correlation coefficient'), title: L('ρhv · КОРРЕЛЯЦИЯ', 'ρhv · CORRELATION'), kind: 'RHO' },
+  KDP: { label: L('KDP — удельная дифференциальная фаза', 'KDP — specific differential phase'), title: L('KDP · ДИФФ. ФАЗА', 'KDP · DIFF. PHASE'), kind: 'KDP' },
 }
 const XS_FIELDS: Record<XsField, { name: string; short: string; reading: string; kind: PaletteKind }> = {
-  Z: { name: 'отражаемость', short: 'Z', reading: 'Отражаемость', kind: 'Z' }, V: { name: 'скорость вдоль луча', short: 'V', reading: 'Скорость', kind: 'V' },
-  SRV: { name: 'скорость относительно грозы', short: 'SRV', reading: 'Скорость', kind: 'V' }, ZDR: { name: 'ZDR', short: 'ZDR', reading: 'ZDR', kind: 'ZDR' },
+  Z: { name: L('отражаемость', 'reflectivity'), short: 'Z', reading: L('Отражаемость', 'Reflectivity'), kind: 'Z' }, V: { name: L('скорость вдоль луча', 'velocity along the beam'), short: 'V', reading: L('Скорость', 'Velocity'), kind: 'V' },
+  SRV: { name: L('скорость относительно грозы', 'storm-relative velocity'), short: 'SRV', reading: L('Скорость', 'Velocity'), kind: 'V' }, ZDR: { name: 'ZDR', short: 'ZDR', reading: 'ZDR', kind: 'ZDR' },
   RHO: { name: 'ρhv', short: 'ρhv', reading: 'ρhv', kind: 'RHO' }, KDP: { name: 'KDP', short: 'KDP', reading: 'KDP', kind: 'KDP' },
 }
 /** The section's values: the vertical section along the line, its size, the line's length (m). */
 type Cut = ReturnType<PPI['crossSection']> & { gates: number; rows: number; length: number }
-const DUAL_NOTE = `Порог эха — ${DUAL_MIN_DBZ} dBZ. Оценка по средним размерам частиц: микрофизика модели одномоментная (размер следует только из массы), поэтому сортировка капель по размеру — дуга ZDR у переднего края суперячейки — почти не видна; точнее станет с двухмоментной схемой.`
+const DUAL_NOTE = L(`Порог эха — ${DUAL_MIN_DBZ} dBZ. Оценка по средним размерам частиц: микрофизика модели одномоментная (размер следует только из массы), поэтому сортировка капель по размеру — дуга ZDR у переднего края суперячейки — почти не видна; точнее станет с двухмоментной схемой.`, `Echo threshold — ${DUAL_MIN_DBZ} dBZ. An estimate from the particles’ mean sizes: the model’s microphysics is single-moment (the size follows from the mass alone), so the size sorting of drops — the ZDR arc at the supercell’s forward edge — is hardly visible; it will be more accurate with a two-moment scheme.`)
 const HELP: Record<Product, string> = {
-  Z: 'Луч идёт под углом к горизонту и с дальностью поднимается выше: низкий наклон видит осадки у земли, высокий — ядро грозы и наковальню. Щелчок по экрану переносит радар.',
-  V: 'Скорость вдоль луча: зелёное — к радару, красное — от радара. Видна только там, где есть эхо. Движение самой грозы часто маскирует вращение — для мезоциклона смотрите SRV.',
+  Z: L('Луч идёт под углом к горизонту и с дальностью поднимается выше: низкий наклон видит осадки у земли, высокий — ядро грозы и наковальню. Щелчок по экрану переносит радар.', 'The beam leaves at an angle to the horizon and rises with range: a low tilt sees the precipitation near the ground, a high one the storm’s core and the anvil. A click on the screen moves the radar.'),
+  V: L('Скорость вдоль луча: зелёное — к радару, красное — от радара. Видна только там, где есть эхо. Движение самой грозы часто маскирует вращение — для мезоциклона смотрите SRV.', 'The velocity along the beam: green — towards the radar, red — away from it. Seen only where there is an echo. The storm’s own motion often masks the rotation — for a mesocyclone look at SRV.'),
   SRV: '',
-  CR: 'Сильнейшее эхо по всем 14 наклонам объёмного скана над каждой точкой — как обычная радарная карта.',
-  ZDR: `Дифференциальная отражаемость: насколько эхо в горизонтальной поляризации сильнее, чем в вертикальной. Крупные капли сплюснуты — ZDR +1…+4 дБ; град и крупа кувыркаются и почти круглые — около 0; сухой снег — 0…+0,5. Колонна ZDR — капли, вынесенные потоком выше 0 °C (высокие наклоны и разрез): признак сильного потока, раньше роста отражаемости. Высокая Z при ZDR около 0 — ядро града. ${DUAL_NOTE}`,
-  RHO: `Коэффициент корреляции ρhv: насколько одинаково эхо в двух поляризациях. Чистый дождь или снег — 0,97–1; смесь разных частиц — ниже: полоса таяния (снег и крупа тают в дождь) — около 0,9, град с дождём — 0,85–0,95. Обломки смерча (TDS, ρhv < 0,8) модель не показывает: вихрь мельче её сетки. ${DUAL_NOTE}`,
-  KDP: `Удельная дифференциальная фаза, °/км: насколько горизонтальная волна отстаёт от вертикальной в дожде. Растёт с количеством воды и почти не замечает града, поэтому по KDP находят сильный ливень внутри ядра града. Здесь — только от дождя. ${DUAL_NOTE}`,
+  CR: L('Сильнейшее эхо по всем 14 наклонам объёмного скана над каждой точкой — как обычная радарная карта.', 'The strongest echo over all 14 tilts of the volume scan above each point — like an ordinary radar map.'),
+  ZDR: L(`Дифференциальная отражаемость: насколько эхо в горизонтальной поляризации сильнее, чем в вертикальной. Крупные капли сплюснуты — ZDR +1…+4 дБ; град и крупа кувыркаются и почти круглые — около 0; сухой снег — 0…+0,5. Колонна ZDR — капли, вынесенные потоком выше 0 °C (высокие наклоны и разрез): признак сильного потока, раньше роста отражаемости. Высокая Z при ZDR около 0 — ядро града. ${DUAL_NOTE}`, `Differential reflectivity: how much stronger the echo is in horizontal polarization than in vertical. Large drops are flattened — ZDR +1…+4 dB; hail and graupel tumble and are nearly round — about 0; dry snow — 0…+0.5. A ZDR column — drops lofted by the updraught above 0 °C (high tilts and the cross-section): a sign of a strong updraught, ahead of the reflectivity’s growth. High Z with ZDR near 0 — a hail core. ${DUAL_NOTE}`),
+  RHO: L(`Коэффициент корреляции ρhv: насколько одинаково эхо в двух поляризациях. Чистый дождь или снег — 0,97–1; смесь разных частиц — ниже: полоса таяния (снег и крупа тают в дождь) — около 0,9, град с дождём — 0,85–0,95. Обломки смерча (TDS, ρhv < 0,8) модель не показывает: вихрь мельче её сетки. ${DUAL_NOTE}`, `The correlation coefficient ρhv: how alike the echo is in the two polarizations. Pure rain or snow — 0.97–1; a mix of particles — lower: the melting layer (snow and graupel melting into rain) — about 0.9, hail with rain — 0.85–0.95. Tornado debris (TDS, ρhv < 0.8) the model does not show: the vortex is smaller than its grid. ${DUAL_NOTE}`),
+  KDP: L(`Удельная дифференциальная фаза, °/км: насколько горизонтальная волна отстаёт от вертикальной в дожде. Растёт с количеством воды и почти не замечает града, поэтому по KDP находят сильный ливень внутри ядра града. Здесь — только от дождя. ${DUAL_NOTE}`, `Specific differential phase, °/km: how much the horizontal wave lags the vertical one in rain. It grows with the amount of water and hardly notices hail, so KDP finds heavy rain inside a hail core. Here — from rain only. ${DUAL_NOTE}`),
 }
-const XS_HELP = 'Разрез — вертикальный срез по линии A–B через весь объём: видно, как высоко поднимается эхо, свод слабого эха (BWER) над восходящим потоком, нависающее эхо, ядро града, наковальню, колонну ZDR. Тонкие линии — лучи 14 наклонов там, где они пересекают линию: так их видит радар (вдали от радара лучи выше, между ними — пропуски). Пунктир — изотермы 0 °C (ниже тает снег и крупа) и −20 °C (около неё растёт град и разделяются заряды). Разрез от радара через точку — как RHI настоящего радара; на линии в стороне от радара скорость — всё равно вдоль его луча к каждой точке. По вертикали масштаб растянут.'
+const NO_ECHO = L('нет эха', 'no echo'), DELETE = L('Удалить', 'Delete')
+const XS_HELP = L('Разрез — вертикальный срез по линии A–B через весь объём: видно, как высоко поднимается эхо, свод слабого эха (BWER) над восходящим потоком, нависающее эхо, ядро града, наковальню, колонну ZDR. Тонкие линии — лучи 14 наклонов там, где они пересекают линию: так их видит радар (вдали от радара лучи выше, между ними — пропуски). Пунктир — изотермы 0 °C (ниже тает снег и крупа) и −20 °C (около неё растёт град и разделяются заряды). Разрез от радара через точку — как RHI настоящего радара; на линии в стороне от радара скорость — всё равно вдоль его луча к каждой точке. По вертикали масштаб растянут.', 'The cross-section is a vertical slice along the line A–B through the whole volume: how high the echo rises, the bounded weak echo region (BWER) over the updraught, the overhanging echo, the hail core, the anvil, the ZDR column. Thin lines are the beams of the 14 tilts where they cross the line: as the radar sees them (far from the radar the beams are higher, with gaps between them). Dashed — the 0 °C isotherm (snow and graupel melt below it) and −20 °C (hail grows and charges separate near it). A section from the radar through a point is like a real radar’s RHI; on a line off to the side the velocity is still along the radar’s beam to each point. The vertical scale is stretched.')
 
 /**
  * Range rings, azimuth radials and their labels: steps (0: off), compass points instead of degrees; the data drawn in
@@ -69,7 +71,7 @@ function loadSection(): { on: boolean; field: XsField; a: Point | null; b: Point
 const GRID_STORE = 'meteolab-radar-grid', GRID_DEFAULT: GridSettings = { radials: 30, rings: 5, labels: true, compass: false, beam: .5 }
 const BEAMS = [.5, 1, 0]
 const RADIAL_STEPS = [0, 10, 30, 45], RING_STEPS = [0, 5, 10, 25]
-const POINTS = ['С', 'ССВ', 'СВ', 'ВСВ', 'В', 'ВЮВ', 'ЮВ', 'ЮЮВ', 'Ю', 'ЮЮЗ', 'ЮЗ', 'ЗЮЗ', 'З', 'ЗСЗ', 'СЗ', 'ССЗ']
+const POINTS = L('С ССВ СВ ВСВ В ВЮВ ЮВ ЮЮВ Ю ЮЮЗ ЮЗ ЗЮЗ З ЗСЗ СЗ ССЗ', 'N NNE NE ENE E ESE SE SSE S SSW SW WSW W WNW NW NNW').split(' ')
 /** The compass point (of 16) of an azimuth. */
 const point = (azimuth: number) => POINTS[Math.round(((azimuth % 360) + 360) % 360 / 22.5) % 16]
 function loadGrid(): GridSettings {
@@ -120,43 +122,43 @@ export class RadarPanel {
   open = false
 
   constructor(host: HTMLElement) {
-    const strengths = (Object.keys(MESO_STRENGTH) as MesoStrength[]).map((s, i, all) => `<div class="mda--${s}"><i></i><span>${['Циркуляция', 'Слабый', 'Умеренный', 'Сильный'][i]}</span><span class="num">${i ? `≥ ${MESO_STRENGTH[s].vrot}` : `< ${MESO_STRENGTH[all[1]].vrot}`} м/с</span></div>`).join('')
+    const strengths = (Object.keys(MESO_STRENGTH) as MesoStrength[]).map((s, i, all) => `<div class="mda--${s}"><i></i><span>${[L('Циркуляция', 'Circulation'), L('Слабый', 'Weak'), L('Умеренный', 'Moderate'), L('Сильный', 'Strong')][i]}</span><span class="num">${i ? `≥ ${MESO_STRENGTH[s].vrot}` : `< ${MESO_STRENGTH[all[1]].vrot}`} ${L('м/с', 'm/s')}</span></div>`).join('')
     const seg = (name: string, options: [string, string][]) => `<div class="seg seg--block seg--instrument" data-seg="${name}">${options.map(([v, t]) => `<button data-value="${v}">${t}</button>`).join('')}</div>`
     this.root = instrumentScreen(host, 'radar-app', 'METEOLAB DOPPLER · S-BAND',
-      '<span>ПРОДУКТ <b id="radarProduct">Z · ОТРАЖАЕМОСТЬ</b></span><span>НАКЛОН <b id="radarTilt">0.5°</b></span><span>РАЗРЕЗ <b id="radarCut">нет</b></span><span>T+ <b id="radarTime">00:00</b></span>',
-      section('Продукт', `<div class="tilts tilts--4">${(Object.keys(PRODUCTS) as Product[]).map(p => `<button data-product="${p}" title="${PRODUCTS[p].label}">${p}</button>`).join('')}</div>
+      `<span>${L('ПРОДУКТ', 'PRODUCT')} <b id="radarProduct">${PRODUCTS.Z.title}</b></span><span>${L('НАКЛОН', 'TILT')} <b id="radarTilt">0.5°</b></span><span>${L('РАЗРЕЗ', 'SECTION')} <b id="radarCut">${L('нет', 'none')}</b></span><span>T+ <b id="radarTime">00:00</b></span>`,
+      section(L('Продукт', 'Product'), `<div class="tilts tilts--4">${(Object.keys(PRODUCTS) as Product[]).map(p => `<button data-product="${p}" title="${PRODUCTS[p].label}">${p}</button>`).join('')}</div>
         <div class="stat" style="border:0;padding:0"><span id="radarProductLabel"></span><span class="unit" id="radarUnits">dBZ</span></div>`)
-      + section('Угол наклона', `<div class="tilts">${RADAR_TILTS.map(t => `<button data-tilt="${t}">${t.toFixed(1)}°</button>`).join('')}</div>`)
-      + section('Вертикальный разрез', `<label class="check"><input type="checkbox" id="xsShow"> Показывать разрез под картой</label>
-        <div class="radar-buttons"><button class="btn btn--xs" id="xsDraw" title="Два щелчка или касания по карте: начало A, затем конец B">Провести разрез</button><button class="btn btn--xs" id="xsRadial" title="Щелчок или касание по карте: разрез от радара через эту точку до края области — как RHI настоящего радара">От радара через точку</button><button class="btn btn--xs" id="xsStrongest" title="Разрез от радара через самое сильное эхо объёмного скана">Через самое сильное эхо</button></div>
-        <span class="label">Поле разреза</span>${seg('xs', (Object.keys(XS_FIELDS) as XsField[]).map(f => [f, XS_FIELDS[f].short]))}
+      + section(L('Угол наклона', 'Tilt angle'), `<div class="tilts">${RADAR_TILTS.map(t => `<button data-tilt="${t}">${t.toFixed(1)}°</button>`).join('')}</div>`)
+      + section(L('Вертикальный разрез', 'Vertical cross-section'), `<label class="check"><input type="checkbox" id="xsShow"> ${L('Показывать разрез под картой', 'Show the section under the map')}</label>
+        <div class="radar-buttons"><button class="btn btn--xs" id="xsDraw" title="${L('Два щелчка или касания по карте: начало A, затем конец B', 'Two clicks or taps on the map: the start A, then the end B')}">${L('Провести разрез', 'Draw a section')}</button><button class="btn btn--xs" id="xsRadial" title="${L('Щелчок или касание по карте: разрез от радара через эту точку до края области — как RHI настоящего радара', 'A click or tap on the map: a section from the radar through that point to the domain’s edge — like a real radar’s RHI')}">${L('От радара через точку', 'From the radar through a point')}</button><button class="btn btn--xs" id="xsStrongest" title="${L('Разрез от радара через самое сильное эхо объёмного скана', 'A section from the radar through the volume scan’s strongest echo')}">${L('Через самое сильное эхо', 'Through the strongest echo')}</button></div>
+        <span class="label">${L('Поле разреза', 'Section field')}</span>${seg('xs', (Object.keys(XS_FIELDS) as XsField[]).map(f => [f, XS_FIELDS[f].short]))}
         <span class="t-caption" id="xsInfo"></span>
-        <span class="t-caption">Концы A и B перетаскиваются. Shift + протянуть по карте — новая линия, Shift + щелчок — от радара через точку.</span>`)
-      + section('Шкала и палитра', `<div class="colorbar"><div class="colorbar__bar" id="radarLegend"></div><div class="colorbar__ticks" id="radarTicks"></div></div>
-        <div class="field"><span class="field__label" id="paletteLabel">Палитра</span><span class="select"><select id="paletteSelect"></select></span></div>
-        <div class="radar-buttons"><button class="btn btn--xs" id="paletteEdit" title="Редактор палитры: точки «значение → цвет», плавно или ступенями">Изменить</button><button class="btn btn--xs" id="paletteImport" title="Файл .pal радарных программ (строки Color: / SolidColor:)">Импорт .pal</button><button class="btn btn--xs" id="paletteExport">Экспорт .pal</button><button class="btn btn--xs" id="paletteDelete" hidden>Удалить</button></div>
+        <span class="t-caption">${L('Концы A и B перетаскиваются. Shift + протянуть по карте — новая линия, Shift + щелчок — от радара через точку.', 'The ends A and B can be dragged. Shift + drag on the map — a new line, Shift + click — from the radar through a point.')}</span>`)
+      + section(L('Шкала и палитра', 'Scale and palette'), `<div class="colorbar"><div class="colorbar__bar" id="radarLegend"></div><div class="colorbar__ticks" id="radarTicks"></div></div>
+        <div class="field"><span class="field__label" id="paletteLabel">${L('Палитра', 'Palette')}</span><span class="select"><select id="paletteSelect"></select></span></div>
+        <div class="radar-buttons"><button class="btn btn--xs" id="paletteEdit" title="${L('Редактор палитры: точки «значение → цвет», плавно или ступенями', 'Palette editor: “value → colour” points, smooth or in steps')}">${L('Изменить', 'Edit')}</button><button class="btn btn--xs" id="paletteImport" title="${L('Файл .pal радарных программ (строки Color: / SolidColor:)', 'A .pal file of radar software (Color: / SolidColor: lines)')}">${L('Импорт .pal', 'Import .pal')}</button><button class="btn btn--xs" id="paletteExport">${L('Экспорт .pal', 'Export .pal')}</button><button class="btn btn--xs" id="paletteDelete" hidden>${DELETE}</button></div>
         <input type="file" id="paletteFile" accept=".pal,.txt,text/plain" hidden>
         <span class="t-caption" id="paletteNote"></span>`)
-      + section('Сетка', `<span class="label" title="Как на экране настоящего радара: данные лежат по лучам и стробам дальности (250 м), поэтому ячейки — секторы, которые расширяются с дальностью">Пиксели данных</span>${seg('beam', [['0.5', 'лучи 0,5°'], ['1', 'лучи 1°'], ['0', 'гладкие']])}
-        <span class="label">Радиалы</span>${seg('radials', RADIAL_STEPS.map(s => [String(s), s ? `${s}°` : 'нет']))}
-        <span class="label">Кольца дальности</span>${seg('rings', RING_STEPS.map(s => [String(s), s ? `${s} км` : 'нет']))}
-        <label class="check"><input type="checkbox" id="gridLabels"> Подписи азимутов и дальностей</label>
-        <span class="label">Азимуты</span>${seg('compass', [['0', 'градусы'], ['1', 'румбы']])}`)
-      + section('Мезоциклоны (MDA)', `<label class="check"><input type="checkbox" id="radarMda" checked> Отмечать на экране</label>
-        <label class="check" title="Вращение слабее порога мезоциклона (Vrot < 12,5 м/с): на сетке ~1 км их много в любой сильной грозе"><input type="checkbox" id="radarWeak"> И слабые циркуляции</label>
+      + section(L('Сетка', 'Grid'), `<span class="label" title="${L('Как на экране настоящего радара: данные лежат по лучам и стробам дальности (250 м), поэтому ячейки — секторы, которые расширяются с дальностью', 'As on a real radar’s screen: the data lie along beams and range gates (250 m), so the cells are sectors that widen with range')}">${L('Пиксели данных', 'Data pixels')}</span>${seg('beam', [['0.5', L('лучи 0,5°', '0.5° beams')], ['1', L('лучи 1°', '1° beams')], ['0', L('гладкие', 'smooth')]])}
+        <span class="label">${L('Радиалы', 'Radials')}</span>${seg('radials', RADIAL_STEPS.map(s => [String(s), s ? `${s}°` : L('нет', 'none')]))}
+        <span class="label">${L('Кольца дальности', 'Range rings')}</span>${seg('rings', RING_STEPS.map(s => [String(s), s ? `${s} ${L('км', 'km')}` : L('нет', 'none')]))}
+        <label class="check"><input type="checkbox" id="gridLabels"> ${L('Подписи азимутов и дальностей', 'Azimuth and range labels')}</label>
+        <span class="label">${L('Азимуты', 'Azimuths')}</span>${seg('compass', [['0', L('градусы', 'degrees')], ['1', L('румбы', 'compass points')]])}`)
+      + section(L('Мезоциклоны (MDA)', 'Mesocyclones (MDA)'), `<label class="check"><input type="checkbox" id="radarMda" checked> ${L('Отмечать на экране', 'Mark on the screen')}</label>
+        <label class="check" title="${L('Вращение слабее порога мезоциклона (Vrot < 12,5 м/с): на сетке ~1 км их много в любой сильной грозе', 'Rotation weaker than the mesocyclone threshold (Vrot < 12.5 m/s): on the ~1 km grid there are many in any strong storm')}"><input type="checkbox" id="radarWeak"> ${L('И слабые циркуляции', 'Weak circulations too')}</label>
         <div class="mda-list" id="radarMdaList"></div>
-        <div class="mda-legend"><span class="label">Метки силы · Vrot</span>${strengths}</div>`)
-      + section('Курсор', '<dl class="kv" id="radarReadout"></dl>')
+        <div class="mda-legend"><span class="label">${L('Метки силы · Vrot', 'Strength marks · Vrot')}</span>${strengths}</div>`)
+      + section(L('Курсор', 'Cursor'), '<dl class="kv" id="radarReadout"></dl>')
       + help('', 'radarHelp'))
     this.root.insertAdjacentHTML('beforeend', `<dialog class="modal modal--wide pal-editor" id="paletteEditor"><form method="dialog" style="display:contents">
-      <h2 class="modal__title">Палитра · <span id="palKind"></span></h2>
-      <label class="field"><span class="label">Название</span><input class="input" id="palName" autocomplete="off" spellcheck="false"></label>
+      <h2 class="modal__title">${L('Палитра', 'Palette')} · <span id="palKind"></span></h2>
+      <label class="field"><span class="label">${L('Название', 'Name')}</span><input class="input" id="palName" autocomplete="off" spellcheck="false"></label>
       <div class="colorbar"><div class="colorbar__bar" id="palPreview"></div><div class="colorbar__ticks" id="palPreviewTicks"></div></div>
-      <div class="pal-head"><span class="label">Значение (<span id="palUnits"></span>)</span><span class="label">Цвет</span><span class="label">Дальше</span><span></span></div>
+      <div class="pal-head"><span class="label">${L('Значение', 'Value')} (<span id="palUnits"></span>)</span><span class="label">${L('Цвет', 'Colour')}</span><span class="label">${L('Дальше', 'Then')}</span><span></span></div>
       <div class="pal-rows" id="palRows"></div>
-      <div class="radar-buttons"><button type="button" class="btn btn--xs" id="palAdd">+ точка</button><button type="button" class="btn btn--xs" id="palSmooth">Все плавно</button><button type="button" class="btn btn--xs" id="palSteps">Все ступенями</button></div>
-      <p class="modal__text">Каждая точка красит значения от себя до следующей: плавно — переходом к цвету следующей точки, ступенью — одним цветом, «пусто» — ничего не рисует. <span id="palBelow"></span></p>
-      <div class="modal__actions"><button class="btn btn--quiet" value="cancel">Отмена</button><button class="btn btn--primary" value="save">Сохранить</button></div>
+      <div class="radar-buttons"><button type="button" class="btn btn--xs" id="palAdd">${L('+ точка', '+ point')}</button><button type="button" class="btn btn--xs" id="palSmooth">${L('Все плавно', 'All smooth')}</button><button type="button" class="btn btn--xs" id="palSteps">${L('Все ступенями', 'All steps')}</button></div>
+      <p class="modal__text">${L('Каждая точка красит значения от себя до следующей: плавно — переходом к цвету следующей точки, ступенью — одним цветом, «пусто» — ничего не рисует.', 'Each point paints the values from itself to the next: smooth — fading into the next point’s colour, step — in one colour, “empty” — draws nothing.')} <span id="palBelow"></span></p>
+      <div class="modal__actions"><button class="btn btn--quiet" value="cancel">${L('Отмена', 'Cancel')}</button><button class="btn btn--primary" value="save">${L('Сохранить', 'Save')}</button></div>
     </form></dialog>`)
     this.canvas = this.root.querySelector('canvas')!; this.ctx = this.canvas.getContext('2d')!
     this.raster = document.createElement('canvas'); this.rasterCtx = this.raster.getContext('2d')!
@@ -329,11 +331,11 @@ export class RadarPanel {
     $('#xsDraw').setAttribute('aria-pressed', String(this.picking === 'a' || this.picking === 'b'))
     $('#xsRadial').setAttribute('aria-pressed', String(this.picking === 'radial'))
     const length = a && b ? Math.hypot(b.x - a.x, b.y - a.y) : 0, azimuth = a && b ? (Math.atan2(b.x - a.x, b.y - a.y) * 180 / Math.PI + 360) % 360 : 0
-    $('#radarCut').textContent = on && length ? `${(length / 1000).toFixed(0)} КМ · ${azimuth.toFixed(0)}°` : 'НЕТ'
-    $('#xsInfo').textContent = this.picking === 'a' ? 'Щёлкните или коснитесь карты: начало разреза A'
-      : this.picking === 'b' ? 'Теперь конец разреза B'
-        : this.picking === 'radial' ? 'Щёлкните или коснитесь карты: разрез пойдёт от радара через эту точку до края области'
-          : length ? `Линия A → B: ${(length / 1000).toFixed(1)} км, направление ${this.azimuthText(azimuth)}` : 'Линии пока нет'
+    $('#radarCut').textContent = on && length ? `${(length / 1000).toFixed(0)} ${L('КМ', 'KM')} · ${azimuth.toFixed(0)}°` : L('НЕТ', 'NONE')
+    $('#xsInfo').textContent = this.picking === 'a' ? L('Щёлкните или коснитесь карты: начало разреза A', 'Click or tap the map: the section’s start A')
+      : this.picking === 'b' ? L('Теперь конец разреза B', 'Now the section’s end B')
+        : this.picking === 'radial' ? L('Щёлкните или коснитесь карты: разрез пойдёт от радара через эту точку до края области', 'Click or tap the map: the section will run from the radar through that point to the domain’s edge')
+          : length ? L(`Линия A → B: ${(length / 1000).toFixed(1)} км, направление ${this.azimuthText(azimuth)}`, `Line A → B: ${(length / 1000).toFixed(1)} km, heading ${this.azimuthText(azimuth)}`) : L('Линии пока нет', 'No line yet')
     this.root.classList.toggle('is-section', on)
   }
 
@@ -353,7 +355,7 @@ export class RadarPanel {
   private showHelp() {
     const product = this.product
     this.root.querySelector<HTMLElement>('#radarHelp')!.textContent = (product === 'SRV'
-      ? `То же, что V, но за вычетом движения грозы (по Банкерсу: ${Math.hypot(...this.motion).toFixed(0)} м/с на ${((Math.atan2(this.motion[0], this.motion[1]) * 180 / Math.PI + 360) % 360).toFixed(0)}°). Мезоциклон — пара «зелёное рядом с красным» поперёк луча на высоте 1–6 км.`
+      ? L(`То же, что V, но за вычетом движения грозы (по Банкерсу: ${Math.hypot(...this.motion).toFixed(0)} м/с на ${((Math.atan2(this.motion[0], this.motion[1]) * 180 / Math.PI + 360) % 360).toFixed(0)}°). Мезоциклон — пара «зелёное рядом с красным» поперёк луча на высоте 1–6 км.`, `The same as V, but with the storm’s motion taken out (Bunkers: ${Math.hypot(...this.motion).toFixed(0)} m/s towards ${((Math.atan2(this.motion[0], this.motion[1]) * 180 / Math.PI + 360) % 360).toFixed(0)}°). A mesocyclone is a “green next to red” pair across the beam at 1–6 km.`)
       : HELP[product]) + (this.xs.on ? ` ${XS_HELP}` : '')
   }
 
@@ -361,7 +363,7 @@ export class RadarPanel {
   private showPalette() {
     const kind = this.kind(), k = KINDS[kind], palette = this.palettes.chosen(kind)
     this.root.querySelector<HTMLElement>('#radarUnits')!.textContent = k.units
-    this.root.querySelector<HTMLElement>('#paletteLabel')!.textContent = `Палитра · ${k.label}`
+    this.root.querySelector<HTMLElement>('#paletteLabel')!.textContent = `${L('Палитра', 'Palette')} · ${k.label}`
     const range = extent(palette)
     this.root.querySelector<HTMLElement>('#radarLegend')!.style.background = cssGradient(palette, range)
     const values = ticks(range), at = (v: number) => (v - range[0]) / (range[1] - range[0]) * 100
@@ -369,17 +371,17 @@ export class RadarPanel {
     const select = this.root.querySelector<HTMLSelectElement>('#paletteSelect')!, all = this.palettes.all(kind)
     const options = (list: Palette[]) => list.map(p => `<option value="${p.id}">${p.name.replace(/[<>&"]/g, c => `&#${c.charCodeAt(0)};`)}</option>`).join('')
     const own = all.filter(p => !p.builtin)
-    select.innerHTML = `<optgroup label="Готовые">${options(all.filter(p => p.builtin))}</optgroup>${own.length ? `<optgroup label="Свои">${options(own)}</optgroup>` : ''}`
+    select.innerHTML = `<optgroup label="${L('Готовые', 'Built-in')}">${options(all.filter(p => p.builtin))}</optgroup>${own.length ? `<optgroup label="${L('Свои', 'Your own')}">${options(own)}</optgroup>` : ''}`
     select.value = palette.id
     const del = this.root.querySelector<HTMLButtonElement>('#paletteDelete')!
-    del.hidden = !!palette.builtin; del.textContent = 'Удалить'; this.deleteArmed = 0
+    del.hidden = !!palette.builtin; del.textContent = DELETE; this.deleteArmed = 0
     this.paint(); this.paintSection(); this.draw()
   }
 
   private markTilt() {
     const t = this.ppi?.tilt ?? RADAR_TILTS[0], all = this.product === 'CR'
     press(this.root.querySelectorAll<HTMLButtonElement>('[data-tilt]'), b => !all && Number(b.dataset.tilt) === t)
-    this.root.querySelector<HTMLElement>('#radarTilt')!.textContent = all ? 'ВСЕ' : `${t.toFixed(1)}°`
+    this.root.querySelector<HTMLElement>('#radarTilt')!.textContent = all ? L('ВСЕ', 'ALL') : `${t.toFixed(1)}°`
   }
 
   /** The radial bins of the chosen beam width (or smooth pixels) on the scan. */
@@ -479,12 +481,12 @@ export class RadarPanel {
 
   /** A value of a kind for the cursor readout. */
   private describe(v: number, kind: PaletteKind, inbound = '') {
-    if (Number.isNaN(v) || (kind === 'Z' && v < 5)) return 'нет эха'
+    if (Number.isNaN(v) || (kind === 'Z' && v < 5)) return NO_ECHO
     if (kind === 'Z') return `${v.toFixed(0)} dBZ`
-    if (kind === 'V') return `${v > 0 ? '+' : ''}${v.toFixed(1)} м/с${inbound && ` ${v > 0 ? '(от радара)' : '(к радару)'}`}`
-    if (kind === 'ZDR') return `${v > 0 ? '+' : ''}${v.toFixed(2)} дБ`
+    if (kind === 'V') return `${v > 0 ? '+' : ''}${v.toFixed(1)} ${L('м/с', 'm/s')}${inbound && ` ${v > 0 ? L('(от радара)', '(outbound)') : L('(к радару)', '(inbound)')}`}`
+    if (kind === 'ZDR') return `${v > 0 ? '+' : ''}${v.toFixed(2)} ${L('дБ', 'dB')}`
     if (kind === 'RHO') return v.toFixed(3)
-    return `${v.toFixed(2)} °/км`
+    return `${v.toFixed(2)} ${L('°/км', '°/km')}`
   }
 
   /** Where the map cursor falls on the line, m from A, if it is within 2 km of it. */
@@ -502,7 +504,7 @@ export class RadarPanel {
     const pal = instrumentPalette(this.root)
     ctx.fillStyle = pal.bar; ctx.fillRect(b.left, b.top, b.right - b.left, b.bottom - b.top)
     ctx.font = `11px ${MONO}`; ctx.lineWidth = 1
-    if (!s) { ctx.fillStyle = pal.label; ctx.fillText(this.picking ? 'Отметьте точки на карте' : 'Проведите линию разреза на карте', b.left + 10, b.top + 20); ctx.strokeStyle = pal.gridStrong; ctx.strokeRect(b.left, b.top, b.right - b.left, b.bottom - b.top); return }
+    if (!s) { ctx.fillStyle = pal.label; ctx.fillText(this.picking ? L('Отметьте точки на карте', 'Mark the points on the map') : L('Проведите линию разреза на карте', 'Draw a section line on the map'), b.left + 10, b.top + 20); ctx.strokeStyle = pal.gridStrong; ctx.strokeRect(b.left, b.top, b.right - b.left, b.bottom - b.top); return }
     const length = s.length, top = s.rows * XS_DZ, X = (d: number) => b.left + d / length * (b.right - b.left), Y = (h: number) => b.bottom - h / top * (b.bottom - b.top)
     const at = (g: number) => (g + .5) / s.gates * length
     ctx.imageSmoothingEnabled = false; ctx.drawImage(this.xsRaster, b.left, b.top, b.right - b.left, b.bottom - b.top)
@@ -511,8 +513,8 @@ export class RadarPanel {
     const every = length > 60_000 ? 10 : 5
     for (let km = 0; km * 1000 <= length; km += every) { ctx.beginPath(); ctx.moveTo(X(km * 1000), b.top); ctx.lineTo(X(km * 1000), b.bottom); ctx.stroke(); ctx.fillText(`${km}`, X(km * 1000) - 4, b.bottom + 14) }
     for (let km = 0; km * 1000 <= top; km += 2) { ctx.beginPath(); ctx.moveTo(b.left, Y(km * 1000)); ctx.lineTo(b.right, Y(km * 1000)); ctx.stroke(); ctx.fillText(`${km}`, b.left - 22, Y(km * 1000) + 3) }
-    ctx.fillText('A', b.left - 4, b.bottom + 27); ctx.fillText('B', b.right - 4, b.bottom + 27); ctx.fillText('от A, км', b.right - 80, b.bottom + 27)
-    ctx.save(); ctx.translate(b.left - 38, b.top + 70); ctx.rotate(-Math.PI / 2); ctx.fillText('высота, км', 0, 0); ctx.restore()
+    ctx.fillText('A', b.left - 4, b.bottom + 27); ctx.fillText('B', b.right - 4, b.bottom + 27); ctx.fillText(L('от A, км', 'from A, km'), b.right - 80, b.bottom + 27)
+    ctx.save(); ctx.translate(b.left - 38, b.top + 70); ctx.rotate(-Math.PI / 2); ctx.fillText(L('высота, км', 'height, km'), 0, 0); ctx.restore()
     ctx.save(); ctx.beginPath(); ctx.rect(b.left, b.top, b.right - b.left, b.bottom - b.top); ctx.clip()
     // The beams of the volume scan where they cross the line (arcs, unless the line goes through the radar).
     ctx.strokeStyle = 'rgba(232, 240, 242, .22)'
@@ -530,7 +532,7 @@ export class RadarPanel {
     ctx.restore()
     ctx.strokeStyle = pal.gridStrong; ctx.strokeRect(b.left, b.top, b.right - b.left, b.bottom - b.top)
     // The caption, shorter on a narrow screen.
-    const caption = [`A → B · ${(length / 1000).toFixed(1)} км`, XS_FIELDS[this.xs.field].name, `масштаб по вертикали ×${((length / (b.right - b.left)) / (top / (b.bottom - b.top))).toFixed(1)}`]
+    const caption = [`A → B · ${(length / 1000).toFixed(1)} ${L('км', 'km')}`, XS_FIELDS[this.xs.field].name, `${L('масштаб по вертикали', 'vertical scale')} ×${((length / (b.right - b.left)) / (top / (b.bottom - b.top))).toFixed(1)}`]
     while (caption.length > 1 && ctx.measureText(caption.join(' · ')).width > b.right - b.left) caption.pop()
     ctx.fillStyle = pal.label; ctx.fillText(caption.join(' · '), b.left + 6, b.top - 8)
     // The cursor: on the section itself, or where the map's cursor falls on the line.
@@ -551,16 +553,16 @@ export class RadarPanel {
   private listMda() {
     const ppi = this.ppi!, m = ppi.model, { nx, ny, dx, dy, width, depth } = m.grid, [ox, oy] = m.frameOffset(), out = this.root.querySelector<HTMLElement>('#radarMdaList')!
     const shown = this.shown(), hidden = this.detections.length - shown.length
-    if (!shown.length) { out.innerHTML = `<span class="t-caption">${hidden ? `мезоциклонов нет; слабых циркуляций: ${hidden}` : 'вращения не найдено'}</span>`; return }
+    if (!shown.length) { out.innerHTML = `<span class="t-caption">${hidden ? L(`мезоциклонов нет; слабых циркуляций: ${hidden}`, `no mesocyclones; weak circulations: ${hidden}`) : L('вращения не найдено', 'no rotation found')}</span>`; return }
     out.innerHTML = shown.map(d => {
       let uh = 0
       // Model columns over the ground point (the domain may have moved; distances are periodic).
       for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++) if (Math.hypot(wrap(x * dx + ox - d.x, width), wrap(y * dy + oy - d.y, depth)) < 5000) uh = Math.max(uh, m.uhColumn[x + nx * y])
       const age = Math.floor((m.time - d.born) / 60)
       return `<div class="mda mda--${d.strength}"><div class="mda__head"><span class="mda__id">M${d.id}</span><span class="mda__name">${MESO_STRENGTH[d.strength].name}</span></div>`
-        + `<dl class="kv">${readings([['Vrot', `${d.vrot.toFixed(1)} м/с · у основания ${d.lowVrot.toFixed(1)}`], ['Ø', `${(d.diameter / 1000).toFixed(1)} км`], ['слой', `${(d.base / 1000).toFixed(1)}–${(d.top / 1000).toFixed(1)} км · ${d.tilts} наклонов`], ['где', `${this.azimuthText(d.azimuth)} / ${(d.range / 1000).toFixed(0)} км · ${age ? `${age} мин` : 'новый'}`]])}</dl>`
-        + (d.hook ? '<div class="mda__hook"><b>КРЮК</b> — эхо обвивает вращение на 0,5°, вырез притока справа от движения</div>' : '')
-        + `<div class="mda__model">в модели рядом: UH ${uh.toFixed(0)} м²/с²</div></div>`
+        + `<dl class="kv">${readings([['Vrot', L(`${d.vrot.toFixed(1)} м/с · у основания ${d.lowVrot.toFixed(1)}`, `${d.vrot.toFixed(1)} m/s · at the base ${d.lowVrot.toFixed(1)}`)], ['Ø', `${(d.diameter / 1000).toFixed(1)} ${L('км', 'km')}`], [L('слой', 'layer'), L(`${(d.base / 1000).toFixed(1)}–${(d.top / 1000).toFixed(1)} км · ${d.tilts} наклонов`, `${(d.base / 1000).toFixed(1)}–${(d.top / 1000).toFixed(1)} km · ${d.tilts} tilts`)], [L('где', 'where'), `${this.azimuthText(d.azimuth)} / ${(d.range / 1000).toFixed(0)} ${L('км', 'km')} · ${age ? `${age} ${L('мин', 'min')}` : L('новый', 'new')}`]])}</dl>`
+        + (d.hook ? `<div class="mda__hook">${L('<b>КРЮК</b> — эхо обвивает вращение на 0,5°, вырез притока справа от движения', '<b>HOOK</b> — the echo wraps around the rotation at 0.5°, an inflow notch to the right of the motion')}</div>` : '')
+        + `<div class="mda__model">${L('в модели рядом', 'in the model nearby')}: UH ${uh.toFixed(0)} ${L('м²/с²', 'm²/s²')}</div></div>`
     }).join('')
   }
 
@@ -667,7 +669,7 @@ export class RadarPanel {
       // The hook: the arc of echo wrapped around the circulation (azimuths clockwise from north; canvas angles from east).
       const h = d.hook, a0 = (h.from - 90) * Math.PI / 180, a1 = (h.from + h.span - 90) * Math.PI / 180
       ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 3; ctx.setLineDash([6, 4]); ctx.beginPath(); ctx.arc(cx, cy, h.radius / 1000 * kmPx, a0, a1); ctx.stroke(); ctx.setLineDash([])
-      ctx.fillStyle = '#ffffff'; ctx.fillText('КРЮК', cx - r * .75 - 40, cy + r * .75 + 12)
+      ctx.fillStyle = '#ffffff'; ctx.fillText(L('КРЮК', 'HOOK'), cx - r * .75 - 40, cy + r * .75 + 12)
     }
     ctx.lineWidth = 1
     this.drawLine(kmPx)
@@ -758,27 +760,27 @@ export class RadarPanel {
     const ppi = this.ppi!, out = this.root.querySelector<HTMLElement>('#radarReadout')!, s = this.cut, hv = this.xsHover
     if (hv && s) {
       const g = Math.min(s.gates - 1, Math.floor(hv.d / s.length * s.gates)), k = Math.min(s.rows - 1, Math.floor(hv.h / XS_DZ)), i = k * s.gates + g, values = this.xsValues(), field = this.xs.field
-      out.innerHTML = readings([['От A', `${(hv.d / 1000).toFixed(1)} км`], ['Высота', `${(hv.h / 1000).toFixed(2)} км`], ['До радара', `${(s.range[g] / 1000).toFixed(1)} км`],
-        ['Отражаемость', s.dbz[i] < 5 ? 'нет эха' : `${s.dbz[i].toFixed(0)} dBZ`], ...(field === 'Z' || !values ? [] : [[XS_FIELDS[field].reading, this.describe(values[i], this.xsKind(), 'in')] as [string, string]])])
+      out.innerHTML = readings([[L('От A', 'From A'), `${(hv.d / 1000).toFixed(1)} ${L('км', 'km')}`], [L('Высота', 'Height'), `${(hv.h / 1000).toFixed(2)} ${L('км', 'km')}`], [L('До радара', 'To the radar'), `${(s.range[g] / 1000).toFixed(1)} ${L('км', 'km')}`],
+        [L('Отражаемость', 'Reflectivity'), s.dbz[i] < 5 ? NO_ECHO : `${s.dbz[i].toFixed(0)} dBZ`], ...(field === 'Z' || !values ? [] : [[XS_FIELDS[field].reading, this.describe(values[i], this.xsKind(), 'in')] as [string, string]])])
       return
     }
     const values = this.values()
-    if (!this.hover || !values) { out.innerHTML = readings([['курсор', 'вне экрана']]); return }
+    if (!this.hover || !values) { out.innerHTML = readings([[L('курсор', 'cursor'), L('вне экрана', 'off the screen')]]); return }
     const { width, depth } = ppi.model.grid
     const b = ppi.beamAt(this.hover.x, this.hover.y), px = Math.min(ppi.w - 1, Math.floor(this.hover.x / width * ppi.w)), py = Math.min(ppi.h - 1, Math.floor((depth - this.hover.y) / depth * ppi.h)), i = px + py * ppi.w
-    const kind = this.kind(), name = { Z: 'Отражаемость', V: 'Скорость', ZDR: 'ZDR', RHO: 'ρhv', KDP: 'KDP' }[kind]
-    out.innerHTML = readings([['Азимут', this.azimuthText(b.azimuth)], ['Дальность', `${(b.range / 1000).toFixed(1)} км`], ...(this.product === 'CR' ? [] : [['Высота луча', `${(b.height / 1000).toFixed(2)} км`] as [string, string]]),
-      ...(kind === 'Z' ? [] : [['Отражаемость', ppi.dbz[i] < 5 ? 'нет эха' : `${ppi.dbz[i].toFixed(0)} dBZ`] as [string, string]]), [name, this.describe(values[i], kind, 'in')]])
+    const kind = this.kind(), name = { Z: L('Отражаемость', 'Reflectivity'), V: L('Скорость', 'Velocity'), ZDR: 'ZDR', RHO: 'ρhv', KDP: 'KDP' }[kind]
+    out.innerHTML = readings([[L('Азимут', 'Azimuth'), this.azimuthText(b.azimuth)], [L('Дальность', 'Range'), `${(b.range / 1000).toFixed(1)} ${L('км', 'km')}`], ...(this.product === 'CR' ? [] : [[L('Высота луча', 'Beam height'), `${(b.height / 1000).toFixed(2)} ${L('км', 'km')}`] as [string, string]]),
+      ...(kind === 'Z' ? [] : [[L('Отражаемость', 'Reflectivity'), ppi.dbz[i] < 5 ? NO_ECHO : `${ppi.dbz[i].toFixed(0)} dBZ`] as [string, string]]), [name, this.describe(values[i], kind, 'in')]])
   }
 
   // ---- The palette editor: a copy of the chosen palette as rows "value · colour · what follows", previewed live.
 
   private edit() {
     const p = this.palettes.chosen(this.kind())
-    this.editing = { id: p.builtin ? undefined : p.id, name: p.builtin ? `${p.name} — своя` : p.name, kind: p.kind, stops: p.stops.map(s => ({ ...s })) }
+    this.editing = { id: p.builtin ? undefined : p.id, name: p.builtin ? `${p.name} — ${L('своя', 'own')}` : p.name, kind: p.kind, stops: p.stops.map(s => ({ ...s })) }
     const $ = <T extends Element = HTMLElement>(s: string) => this.root.querySelector<T>(s)!
-    $('#palKind').textContent = KINDS[p.kind].label; $('#palUnits').textContent = KINDS[p.kind].units || 'без единиц'
-    $('#palBelow').textContent = KINDS[p.kind].clampBelow ? 'Скорость ниже первой точки — цветом первой.' : 'Ниже первой точки эха не видно.'
+    $('#palKind').textContent = KINDS[p.kind].label; $('#palUnits').textContent = KINDS[p.kind].units || L('без единиц', 'no units')
+    $('#palBelow').textContent = KINDS[p.kind].clampBelow ? L('Скорость ниже первой точки — цветом первой.', 'Velocities below the first point take its colour.') : L('Ниже первой точки эха не видно.', 'Below the first point no echo is shown.')
     $<HTMLInputElement>('#palName').value = this.editing.name
     this.editorRows()
     $<HTMLDialogElement>('#paletteEditor').showModal()
@@ -788,10 +790,10 @@ export class RadarPanel {
     const e = this.editing!, step = KINDS[e.kind].digits ? 10 ** -KINDS[e.kind].digits : 1
     e.stops.sort((a, b) => a.value - b.value)
     this.root.querySelector<HTMLElement>('#palRows')!.innerHTML = e.stops.map((s, i) => `<div class="pal-row" data-row="${i}">
-      <input class="input" type="number" step="${step}" value="${s.value}" data-field="value" aria-label="Значение">
-      <input class="pal-color" type="color" value="${toHex(s.color)}" data-field="color" aria-label="Цвет"${s.color ? '' : ' disabled'}>
-      <span class="select"><select data-field="mode" aria-label="Что дальше"><option value="smooth"${!s.solid && s.color ? ' selected' : ''}>плавно</option><option value="solid"${s.solid && s.color ? ' selected' : ''}>ступень</option><option value="none"${s.color ? '' : ' selected'}>пусто</option></select></span>
-      <button type="button" class="btn btn--quiet btn--xs" data-remove="${i}" title="Убрать точку">×</button></div>`).join('')
+      <input class="input" type="number" step="${step}" value="${s.value}" data-field="value" aria-label="${L('Значение', 'Value')}">
+      <input class="pal-color" type="color" value="${toHex(s.color)}" data-field="color" aria-label="${L('Цвет', 'Colour')}"${s.color ? '' : ' disabled'}>
+      <span class="select"><select data-field="mode" aria-label="${L('Что дальше', 'What next')}"><option value="smooth"${!s.solid && s.color ? ' selected' : ''}>${L('плавно', 'smooth')}</option><option value="solid"${s.solid && s.color ? ' selected' : ''}>${L('ступень', 'step')}</option><option value="none"${s.color ? '' : ' selected'}>${L('пусто', 'empty')}</option></select></span>
+      <button type="button" class="btn btn--quiet btn--xs" data-remove="${i}" title="${L('Убрать точку', 'Remove the point')}">×</button></div>`).join('')
     this.editorPreview()
   }
 
@@ -818,7 +820,7 @@ export class RadarPanel {
     if (!e || !e.stops.length) return
     e.name = this.root.querySelector<HTMLInputElement>('#palName')!.value
     this.palettes.put(e); this.luts.clear()
-    this.note(`Палитра «${e.name.trim() || 'Своя'}» сохранена в этом браузере`)
+    this.note(L(`Палитра «${e.name.trim() || 'Своя'}» сохранена в этом браузере`, `Palette “${e.name.trim() || 'Own'}” saved in this browser`))
     this.showPalette()
   }
 
@@ -829,17 +831,17 @@ export class RadarPanel {
     file.text().then(text => {
       const parsed = parsePal(text, this.kind(), file.name.replace(/\.[^.]+$/, ''))
       const saved = this.palettes.put(parsed); this.luts.clear()
-      this.note(saved.kind === this.kind() ? `Палитра «${saved.name}» загружена: ${saved.stops.length} точек` : `Палитра «${saved.name}» загружена для продукта ${KINDS[saved.kind].label} — она появится там`)
+      this.note(saved.kind === this.kind() ? L(`Палитра «${saved.name}» загружена: ${saved.stops.length} точек`, `Palette “${saved.name}” loaded: ${saved.stops.length} points`) : L(`Палитра «${saved.name}» загружена для продукта ${KINDS[saved.kind].label} — она появится там`, `Palette “${saved.name}” loaded for the ${KINDS[saved.kind].label} product — it will appear there`))
       this.showPalette()
-    }).catch((err: Error) => this.note(`Не удалось прочитать файл: ${err.message}`))
+    }).catch((err: Error) => this.note(`${L('Не удалось прочитать файл', 'Could not read the file')}: ${err.message}`))
   }
 
   private deletePalette() {
     const p = this.palettes.chosen(this.kind()), button = this.root.querySelector<HTMLButtonElement>('#paletteDelete')!
     if (p.builtin) return
     // A second click within 4 s deletes (no browser dialog over the instrument).
-    if (performance.now() - this.deleteArmed > 4000) { this.deleteArmed = performance.now(); button.textContent = 'Точно удалить?'; setTimeout(() => { if (performance.now() - this.deleteArmed >= 4000) button.textContent = 'Удалить' }, 4100); return }
-    this.palettes.remove(p.id); this.luts.clear(); this.note(`Палитра «${p.name}» удалена`); this.showPalette()
+    if (performance.now() - this.deleteArmed > 4000) { this.deleteArmed = performance.now(); button.textContent = L('Точно удалить?', 'Really delete?'); setTimeout(() => { if (performance.now() - this.deleteArmed >= 4000) button.textContent = DELETE }, 4100); return }
+    this.palettes.remove(p.id); this.luts.clear(); this.note(L(`Палитра «${p.name}» удалена`, `Palette “${p.name}” deleted`)); this.showPalette()
   }
 
   private note(text: string) { this.root.querySelector<HTMLElement>('#paletteNote')!.textContent = text }

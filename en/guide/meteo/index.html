@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Meteorology from zero: where a thunderstorm comes from, instability, CAPE and CIN, wind shear and the hodograph, supercells, radar, lightning and indices — and where to see it all in the MeteoLab simulator">
+    <title>Meteorology from zero — MeteoLab</title>
+    <script>try { const t = localStorage.getItem('meteolab-theme'); if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t } catch {}</script>
+  </head>
+  <body class="site">
+    <header class="site-header"><div class="container site-header__in">
+      <a class="logo" href="../../" style="font-size:19px"><span class="logo__mark" style="width:22px;height:22px"></span>MeteoLab</a>
+      <nav class="site-nav"><a href="../../simulator/">Simulator</a><a href="../../#scenarios">Scenarios</a><a href="../" aria-current="page">How to use it</a><a href="../../about/">About the model</a><a href="https://github.com/Bandananor/MeteoLAB">GitHub</a><a href="https://t.me/MeteoLabBnor" class="nav-channel">Telegram</a><a href="../../../guide/meteo/" data-lang-switch hreflang="ru" title="Русская версия">RU</a></nav>
+      <div class="seg seg--text" role="group" aria-label="Theme"><button data-theme-set="auto" title="As the system">Auto</button><button data-theme-set="light">Light</button><button data-theme-set="dark">Dark</button></div>
+      <div class="site-header__menu"><button class="btn btn--quiet btn--icon btn--touch" data-theme-toggle aria-label="Light or dark theme">◐</button><button class="btn btn--quiet btn--icon btn--touch" data-menu-toggle aria-expanded="false" aria-label="Menu" style="color:var(--text)">☰</button></div>
+      <div class="menu menu--touch site-menu" id="siteMenu" hidden><a class="menu__item" href="../../simulator/">Simulator</a><a class="menu__item" href="../../#scenarios">Scenarios</a><a class="menu__item" href="../">How to use it</a><a class="menu__item" href="../../about/">About the model</a><a class="menu__item" href="https://github.com/Bandananor/MeteoLAB">GitHub</a><a class="menu__item" href="https://t.me/MeteoLabBnor">The project’s Telegram channel</a><a class="menu__item" href="../../../guide/meteo/" data-lang-switch hreflang="ru">Русская версия</a></div>
+    </div></header>
+    <main class="container"><div class="doc">
+      <nav class="toc" aria-label="Contents"><span class="toc__title">Contents</span>
+        <a href="#how"><span class="num">1</span>How a storm is born</a>
+        <a href="#instability"><span class="num">2</span>Instability: CAPE and CIN</a>
+        <a href="#moisture"><span class="num">3</span>Moisture</a>
+        <a href="#wind"><span class="num">4</span>Wind, shear, hodograph</a>
+        <a href="#types"><span class="num">5</span>Kinds of storms</a>
+        <a href="#ground"><span class="num">6</span>What a storm does at the ground</a>
+        <a href="#radar"><span class="num">7</span>How to read the radar</a>
+        <a href="#lightning"><span class="num">8</span>Lightning</a>
+        <a href="#indices"><span class="num">9</span>Indices: what is a lot, what is little</a>
+        <a href="#words"><span class="num">10</span>Glossary</a>
+        <span class="toc__ver">v2.7.0.1</span></nav>
+      <article class="prose">
+        <span class="t-eyebrow">A guide for newcomers to meteorology</span>
+        <h1>Meteorology from zero</h1>
+        <p class="lead">This page is for those who have never studied the weather. No formulas: what a thunderstorm is, why it grows, why it rotates and why it is dangerous. After each section — <b>“See it in the simulator”</b>: where exactly on the screen it shows. If you have not opened the simulator yet, start with the <a href="../start/">“First steps”</a> guide and then come back here.</p>
+        <div class="callout"><span class="callout__label">How to read the paths</span><p>“Right → Data → Instability indices” means: on a computer — the right column, the “Instability indices” group (it opens with a click on its title); on a phone — the bottom “Data” button, the same group in the sheet that slides up. The instrument buttons (Radar, Skew-T, Zones, Lightning, Station) are in the top line on a computer, under the bottom “Instruments” button on a phone.</p></div>
+
+        <h2 id="how"><span class="num">1</span>How a storm is born</h2>
+        <p>The sun heats the ground, the ground heats the air right at the surface. Warm air is lighter than cold air and rises, like a bubble in water. This is <b>convection</b> (“carrying upward”).</p>
+        <p>As it rises the air expands (the pressure is lower higher up) and cools — by about 10 °C every kilometre while it is dry. When it has cooled enough for its water vapour to start turning into drops, a cloud appears. The height where this happens is the <b>condensation level</b> (the cloud base).</p>
+        <p>In condensing, the vapour gives back heat (the very heat that went into evaporating it). So cloudy air cools more slowly — about 6 °C per kilometre — and can stay warmer than the surrounding air right up to the tropopause (10–16 km). Then the bubble turns into a powerful <b>updraught</b> of 20–60 m/s, the cloud into a <b>cumulonimbus</b> with an anvil on top, and the drops, ice, snow and hail grown in it fall as a downpour.</p>
+        <p>So a storm needs three things: <b>instability</b> (the air aloft cold enough for the bubble to stay warm), <b>moisture</b> (something to condense) and <b>a push</b> (whatever lifts the air to the level from which it goes on by itself: heating by the sun, a front, a slope, the outflow of a neighbouring storm). The fourth thing — <b>wind shear</b> — decides what the storm will be like: short-lived or long-lived, simple or rotating.</p>
+        <p><b>See it in the simulator:</b> choose the “Summer day” scenario (on the left, “Scenarios”; on a phone — the “Scenarios” button). In 5–10 model minutes (the T+ clock at the top) you will see the bubble rise and turn into a cloud, by minutes 20–30 into a storm. The “Vertical motion” tab above the 3D view shows the updraught in red and the downdraught in blue.</p>
+
+        <h2 id="instability"><span class="num">2</span>Instability: CAPE and CIN</h2>
+        <p>Imagine taking a portion of air at the ground (meteorologists say “a parcel”) and lifting it in your mind. If at every height it is warmer than the surrounding air, it is pushed upward: the atmosphere is <b>unstable</b>. How much energy the parcel gains over the whole ascent is called <b>CAPE</b> (convective available potential energy), in joules per kilogram.</p>
+        <p>Often there is a layer near the ground where the parcel is, on the contrary, colder than the surrounding air — a <b>cap</b>, or inversion (a “lid”). Getting through it takes energy — that is <b>CIN</b> (convective inhibition). A moderate or large CIN (50–150 J/kg and more) keeps storms from starting too early: the heat builds up, and when the cap breaks the storms are especially strong (a “loaded gun”). A small CIN (up to ~25) hardly holds: thermals break through it by themselves.</p>
+        <p>Important heights: <b>LCL</b> — the lifted condensation level (the cloud base), <b>LFC</b> — the level of free convection (above it the parcel rises by itself), <b>EL</b> — the equilibrium level (where the parcel’s temperature again equals the surrounding air’s; roughly the top of the anvil).</p>
+        <p>What affects them: the faster the air cools with height (the temperature <b>lapse rate</b>, K/km), the larger the CAPE; the warmer and moister at the ground, the larger too; a strong inversion means a larger CIN.</p>
+        <p><b>See it in the simulator:</b></p>
+        <ul>
+          <li>Under the scenario’s description on the left — the ML CAPE and CIN of the chosen weather. Move the “Surface temperature” slider (the “Temperature profile” group): the numbers change at once, before the run.</li>
+          <li>The <b>Skew-T</b> instrument (the button at the top or key S; on a phone — “Instruments” → “Skew-T”): the red line is the temperature, the green one the dew point, the white dashed one the parcel’s path; the shaded area between the parcel and the temperature is CAPE (warm) and CIN (cold). LCL, LFC and EL are there too.</li>
+          <li>Right → “Environment: sounding and levels” — a small diagram and the same levels; “Instability indices” — CAPE and CIN for three parcels: surface-based (SB), mixed layer (ML), most unstable (MU).</li>
+          <li>The “Cap (inversion)” and “Inversion height” sliders — make a cap yourself and watch the CIN grow.</li>
+        </ul>
+
+        <h2 id="moisture"><span class="num">3</span>Moisture</h2>
+        <p><b>Relative humidity</b> is how close the air is to saturation (at 100 % the vapour starts to condense). The <b>dew point</b> is the temperature the air must be cooled to for condensation to begin; the closer it is to the air temperature, the moister the air. A summer dew point of 18–22 °C at the ground feels muggy — good “fuel” for storms.</p>
+        <p>The moisture at the ground matters most: it decides at what height the cloud appears (the moister, the lower the base) and how much heat condensation releases (more CAPE). Dry air in the middle (3–7 km), on the contrary, weakens ordinary storms — drops evaporate in it — but helps strong downward gusts.</p>
+        <p><b>See it in the simulator:</b> the “Humidity by layer” group on the left: “Surface”, “1–3 km”, “3–7 km”, “7 km–TP” and “Moist mixed layer”. The “Moisture” tab above the 3D view shows the humidity in colour. On the Skew-T the green line is the dew point: where it hugs the red one, the air is nearly saturated.</p>
+
+        <h2 id="wind"><span class="num">4</span>Wind, shear, hodograph</h2>
+        <p>Meteorologists name the <b>wind direction</b> by where it blows <i>from</i>: 270° is a westerly (from west to east), 180° a southerly.</p>
+        <p><b>Wind shear</b> is how the wind changes with height (in speed, direction or both). For storms the main one is the <b>0–6 km shear</b>: the difference between the wind at the ground and at 6 km. Weak shear (less than ~10 m/s) — storms grow straight up and quickly kill themselves: the cold downpour falls into their own updraught. Strong shear (20 m/s and more) tilts the storm: the downpour falls to the side, the updraught lives for hours — this is how supercells form.</p>
+        <p>The <b>hodograph</b> is a drawing of the wind by height: from the centre of the circle to a point is the wind at that height; the points are joined by a line from the bottom up. A long line means strong shear. If the line curves clockwise near the ground (the wind veers to the right with height), the air flowing into the storm is already spinning — that is <b>SRH</b> (storm-relative helicity, m²/s²). A large SRH in the lowest kilometre (0–1 km) is the main sign of an environment where tornadoes are possible.</p>
+        <p><b>See it in the simulator:</b> the “Wind profile” group on the left — the speed and direction at 0, 0.5, 1, 3, 6 and 10 km. Right → “Wind: hodograph and shear” — the hodograph: its circles can be dragged with a mouse or a finger, they are the same sliders. Under it — “0–6 km wind shear”. SRH, SCP and STP are on the right in “Instability indices”. In the “Zones” instrument the lines show where storms will go with this wind.</p>
+
+        <h2 id="types"><span class="num">5</span>Kinds of storms</h2>
+        <dl class="terms">
+          <dt>Single cell</dt><dd>weak shear: the cloud grows, a downpour falls, the downdraught kills the updraught — all within 30–60 minutes. The “Summer day” scenario.</dd>
+          <dt>Multicell storm</dt><dd>moderate shear: the cold air from the downpour spreads along the ground and lifts warm air at its edge — a new cell grows next to the old one, then another. The storm lives long, but each cell briefly. The “Multicell storm” scenario.</dd>
+          <dt>Supercell</dt><dd>strong shear: the updraught rotates — that is a <b>mesocyclone</b> (a vortex 3–10 km wide). It lives for hours and gives large hail, strong wind and sometimes tornadoes. It often <b>splits</b>: one storm becomes a right mover (rotating anticlockwise, moving to the right of the wind, usually stronger) and a left mover. The “Classic supercell” and “WK supercell” scenarios.</dd>
+          <dt>Storms on a front</dt><dd>a cold front is a wedge of cold air that undercuts the warm air and lifts it like a bulldozer. If it is moist and unstable ahead and the “cap” is not too strong, a line of storms rises along the front. A warm front is gentle: warm air slowly flows up over the cold, storms form above the cold layer. The “Cold front” scenario; the front is set on the “Zones” screen.</dd>
+          <dt>HSLC</dt><dd>“high shear, low CAPE” — the cold season, the night: low-topped but rotating storms, treacherous for tornadoes. The “HSLC” scenario.</dd>
+          <dt>Squall line, MCS</dt><dd>storms merge into a line or a big system hundreds of kilometres across and live half the night. They need a larger domain than the current one — that is planned.</dd>
+        </dl>
+        <p><b>See it in the simulator:</b> at the top right — “Storm mode”: in words, what is happening now (thermals, a single cell, a multicell, a tilted organized cell, a supercell). The “Mesocyclone” toggle on the view draws a ring over a rotating core. The “Rotation (UH)” tab shows the rotation of the rising air in colour.</p>
+
+        <h2 id="ground"><span class="num">6</span>What a storm does at the ground</h2>
+        <ul>
+          <li><b>Cold pool</b> — air cooled by the evaporating downpour spreads along the ground like spilled water. Its edge is the <b>gust front</b>: a sharp wind, a drop in temperature. The “Cold pool” tab.</li>
+          <li><b>Microburst</b> — a short blast of cold air down and outward, up to 30–40 m/s at the ground. The “Microburst” scenario; the “Surface gust” number on the right.</li>
+          <li><b>Hail</b> — drops lifted by the updraught above 0 °C freeze and grow a coat of ice for as long as the updraught holds them up. The stronger the updraught, the larger the hail. The “Hail at the ground” number. (Honestly: the model so far gives hailstones up to about 2 cm — large hail will come with more complex microphysics.)</li>
+          <li><b>Downpour</b> — “Rain in the core now” (the heaviest rain this minute, mm/h) and “Total at the wettest point”. The core moves and passes over one place in 5–15 minutes, so 100 mm/h in the core gives that point 5–20 mm, not 100 — the weather station records the rain at its own point. The “Rain total” toggle on the view draws the downpour’s track on the ground.</li>
+        </ul>
+        <p><b>See how a person on the ground feels it:</b> the “Station” instrument → “Place with a click in 3D” → click the ground in the storm’s path. When the storm passes, the chart will show a pressure jump, a temperature drop, a gust of wind, a downpour.</p>
+
+        <h2 id="radar"><span class="num">7</span>How to read the radar</h2>
+        <p>A weather radar sends out a radio wave and listens to the echo from drops, snow and hail. The larger and denser the particles, the stronger the echo.</p>
+        <ul>
+          <li><b>Z, reflectivity</b> (dBZ): 20 — light rain, 40 — a downpour, 50–60 — a very heavy downpour, above 60 — almost certainly hail. On the map these are colours from light blue to red and purple.</li>
+          <li><b>V, velocity</b> along the beam: green — towards the radar, red — away from it. <b>SRV</b> — the same with the storm’s own motion taken out: a mesocyclone’s rotation shows as a “green next to red” pair.</li>
+          <li><b>Hook</b> (hook echo) — a curl of echo on the south-west side of a supercell: rain wrapped around the mesocyclone.</li>
+          <li><b>Beam tilt:</b> the beam goes up at an angle, so far away it sees higher. A low tilt shows what is near the ground; a high one the storm’s core and the anvil.</li>
+          <li><b>ZDR, ρhv, KDP</b> — dual polarization: they help tell drops from hail and melting snow (details are in the help on the radar screen itself).</li>
+        </ul>
+        <p><b>See it in the simulator:</b> the “Radar” button (R; on a phone — “Instruments” → “Radar”). On the right of the radar screen — the Z, V, SRV and other products, the tilt angle, a help note on each product. The radar finds mesocyclones by itself — the “Mesocyclones (MDA)” section.</p>
+
+        <h2 id="lightning"><span class="num">8</span>Lightning</h2>
+        <p>Inside a storm graupel (soft hail) and ice crystals collide in a cloud of supercooled drops. In every collision the particles exchange a tiny charge: minus builds up in one part of the cloud, plus in another. When the electric field becomes stronger than the air can withstand, a discharge goes. If the channel reaches the ground it is a <b>ground stroke</b> (CG), if not an <b>in-cloud</b> flash (IC). In-cloud flashes are usually several times more frequent.</p>
+        <p>A <b>lightning jump</b> is a sharp rise in the flash rate: a sign that the updraught is strengthening; hail and a squall often follow.</p>
+        <p><b>See it in the simulator:</b> the “Lightning” toggle on the 3D view (the flashes’ channels); the “Lightning” instrument (L; on a phone — “Instruments” → “Lightning”): a map of strokes, the density per km², a chart of the rate and the jumps, a card for any flash. The fifth chart of the “Storm history” on the right is “Lightning, flashes/min”. The first lightning usually appears 15–25 minutes into the storm.</p>
+
+        <h2 id="indices"><span class="num">9</span>Indices: what is a lot, what is little</h2>
+        <div class="table-wrap"><table><thead><tr><th>Index</th><th>What it means</th><th>Little</th><th>A lot</th></tr></thead><tbody>
+          <tr><td>CAPE</td><td>the energy of the ascent</td><td>&lt; 500 J/kg — weak storms</td><td>&gt; 2500 — very strong</td></tr>
+          <tr><td>CIN</td><td>the “cap”, inhibition</td><td>&lt; 25 — storms start easily</td><td>&gt; 100 — they will not start without a strong push</td></tr>
+          <tr><td>0–6 km shear</td><td>organizes the storm</td><td>&lt; 10 m/s — single cells</td><td>&gt; 20 m/s — supercells</td></tr>
+          <tr><td>SRH 0–1 km</td><td>the twist near the ground</td><td>&lt; 50 m²/s²</td><td>&gt; 150 — a tornadic environment</td></tr>
+          <tr><td>SCP</td><td>supercell composite parameter</td><td>&lt; 1</td><td>&gt; 4 — strong supercells</td></tr>
+          <tr><td>STP</td><td>significant tornado parameter</td><td>&lt; 0.5</td><td>&gt; 1 — an environment where strong tornadoes happen</td></tr>
+        </tbody></table></div>
+        <p>The indices describe the <i>environment</i>, not the storm: they say what may grow if a storm starts. Where they are: right → “Instability indices”; on a phone — “Data” → the same group.</p>
+
+        <h2 id="words"><span class="num">10</span>Glossary</h2>
+        <dl class="terms">
+          <dt>Advection</dt><dd>air carried by the wind: air arrives at a point from somewhere else — warmer or colder, moister or drier. Moisture from the south raises CAPE; cold aloft (an upper trough) steepens the profile; warm air above the mixed layer strengthens the “cap”. In the simulator — the “Advection” group on the left.</dd>
+          <dt>Updraught / downdraught</dt><dd>air rising in a storm (m/s upward) or sinking.</dd>
+          <dt>Sounding</dt><dd>a profile of temperature, humidity and wind by height; real soundings are made by weather balloons twice a day.</dd>
+          <dt>Inversion</dt><dd>a layer where the temperature rises with height: a “cap” on convection.</dd>
+          <dt>Cumulonimbus (Cb)</dt><dd>a thunderstorm cloud with a glaciated top: bald (Cb calvus) — without fibres, hairy (Cb capillatus) — with a fibrous top, often with an anvil (incus); in strong storms the top runs into the tropopause.</dd>
+          <dt>Trough (upper)</dt><dd>an elongated area of low pressure aloft with cold air. Ahead of a trough the air slowly rises (divergence aloft, vorticity advection), which weakens the cap; the cold aloft adds instability — storms start more easily and last longer.</dd>
+          <dt>Mesocyclone</dt><dd>the rotating updraught of a supercell, 3–10 km across.</dd>
+          <dt>Anvil</dt><dd>the flat top of a storm: the updraught runs into the tropopause and spreads out sideways.</dd>
+          <dt>Outflow, gust front</dt><dd>the cold air from a downpour spreading along the ground, and its edge.</dd>
+          <dt>Right / left mover</dt><dd>the two supercells after a split; the right one is usually stronger and more often gives tornadoes.</dd>
+          <dt>Tropopause</dt><dd>the boundary between the lower atmosphere (the troposphere) and the stratosphere, 10–16 km; storms hardly rise above it.</dd>
+          <dt>UH</dt><dd>updraft helicity: how much the rising air rotates; 2–5 km — a mesocyclone, 0–1 km — rotation near the ground.</dd>
+          <dt>Warm sector</dt><dd>the part of a cyclone between the warm and the cold fronts: warm moist air, often under a “cap”. Storms in it usually wait for the cold front.</dd>
+          <dt>Thermal</dt><dd>a bubble of warm air; in the simulator a storm starts from one (a double click on the ground adds another).</dd>
+        </dl>
+        <p>Next: <a href="../start/">First steps</a> — how to use the simulator; <a href="../recipes/">Experiments and recipes</a> — how to get each phenomenon; <a href="../">the interface reference</a>; <a href="../../about/">About the model</a> — how it works.</p>
+      </article>
+    </div></main>
+    <footer class="site-footer"><div class="container site-footer__in"><div><a class="logo" href="../../"><span class="logo__mark"></span>MeteoLab</a><p>A numerical atmosphere lab on the StormLab thunderstorm model. MIT licence · © 2026 Bandananor</p><p class="footer-channel"><a href="https://t.me/MeteoLabBnor">The project’s Telegram channel — t.me/MeteoLabBnor</a></p><p class="faint">The EMSquad team · <a href="https://t.me/EMSquad">t.me/EMSquad</a></p></div><nav><a href="../../simulator/">Simulator</a><a href="../../#scenarios">Scenarios</a><a href="../">How to use it</a><a href="../../about/">About the model</a><a href="../../about/#changelog">Changelog</a><a href="https://github.com/Bandananor/MeteoLAB">GitHub</a><a href="../../../guide/meteo/" data-lang-switch hreflang="ru">Русская версия</a><span class="num faint" style="font-size:12px">v2.7.0.1</span></nav></div></footer>
+    <script type="module" src="/src/site/about.ts"></script>
+  </body>
+</html>

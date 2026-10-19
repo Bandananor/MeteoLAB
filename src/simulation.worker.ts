@@ -4,6 +4,7 @@
 import { AtmosphereModel, controlBuffer, createGrid, domainGrid, DT, type SimConfig, SharedMemory, ThreadRunner, TRANSPORT_SLABS, applyState, readState } from './core'
 import { BATCH_BUDGET_MS, MAX_STEPS_PER_BATCH, MAX_THREADS, SNAPSHOT_COLUMNS, SNAPSHOT_FIELDS, type Snapshot, type WorkerRequest } from './simulation'
 import type { HelperStart } from './step.worker'
+import { setLang } from './i18n'
 
 const scope = self as unknown as {
   crossOriginIsolated?: boolean
@@ -62,7 +63,7 @@ function send() {
 
 scope.addEventListener('message', ({ data }) => {
   switch (data.type) {
-    case 'init': accumulator = 0; start(data.config, data.threads); break
+    case 'init': accumulator = 0; if (data.lang) setLang(data.lang); start(data.config, data.threads); break
     case 'config': if (model) Object.assign(model.config, data.config); break
     case 'perturb': model?.injectBubble(data.x, data.y, data.strength); break
     case 'release': free.push(data.buffer); break

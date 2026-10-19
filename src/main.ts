@@ -28,10 +28,13 @@ import { Timeline } from './timeline'
 import { DEFAULTS as defaults } from './defaults'
 import { hailWord, rainWord } from './describe'
 import { type CameraGrade, GRADE_SLIDERS, loadGrade, NEUTRAL_GRADE, saveGrade } from './camera'
+import { L, lang, otherLanguagePath, rememberLang } from './i18n'
 
 // Settings whose change restarts the run (the rest act on the running model): marked ↻ at their label.
+// Units of the sliders.
+const KM = L(' км', ' km'), MS = L(' м/с', ' m/s'), KKM = L(' K/км', ' K/km'), JKG = L('Дж/кг', 'J/kg'), NO = L('№', '#')
 const resetKeys = new Set<keyof SimConfig>(['surfaceTemp','lapseLow','lapseMid','lapseUpper','tropopause','stratoWarming','capStrength','capHeight','rhSurface','rhLow','rhMid','rhUpper','moistLayer','wind0','wind05','wind1','wind3','wind6','wind10','windDir0','windDir05','windDir1','windDir3','windDir6','windDir10','latitude','bubble','surfaceType','city'])
-const RESTART = '<span class="field__restart" title="Изменение перезапускает расчёт">↻</span>'
+const RESTART = `<span class="field__restart" title="${L('Изменение перезапускает расчёт', 'Changing it restarts the run')}">↻</span>`
 
 // Markup pieces of the design system (styles/components.css).
 const slider = (key: keyof SimConfig, label: string, min: number, max: number, step: number, value: number, unit: string, digits = 0) => `
@@ -39,8 +42,8 @@ const slider = (key: keyof SimConfig, label: string, min: number, max: number, s
     <input class="range" data-key="${key}" data-unit="${unit}" data-digits="${digits}" type="range" min="${min}" max="${max}" step="${step}" value="${value}"></label>`
 /** A collapsible group; `profile` groups are dimmed when the scenario's profile is analytic, `id` ones remember being open. */
 const group = (title: string, body: string, o: { count?: number; tag?: string; open?: boolean; profile?: boolean; id?: string; bare?: boolean } = {}) => `
-  <details class="group"${o.open ? ' open' : ''}${o.profile ? ' data-profile' : ''}${o.id ? ` data-group="${o.id}"` : ''}><summary><span class="group__title">${title}</span>${o.profile ? '<span class="group__tag" hidden>формулы WK</span>' : ''}${o.count || o.tag ? `<span class="group__count">${o.count ?? o.tag}</span>` : ''}</summary>${o.bare ? body : `<div class="group__body">${body}</div>`}</details>`
-const info = (tip: string) => `<button class="info" popovertarget="${tip}" aria-expanded="false" aria-label="Что это">i</button>`
+  <details class="group"${o.open ? ' open' : ''}${o.profile ? ' data-profile' : ''}${o.id ? ` data-group="${o.id}"` : ''}><summary><span class="group__title">${title}</span>${o.profile ? `<span class="group__tag" hidden>${L('формулы WK', 'WK formulas')}</span>` : ''}${o.count || o.tag ? `<span class="group__count">${o.count ?? o.tag}</span>` : ''}</summary>${o.bare ? body : `<div class="group__body">${body}</div>`}</details>`
+const info = (tip: string) => `<button class="info" popovertarget="${tip}" aria-expanded="false" aria-label="${L('Что это', 'What is this')}">i</button>`
 const metric = (id: string, label: string, unit: string, tip?: string, extra = '') =>
   `<div class="metric" data-metric="${id}"><div class="metric__head"><span class="label">${label}</span>${tip ? info(tip) : ''}</div><div class="metric__value"><span class="metric__num" id="${id}">—</span><span class="unit">${unit}</span></div>${extra}</div>`
 type PairItem = [id: string, label: string, unit: string, title?: string]
@@ -56,7 +59,8 @@ const tip = (id: string, title: string, text: string, scale = '', foot = '') =>
 function environmentNums(c: SimConfig) {
   const grid = createGrid(), env = new Environment(c, grid, environmentProfile(c, grid.height)), p = parcelIndices(env, grid.height), k = stormIndices(env, p)
   const minus = (v: number) => String(Math.round(v)).replace('-', '−')
-  return `ML CAPE ${minus(p.ml.cape)} Дж/кг · ML CIN ${minus(p.ml.cin)} · сдвиг 0–6 км ${Math.round(k.shear06)} м/с · SRH 0–1 км ${Math.round(k.srh01)} м²/с²`
+  return L(`ML CAPE ${minus(p.ml.cape)} Дж/кг · ML CIN ${minus(p.ml.cin)} · сдвиг 0–6 км ${Math.round(k.shear06)} м/с · SRH 0–1 км ${Math.round(k.srh01)} м²/с²`,
+    `ML CAPE ${minus(p.ml.cape)} J/kg · ML CIN ${minus(p.ml.cin)} · 0–6 km shear ${Math.round(k.shear06)} m/s · SRH 0–1 km ${Math.round(k.srh01)} m²/s²`)
 }
 const presets = SCENARIOS.map(s => ({ ...s, nums: environmentNums({ ...defaults, ...s.values }) }))
 /**
@@ -73,223 +77,227 @@ const wideOf = (names: string[]) => {
   return wide
 }
 const plainPresets = presets.flatMap((p, i) => p.story ? [] : [i]), situationPresets = presets.flatMap((p, i) => p.story ? [i] : [])
-const scenarioButtons = (indices: number[]) => { const wide = wideOf(indices.map(i => presets[i].name)); return indices.map((i, k) => `<button class="btn${wide[k] ? ' is-wide' : ''}" data-preset="${i}" aria-pressed="false">${presets[i].name}</button>`).join('') }
+const scenarioButtons = (indices: number[]) => { const wide = wideOf(indices.map(i => presets[i].title)); return indices.map((i, k) => `<button class="btn${wide[k] ? ' is-wide' : ''}" data-preset="${i}" aria-pressed="false">${presets[i].title}</button>`).join('') }
 const choice = (id: string, label: string, items: Record<string, { name: string }>) => `<div class="field"><span class="field__label">${label}</span><span class="select"><select id="${id}">${Object.entries(items).map(([k, v]) => `<option value="${k}">${v.name}</option>`).join('')}</select></span></div>`
 
 const app = document.querySelector<HTMLDivElement>('#app')!
 app.innerHTML = `<div class="app">
   <header class="topbar">
-    <a class="logo" href="../" title="На главную"><span class="logo__mark"></span>MeteoLab</a>
+    <a class="logo" href="../" title="${L('На главную', 'Home')}"><span class="logo__mark"></span>MeteoLab</a>
     <span class="topbar__sep"></span>
-    <span class="status" id="statusText">Идёт расчёт</span><span class="num faint m-only" data-hud="speed">×8</span>
-    <span class="topbar__stats"><span title="Время расчёта — часы:минуты:секунды с начала опыта">T+<b id="time">0:00:00</b></span><span title="Местное солнечное время в модели: начальное время (ползунок «Местное солнечное время») плюс время расчёта"><b id="localTime">—</b></span><span title="Потоки расчёта физики"><b id="threads">—</b> потоков</span><span class="faint" id="domainSize">48 × 36 × 19 км</span></span>
+    <span class="status" id="statusText">${L('Идёт расчёт', 'Running')}</span><span class="num faint m-only" data-hud="speed">×8</span>
+    <span class="topbar__stats"><span title="${L('Время расчёта — часы:минуты:секунды с начала опыта', 'Run time — hours:minutes:seconds since the start of the experiment')}">T+<b id="time">0:00:00</b></span><span title="${L('Местное солнечное время в модели: начальное время (ползунок «Местное солнечное время») плюс время расчёта', 'Local solar time in the model: the start time (the “Local solar time” slider) plus the run time')}"><b id="localTime">—</b></span><span title="${L('Потоки расчёта физики', 'Threads computing the physics')}"><b id="threads">—</b> ${L('потоков', 'threads')}</span><span class="faint" id="domainSize">48 × 36 × 19 ${L('км', 'km')}</span></span>
     <span class="topbar__spacer"></span>
-    <span class="topbar__group"><button class="btn" id="radarOpen" title="Доплеровский радар: отражаемость на выбранном угле наклона луча">Радар <span class="kbd">R</span></button><button class="btn" id="skewOpen" title="Аэрологическая диаграмма Skew-T log-p: профиль среды, частица, CAPE/CIN, ветер и зонд в модели у выбранной ячейки">Skew-T <span class="kbd">S</span></button><button class="btn" id="zonesOpen" title="Зоны среды и фронт на карте: участки земли, где воздух у земли теплее или холоднее, влажнее или суше, и холодный или тёплый фронт — гроза пройдёт через них">Зоны <span class="kbd">Z</span></button><button class="btn" id="detectorOpen" title="Грозопеленгатор: удары в землю и внутриоблачные вспышки на карте, плотность молний на км², частота вспышек и её скачки">Молнии <span class="kbd">L</span></button><button class="btn" id="analysisOpen" title="Приземный анализ: карта области, как у синоптика — изобары давления у земли с центрами H и L, фронт, осадки и станции с температурой, точкой росы, давлением, ветром и погодой">Анализ <span class="kbd">A</span></button><button class="btn" id="stationOpen" title="Виртуальная метеостанция: поставьте её щелчком на земле и смотрите метеограмму — температуру, давление, ветер с порывами и осадки, когда гроза проходит над ней">Станция <span class="kbd">M</span></button></span>
+    <span class="topbar__group"><button class="btn" id="radarOpen" title="${L('Доплеровский радар: отражаемость на выбранном угле наклона луча', 'Doppler radar: reflectivity at the chosen beam tilt')}">${L('Радар', 'Radar')} <span class="kbd">R</span></button><button class="btn" id="skewOpen" title="${L('Аэрологическая диаграмма Skew-T log-p: профиль среды, частица, CAPE/CIN, ветер и зонд в модели у выбранной ячейки', 'Skew-T log-p diagram: the environment’s profile, the parcel, CAPE/CIN, the wind and a sounding taken in the model at the selected cell')}">Skew-T <span class="kbd">S</span></button><button class="btn" id="zonesOpen" title="${L('Зоны среды и фронт на карте: участки земли, где воздух у земли теплее или холоднее, влажнее или суше, и холодный или тёплый фронт — гроза пройдёт через них', 'Environment zones and a front on the map: patches of ground where the near-surface air is warmer or colder, moister or drier, and a cold or warm front — the storm will pass through them')}">${L('Зоны', 'Zones')} <span class="kbd">Z</span></button><button class="btn" id="detectorOpen" title="${L('Грозопеленгатор: удары в землю и внутриоблачные вспышки на карте, плотность молний на км², частота вспышек и её скачки', 'Lightning detector: ground strokes and in-cloud flashes on the map, flash density per km², the flash rate and its jumps')}">${L('Молнии', 'Lightning')} <span class="kbd">L</span></button><button class="btn" id="analysisOpen" title="${L('Приземный анализ: карта области, как у синоптика — изобары давления у земли с центрами H и L, фронт, осадки и станции с температурой, точкой росы, давлением, ветром и погодой', 'Surface analysis: a forecaster’s map of the domain — surface isobars with H and L centres, the front, precipitation and stations with temperature, dew point, pressure, wind and weather')}">${L('Анализ', 'Analysis')} <span class="kbd">A</span></button><button class="btn" id="stationOpen" title="${L('Виртуальная метеостанция: поставьте её щелчком на земле и смотрите метеограмму — температуру, давление, ветер с порывами и осадки, когда гроза проходит над ней', 'Virtual weather station: place it with a click on the ground and watch the meteogram — temperature, pressure, wind with gusts and precipitation as the storm passes over it')}">${L('Станция', 'Station')} <span class="kbd">M</span></button></span>
     <span class="topbar__sep"></span>
-    <a class="btn btn--quiet" href="../guide/" target="_blank" rel="noopener" title="Как пользоваться: где какие кнопки, как менять параметры, приборы, телефон (откроется в новой вкладке, расчёт не прервётся)">Справка</a>
-    <button class="btn btn--quiet" id="layoutToggle" title="Телефонный вид: 3D во весь экран, крупные цифры, панель под палец. Выбор запоминается">Телефонный вид</button>
-    <div class="seg seg--text" role="group" aria-label="Тема"><button data-theme-set="auto" title="Как в системе">Авто</button><button data-theme-set="light">Светлая</button><button data-theme-set="dark">Тёмная</button></div>
+    <a class="btn btn--quiet" href="../guide/" target="_blank" rel="noopener" title="${L('Как пользоваться: где какие кнопки, как менять параметры, приборы, телефон (откроется в новой вкладке, расчёт не прервётся)', 'How to use it: where the buttons are, how to change settings, the instruments, the phone (opens in a new tab, the run goes on)')}">${L('Справка', 'Guide')}</a>
+    <a class="btn btn--quiet" id="langSwitch" href="#" title="${L('English version', 'Русская версия')}">${L('EN', 'RU')}</a>
+    <button class="btn btn--quiet" id="layoutToggle" title="${L('Телефонный вид: 3D во весь экран, крупные цифры, панель под палец. Выбор запоминается', 'Phone layout: 3D on the whole screen, large numbers, a panel for the thumb. The choice is remembered')}">${L('Телефонный вид', 'Phone layout')}</button>
+    <div class="seg seg--text" role="group" aria-label="${L('Тема', 'Theme')}"><button data-theme-set="auto" title="${L('Как в системе', 'As the system')}">${L('Авто', 'Auto')}</button><button data-theme-set="light">${L('Светлая', 'Light')}</button><button data-theme-set="dark">${L('Тёмная', 'Dark')}</button></div>
   </header>
   <main class="app__main">
-    <aside class="side side--left" aria-label="Обстановка">
+    <aside class="side side--left" aria-label="${L('Обстановка', 'Setting')}">
       <div class="side__scroll">
         <div class="side__block">
-          <h2 class="side__title d-only">Сценарии</h2>
+          <h2 class="side__title d-only">${L('Сценарии', 'Scenarios')}</h2>
           <div class="scenarios d-only">${scenarioButtons(plainPresets)}</div>
-          <h2 class="side__title side__title--sub d-only" title="Сюжет на несколько часов: воздушная масса, что приносит ветер (адвекция), фронт и солнце">Синоптические ситуации</h2>
+          <h2 class="side__title side__title--sub d-only" title="${L('Сюжет на несколько часов: воздушная масса, что приносит ветер (адвекция), фронт и солнце', 'A story of a few hours: the air mass, what the wind brings (advection), a front and the sun')}">${L('Синоптические ситуации', 'Synoptic situations')}</h2>
           <div class="scenarios d-only">${scenarioButtons(situationPresets)}</div>
-          <details class="builder"><summary>Собрать свою ситуацию</summary>
-            ${choice('sitMass', 'Воздушная масса', AIR_MASSES)}${choice('sitTrigger', 'Что запускает конвекцию', TRIGGERS)}${choice('sitShear', 'Сдвиг ветра', SHEARS)}
-            <div class="field"><span class="field__label">Начало</span><span class="select"><select id="sitHour">${[8, 9, 10, 11, 12, 13].map(h => `<option value="${h}"${h === 10 ? ' selected' : ''}>${h}:00</option>`).join('')}</select></span></div>
-            <button class="btn btn--block btn--primary" id="sitBuild" type="button">Собрать и запустить</button></details>
-          <div class="scards m-only">${presets.map((p, i) => `<button class="scard" data-preset="${i}" aria-pressed="false"><span class="scard__name">${p.name}</span><span class="scard__desc">${p.summary}</span><span class="scard__nums">${p.nums}</span></button>`).join('')}</div>
+          <details class="builder"><summary>${L('Собрать свою ситуацию', 'Build your own situation')}</summary>
+            ${choice('sitMass', L('Воздушная масса', 'Air mass'), AIR_MASSES)}${choice('sitTrigger', L('Что запускает конвекцию', 'What sets off convection'), TRIGGERS)}${choice('sitShear', L('Сдвиг ветра', 'Wind shear'), SHEARS)}
+            <div class="field"><span class="field__label">${L('Начало', 'Start')}</span><span class="select"><select id="sitHour">${[8, 9, 10, 11, 12, 13].map(h => `<option value="${h}"${h === 10 ? ' selected' : ''}>${h}:00</option>`).join('')}</select></span></div>
+            <button class="btn btn--block btn--primary" id="sitBuild" type="button">${L('Собрать и запустить', 'Build and run')}</button></details>
+          <div class="scards m-only">${presets.map((p, i) => `<button class="scard" data-preset="${i}" aria-pressed="false"><span class="scard__name">${p.title}</span><span class="scard__desc">${p.summary}</span><span class="scard__nums">${p.nums}</span></button>`).join('')}</div>
           <div class="scenario-note d-only" id="scenarioNote">
-            <div class="scenario-note__head"><span class="scenario-note__name" id="scenarioName"></span><button class="btn btn--quiet btn--xs" id="scenarioMore">Подробнее</button></div>
+            <div class="scenario-note__head"><span class="scenario-note__name" id="scenarioName"></span><button class="btn btn--quiet btn--xs" id="scenarioMore">${L('Подробнее', 'More')}</button></div>
             <div class="scenario-note__text" id="scenarioText"></div>
             <div class="scenario-note__nums" id="scenarioNums"></div>
             <ol class="story" id="story" hidden></ol>
           </div>
-          <div class="notice" id="profileLocked" hidden>Профиль задан формулами — ползунки температуры, влажности и ветра не действуют.</div>
-          <button class="btn btn--block" id="soundingOpen" title="Реальное зондирование из файла или вставленного текста: Вайомингский университет, SHARPpy, input_sounding CM1/WRF, CSV — гроза в среде конкретного дня">Реальное зондирование…</button>
+          <div class="notice" id="profileLocked" hidden>${L('Профиль задан формулами — ползунки температуры, влажности и ветра не действуют.', 'The profile is set by formulas — the temperature, humidity and wind sliders have no effect.')}</div>
+          <button class="btn btn--block" id="soundingOpen" title="${L('Реальное зондирование из файла или вставленного текста: Вайомингский университет, SHARPpy, input_sounding CM1/WRF, CSV — гроза в среде конкретного дня', 'A real sounding from a file or pasted text: University of Wyoming, SHARPpy, CM1/WRF input_sounding, CSV — a storm in the environment of a given day')}">${L('Реальное зондирование…', 'Real sounding…')}</button>
         </div>
-        ${group('Температурный профиль', `
-          ${slider('surfaceTemp','Температура у земли',15,40,.5,30,' °C',1)}
-          ${slider('lapseLow','Градиент 0–3 км',3,11,.1,8.4,' K/км',1)}
-          ${slider('lapseMid','Градиент 3–8 км',3,11,.1,7.2,' K/км',1)}
-          ${slider('lapseUpper','Градиент 8 км–TP',3,11,.1,6.5,' K/км',1)}
-          ${slider('tropopause','Тропопауза',8,17,.5,11,' км',1)}
-          ${slider('stratoWarming','Стратосферный градиент',-1,4,.1,1.2,' K/км',1)}
-          ${slider('capStrength','Задерживающий слой (инверсия)',0,6,.25,0,' K',2)}
-          ${slider('capHeight','Высота инверсии',.5,4,.1,1.5,' км',1)}`, { count: 8, open: true, profile: true })}
-        ${group('Влажность по слоям', `
-          ${slider('rhSurface','У земли',20,100,1,72,' %')}
-          ${slider('rhLow','1–3 км',10,100,1,60,' %')}
-          ${slider('rhMid','3–7 км',5,100,1,42,' %')}
-          ${slider('rhUpper','7 км–TP',5,100,1,28,' %')}
-          ${slider('moistLayer','Влажный перемешанный слой',0,2.5,.1,0,' км',1)}`, { count: 5, open: true, profile: true })}
-        ${group('Профиль ветра', `
-          ${slider('wind0','Ветер у земли',-20,30,1,2,' м/с')}
-          ${slider('wind05','Ветер на 0,5 км',-20,35,1,3,' м/с')}
-          ${slider('wind1','Ветер на 1 км',-20,40,1,5,' м/с')}
-          ${slider('wind3','Ветер на 3 км',-10,45,1,10,' м/с')}
-          ${slider('wind6','Ветер на 6 км',-10,60,1,20,' м/с')}
-          ${slider('wind10','Ветер на 10 км',-10,75,1,28,' м/с')}
-          ${slider('windDir0','Направление у земли',0,360,5,160,'°')}
-          ${slider('windDir05','Направление на 0,5 км',0,360,5,165,'°')}
-          ${slider('windDir1','Направление на 1 км',0,360,5,170,'°')}
-          ${slider('windDir3','Направление на 3 км',0,360,5,185,'°')}
-          ${slider('windDir6','Направление на 6 км',0,360,5,215,'°')}
-          ${slider('windDir10','Направление на 10 км',0,360,5,235,'°')}`, { count: 12, profile: true })}
-        ${group('3D-динамика', `
-          ${slider('latitude','Широта / Кориолис',0,75,1,45,'°')}
-          ${slider('turbulence','Субсеточная турбулентность',0,2,.05,.55,'×',2)}`, { count: 2 })}
-        ${group('Поверхность и радиация', `
-          <div class="field"><span class="field__label">Тип поверхности${RESTART}</span><span class="select"><select id="surfaceType"><option value="grass">Трава</option><option value="dry">Сухая почва</option><option value="water">Вода</option><option value="urban">Город</option></select></span></div>
-          ${slider('hour','Местное солнечное время',5,21,.25,13.5,' ч',2)}
-          ${slider('dayOfYear','День года: 80 — равноденствие, 172 — 21 июня, 355 — 21 декабря',1,365,1,80,'',0)}
-          ${slider('solarMax','Солнце в зените',300,1200,25,1000,' Вт/м²')}
-          ${slider('soilMoisture','Влажность почвы',0,100,1,45,' %')}
-          ${slider('city','Город в центре, радиус (0 — нет)',0,12,1,0,' км')}`, { count: 6 })}
-        ${group('Адвекция: среда меняется', advectionMarkup(), { id: 'advection' })}
-        ${group('Расчёт', `
-          <div class="field" title="Точный перенос (WENO 5-го порядка, по умолчанию) почти не размывает восходящие потоки и сам сохраняет массу воды. Быстрый (полулагранжев) примерно вдвое дешевле, но размывает потоки: в сильном сдвиге термик не стартует"><span class="field__label">Перенос</span><span class="select"><select id="transport"><option value="weno">Точный (WENO5)</option><option value="semi-lagrangian">Быстрый (полулагранжев)</option></select></span></div>
-          <label class="check" title="Область сдвигается вместе с грозой (правая ячейка по Банкерсу при сдвиге 0–6 км от 15 м/с, иначе средний ветер 0–6 км): гроза остаётся внутри и не въезжает с другой стороны в собственный холодный отток. Ветер, годограф и радар — относительно земли"><input type="checkbox" id="followStorm" checked> Область движется вместе с грозой${RESTART}</label>
-          <label class="check" title="Электризация облака и молнии: заряд на крупе, кристаллах и каплях, поле и разряды (IC и в землю). Выключение ускоряет расчёт примерно на четверть; погода от этого не меняется — заряд не влияет на движение воздуха"><input type="checkbox" id="lightning" checked> Молнии${RESTART}</label>
-          <div class="field" title="Большая область — 96 × 72 км с тем же шагом: ячейкам просторнее, но расчёт примерно в 4 раза медленнее"><span class="field__label">Размер области${RESTART}</span><span class="select"><select id="domain"><option value="standard">Стандарт — 48 × 36 км</option><option value="large">Большая — 96 × 72 км (в ~4 раза медленнее)</option><option value="custom">Своя…</option></select></span></div>
-          <div class="field" title="Со льдом (по умолчанию): облачный лёд, снег и крупа (Lin et al. 1983) — наковальня из кристаллов, теплота замерзания, таяние крупы в дождь. Тёплый дождь (Кесслер) — только капли: дешевле, но без наковальни и теплоты замерзания"><span class="field__label">Микрофизика${RESTART}</span><span class="select"><select id="microphysics"><option value="ice">Со льдом — лёд, снег, крупа</option><option value="warm">Тёплый дождь (Кесслер)</option></select></span></div>
-          <div id="domainCustom" hidden><label class="field"><span class="field__head"><span class="field__label">Ширина области</span><output class="field__value" id="domainWidthOut">48 км</output></span><input class="range" type="range" id="domainWidth" min="24" max="144" step="12" value="48"></label><label class="field"><span class="field__head"><span class="field__label">Глубина области</span><output class="field__value" id="domainDepthOut">36 км</output></span><input class="range" type="range" id="domainDepth" min="18" max="108" step="9" value="36"></label></div>
-          <div class="notice notice--warn" id="domainWarn" hidden><span class="notice__text">Большая область считается медленнее: время шага растёт с площадью (96 × 72 км — в ~4 раза дольше стандартной). До расчёта на видеокарте (WebGPU, в плане) очень большие области на слабом компьютере идут медленно.</span></div>
-          ${slider('speed','Ускорение времени',1,120,1,8,'×')}
+        ${group(L('Температурный профиль', 'Temperature profile'), `
+          ${slider('surfaceTemp',L('Температура у земли', 'Surface temperature'),15,40,.5,30,' °C',1)}
+          ${slider('lapseLow',L('Градиент 0–3 км', 'Lapse rate 0–3 km'),3,11,.1,8.4,KKM,1)}
+          ${slider('lapseMid',L('Градиент 3–8 км', 'Lapse rate 3–8 km'),3,11,.1,7.2,KKM,1)}
+          ${slider('lapseUpper',L('Градиент 8 км–TP', 'Lapse rate 8 km–TP'),3,11,.1,6.5,KKM,1)}
+          ${slider('tropopause',L('Тропопауза', 'Tropopause'),8,17,.5,11,KM,1)}
+          ${slider('stratoWarming',L('Стратосферный градиент', 'Stratospheric gradient'),-1,4,.1,1.2,KKM,1)}
+          ${slider('capStrength',L('Задерживающий слой (инверсия)', 'Cap (inversion)'),0,6,.25,0,' K',2)}
+          ${slider('capHeight',L('Высота инверсии', 'Inversion height'),.5,4,.1,1.5,KM,1)}`, { count: 8, open: true, profile: true })}
+        ${group(L('Влажность по слоям', 'Humidity by layer'), `
+          ${slider('rhSurface',L('У земли', 'Surface'),20,100,1,72,' %')}
+          ${slider('rhLow',L('1–3 км', '1–3 km'),10,100,1,60,' %')}
+          ${slider('rhMid',L('3–7 км', '3–7 km'),5,100,1,42,' %')}
+          ${slider('rhUpper',L('7 км–TP', '7 km–TP'),5,100,1,28,' %')}
+          ${slider('moistLayer',L('Влажный перемешанный слой', 'Moist mixed layer'),0,2.5,.1,0,KM,1)}`, { count: 5, open: true, profile: true })}
+        ${group(L('Профиль ветра', 'Wind profile'), `
+          ${slider('wind0',L('Ветер у земли', 'Surface wind'),-20,30,1,2,MS)}
+          ${slider('wind05',L('Ветер на 0,5 км', 'Wind at 0.5 km'),-20,35,1,3,MS)}
+          ${slider('wind1',L('Ветер на 1 км', 'Wind at 1 km'),-20,40,1,5,MS)}
+          ${slider('wind3',L('Ветер на 3 км', 'Wind at 3 km'),-10,45,1,10,MS)}
+          ${slider('wind6',L('Ветер на 6 км', 'Wind at 6 km'),-10,60,1,20,MS)}
+          ${slider('wind10',L('Ветер на 10 км', 'Wind at 10 km'),-10,75,1,28,MS)}
+          ${slider('windDir0',L('Направление у земли', 'Surface direction'),0,360,5,160,'°')}
+          ${slider('windDir05',L('Направление на 0,5 км', 'Direction at 0.5 km'),0,360,5,165,'°')}
+          ${slider('windDir1',L('Направление на 1 км', 'Direction at 1 km'),0,360,5,170,'°')}
+          ${slider('windDir3',L('Направление на 3 км', 'Direction at 3 km'),0,360,5,185,'°')}
+          ${slider('windDir6',L('Направление на 6 км', 'Direction at 6 km'),0,360,5,215,'°')}
+          ${slider('windDir10',L('Направление на 10 км', 'Direction at 10 km'),0,360,5,235,'°')}`, { count: 12, profile: true })}
+        ${group(L('3D-динамика', '3D dynamics'), `
+          ${slider('latitude',L('Широта / Кориолис', 'Latitude / Coriolis'),0,75,1,45,'°')}
+          ${slider('turbulence',L('Субсеточная турбулентность', 'Subgrid turbulence'),0,2,.05,.55,'×',2)}`, { count: 2 })}
+        ${group(L('Поверхность и радиация', 'Surface and radiation'), `
+          <div class="field"><span class="field__label">${L('Тип поверхности', 'Surface type')}${RESTART}</span><span class="select"><select id="surfaceType"><option value="grass">${L('Трава', 'Grass')}</option><option value="dry">${L('Сухая почва', 'Dry soil')}</option><option value="water">${L('Вода', 'Water')}</option><option value="urban">${L('Город', 'City')}</option></select></span></div>
+          ${slider('hour',L('Местное солнечное время', 'Local solar time'),5,21,.25,13.5,L(' ч', ' h'),2)}
+          ${slider('dayOfYear',L('День года: 80 — равноденствие, 172 — 21 июня, 355 — 21 декабря', 'Day of the year: 80 — equinox, 172 — 21 June, 355 — 21 December'),1,365,1,80,'',0)}
+          ${slider('solarMax',L('Солнце в зените', 'Sun at the zenith'),300,1200,25,1000,L(' Вт/м²', ' W/m²'))}
+          ${slider('soilMoisture',L('Влажность почвы', 'Soil moisture'),0,100,1,45,' %')}
+          ${slider('city',L('Город в центре, радиус (0 — нет)', 'City in the centre, radius (0 — none)'),0,12,1,0,KM)}`, { count: 6 })}
+        ${group(L('Адвекция: среда меняется', 'Advection: the environment changes'), advectionMarkup(), { id: 'advection' })}
+        ${group(L('Расчёт', 'Computation'), `
+          <div class="field" title="${L('Точный перенос (WENO 5-го порядка, по умолчанию) почти не размывает восходящие потоки и сам сохраняет массу воды. Быстрый (полулагранжев) примерно вдвое дешевле, но размывает потоки: в сильном сдвиге термик не стартует', 'Accurate transport (5th-order WENO, the default) hardly smears the updraughts and conserves the water mass by itself. Fast (semi-Lagrangian) costs about half as much but smears them: in strong shear the thermal does not start')}"><span class="field__label">${L('Перенос', 'Transport')}</span><span class="select"><select id="transport"><option value="weno">${L('Точный (WENO5)', 'Accurate (WENO5)')}</option><option value="semi-lagrangian">${L('Быстрый (полулагранжев)', 'Fast (semi-Lagrangian)')}</option></select></span></div>
+          <label class="check" title="${L('Область сдвигается вместе с грозой (правая ячейка по Банкерсу при сдвиге 0–6 км от 15 м/с, иначе средний ветер 0–6 км): гроза остаётся внутри и не въезжает с другой стороны в собственный холодный отток. Ветер, годограф и радар — относительно земли', 'The domain moves with the storm (the Bunkers right mover with 0–6 km shear from 15 m/s, else the 0–6 km mean wind): the storm stays inside and does not drive into its own cold outflow from the other side. The wind, the hodograph and the radar are ground-relative')}"><input type="checkbox" id="followStorm" checked> ${L('Область движется вместе с грозой', 'The domain moves with the storm')}${RESTART}</label>
+          <label class="check" title="${L('Электризация облака и молнии: заряд на крупе, кристаллах и каплях, поле и разряды (IC и в землю). Выключение ускоряет расчёт примерно на четверть; погода от этого не меняется — заряд не влияет на движение воздуха', 'Cloud electrification and lightning: charge on graupel, crystals and drops, the field and the discharges (IC and to the ground). Turning it off speeds the run up by about a quarter; the weather stays the same — the charge does not move the air')}"><input type="checkbox" id="lightning" checked> ${L('Молнии', 'Lightning')}${RESTART}</label>
+          <div class="field" title="${L('Большая область — 96 × 72 км с тем же шагом: ячейкам просторнее, но расчёт примерно в 4 раза медленнее', 'Large domain — 96 × 72 km at the same spacing: more room for the cells, but the run is about 4 times slower')}"><span class="field__label">${L('Размер области', 'Domain size')}${RESTART}</span><span class="select"><select id="domain"><option value="standard">${L('Стандарт — 48 × 36 км', 'Standard — 48 × 36 km')}</option><option value="large">${L('Большая — 96 × 72 км (в ~4 раза медленнее)', 'Large — 96 × 72 km (~4 times slower)')}</option><option value="custom">${L('Своя…', 'Custom…')}</option></select></span></div>
+          <div class="field" title="${L('Со льдом (по умолчанию): облачный лёд, снег и крупа (Lin et al. 1983) — наковальня из кристаллов, теплота замерзания, таяние крупы в дождь. Тёплый дождь (Кесслер) — только капли: дешевле, но без наковальни и теплоты замерзания', 'With ice (the default): cloud ice, snow and graupel (Lin et al. 1983) — an anvil of crystals, the latent heat of freezing, graupel melting into rain. Warm rain (Kessler) — drops only: cheaper, but no anvil and no heat of freezing')}"><span class="field__label">${L('Микрофизика', 'Microphysics')}${RESTART}</span><span class="select"><select id="microphysics"><option value="ice">${L('Со льдом — лёд, снег, крупа', 'With ice — ice, snow, graupel')}</option><option value="warm">${L('Тёплый дождь (Кесслер)', 'Warm rain (Kessler)')}</option></select></span></div>
+          <div id="domainCustom" hidden><label class="field"><span class="field__head"><span class="field__label">${L('Ширина области', 'Domain width')}</span><output class="field__value" id="domainWidthOut">48 ${L('км', 'km')}</output></span><input class="range" type="range" id="domainWidth" min="24" max="144" step="12" value="48"></label><label class="field"><span class="field__head"><span class="field__label">${L('Глубина области', 'Domain depth')}</span><output class="field__value" id="domainDepthOut">36 ${L('км', 'km')}</output></span><input class="range" type="range" id="domainDepth" min="18" max="108" step="9" value="36"></label></div>
+          <div class="notice notice--warn" id="domainWarn" hidden><span class="notice__text">${L('Большая область считается медленнее: время шага растёт с площадью (96 × 72 км — в ~4 раза дольше стандартной). До расчёта на видеокарте (WebGPU, в плане) очень большие области на слабом компьютере идут медленно.', 'A larger domain runs slower: a step’s time grows with the area (96 × 72 km takes ~4 times the standard one). Until the computation moves to the GPU (WebGPU, planned) very large domains are slow on a weak computer.')}</span></div>
+          ${slider('speed',L('Ускорение времени', 'Time acceleration'),1,120,1,8,'×')}
           <div class="t-caption" id="speedReal"></div>
           <div class="notice notice--warn" id="speedWarn" hidden><span class="notice__text"></span></div>
-          ${slider('bubble','Сила начального термика (0 — без термика)',0,2.5,.05,1,'×',2)}`, { count: 6 })}
-        ${group('Что рассчитано, а что нет', `<div class="model-notes">
+          ${slider('bubble',L('Сила начального термика (0 — без термика)', 'Starting thermal strength (0 — no thermal)'),0,2.5,.05,1,'×',2)}`, { count: 6 })}
+        ${group(L('Что рассчитано, а что нет', 'What is computed and what is not'), `<div class="model-notes">${L(`
           <p><b>Рассчитано по уравнениям</b> на сетке ~1,2 км по горизонтали (у земли 100 м по вертикали, выше — растянуто): ветер во всех трёх направлениях, давление (анеластическое приближение), плавучесть с учётом пара и веса капель, перенос тепла, пара, облака и осадков (WENO 5-го порядка), сила Кориолиса. Потоки шире ~6–8 км (5–7 шагов сетки) разрешены хорошо, более узкие сглажены.</p>
           <p><b>Параметризовано</b> — заменено упрощённой формулой, потому что меньше ячейки сетки: турбулентность мельче сетки (Смагоринский, отдельно по горизонтали и вертикали), микрофизика (объёмная: тёплый дождь по Кесслеру, лёд, снег, крупа и град по Лину — каждая частица описана только массой), потоки тепла и пара от поверхности (баланс энергии, трение по шероховатости), солнце (греет только землю; облака его не заслоняют, ночного выхолаживания нет — тени облаков и ночь на 3D-виде только нарисованы), губка у верха области, периодические края.</p>
-          <p><b>Только картинка</b>, в расчёт не входит: мелкие детали облаков (фрактальный шум мельче сетки), частицы дождя и снега, тени облаков на земле. Радар, станция и индексы считаются по полям модели; давление станции — гидростатическая оценка.</p>
+          <p><b>Только картинка</b>, в расчёт не входит: мелкие детали облаков (фрактальный шум мельче сетки), частицы дождя и снега, тени облаков на земле. Радар, станция и индексы считаются по полям модели; давление станции — гидростатическая оценка.</p>`, `
+          <p><b>Computed from the equations</b> on a grid of ~1.2 km horizontally (100 m vertically at the ground, stretched above): the wind in all three directions, the pressure (anelastic approximation), buoyancy with vapour and the weight of the drops, the transport of heat, vapour, cloud and precipitation (5th-order WENO), the Coriolis force. Flows wider than ~6–8 km (5–7 grid steps) are resolved well, narrower ones are smoothed.</p>
+          <p><b>Parameterized</b> — replaced by a simplified formula because it is smaller than a grid cell: turbulence below the grid scale (Smagorinsky, separately horizontal and vertical), microphysics (bulk: warm rain after Kessler, ice, snow, graupel and hail after Lin — each kind of particle described by its mass only), heat and vapour fluxes from the surface (energy balance, friction by roughness), the sun (heats only the ground; clouds do not block it, there is no night cooling — cloud shadows and the night in the 3D view are only drawn), a sponge at the top of the domain, periodic edges.</p>
+          <p><b>Picture only</b>, not part of the computation: small cloud detail (fractal noise below the grid scale), the rain and snow particles, cloud shadows on the ground. The radar, the station and the indices come from the model’s fields; the station’s pressure is a hydrostatic estimate.</p>`)}
         </div>`)}
       </div>
       <div class="side__actions">
-        <div class="side__row"><button class="btn btn--primary btn--l" id="restart">Перезапустить</button><button class="btn btn--l" id="pause">Пауза</button></div>
-        <button class="btn btn--block" id="share" title="Скопировать ссылку на этот опыт: все настройки и сид, так что по ней откроется тот же расчёт">Ссылка на опыт</button>
-        <div class="side__row"><button class="btn" id="saveState" title="Сохранить расчёт в файл .meteolab (все поля модели в этот момент, ~4 МБ): его можно открыть позже и продолжить с того же места">Сохранить</button><button class="btn" id="loadState" title="Открыть сохранённый файл .meteolab и продолжить расчёт с сохранённого момента">Открыть…</button></div>
-        <span class="select"><select id="rewind" title="Перемотка назад: состояние запоминается каждые 5 модельных минут (последние ~60 МБ). Выбранная минута — и расчёт идёт оттуда заново; более поздние точки забываются"><option value="">Вернуться к минуте…</option></select></span>
+        <div class="side__row"><button class="btn btn--primary btn--l" id="restart">${L('Перезапустить', 'Restart')}</button><button class="btn btn--l" id="pause">${L('Пауза', 'Pause')}</button></div>
+        <button class="btn btn--block" id="share" title="${L('Скопировать ссылку на этот опыт: все настройки и сид, так что по ней откроется тот же расчёт', 'Copy a link to this experiment: all the settings and the seed, so it opens the same run')}">${L('Ссылка на опыт', 'Link to the run')}</button>
+        <div class="side__row"><button class="btn" id="saveState" title="${L('Сохранить расчёт в файл .meteolab (все поля модели в этот момент, ~4 МБ): его можно открыть позже и продолжить с того же места', 'Save the run to a .meteolab file (all the model’s fields at this moment, ~4 MB): open it later and go on from the same point')}">${L('Сохранить', 'Save')}</button><button class="btn" id="loadState" title="${L('Открыть сохранённый файл .meteolab и продолжить расчёт с сохранённого момента', 'Open a saved .meteolab file and continue the run from the saved moment')}">${L('Открыть…', 'Open…')}</button></div>
+        <span class="select"><select id="rewind" title="${L('Перемотка назад: состояние запоминается каждые 5 модельных минут (последние ~60 МБ). Выбранная минута — и расчёт идёт оттуда заново; более поздние точки забываются', 'Rewind: the state is kept every 5 model minutes (the last ~60 MB). Pick a minute and the run starts again from there; later points are forgotten')}"><option value="">${L('Вернуться к минуте…', 'Go back to minute…')}</option></select></span>
         <input id="stateFile" type="file" accept=".meteolab" hidden>
-        <div class="notice" id="stateNote" role="status" hidden><span class="notice__text"></span><button class="notice__close" aria-label="Закрыть">×</button></div>
+        <div class="notice" id="stateNote" role="status" hidden><span class="notice__text"></span><button class="notice__close" aria-label="${L('Закрыть', 'Close')}">×</button></div>
       </div>
     </aside>
 
     <section class="workspace">
-      <nav class="tabs" role="tablist" aria-label="Отображаемое поле">${([['composite', 'Облака'], ['updraft', 'Вертикальные потоки'], ['theta', 'Температура'], ['moisture', 'Влажность'], ['vorticity', 'Завихренность'], ['helicity', 'Вращение (UH)'], ['coldpool', 'Холодный купол']] as const).map(([f, name]) => `<button class="tab" role="tab" data-field="${f}" aria-selected="${f === 'composite'}"${f === 'helicity' ? ' title="Спиральность восходящего потока: где поднимающийся воздух вращается (слой 2–5 км)"' : ''}>${name}</button>`).join('')}</nav>
+      <nav class="tabs" role="tablist" aria-label="${L('Отображаемое поле', 'Field shown')}">${([['composite', L('Облака', 'Clouds')], ['updraft', L('Вертикальные потоки', 'Vertical motion')], ['theta', L('Температура', 'Temperature')], ['moisture', L('Влажность', 'Moisture')], ['vorticity', L('Завихренность', 'Vorticity')], ['helicity', L('Вращение (UH)', 'Rotation (UH)')], ['coldpool', L('Холодный купол', 'Cold pool')]] as const).map(([f, name]) => `<button class="tab" role="tab" data-field="${f}" aria-selected="${f === 'composite'}"${f === 'helicity' ? ` title="${L('Спиральность восходящего потока: где поднимающийся воздух вращается (слой 2–5 км)', 'Updraft helicity: where the rising air rotates (the 2–5 km layer)')}"` : ''}>${name}</button>`).join('')}</nav>
       <div class="popover ground-menu" id="groundMenu" popover>
-        <span class="popover__title">Вид с земли</span>
-        <span class="popover__text">Где встать наблюдателю. Потом перетаскивание — поворот головы, колесо — приближение, двойной щелчок по земле — перейти туда.</span>
-        <button class="ground-menu__item" data-stand="far"><b>Сбоку от грозы, 25 км</b><small>видна вся гроза — башня, наковальня, основание; под ясным небом, со стороны притока, солнце за спиной</small></button>
-        <button class="ground-menu__item" data-stand="near"><b>Ближе, 12 км</b><small>основание потока, полосы дождя и наковальня над головой</small></button>
-        <button class="ground-menu__item" data-stand="station"><b>У метеостанции</b><small data-station-note>там, где стоит станция: смотреть на грозу и на её показания</small></button>
-        <button class="ground-menu__item" data-stand="pick"><b>Выбрать место…</b><small>щёлкните по земле в 3D-виде, где встать</small></button>
-        <button class="ground-menu__item" data-stand="leave"><b>Вернуться к виду сверху</b><small>камера там же, где была</small></button>
+        <span class="popover__title">${L('Вид с земли', 'View from the ground')}</span>
+        <span class="popover__text">${L('Где встать наблюдателю. Потом перетаскивание — поворот головы, колесо — приближение, двойной щелчок по земле — перейти туда.', 'Where the observer stands. Then drag to turn the head, wheel to zoom, double-click the ground to walk there.')}</span>
+        <button class="ground-menu__item" data-stand="far"><b>${L('Сбоку от грозы, 25 км', 'Beside the storm, 25 km')}</b><small>${L('видна вся гроза — башня, наковальня, основание; под ясным небом, со стороны притока, солнце за спиной', 'the whole storm in sight — the tower, the anvil, the base; under a clear sky on the inflow side, the sun behind you')}</small></button>
+        <button class="ground-menu__item" data-stand="near"><b>${L('Ближе, 12 км', 'Closer, 12 km')}</b><small>${L('основание потока, полосы дождя и наковальня над головой', 'the updraught’s base, rain shafts and the anvil overhead')}</small></button>
+        <button class="ground-menu__item" data-stand="station"><b>${L('У метеостанции', 'At the weather station')}</b><small data-station-note>${L('там, где стоит станция: смотреть на грозу и на её показания', 'where the station stands: watch the storm and its readings')}</small></button>
+        <button class="ground-menu__item" data-stand="pick"><b>${L('Выбрать место…', 'Pick a place…')}</b><small>${L('щёлкните по земле в 3D-виде, где встать', 'click the ground in the 3D view where to stand')}</small></button>
+        <button class="ground-menu__item" data-stand="leave"><b>${L('Вернуться к виду сверху', 'Back to the view from above')}</b><small>${L('камера там же, где была', 'the camera where it was')}</small></button>
       </div>
       <div class="viewport">
         <canvas id="sim" width="960" height="600"></canvas>
         <div class="cell-labels" id="cellLabels"></div>
-        <div class="ov-pick" id="pickHint" hidden>Щёлкните по земле, где встать · Esc — отмена</div>
-        <button class="immersive-exit" id="immersiveExit" title="Вернуть панели (Esc)">✕ Выйти из полноэкранного</button>
-        <div class="cam" id="camera"><button class="cam__toggle" id="cameraToggle" aria-expanded="false" title="Экспозиция, яркость, контраст и насыщенность кадра — только в полноэкранном режиме, снимок (P) их сохраняет">Камера</button>
+        <div class="ov-pick" id="pickHint" hidden>${L('Щёлкните по земле, где встать · Esc — отмена', 'Click the ground where to stand · Esc — cancel')}</div>
+        <button class="immersive-exit" id="immersiveExit" title="${L('Вернуть панели (Esc)', 'Bring the panels back (Esc)')}">✕ ${L('Выйти из полноэкранного', 'Exit full screen')}</button>
+        <div class="cam" id="camera"><button class="cam__toggle" id="cameraToggle" aria-expanded="false" title="${L('Экспозиция, яркость, контраст и насыщенность кадра — только в полноэкранном режиме, снимок (P) их сохраняет', 'Exposure, brightness, contrast and saturation of the frame — in full screen only; a snapshot (P) keeps them')}">${L('Камера', 'Camera')}</button>
           <div class="cam__body" id="cameraBody" hidden>${GRADE_SLIDERS.map(s => `<label class="cam__row"><span>${s.label}</span><input type="range" data-grade="${s.key}" min="${s.min}" max="${s.max}" step="${s.step}"><output data-grade-out="${s.key}"></output></label>`).join('')}
-            <button class="cam__reset" id="cameraReset">Сбросить</button></div></div>
-        <div class="gl-lost" id="glLost" role="alert" hidden><div><p><b>3D-вид отключён браузером</b> — ему не хватило памяти видеокарты (так бывает на телефоне при многих открытых вкладках или после переключения приложений). Расчёт идёт дальше; вид может вернуться сам.</p><button class="btn btn--primary" id="glReload" type="button">Перезапустить с теми же настройками</button></div></div>
-        <div class="gl-lost" id="glShader" role="alert" hidden><div><p><b>3D-вид не собрался на этой видеокарте</b> — расчёт и приборы работают. Пришлите, пожалуйста, снимок этого сообщения разработчику.</p><pre class="gl-log" id="glShaderLog"></pre></div></div>
-        <div class="ov-tl"><button class="ov-toggle" id="flowToggle" aria-pressed="false">Потоки →</button><button class="ov-toggle" id="precipToggle" aria-pressed="false" title="Частицы осадков: снежинки, опускаясь ниже уровня 0 °C, тают в капли">Снег и дождь</button><button class="ov-toggle" id="mesoToggle" aria-pressed="true" title="Кольцо над вращающимся восходящим потоком (UH 2–5 км выше порога вращения)">Мезоциклон</button><button class="ov-toggle" id="lightningToggle" aria-pressed="true" title="Каналы молний в момент вспышки: видны там, где выходят из облака; внутри облака — только его свечение">Молнии</button><button class="ov-toggle" id="lightningReplay" title="Последний удар в землю ещё раз, в 20 раз медленнее, как на скоростной съёмке: видно, как слабый ступенчатый лидер ветвится вниз, как вспыхивает и за миллисекунды гаснет обратный удар и как идут повторные удары — чаще всего по тому же каналу (отсюда мерцание)">Повтор удара</button><button class="ov-toggle" id="groundToggle" aria-pressed="false" popovertarget="groundMenu" title="Встать на землю и смотреть на грозу снизу, как наблюдатель: где встать — в меню. Клавиша G">С земли</button><button class="ov-toggle" id="snapshotButton" title="Сохранить кадр 3D-вида картинкой PNG — без панелей, как он есть сейчас. Клавиша P">Снимок</button><button class="ov-toggle" id="immersiveToggle" title="Во весь экран без панелей и кнопок. Выйти — той же кнопкой в углу или Esc. Клавиша F">Во весь экран</button><button class="ov-toggle" id="swathToggle" aria-pressed="false" title="Сколько дождя выпало на землю с начала расчёта: голубой до 5 мм, зелёный до 10, жёлтый до 25, оранжевый до 50, красный больше">Сумма осадков</button></div>
-        <div class="ov-bl"><span class="ov-badge" id="surfaceReadout">ТРАВА</span><button class="ov-badge ov-quality" id="qualityToggle" title="Качество картинки: облака считаются лучом по объёму, и это самая дорогая часть кадра. «Авто» само снижает качество, если кадры идут медленнее ~22 в секунду, и повышает, когда запас есть. Нажатие — следующий вариант">КАЧЕСТВО: АВТО</button><span class="ov-chip">ЛКМ — вращение · ПКМ — сдвиг · колесо — масштаб · 2× клик — термик</span></div>
-        <div class="ov-br"><div class="ov-legend" id="cloudLegend"><span><i style="--c:#d8e0e3"></i>облачная вода</span><span><i style="--c:#4e7692"></i>осадки</span><span><i style="--c:#b68b59"></i>восходящий</span><span><i style="--c:#7189a5"></i>нисходящий</span></div></div>
+            <button class="cam__reset" id="cameraReset">${L('Сбросить', 'Reset')}</button></div></div>
+        <div class="gl-lost" id="glLost" role="alert" hidden><div><p>${L('<b>3D-вид отключён браузером</b> — ему не хватило памяти видеокарты (так бывает на телефоне при многих открытых вкладках или после переключения приложений). Расчёт идёт дальше; вид может вернуться сам.', '<b>The browser turned the 3D view off</b> — it ran out of GPU memory (this happens on a phone with many open tabs or after switching apps). The run goes on; the view may come back by itself.')}</p><button class="btn btn--primary" id="glReload" type="button">${L('Перезапустить с теми же настройками', 'Restart with the same settings')}</button></div></div>
+        <div class="gl-lost" id="glShader" role="alert" hidden><div><p>${L('<b>3D-вид не собрался на этой видеокарте</b> — расчёт и приборы работают. Пришлите, пожалуйста, снимок этого сообщения разработчику.', '<b>The 3D view could not be built on this GPU</b> — the run and the instruments work. Please send a screenshot of this message to the developer.')}</p><pre class="gl-log" id="glShaderLog"></pre></div></div>
+        <div class="ov-tl"><button class="ov-toggle" id="flowToggle" aria-pressed="false">${L('Потоки →', 'Flow →')}</button><button class="ov-toggle" id="precipToggle" aria-pressed="false" title="${L('Частицы осадков: снежинки, опускаясь ниже уровня 0 °C, тают в капли', 'Precipitation particles: snowflakes melt into drops as they sink below the 0 °C level')}">${L('Снег и дождь', 'Snow and rain')}</button><button class="ov-toggle" id="mesoToggle" aria-pressed="true" title="${L('Кольцо над вращающимся восходящим потоком (UH 2–5 км выше порога вращения)', 'A ring over a rotating updraught (UH 2–5 km above the rotation threshold)')}">${L('Мезоциклон', 'Mesocyclone')}</button><button class="ov-toggle" id="lightningToggle" aria-pressed="true" title="${L('Каналы молний в момент вспышки: видны там, где выходят из облака; внутри облака — только его свечение', 'Lightning channels at the moment of a flash: seen where they leave the cloud; inside the cloud only its glow')}">${L('Молнии', 'Lightning')}</button><button class="ov-toggle" id="lightningReplay" title="${L('Последний удар в землю ещё раз, в 20 раз медленнее, как на скоростной съёмке: видно, как слабый ступенчатый лидер ветвится вниз, как вспыхивает и за миллисекунды гаснет обратный удар и как идут повторные удары — чаще всего по тому же каналу (отсюда мерцание)', 'The last ground stroke again, 20 times slower, as on a high-speed camera: the faint stepped leader branching down, the return stroke flashing and fading within milliseconds, and the subsequent strokes — mostly down the same channel (hence the flicker)')}">${L('Повтор удара', 'Replay stroke')}</button><button class="ov-toggle" id="groundToggle" aria-pressed="false" popovertarget="groundMenu" title="${L('Встать на землю и смотреть на грозу снизу, как наблюдатель: где встать — в меню. Клавиша G', 'Stand on the ground and watch the storm from below like an observer: where to stand — in the menu. Key G')}">${L('С земли', 'From the ground')}</button><button class="ov-toggle" id="snapshotButton" title="${L('Сохранить кадр 3D-вида картинкой PNG — без панелей, как он есть сейчас. Клавиша P', 'Save the 3D view as a PNG image — without the panels, as it is now. Key P')}">${L('Снимок', 'Snapshot')}</button><button class="ov-toggle" id="immersiveToggle" title="${L('Во весь экран без панелей и кнопок. Выйти — той же кнопкой в углу или Esc. Клавиша F', 'Full screen without panels and buttons. Exit with the button in the corner or Esc. Key F')}">${L('Во весь экран', 'Full screen')}</button><button class="ov-toggle" id="swathToggle" aria-pressed="false" title="${L('Сколько дождя выпало на землю с начала расчёта: голубой до 5 мм, зелёный до 10, жёлтый до 25, оранжевый до 50, красный больше', 'How much rain has fallen on the ground since the start: light blue up to 5 mm, green up to 10, yellow up to 25, orange up to 50, red more')}">${L('Сумма осадков', 'Rain total')}</button></div>
+        <div class="ov-bl"><span class="ov-badge" id="surfaceReadout">${L('ТРАВА', 'GRASS')}</span><button class="ov-badge ov-quality" id="qualityToggle" title="${L('Качество картинки: облака считаются лучом по объёму, и это самая дорогая часть кадра. «Авто» само снижает качество, если кадры идут медленнее ~22 в секунду, и повышает, когда запас есть. Нажатие — следующий вариант', 'Picture quality: the clouds are ray-marched through the volume, the costliest part of a frame. “Auto” lowers the quality when frames come slower than ~22 a second and raises it when there is room. Click — the next option')}">${L('КАЧЕСТВО: АВТО', 'QUALITY: AUTO')}</button><span class="ov-chip">${L('ЛКМ — вращение · ПКМ — сдвиг · колесо — масштаб · 2× клик — термик', 'LMB — rotate · RMB — pan · wheel — zoom · double-click — thermal')}</span></div>
+        <div class="ov-br"><div class="ov-legend" id="cloudLegend"><span><i style="--c:#d8e0e3"></i>${L('облачная вода', 'cloud water')}</span><span><i style="--c:#4e7692"></i>${L('осадки', 'precipitation')}</span><span><i style="--c:#b68b59"></i>${L('восходящий', 'updraught')}</span><span><i style="--c:#7189a5"></i>${L('нисходящий', 'downdraught')}</span></div></div>
         <div class="ov-tr" id="fieldPanel" hidden><div class="field-panel">
-          <div class="field-panel__head"><span class="field-panel__title" id="fieldTitle"></span><button class="btn btn--quiet btn--s m-only" id="fieldSettingsToggle" aria-expanded="false" aria-controls="fieldSettings">Настройки ▾</button></div>
+          <div class="field-panel__head"><span class="field-panel__title" id="fieldTitle"></span><button class="btn btn--quiet btn--s m-only" id="fieldSettingsToggle" aria-expanded="false" aria-controls="fieldSettings">${L('Настройки ▾', 'Settings ▾')}</button></div>
           <div class="colorbar"><div class="colorbar__bar" id="colorbar"></div><div class="colorbar__ticks"><span id="fieldMin"></span><span id="fieldMid"></span><span id="fieldMax"></span></div></div>
           <div class="field-panel__settings" id="fieldSettings">
-            <div class="field" id="uhLayerRow" hidden title="UH = Σ w·ζ·Δz по слою: насколько поднимающийся воздух вращается. 2–5 км — средний мезоциклон (как в цифрах модели); 0–1 и 0–3 км — нижний, главный признак опасности смерча; весь поток — вращается ли он целиком или только середина"><span class="field__label">Слой вращения</span><span class="select"><select id="uhLayer">${(Object.keys(UH_LAYERS) as UhLayer[]).map(k => `<option value="${k}">${UH_LAYERS[k].label}</option>`).join('')}</select></span></div>
-            <label class="field"><span class="field__head"><span class="field__label">Высота горизонтального среза</span><output class="field__value" id="sliceHeightOut">2.0 км</output></span><input class="range" id="sliceHeight" type="range" min="0.1" max="18.5" step="0.1" value="2"></label>
-            <label class="field"><span class="field__head"><span class="field__label">Разрез север ↔ юг</span><output class="field__value" id="sliceNorthOut">0 км</output></span><input class="range" id="sliceNorth" type="range" min="-17.5" max="17.5" step="0.5" value="0"></label>
-            <div class="field"><span class="field__label">Отображение</span><span class="select"><select id="layerMode"><option value="both">Срезы + объём сильных отклонений</option><option value="slices">Только срезы</option><option value="volume">Только объём (всё поле)</option></select></span></div>
+            <div class="field" id="uhLayerRow" hidden title="${L('UH = Σ w·ζ·Δz по слою: насколько поднимающийся воздух вращается. 2–5 км — средний мезоциклон (как в цифрах модели); 0–1 и 0–3 км — нижний, главный признак опасности смерча; весь поток — вращается ли он целиком или только середина', 'UH = Σ w·ζ·Δz over a layer: how much the rising air rotates. 2–5 km — the mid-level mesocyclone (as in the model’s numbers); 0–1 and 0–3 km — the low-level one, the main sign of tornado danger; the whole updraught — whether it rotates throughout or only in the middle')}"><span class="field__label">${L('Слой вращения', 'Rotation layer')}</span><span class="select"><select id="uhLayer">${(Object.keys(UH_LAYERS) as UhLayer[]).map(k => `<option value="${k}">${UH_LAYERS[k].label}</option>`).join('')}</select></span></div>
+            <label class="field"><span class="field__head"><span class="field__label">${L('Высота горизонтального среза', 'Horizontal slice height')}</span><output class="field__value" id="sliceHeightOut">2.0 ${L('км', 'km')}</output></span><input class="range" id="sliceHeight" type="range" min="0.1" max="18.5" step="0.1" value="2"></label>
+            <label class="field"><span class="field__head"><span class="field__label">${L('Разрез север ↔ юг', 'Cross-section north ↔ south')}</span><output class="field__value" id="sliceNorthOut">0 ${L('км', 'km')}</output></span><input class="range" id="sliceNorth" type="range" min="-17.5" max="17.5" step="0.5" value="0"></label>
+            <div class="field"><span class="field__label">${L('Отображение', 'Display')}</span><span class="select"><select id="layerMode"><option value="both">${L('Срезы + объём сильных отклонений', 'Slices + volume of strong anomalies')}</option><option value="slices">${L('Только срезы', 'Slices only')}</option><option value="volume">${L('Только объём (всё поле)', 'Volume only (the whole field)')}</option></select></span></div>
             <div id="volumeControls" hidden>
-              <label class="field"><span class="field__head"><span class="field__label">Порог прозрачности</span><output class="field__value" id="volumeThresholdOut">10 %</output></span><input class="range" id="volumeThreshold" type="range" min="0" max="0.8" step="0.02" value="0.1"></label>
-              <label class="field"><span class="field__head"><span class="field__label">Плотность объёма</span><output class="field__value" id="volumeDensityOut">1.0×</output></span><input class="range" id="volumeDensity" type="range" min="0.2" max="4" step="0.1" value="1"></label>
+              <label class="field"><span class="field__head"><span class="field__label">${L('Порог прозрачности', 'Transparency threshold')}</span><output class="field__value" id="volumeThresholdOut">10 %</output></span><input class="range" id="volumeThreshold" type="range" min="0" max="0.8" step="0.02" value="0.1"></label>
+              <label class="field"><span class="field__head"><span class="field__label">${L('Плотность объёма', 'Volume density')}</span><output class="field__value" id="volumeDensityOut">1.0×</output></span><input class="range" id="volumeDensity" type="range" min="0.2" max="4" step="0.1" value="1"></label>
             </div>
           </div>
         </div></div>
       </div>
-      <div class="readout"><span>Сетка <b id="gridSize">40 × 32 × 50</b></span><span>Δx / Δy <b>1.2 / 1.1 км</b></span><span>Δz <b>0.1 → 1 км</b></span><span>Δt <b>${DT} с</b></span><span>Область <b id="frameMotion">—</b></span><span>Инсоляция <b id="sun">—</b></span><span>Солнце <b id="sunElevation">—</b></span></div>
+      <div class="readout"><span>${L('Сетка', 'Grid')} <b id="gridSize">40 × 32 × 50</b></span><span>Δx / Δy <b>1.2 / 1.1 ${L('км', 'km')}</b></span><span>Δz <b>0.1 → 1 ${L('км', 'km')}</b></span><span>Δt <b>${DT} ${L('с', 's')}</b></span><span>${L('Область', 'Domain')} <b id="frameMotion">—</b></span><span>${L('Инсоляция', 'Insolation')} <b id="sun">—</b></span><span>${L('Солнце', 'Sun')} <b id="sunElevation">—</b></span></div>
     </section>
 
-    <aside class="side side--right diagnostics" aria-label="Данные"><div class="diag">
-      <section class="mode" id="modeCard"><div class="mode__head"><span class="label">Режим грозы</span><span class="badge" id="mesoBadge" hidden>мезоциклон</span></div><div class="mode__title" id="cellType">—</div><div class="mode__reason" id="cellReason">ожидание инициализации</div><div class="mode__reason" id="cloudGenus" title="Самое высокое облако по международной классификации: кучевое по толщине, кучево-дождевое — когда вершина холоднее −20 °C (оледенела), с наковальней — когда растекается на уровне равновесия (EL)"></div><div class="mode__reason" id="cloudGenus" title="Самое высокое облако по международной классификации: кучевое по толщине, кучево-дождевое — когда вершина холоднее −20 °C (оледенела), с наковальней — когда растекается на уровне равновесия (EL)"></div><div class="mode__cell" id="cellStage"></div></section>
-      <section class="cells"><div class="cells__head"><span class="label" id="cellCount">Ячейки</span><button class="btn btn--quiet btn--s" id="cellAll" aria-pressed="true" title="Показатели по всей области: максимумы по всем ячейкам">Вся область</button></div><div class="cells__list" id="cellList"></div></section>
-      <section class="chart"><div class="diag__scope"><span class="label" id="metricScope">Показатели по всей области</span></div>
+    <aside class="side side--right diagnostics" aria-label="${L('Данные', 'Data')}"><div class="diag">
+      <section class="mode" id="modeCard"><div class="mode__head"><span class="label">${L('Режим грозы', 'Storm mode')}</span><span class="badge" id="mesoBadge" hidden>${L('мезоциклон', 'mesocyclone')}</span></div><div class="mode__title" id="cellType">—</div><div class="mode__reason" id="cellReason">${L('ожидание инициализации', 'waiting for initiation')}</div><div class="mode__reason" id="cloudGenus" title="${L('Самое высокое облако по международной классификации: кучевое по толщине, кучево-дождевое — когда вершина холоднее −20 °C (оледенела), с наковальней — когда растекается на уровне равновесия (EL)', 'The tallest cloud by the international classification: cumulus by its depth, cumulonimbus once the top is colder than −20 °C (glaciated), with an anvil once it spreads at the equilibrium level (EL)')}"></div><div class="mode__cell" id="cellStage"></div></section>
+      <section class="cells"><div class="cells__head"><span class="label" id="cellCount">${L('Ячейки', 'Cells')}</span><button class="btn btn--quiet btn--s" id="cellAll" aria-pressed="true" title="${L('Показатели по всей области: максимумы по всем ячейкам', 'Values over the whole domain: maxima over all the cells')}">${L('Вся область', 'Whole domain')}</button></div><div class="cells__list" id="cellList"></div></section>
+      <section class="chart"><div class="diag__scope"><span class="label" id="metricScope">${L('Показатели по всей области', 'Values over the whole domain')}</span></div>
         <div class="metrics">
-          ${metric('updraft', 'Восх. поток, макс.', 'м/с')}
-          ${metric('uh', 'Вращение UH 2–5 км', 'м²/с²', 'tip-uh')}
-          ${metric('rain', 'Дождь в ядре сейчас', 'мм/ч', 'tip-rain', '<div class="t-caption" id="rainWord"></div>')}
-          ${metric('rainTotal', 'Сумма в самой мокрой точке', 'мм', 'tip-rainTotal')}
-          ${metric('gust', 'Порыв у земли', 'м/с', 'tip-gust')}
-          ${metric('hail', 'Град у земли', 'см', 'tip-hail', '<div class="t-caption" id="hailWord"></div><div class="t-caption" id="hailSwath"></div>')}
+          ${metric('updraft', L('Восх. поток, макс.', 'Max updraught'), L('м/с', 'm/s'))}
+          ${metric('uh', L('Вращение UH 2–5 км', 'Rotation UH 2–5 km'), L('м²/с²', 'm²/s²'), 'tip-uh')}
+          ${metric('rain', L('Дождь в ядре сейчас', 'Rain in the core now'), L('мм/ч', 'mm/h'), 'tip-rain', '<div class="t-caption" id="rainWord"></div>')}
+          ${metric('rainTotal', L('Сумма в самой мокрой точке', 'Total at the wettest point'), L('мм', 'mm'), 'tip-rainTotal')}
+          ${metric('gust', L('Порыв у земли', 'Surface gust'), L('м/с', 'm/s'), 'tip-gust')}
+          ${metric('hail', L('Град у земли', 'Hail at the ground'), L('см', 'cm'), 'tip-hail', '<div class="t-caption" id="hailWord"></div><div class="t-caption" id="hailSwath"></div>')}
         </div></section>
-      <section class="chart"><div class="chart__head"><span class="chart__title">Ход грозы</span><button class="btn btn--xs" id="timelineCsv" title="Выгрузить ряды «Хода грозы» в CSV (таблица или скрипт): время, CAPE и CIN, поток, UH, дождь">CSV</button></div>
-        <canvas id="timeline" title="Ход грозы по модельному времени (вся область, точка каждые 30 с): неустойчивость среды сейчас (CAPE и CIN частицы от земли по живому зондированию — вдали от гроз, раз в модельную минуту), самый сильный восходящий поток, вращение потока, дождь у земли и вспышки молний за последнюю минуту. Перезапуск начинает графики заново"></canvas></section>
+      <section class="chart"><div class="chart__head"><span class="chart__title">${L('Ход грозы', 'Storm history')}</span><button class="btn btn--xs" id="timelineCsv" title="${L('Выгрузить ряды «Хода грозы» в CSV (таблица или скрипт): время, CAPE и CIN, поток, UH, дождь', 'Export the “Storm history” series to CSV (a spreadsheet or a script): time, CAPE and CIN, updraught, UH, rain')}">CSV</button></div>
+        <canvas id="timeline" title="${L('Ход грозы по модельному времени (вся область, точка каждые 30 с): неустойчивость среды сейчас (CAPE и CIN частицы от земли по живому зондированию — вдали от гроз, раз в модельную минуту), самый сильный восходящий поток, вращение потока, дождь у земли и вспышки молний за последнюю минуту. Перезапуск начинает графики заново', 'The storm over model time (the whole domain, a point every 30 s): the instability of the environment now (CAPE and CIN of the surface parcel from the live sounding — away from the storms, once a model minute), the strongest updraught, its rotation, the rain at the ground and the lightning flashes in the last minute. A restart begins the charts anew')}"></canvas></section>
       <div class="diag__groups">
-        ${group('Индексы неустойчивости', `
-          ${pair(['cape', 'CAPE', 'Дж/кг', 'Частица приложения: +0,5 K и вовлечение сухого воздуха (разбавленная CAPE)'], ['cin', 'CIN', 'Дж/кг'])}
-          ${pair(['mlcape', 'MLCAPE', 'Дж/кг', 'Перемешанный слой 100 гПа (стандартная частица, без добавок)'], ['mlcin', 'MLCIN', 'Дж/кг', 'CIN частицы перемешанного слоя'])}
-          ${pair(['mucape', 'MUCAPE', 'Дж/кг', 'Наиболее неустойчивая частица в нижних 300 гПа'], ['dcape', 'DCAPE', 'Дж/кг', 'Энергия нисходящего потока: сила холодных оттоков и микропорывов'])}
-          ${pair(['srh01', 'SRH 0–1 км', 'м²/с²', 'Спиральность относительно правой ячейки (движение по Банкерсу), слой 0–1 км: главный признак смерчеопасной среды'], ['srh03', 'SRH 0–3 км', 'м²/с²', 'Спиральность относительно правой ячейки, слой 0–3 км'])}
-          ${pair(['scp', 'SCP', '', 'Сложный параметр суперячейки (MUCAPE, SRH 0–3 км, сдвиг 0–6 км). Больше 1 — среда благоприятна для суперячеек'], ['stp', 'STP', '', 'Параметр значимого смерча, фиксированный слой (SBCAPE, LCL, SRH 0–1 км, сдвиг 0–6 км). Больше 1 — благоприятно для сильных смерчей'])}`, { count: 10, id: 'indices' })}
-        ${group('Среда: зондирование и уровни', `
+        ${group(L('Индексы неустойчивости', 'Instability indices'), `
+          ${pair(['cape', 'CAPE', JKG, L('Частица приложения: +0,5 K и вовлечение сухого воздуха (разбавленная CAPE)', 'The app’s parcel: +0.5 K and entrainment of dry air (dilute CAPE)')], ['cin', 'CIN', JKG])}
+          ${pair(['mlcape', 'MLCAPE', JKG, L('Перемешанный слой 100 гПа (стандартная частица, без добавок)', 'The 100 hPa mixed layer (the standard parcel, nothing added)')], ['mlcin', 'MLCIN', JKG, L('CIN частицы перемешанного слоя', 'CIN of the mixed-layer parcel')])}
+          ${pair(['mucape', 'MUCAPE', JKG, L('Наиболее неустойчивая частица в нижних 300 гПа', 'The most unstable parcel in the lowest 300 hPa')], ['dcape', 'DCAPE', JKG, L('Энергия нисходящего потока: сила холодных оттоков и микропорывов', 'Downdraught energy: the strength of cold outflows and microbursts')])}
+          ${pair(['srh01', L('SRH 0–1 км', 'SRH 0–1 km'), L('м²/с²', 'm²/s²'), L('Спиральность относительно правой ячейки (движение по Банкерсу), слой 0–1 км: главный признак смерчеопасной среды', 'Helicity relative to the right mover (Bunkers motion), 0–1 km: the main sign of a tornadic environment')], ['srh03', L('SRH 0–3 км', 'SRH 0–3 km'), L('м²/с²', 'm²/s²'), L('Спиральность относительно правой ячейки, слой 0–3 км', 'Helicity relative to the right mover, 0–3 km')])}
+          ${pair(['scp', 'SCP', '', L('Сложный параметр суперячейки (MUCAPE, SRH 0–3 км, сдвиг 0–6 км). Больше 1 — среда благоприятна для суперячеек', 'Supercell composite parameter (MUCAPE, SRH 0–3 km, 0–6 km shear). Above 1 — the environment favours supercells')], ['stp', 'STP', '', L('Параметр значимого смерча, фиксированный слой (SBCAPE, LCL, SRH 0–1 км, сдвиг 0–6 км). Больше 1 — благоприятно для сильных смерчей', 'Significant tornado parameter, fixed layer (SBCAPE, LCL, SRH 0–1 km, 0–6 km shear). Above 1 — favourable for strong tornadoes')])}`, { count: 10, id: 'indices' })}
+        ${group(L('Среда: зондирование и уровни', 'Environment: sounding and levels'), `
           <canvas id="sounding" class="side-chart"></canvas>
-          <div class="legend"><span><i style="--c:#4f7180"></i>среда</span><span><i class="dash" style="--c:#5a9a6a"></i>точка росы</span><span><i style="--c:#b46e43"></i>частица</span><span><i class="area" style="--c:rgba(207,109,73,.55)"></i>CAPE</span><span><i class="area" style="--c:rgba(77,134,179,.5)"></i>CIN</span></div>
+          <div class="legend"><span><i style="--c:#4f7180"></i>${L('среда', 'environment')}</span><span><i class="dash" style="--c:#5a9a6a"></i>${L('точка росы', 'dew point')}</span><span><i style="--c:#b46e43"></i>${L('частица', 'parcel')}</span><span><i class="area" style="--c:rgba(207,109,73,.55)"></i>CAPE</span><span><i class="area" style="--c:rgba(77,134,179,.5)"></i>CIN</span></div>
           <dl class="kv"><dt>LCL</dt><dd id="lcl">—</dd><dt>LFC</dt><dd id="lfc">—</dd><dt>EL</dt><dd id="el">—</dd><dt>0 °C</dt><dd id="freezing">—</dd></dl>`, { tag: 'Skew-T', id: 'sounding' })}
-        ${group('Ветер: годограф и сдвиг', `
+        ${group(L('Ветер: годограф и сдвиг', 'Wind: hodograph and shear'), `
           <canvas id="hodograph" class="side-chart side-chart--square"></canvas>
-          <div class="legend"><span><i style="--c:#c4553a"></i>0–3 км</span><span><i style="--c:#4f8f5b"></i>3–6 км</span><span><i style="--c:#3f6fa3"></i>6–10 км</span></div>
-          <div class="hodo-edit"><span class="t-caption" id="hodoHint"></span><button class="btn btn--quiet btn--xs" id="hodoReset" type="button" hidden>Вернуть ветер</button></div>
-          <div><div class="stat"><span>Сдвиг ветра 0–6 км</span><span class="stat__v" id="shear">—</span></div><div class="t-caption" id="shearHint"></div></div>`, { id: 'hodograph' })}
-        ${group('Все показатели грозы', `<div>
-          ${stat('downdraft', 'Макс. нисходящий поток', 'м/с')}
-          ${stat('uhLow', 'Низкое вращение (UH 0–1 / 0–3 км)', 'м²/с²', 'Вращение восходящего потока у земли: низкоуровневый мезоциклон — признак ячейки, опасной по смерчам. На сетке ~0,65 км слой 0–1 км — один уровень, 0–3 км — четыре')}
-          <div class="tornado" title="Определитель признаков смерчеобразования по всей области: вращение у земли, держащееся несколько минут, мезоциклон над ним, среда (STP, SRH 0–1 км, низкое основание облака) и не слишком холодный отток. Сам смерч сетка ~1 км не разрешает — это признаки, по которым о нём судят синоптики">${stat('tornadoLevel', 'Признаки смерчеобразования', '')}<ul class="tornado__checks" id="tornadoChecks"></ul>
-            <details class="tornado__more"><summary>Пороги</summary><div class="tornado__grid"><label class="tornado__th"><span>UH 0–1 км, м²/с²</span><input type="number" step="1" data-tornado="uh01"></label><label class="tornado__th"><span>держится, мин</span><input type="number" step="0.5" data-tornado="held"></label><label class="tornado__th"><span>STP от</span><input type="number" step="0.1" data-tornado="stp"></label><label class="tornado__th"><span>SRH 0–1 км от</span><input type="number" step="10" data-tornado="srh01"></label><label class="tornado__th"><span>LCL до, км</span><input type="number" step="0.1" data-tornado="lcl"></label><label class="tornado__th"><span>отток до, K</span><input type="number" step="0.5" data-tornado="cold"></label></div><button class="btn btn--quiet btn--xs" id="tornadoReset" type="button">По умолчанию</button></details></div>
-          <div class="chart" title="Профиль w·ζ по высоте в ядре с наибольшим UH (среднее по 3×3 столбцам): на какой высоте и как глубоко вращается восходящий поток. Ниже — корреляция w и ζ по всей области на 2–6 км: в суперячейке поток и циклоническое вращение совпадают (на сетке ~1 км у WK 0,15–0,25), в обычной грозе они рядом, а не вместе (около 0)"><span class="chart__sub">На какой высоте вращается поток (ядро с макс. UH)</span><canvas id="spin"></canvas><span class="t-caption" id="spinNote">—</span></div>
-          ${stat('cloudTop', 'Вершина облака', 'км')}
-          ${stat('thermalTop', 'Вершина термика', 'км')}
-          ${stat('cloudWater', 'Макс. облачная вода', 'г/кг')}
-          ${stat('coldPool', 'Охлаждение от осадков', 'K', 'Индикатор: сколько охлаждения от испарения, таяния и сублимации накопил воздух (переносится потоком, затухает за ~20 мин). Это не настоящая разность температур оттока и среды — она бывает и вдвое меньше, и больше')}
-          <div class="stat" id="rkwCard" title="Критерий RKW (Rotunno, Klemp, Weisman 1988): скорость растекания холодного купола C = √(2∫(−B)dz) против разности ветра среды 0–2,5 км Δu. Около 1 — поток у фронта порывов стоит прямо, новые ячейки растут на нём (долгоживущие линии); больше — купол убегает вперёд, ячейки заваливаются над оттоком; меньше — сдвиг наклоняет ячейки, купол слишком слаб"><span>Купол / сдвиг 0–2,5 км (RKW)</span><span class="stat__v"><span id="rkw">—</span> <span class="unit" id="rkwNote">C/Δu</span></span></div>
-          ${stat('clipped', 'Срабатывания ограничителей', 'с начала', 'Сколько раз скорость упёрлась в предохранитель (|u|,|v| ≤ 120, |w| ≤ 100 м/с — заметно выше любых реальных гроз). Не ноль — расчёт пошёл вразнос, цифрам доверять нельзя.')}
+          <div class="legend"><span><i style="--c:#c4553a"></i>0–3 ${L('км', 'km')}</span><span><i style="--c:#4f8f5b"></i>3–6 ${L('км', 'km')}</span><span><i style="--c:#3f6fa3"></i>6–10 ${L('км', 'km')}</span></div>
+          <div class="hodo-edit"><span class="t-caption" id="hodoHint"></span><button class="btn btn--quiet btn--xs" id="hodoReset" type="button" hidden>${L('Вернуть ветер', 'Restore the wind')}</button></div>
+          <div><div class="stat"><span>${L('Сдвиг ветра 0–6 км', '0–6 km wind shear')}</span><span class="stat__v" id="shear">—</span></div><div class="t-caption" id="shearHint"></div></div>`, { id: 'hodograph' })}
+        ${group(L('Все показатели грозы', 'All the storm’s values'), `<div>
+          ${stat('downdraft', L('Макс. нисходящий поток', 'Max downdraught'), L('м/с', 'm/s'))}
+          ${stat('uhLow', L('Низкое вращение (UH 0–1 / 0–3 км)', 'Low-level rotation (UH 0–1 / 0–3 km)'), L('м²/с²', 'm²/s²'), L('Вращение восходящего потока у земли: низкоуровневый мезоциклон — признак ячейки, опасной по смерчам. На сетке ~0,65 км слой 0–1 км — один уровень, 0–3 км — четыре', 'Rotation of the updraught near the ground: a low-level mesocyclone, the sign of a cell that may produce tornadoes. On the ~0.65 km grid the 0–1 km layer is one level, 0–3 km four'))}
+          <div class="tornado" title="${L('Определитель признаков смерчеобразования по всей области: вращение у земли, держащееся несколько минут, мезоциклон над ним, среда (STP, SRH 0–1 км, низкое основание облака) и не слишком холодный отток. Сам смерч сетка ~1 км не разрешает — это признаки, по которым о нём судят синоптики', 'Tornadogenesis signs over the whole domain: rotation at the ground holding for several minutes, a mesocyclone above it, the environment (STP, SRH 0–1 km, a low cloud base) and an outflow not too cold. The ~1 km grid does not resolve the tornado itself — these are the signs forecasters judge it by')}">${stat('tornadoLevel', L('Признаки смерчеобразования', 'Tornadogenesis signs'), '')}<ul class="tornado__checks" id="tornadoChecks"></ul>
+            <details class="tornado__more"><summary>${L('Пороги', 'Thresholds')}</summary><div class="tornado__grid"><label class="tornado__th"><span>${L('UH 0–1 км, м²/с²', 'UH 0–1 km, m²/s²')}</span><input type="number" step="1" data-tornado="uh01"></label><label class="tornado__th"><span>${L('держится, мин', 'holds, min')}</span><input type="number" step="0.5" data-tornado="held"></label><label class="tornado__th"><span>${L('STP от', 'STP from')}</span><input type="number" step="0.1" data-tornado="stp"></label><label class="tornado__th"><span>${L('SRH 0–1 км от', 'SRH 0–1 km from')}</span><input type="number" step="10" data-tornado="srh01"></label><label class="tornado__th"><span>${L('LCL до, км', 'LCL up to, km')}</span><input type="number" step="0.1" data-tornado="lcl"></label><label class="tornado__th"><span>${L('отток до, K', 'outflow up to, K')}</span><input type="number" step="0.5" data-tornado="cold"></label></div><button class="btn btn--quiet btn--xs" id="tornadoReset" type="button">${L('По умолчанию', 'Defaults')}</button></details></div>
+          <div class="chart" title="${L('Профиль w·ζ по высоте в ядре с наибольшим UH (среднее по 3×3 столбцам): на какой высоте и как глубоко вращается восходящий поток. Ниже — корреляция w и ζ по всей области на 2–6 км: в суперячейке поток и циклоническое вращение совпадают (на сетке ~1 км у WK 0,15–0,25), в обычной грозе они рядом, а не вместе (около 0)', 'The w·ζ profile by height in the core with the largest UH (mean over 3×3 columns): at what height and how deep the updraught rotates. Below — the correlation of w and ζ over the whole domain at 2–6 km: in a supercell the updraught and the cyclonic rotation coincide (WK 0.15–0.25 on the ~1 km grid), in an ordinary storm they lie side by side, not together (about 0)')}"><span class="chart__sub">${L('На какой высоте вращается поток (ядро с макс. UH)', 'At what height the updraught rotates (the core with max UH)')}</span><canvas id="spin"></canvas><span class="t-caption" id="spinNote">—</span></div>
+          ${stat('cloudTop', L('Вершина облака', 'Cloud top'), L('км', 'km'))}
+          ${stat('thermalTop', L('Вершина термика', 'Thermal top'), L('км', 'km'))}
+          ${stat('cloudWater', L('Макс. облачная вода', 'Max cloud water'), L('г/кг', 'g/kg'))}
+          ${stat('coldPool', L('Охлаждение от осадков', 'Cooling by precipitation'), 'K', L('Индикатор: сколько охлаждения от испарения, таяния и сублимации накопил воздух (переносится потоком, затухает за ~20 мин). Это не настоящая разность температур оттока и среды — она бывает и вдвое меньше, и больше', 'An indicator: how much cooling by evaporation, melting and sublimation the air has gathered (carried by the flow, decaying over ~20 min). It is not the true temperature difference between the outflow and the environment — that can be half as large or larger'))}
+          <div class="stat" id="rkwCard" title="${L('Критерий RKW (Rotunno, Klemp, Weisman 1988): скорость растекания холодного купола C = √(2∫(−B)dz) против разности ветра среды 0–2,5 км Δu. Около 1 — поток у фронта порывов стоит прямо, новые ячейки растут на нём (долгоживущие линии); больше — купол убегает вперёд, ячейки заваливаются над оттоком; меньше — сдвиг наклоняет ячейки, купол слишком слаб', 'The RKW criterion (Rotunno, Klemp, Weisman 1988): the cold pool’s spreading speed C = √(2∫(−B)dz) against the environmental wind difference over 0–2.5 km Δu. About 1 — the updraught at the gust front stands upright and new cells grow on it (long-lived lines); more — the pool runs ahead and the cells lean over the outflow; less — the shear tilts the cells, the pool is too weak')}"><span>${L('Купол / сдвиг 0–2,5 км (RKW)', 'Cold pool / 0–2.5 km shear (RKW)')}</span><span class="stat__v"><span id="rkw">—</span> <span class="unit" id="rkwNote">C/Δu</span></span></div>
+          ${stat('clipped', L('Срабатывания ограничителей', 'Limiter hits'), L('с начала', 'since the start'), L('Сколько раз скорость упёрлась в предохранитель (|u|,|v| ≤ 120, |w| ≤ 100 м/с — заметно выше любых реальных гроз). Не ноль — расчёт пошёл вразнос, цифрам доверять нельзя.', 'How many times a velocity hit the safety limit (|u|,|v| ≤ 120, |w| ≤ 100 m/s — well above any real storm). Not zero — the run has blown up, the numbers cannot be trusted.'))}
         </div>`, { count: 9, id: 'all' })}
-        ${group('Что происходит', `<p class="diag__logic" id="logicText">Частица ещё не достигла уровня свободной конвекции.</p>`, { open: true, id: 'logic', bare: true })}
+        ${group(L('Что происходит', 'What is happening'), `<p class="diag__logic" id="logicText">${L('Частица ещё не достигла уровня свободной конвекции.', 'The parcel has not reached the level of free convection yet.')}</p>`, { open: true, id: 'logic', bare: true })}
       </div>
     </div>
-    ${tip('tip-uh', 'Вращение потока, UH 2–5 км', 'Спиральность восходящего потока: насколько поднимающийся воздух вращается циклонически в слое 2–5 км.', `<dl class="popover__scale"><dt>≥ ${UH_ROTATING}</dt><dd>поток вращается (подсветка в 3D)</dd></dl>`, `Мезоциклон решается не по UH, а по вращению ядра потока: завихренность на 2–5 км ≥ 3·10⁻³ с⁻¹ в течение ${MESO_PERSISTENCE / 60} мин.`)}
-    ${tip('tip-rain', 'Дождь в ядре сейчас', 'Самый сильный дождь у земли в эту минуту — где бы он ни шёл, обычно под ядром грозы (поток ρ·q_r·V_t). Ядро движется и проходит над одной точкой за 5–15 минут, поэтому 100 мм/ч в ядре дают в точке не 100 мм за час, а 5–20 мм. Сколько выпало в одном месте — «Сумма в самой мокрой точке» и метеостанция.')}
-    ${tip('tip-rainTotal', 'Сумма в самой мокрой точке', 'Наибольшая сумма дождя на земле с начала расчёта — в той точке, где выпало больше всего (полоса осадков на 3D-виде). В точке, над которой прошло ядро, сумма меньше: интенсивность в ядре держится там лишь минуты. Ход дождя в своей точке показывает метеостанция.')}
-    ${tip('tip-gust', 'Порыв у земли', 'Самый сильный ветер на высоте 100 м: оттоки и микропорывы под грозой.')}
-    ${tip('tip-hail', 'Град у земли', 'Крупнейшие градины, долетевшие до земли сейчас; ниже — крупнейшие за весь прогон.')}
+    ${tip('tip-uh', L('Вращение потока, UH 2–5 км', 'Updraught rotation, UH 2–5 km'), L('Спиральность восходящего потока: насколько поднимающийся воздух вращается циклонически в слое 2–5 км.', 'Updraft helicity: how much the rising air rotates cyclonically in the 2–5 km layer.'), `<dl class="popover__scale"><dt>≥ ${UH_ROTATING}</dt><dd>${L('поток вращается (подсветка в 3D)', 'the updraught rotates (highlighted in 3D)')}</dd></dl>`, L(`Мезоциклон решается не по UH, а по вращению ядра потока: завихренность на 2–5 км ≥ 3·10⁻³ с⁻¹ в течение ${MESO_PERSISTENCE / 60} мин.`, `A mesocyclone is decided not by UH but by the rotation of the updraught’s core: vorticity at 2–5 km ≥ 3·10⁻³ s⁻¹ for ${MESO_PERSISTENCE / 60} min.`))}
+    ${tip('tip-rain', L('Дождь в ядре сейчас', 'Rain in the core now'), L('Самый сильный дождь у земли в эту минуту — где бы он ни шёл, обычно под ядром грозы (поток ρ·q_r·V_t). Ядро движется и проходит над одной точкой за 5–15 минут, поэтому 100 мм/ч в ядре дают в точке не 100 мм за час, а 5–20 мм. Сколько выпало в одном месте — «Сумма в самой мокрой точке» и метеостанция.', 'The heaviest rain at the ground this minute — wherever it falls, usually under the storm’s core (the flux ρ·q_r·V_t). The core moves and passes over one point in 5–15 minutes, so 100 mm/h in the core gives that point not 100 mm in an hour but 5–20 mm. How much fell in one place — “Total at the wettest point” and the weather station.'))}
+    ${tip('tip-rainTotal', L('Сумма в самой мокрой точке', 'Total at the wettest point'), L('Наибольшая сумма дождя на земле с начала расчёта — в той точке, где выпало больше всего (полоса осадков на 3D-виде). В точке, над которой прошло ядро, сумма меньше: интенсивность в ядре держится там лишь минуты. Ход дождя в своей точке показывает метеостанция.', 'The largest rain total on the ground since the start — at the point where the most fell (the rain swath in the 3D view). Where the core passed over, the total is smaller: the core’s rate lasts only minutes there. The weather station shows the rain at its own point.'))}
+    ${tip('tip-gust', L('Порыв у земли', 'Surface gust'), L('Самый сильный ветер на высоте 100 м: оттоки и микропорывы под грозой.', 'The strongest wind at 100 m: outflows and microbursts under the storm.'))}
+    ${tip('tip-hail', L('Град у земли', 'Hail at the ground'), L('Крупнейшие градины, долетевшие до земли сейчас; ниже — крупнейшие за весь прогон.', 'The largest hailstones reaching the ground now; below — the largest of the whole run.'))}
     </aside>
   </main>
 </div>
 <dialog class="modal modal--wide sounding-dialog" id="soundingDialog"><form method="dialog" style="display:contents">
-  <h2 class="modal__title">Реальное зондирование</h2>
-  <p class="modal__text">Гроза в среде конкретного дня: температура, влажность и ветер по высоте берутся из зондирования, а не из ползунков. Форматы: текст Вайомингского университета (<a href="https://weather.uwyo.edu/upperair/sounding.shtml" target="_blank" rel="noopener">weather.uwyo.edu</a>, вид «Text: List» — можно скопировать страницу целиком), SHARPpy, <code>input_sounding</code> CM1 / WRF, CSV с заголовками (pres, hght, temp, dwpt, drct, sknt…). Нужны данные хотя бы до 10 км.</p>
-  <div class="sounding-dialog__input"><button type="button" class="btn" id="soundingFileButton">Выбрать файл…</button><input type="file" id="soundingFile" accept=".txt,.csv,.dat,.sharppy,.oax,text/plain" hidden><span class="t-caption" id="soundingFileName"></span></div>
-  <textarea class="input sounding-dialog__text" id="soundingText" spellcheck="false" placeholder="…или вставьте текст зондирования сюда"></textarea>
+  <h2 class="modal__title">${L('Реальное зондирование', 'Real sounding')}</h2>
+  <p class="modal__text">${L('Гроза в среде конкретного дня: температура, влажность и ветер по высоте берутся из зондирования, а не из ползунков. Форматы: текст Вайомингского университета (<a href="https://weather.uwyo.edu/upperair/sounding.shtml" target="_blank" rel="noopener">weather.uwyo.edu</a>, вид «Text: List» — можно скопировать страницу целиком), SHARPpy, <code>input_sounding</code> CM1 / WRF, CSV с заголовками (pres, hght, temp, dwpt, drct, sknt…). Нужны данные хотя бы до 10 км.', 'A storm in the environment of a given day: temperature, humidity and wind by height come from the sounding, not from the sliders. Formats: University of Wyoming text (<a href="https://weather.uwyo.edu/upperair/sounding.shtml" target="_blank" rel="noopener">weather.uwyo.edu</a>, “Text: List” — the whole page can be copied), SHARPpy, CM1 / WRF <code>input_sounding</code>, CSV with headers (pres, hght, temp, dwpt, drct, sknt…). Data up to 10 km at least are needed.')}</p>
+  <div class="sounding-dialog__input"><button type="button" class="btn" id="soundingFileButton">${L('Выбрать файл…', 'Choose a file…')}</button><input type="file" id="soundingFile" accept=".txt,.csv,.dat,.sharppy,.oax,text/plain" hidden><span class="t-caption" id="soundingFileName"></span></div>
+  <textarea class="input sounding-dialog__text" id="soundingText" spellcheck="false" placeholder="${L('…или вставьте текст зондирования сюда', '…or paste the sounding’s text here')}"></textarea>
   <div class="notice" id="soundingError" hidden></div>
   <div class="sounding-dialog__preview" id="soundingPreview" hidden>
     <div class="sounding-dialog__head"><b id="soundingName"></b><span class="t-caption" id="soundingInfo"></span></div>
     <div class="sounding-dialog__body"><canvas id="soundingChart" class="side-chart"></canvas><dl class="kv" id="soundingNums"></dl></div>
     <ul class="sounding-dialog__notes" id="soundingNotes"></ul>
-    <label class="field"><span class="field__head"><span class="field__label">Начальный термик (в реальном дне его нет — задайте сами; 0 — без термика)</span><output class="field__value" id="soundingBubbleOut">1.00×</output></span><input class="range" id="soundingBubble" type="range" min="0" max="2.5" step="0.05" value="1"></label>
+    <label class="field"><span class="field__head"><span class="field__label">${L('Начальный термик (в реальном дне его нет — задайте сами; 0 — без термика)', 'Starting thermal (a real day has none — set it yourself; 0 — no thermal)')}</span><output class="field__value" id="soundingBubbleOut">1.00×</output></span><input class="range" id="soundingBubble" type="range" min="0" max="2.5" step="0.05" value="1"></label>
   </div>
-  <div class="modal__actions"><button class="btn btn--quiet" value="cancel">Отмена</button><button class="btn btn--primary" value="run" id="soundingRun" disabled>Запустить с этим зондированием</button></div>
+  <div class="modal__actions"><button class="btn btn--quiet" value="cancel">${L('Отмена', 'Cancel')}</button><button class="btn btn--primary" value="run" id="soundingRun" disabled>${L('Запустить с этим зондированием', 'Run with this sounding')}</button></div>
 </form></dialog>
-<dialog class="modal" id="saveDialog"><form method="dialog" style="display:contents"><h2 class="modal__title">Сохранить расчёт</h2><p class="modal__text" id="saveText"></p><label class="field"><span class="label">Имя файла</span><input class="input" id="saveName" autocomplete="off" spellcheck="false"></label><div class="modal__actions"><button class="btn btn--quiet" value="cancel">Отмена</button><button class="btn btn--primary" value="save">Сохранить</button></div></form></dialog>`
+<dialog class="modal" id="saveDialog"><form method="dialog" style="display:contents"><h2 class="modal__title">${L('Сохранить расчёт', 'Save the run')}</h2><p class="modal__text" id="saveText"></p><label class="field"><span class="label">${L('Имя файла', 'File name')}</span><input class="input" id="saveName" autocomplete="off" spellcheck="false"></label><div class="modal__actions"><button class="btn btn--quiet" value="cancel">${L('Отмена', 'Cancel')}</button><button class="btn btn--primary" value="save">${L('Сохранить', 'Save')}</button></div></form></dialog>`
 
 const text = (id: string, value: string) => { document.querySelector(`#${id}`)!.textContent = value }
 // The page opens on the first scenario ("Летний день"); the controls are synced to it below.
@@ -379,7 +387,7 @@ const view = { field: 'composite' as FieldMode, uhLayer: '2-5' as UhLayer, showV
 let sim = new Atmosphere(canvas, config)
 // The picture's quality ('auto' or a level), kept in the browser; the view recreated with a restart keeps the level the
 // automatic choice settled on.
-const QUALITY_NAMES = { low: 'НИЗКОЕ', medium: 'СРЕДНЕЕ', high: 'ВЫСОКОЕ' } as const
+const QUALITY_NAMES = { low: L('НИЗКОЕ', 'LOW'), medium: L('СРЕДНЕЕ', 'MEDIUM'), high: L('ВЫСОКОЕ', 'HIGH') } as const
 const QUALITY_KEY = 'meteolab-quality'
 let quality: Quality | 'auto' = (() => { try { const q = localStorage.getItem(QUALITY_KEY); return q === 'low' || q === 'medium' || q === 'high' ? q : 'auto' } catch { return 'auto' } })()
 // When the automatic choice lowers the level, the badge says why for a few seconds.
@@ -391,9 +399,9 @@ const showQuality = () => {
   if (lowered) { loweredUntil = performance.now() + 3000; setTimeout(showQuality, 3050) }
   // On a phone the badge is not shown: the same words over the 3D view (hud.ts).
   const notice = document.querySelector<HTMLElement>('[data-hud="notice"]')
-  if (notice) { notice.textContent = 'Качество снижено: кадры медленные'; notice.hidden = !(quality === 'auto' && performance.now() < loweredUntil) }
-  document.querySelector('#qualityToggle')!.textContent = quality === 'auto' && performance.now() < loweredUntil ? `КАЧЕСТВО СНИЖЕНО: КАДРЫ МЕДЛЕННЫЕ · ${QUALITY_NAMES[sim.level]}`
-    : quality === 'auto' ? `КАЧЕСТВО: АВТО · ${QUALITY_NAMES[sim.level]}` : `КАЧЕСТВО: ${QUALITY_NAMES[quality]}`
+  if (notice) { notice.textContent = L('Качество снижено: кадры медленные', 'Quality lowered: slow frames'); notice.hidden = !(quality === 'auto' && performance.now() < loweredUntil) }
+  document.querySelector('#qualityToggle')!.textContent = quality === 'auto' && performance.now() < loweredUntil ? `${L('КАЧЕСТВО СНИЖЕНО: КАДРЫ МЕДЛЕННЫЕ', 'QUALITY LOWERED: SLOW FRAMES')} · ${QUALITY_NAMES[sim.level]}`
+    : quality === 'auto' ? `${L('КАЧЕСТВО: АВТО', 'QUALITY: AUTO')} · ${QUALITY_NAMES[sim.level]}` : `${L('КАЧЕСТВО', 'QUALITY')}: ${QUALITY_NAMES[quality]}`
   document.querySelectorAll<HTMLButtonElement>('[data-quality-set]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.qualitySet === quality)))
 }
 const chooseQuality = (q: Quality | 'auto') => {
@@ -453,11 +461,11 @@ function showDomainControls() {
   const custom = config.domain === 'custom', [w, d] = config.domain === 'large' ? [96, 72] : custom ? config.domainSize ?? [48, 36] : [48, 36]
   ;(document.querySelector('#domainCustom') as HTMLElement).hidden = !custom
   domainWidth.value = String(w); domainDepth.value = String(d); fillRange(domainWidth); fillRange(domainDepth)
-  text('domainWidthOut', `${w} км`); text('domainDepthOut', `${d} км`)
+  text('domainWidthOut', `${w}${KM}`); text('domainDepthOut', `${d}${KM}`)
   ;(document.querySelector('#domainWarn') as HTMLElement).hidden = w * d <= 96 * 72
 }
 for (const input of [domainWidth, domainDepth]) {
-  input.addEventListener('input', () => { fillRange(input); text(`${input.id}Out`, `${input.value} км`); (document.querySelector('#domainWarn') as HTMLElement).hidden = Number(domainWidth.value) * Number(domainDepth.value) <= 96 * 72 })
+  input.addEventListener('input', () => { fillRange(input); text(`${input.id}Out`, `${input.value}${KM}`); (document.querySelector('#domainWarn') as HTMLElement).hidden = Number(domainWidth.value) * Number(domainDepth.value) <= 96 * 72 })
   input.addEventListener('change', () => { config.domainSize = [Number(domainWidth.value), Number(domainDepth.value)]; recreate() })
 }
 const microSelect = document.querySelector<HTMLSelectElement>('#microphysics')!
@@ -480,10 +488,10 @@ document.querySelectorAll<HTMLInputElement>('input.range').forEach(input => {
 // With an analytic profile (the Weisman-Klemp scenario) the temperature, humidity and wind sliders do nothing: dim them.
 const markProfileGroups = () => {
   const off = !!config.profile || !!config.sounding
-  document.querySelectorAll<HTMLDetailsElement>('details[data-profile]').forEach(d => { d.classList.toggle('is-inactive', off); const tag = d.querySelector<HTMLElement>('.group__tag')!; tag.hidden = !off; tag.textContent = config.sounding ? 'зондирование' : 'формулы WK' })
+  document.querySelectorAll<HTMLDetailsElement>('details[data-profile]').forEach(d => { d.classList.toggle('is-inactive', off); const tag = d.querySelector<HTMLElement>('.group__tag')!; tag.hidden = !off; tag.textContent = config.sounding ? L('зондирование', 'sounding') : L('формулы WK', 'WK formulas') })
   const locked = document.querySelector<HTMLElement>('#profileLocked')!
   locked.hidden = !off
-  locked.textContent = config.sounding ? 'Профиль взят из зондирования — ползунки температуры, влажности и ветра не действуют. Вернуться к ползункам — выберите сценарий.' : 'Профиль задан формулами — ползунки температуры, влажности и ветра не действуют.'
+  locked.textContent = config.sounding ? L('Профиль взят из зондирования — ползунки температуры, влажности и ветра не действуют. Вернуться к ползункам — выберите сценарий.', 'The profile comes from the sounding — the temperature, humidity and wind sliders have no effect. To go back to the sliders, choose a scenario.') : L('Профиль задан формулами — ползунки температуры, влажности и ветра не действуют.', 'The profile is set by formulas — the temperature, humidity and wind sliders have no effect.')
 }
 /** The scenario the settings started from (null: a run opened from a file), as a full config. */
 const baseConfig = (): SimConfig => { const base: SimConfig = { ...defaults, ...(baseScenario === null ? built?.values ?? soundingBase ?? {} : SCENARIOS[baseScenario].values) }; fillLowWind(base); return base }
@@ -505,14 +513,14 @@ function markModified() {
 }
 // The note under the scenario buttons: what the scenario shows, cut to four lines until «Подробнее».
 const scenarioNote = document.querySelector<HTMLElement>('#scenarioNote')!, scenarioMore = document.querySelector<HTMLButtonElement>('#scenarioMore')!
-scenarioMore.addEventListener('click', () => { const open = scenarioNote.classList.toggle('is-open'); scenarioMore.textContent = open ? 'Свернуть' : 'Подробнее' })
+scenarioMore.addEventListener('click', () => { const open = scenarioNote.classList.toggle('is-open'); scenarioMore.textContent = open ? L('Свернуть', 'Less') : L('Подробнее', 'More') })
 function showScenario() {
   const p = baseScenario === null ? built : presets[baseScenario], s = config.sounding
-  text('scenarioName', p ? p.name : s ? `Зондирование: ${s.name || 'без названия'}` : 'Расчёт из файла')
-  text('scenarioText', p ? `${p.hint.replace(/.$/, '')}.` : s ? `Температура, влажность и ветер — из реального зондирования (${s.levels.length} уровней до ${(s.levels[s.levels.length - 1].z / 1000).toFixed(1)} км над станцией). Термик, солнце, поверхность и расчёт — ползунками.` : 'Настройки взяты из сохранённого файла и ни с одним сценарием не сравниваются.')
+  text('scenarioName', p ? p.title : s ? `${L('Зондирование', 'Sounding')}: ${s.name || L('без названия', 'untitled')}` : L('Расчёт из файла', 'Run from a file'))
+  text('scenarioText', p ? `${p.hint.replace(/.$/, '')}.` : s ? L(`Температура, влажность и ветер — из реального зондирования (${s.levels.length} уровней до ${(s.levels[s.levels.length - 1].z / 1000).toFixed(1)} км над станцией). Термик, солнце, поверхность и расчёт — ползунками.`, `Temperature, humidity and wind come from a real sounding (${s.levels.length} levels up to ${(s.levels[s.levels.length - 1].z / 1000).toFixed(1)} km above the station). The thermal, the sun, the surface and the computation — by the sliders.`) : L('Настройки взяты из сохранённого файла и ни с одним сценарием не сравниваются.', 'The settings come from a saved file and are compared with no scenario.'))
   text('scenarioNums', p ? p.nums : s ? environmentNums(config) : '')
   showStory(p?.story ?? null)
-  scenarioNote.classList.remove('is-open'); scenarioMore.textContent = 'Подробнее'
+  scenarioNote.classList.remove('is-open'); scenarioMore.textContent = L('Подробнее', 'More')
   // «Подробнее» only when the text is cut.
   requestAnimationFrame(() => { const t = document.querySelector<HTMLElement>('#scenarioText')!; scenarioMore.hidden = t.scrollHeight <= t.clientHeight + 1 })
 }
@@ -553,13 +561,13 @@ function storyText() {
   return k < 0 ? '' : `${timeOfDay(config.hour, story[k][0] * 3600)} · ${story[k][1]}`
 }
 // A situation assembled from the choices (situations.ts): run like a scenario, but its own.
-let built: { name: string; hint: string; nums: string; story: StoryStage[]; values: Partial<SimConfig> } | null = null
+let built: { name: string; title: string; hint: string; nums: string; story: StoryStage[]; values: Partial<SimConfig> } | null = null
 document.querySelector('#sitBuild')!.addEventListener('click', () => {
   const pick = (id: string) => document.querySelector<HTMLSelectElement>(`#${id}`)!.value
   const b = buildSituation({ mass: pick('sitMass') as keyof typeof AIR_MASSES, trigger: pick('sitTrigger') as keyof typeof TRIGGERS, shear: pick('sitShear') as keyof typeof SHEARS, hour: Number(pick('sitHour')) }, defaults)
   Object.assign(config, defaults, { speed: config.speed, followStorm: config.followStorm, lightning: config.lightning, domain: config.domain, domainSize: config.domainSize, wind05: undefined, wind1: undefined, windDir05: undefined, windDir1: undefined, profile: undefined, sounding: undefined, bubbleRadius: undefined, front: undefined, edges: undefined, start: undefined, frameMotion: undefined, top: undefined, nightInversion: undefined, zones: undefined, frontLine: undefined, largeScale: undefined, transport: 'weno' }, b.values)
   fillLowWind(config)
-  built = { ...b, nums: environmentNums(config) }; baseScenario = null; soundingBase = null
+  built = { ...b, title: b.name, nums: environmentNums(config) }; baseScenario = null; soundingBase = null
   syncControls(); markPreset(null); showScenario()
   recreate(); running = true; updatePause()
 })
@@ -606,7 +614,7 @@ const runLink = () => {
 }
 document.querySelector('#share')!.addEventListener('click', () => {
   const url = runLink()
-  navigator.clipboard.writeText(url.href).then(() => note('Ссылка на опыт скопирована', true), () => { history.replaceState(null, '', url); note('Ссылка на опыт — в адресной строке') })
+  navigator.clipboard.writeText(url.href).then(() => note(L('Ссылка на опыт скопирована', 'Link to the run copied'), true), () => { history.replaceState(null, '', url); note(L('Ссылка на опыт — в адресной строке', 'The link to the run is in the address bar')) })
 })
 // Saving and opening a run (.meteolab, src/core/state.ts). The state is taken when «Сохранить» is pressed; the dialog
 // only names the file. The file's settings are outside input: only the known ones are read back.
@@ -614,9 +622,10 @@ const saveDialog = document.querySelector<HTMLDialogElement>('#saveDialog')!, sa
 let saved: { data: ArrayBuffer; time: number } | null = null
 document.querySelector('#saveState')!.addEventListener('click', () => {
   saved = { data: sim.saveState(), time: sim.time }
-  const name = baseScenario === null ? 'MeteoLab' : SCENARIOS[baseScenario].name
-  text('saveText', `Файл .meteolab (~${Math.max(1, Math.round(saved.data.byteLength / 2 ** 20))} МБ): все поля модели на T+${runTime(saved.time)} и настройки — расчёт продолжится с того же места через «Открыть…». Имя уже подставлено, менять не обязательно.`)
-  saveName.value = `${name}${baseScenario !== null && markedModified() ? ' (изменён)' : ''}, T+${Math.floor(saved.time / 60)}.meteolab`
+  const name = baseScenario === null ? 'MeteoLab' : SCENARIOS[baseScenario].title
+  const mb = Math.max(1, Math.round(saved.data.byteLength / 2 ** 20))
+  text('saveText', L(`Файл .meteolab (~${mb} МБ): все поля модели на T+${runTime(saved.time)} и настройки — расчёт продолжится с того же места через «Открыть…». Имя уже подставлено, менять не обязательно.`, `A .meteolab file (~${mb} MB): all the model’s fields at T+${runTime(saved.time)} and the settings — the run continues from the same point via “Open…”. The name is filled in, no need to change it.`))
+  saveName.value = `${name}${baseScenario !== null && markedModified() ? L(' (изменён)', ' (modified)') : ''}, T+${Math.floor(saved.time / 60)}.meteolab`
   saveDialog.showModal(); saveName.select()
 })
 const markedModified = () => !!document.querySelector('.side--left details.is-modified')
@@ -625,7 +634,7 @@ saveDialog.addEventListener('close', () => {
     const name = (saveName.value.trim() || 'meteolab').replace(/[\\/:*?"<>|]/g, '-'), file = name.endsWith('.meteolab') ? name : `${name}.meteolab`
     const url = URL.createObjectURL(new Blob([saved.data], { type: 'application/octet-stream' })), a = document.createElement('a')
     a.href = url; a.download = file; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000)
-    note(`Сохранено: ${Math.floor(saved.time / 60)}-я минута расчёта`, true)
+    note(L(`Сохранено: ${Math.floor(saved.time / 60)}-я минута расчёта`, `Saved: minute ${Math.floor(saved.time / 60)} of the run`), true)
   }
   saved = null; saveDialog.returnValue = ''
 })
@@ -656,7 +665,7 @@ function readSounding(fallbackName = '') {
     soundingNotes = [...file.notes, ...sp.notes]; soundingLatitude = file.latitude
     run.disabled = false; previewSounding()
   } catch (e) {
-    error.textContent = e instanceof SoundingError ? e.message : `Не удалось прочитать: ${(e as Error).message}`; error.hidden = false
+    error.textContent = e instanceof SoundingError ? e.message : `${L('Не удалось прочитать', 'Could not read it')}: ${(e as Error).message}`; error.hidden = false
   }
 }
 let soundingNotes: string[] = [], soundingLatitude: number | undefined
@@ -664,10 +673,10 @@ function previewSounding() {
   const s = loadedSounding!, c: SimConfig = { ...defaults, sounding: s }, grid = createGrid(), env = new Environment(c, grid, environmentProfile(c, grid.height))
   const i = parcelIndices(env, grid.height), k = stormIndices(env, i), top = s.levels[s.levels.length - 1].z
   document.querySelector<HTMLElement>('#soundingPreview')!.hidden = false
-  text('soundingName', s.name || 'Зондирование')
-  text('soundingInfo', `${s.levels.length} уровней · до ${(top / 1000).toFixed(1)} км над станцией · у земли ${(s.levels[0].p / 100).toFixed(0)} гПа${soundingLatitude !== undefined ? ` · широта ${soundingLatitude.toFixed(1)}°` : ''}`)
-  const n = (v: number) => String(Math.round(v)).replace('-', '−'), km = (v: number | null) => v === null ? '—' : `${v.toFixed(1)} км`
-  document.querySelector('#soundingNums')!.innerHTML = ([['SB CAPE / CIN', `${n(i.sb.cape)} / ${n(i.sb.cin)} Дж/кг`], ['ML CAPE / CIN', `${n(i.ml.cape)} / ${n(i.ml.cin)} Дж/кг`], ['MU CAPE', `${n(i.mu.cape)} Дж/кг`], ['LCL / LFC', `${km(i.ml.lcl)} / ${km(i.ml.lfc)}`], ['Сдвиг 0–6 км', `${Math.round(k.shear06)} м/с`], ['SRH 0–1 / 0–3 км', `${n(k.srh01)} / ${n(k.srh03)} м²/с²`], ['SCP / STP', `${k.scp.toFixed(1)} / ${k.stp.toFixed(1)}`]] as const).map(([a, b]) => `<dt>${a}</dt><dd>${b}</dd>`).join('')
+  text('soundingName', s.name || L('Зондирование', 'Sounding'))
+  text('soundingInfo', L(`${s.levels.length} уровней · до ${(top / 1000).toFixed(1)} км над станцией · у земли ${(s.levels[0].p / 100).toFixed(0)} гПа`, `${s.levels.length} levels · up to ${(top / 1000).toFixed(1)} km above the station · ${(s.levels[0].p / 100).toFixed(0)} hPa at the ground`) + (soundingLatitude !== undefined ? ` · ${L('широта', 'latitude')} ${soundingLatitude.toFixed(1)}°` : ''))
+  const n = (v: number) => String(Math.round(v)).replace('-', '−'), km = (v: number | null) => v === null ? '—' : `${v.toFixed(1)}${KM}`
+  document.querySelector('#soundingNums')!.innerHTML = ([['SB CAPE / CIN', `${n(i.sb.cape)} / ${n(i.sb.cin)} ${JKG}`], ['ML CAPE / CIN', `${n(i.ml.cape)} / ${n(i.ml.cin)} ${JKG}`], ['MU CAPE', `${n(i.mu.cape)} ${JKG}`], ['LCL / LFC', `${km(i.ml.lcl)} / ${km(i.ml.lfc)}`], [L('Сдвиг 0–6 км', 'Shear 0–6 km'), `${Math.round(k.shear06)}${MS}`], [L('SRH 0–1 / 0–3 км', 'SRH 0–1 / 0–3 km'), `${n(k.srh01)} / ${n(k.srh03)} ${L('м²/с²', 'm²/s²')}`], ['SCP / STP', `${k.scp.toFixed(1)} / ${k.stp.toFixed(1)}`]] as const).map(([a, b]) => `<dt>${a}</dt><dd>${b}</dd>`).join('')
   document.querySelector('#soundingNotes')!.innerHTML = soundingNotes.map(t => `<li>${t.replace(/[<>&]/g, ch => `&#${ch.charCodeAt(0)};`)}</li>`).join('')
   drawSounding('soundingChart', computeSounding(c, env, grid.height))
 }
@@ -681,7 +690,7 @@ soundingDialog.addEventListener('close', () => {
   syncControls(); markPreset(null); showScenario()
   recreate(); running = true; updatePause()
   dispatchEvent(new Event('closesheet'))
-  note(`Запущено в зондировании «${loadedSounding.name || 'без названия'}»`, true)
+  note(L(`Запущено в зондировании «${loadedSounding.name || 'без названия'}»`, `Running in the sounding “${loadedSounding.name || 'untitled'}”`), true)
 })
 
 // Rewind: the points the Atmosphere keeps, refreshed when their number changes.
@@ -691,13 +700,13 @@ const listRewind = () => {
   const key = sim.history.map(h => h.time).join(',')
   if (key === rewindKey) return
   rewindKey = key
-  rewindSelect.innerHTML = '<option value="">Вернуться к минуте…</option>' + sim.history.map(h => `<option value="${h.time}">${Math.floor(h.time / 60)}-я минута${h.time === 0 ? ' (начало)' : ''}</option>`).join('')
+  rewindSelect.innerHTML = `<option value="">${L('Вернуться к минуте…', 'Go back to minute…')}</option>` + sim.history.map(h => `<option value="${h.time}">${L(`${Math.floor(h.time / 60)}-я минута`, `minute ${Math.floor(h.time / 60)}`)}${h.time === 0 ? L(' (начало)', ' (start)') : ''}</option>`).join('')
 }
 rewindSelect.addEventListener('change', () => {
   const time = Number(rewindSelect.value)
   if (rewindSelect.value === '') return
   sim.rewind(time); timeline.truncate(time); rewindSelect.value = ''; running = true; updatePause()
-  note(`Расчёт вернулся к ${Math.floor(time / 60)}-й минуте`)
+  note(L(`Расчёт вернулся к ${Math.floor(time / 60)}-й минуте`, `The run went back to minute ${Math.floor(time / 60)}`))
 })
 stateFile.addEventListener('change', async () => {
   const file = stateFile.files?.[0]; stateFile.value = ''
@@ -710,8 +719,8 @@ stateFile.addEventListener('change', async () => {
     recreate(config.seed)
     timeline.points.length = 0
     sim.loadState(state, buffer); running = true; updatePause()
-    note(`Открыт расчёт · с ${Math.floor(state.header.time / 60)}-й минуты`)
-  } catch (error) { note(`Не удалось открыть: ${(error as Error).message}`) }
+    note(L(`Открыт расчёт · с ${Math.floor(state.header.time / 60)}-й минуты`, `Run opened · from minute ${Math.floor(state.header.time / 60)}`))
+  } catch (error) { note(`${L('Не удалось открыть', 'Could not open it')}: ${(error as Error).message}`) }
 })
 document.querySelector('#timelineCsv')!.addEventListener('click', () => download(`meteolab-hod-grozy-seed${config.seed}.csv`, toCsv(timeline.points, [
   ['time_s', p => p.t], ['sb_cape_jkg', p => p.cape], ['sb_cin_jkg', p => p.cin], ['max_updraft_ms', p => p.updraft], ['uh_2_5km_m2s2', p => p.uh],
@@ -719,15 +728,15 @@ document.querySelector('#timelineCsv')!.addEventListener('click', () => download
 ])))
 document.querySelector('#pause')!.addEventListener('click', () => { running = !running; updatePause() })
 const updatePause = () => {
-  document.querySelector('#pause')!.textContent = running ? 'Пауза' : 'Продолжить'
+  document.querySelector('#pause')!.textContent = running ? L('Пауза', 'Pause') : L('Продолжить', 'Continue')
   const status = document.querySelector<HTMLElement>('#statusText')!
-  status.textContent = running ? 'Идёт расчёт' : 'Пауза'; status.classList.toggle('is-paused', !running)
+  status.textContent = running ? L('Идёт расчёт', 'Running') : L('Пауза', 'Paused'); status.classList.toggle('is-paused', !running)
 }
 const setView = (patch: Partial<typeof view>) => { Object.assign(view, patch); Object.assign(sim, patch) }
 const fieldPanel = document.querySelector<HTMLDivElement>('#fieldPanel')!
 // On a phone the field panel shows only its title and colour bar over the view; the settings open on demand.
 const fieldSettingsToggle = document.querySelector<HTMLButtonElement>('#fieldSettingsToggle')!
-const showFieldSettings = (open: boolean) => { fieldPanel.classList.toggle('is-open', open); fieldSettingsToggle.setAttribute('aria-expanded', String(open)); fieldSettingsToggle.textContent = open ? 'Свернуть ▴' : 'Настройки ▾' }
+const showFieldSettings = (open: boolean) => { fieldPanel.classList.toggle('is-open', open); fieldSettingsToggle.setAttribute('aria-expanded', String(open)); fieldSettingsToggle.textContent = open ? L('Свернуть ▴', 'Hide ▴') : L('Настройки ▾', 'Settings ▾') }
 fieldSettingsToggle.addEventListener('click', () => showFieldSettings(!fieldPanel.classList.contains('is-open')))
 const formatValue = (v: number) => `${v > 0 ? '+' : ''}${Number.isInteger(v) ? v : v.toFixed(1)}`
 document.querySelectorAll<HTMLButtonElement>('[data-field]').forEach(button => button.addEventListener('click', () => {
@@ -766,14 +775,14 @@ for (const [id, key] of [['#flowToggle', 'showVectors'], ['#mesoToggle', 'showMe
   replay.addEventListener('click', () => {
     if (!view.showLightning) { setView({ showLightning: true }); document.querySelector('#lightningToggle')!.setAttribute('aria-pressed', 'true') }
     if (sim.replayLightning(1 / 20)) return
-    replay.textContent = 'Молний ещё не было'; setTimeout(() => { replay.textContent = 'Повтор удара' }, 2000)
+    replay.textContent = L('Молний ещё не было', 'No lightning yet'); setTimeout(() => { replay.textContent = L('Повтор удара', 'Replay stroke') }, 2000)
   })
 }
 const sliceHeight = document.querySelector<HTMLInputElement>('#sliceHeight')!, sliceNorth = document.querySelector<HTMLInputElement>('#sliceNorth')!
-sliceHeight.addEventListener('input', () => { setView({ sliceHeight: Number(sliceHeight.value) }); text('sliceHeightOut', `${Number(sliceHeight.value).toFixed(1)} км`) })
+sliceHeight.addEventListener('input', () => { setView({ sliceHeight: Number(sliceHeight.value) }); text('sliceHeightOut', `${Number(sliceHeight.value).toFixed(1)}${KM}`) })
 sliceNorth.addEventListener('input', () => {
   const km = Number(sliceNorth.value)
-  setView({ sliceNorth: km }); text('sliceNorthOut', km === 0 ? '0 км' : `${Math.abs(km)} км ${km > 0 ? 'к северу' : 'к югу'}`)
+  setView({ sliceNorth: km }); text('sliceNorthOut', km === 0 ? `0${KM}` : `${Math.abs(km)}${KM} ${km > 0 ? L('к северу', 'north') : L('к югу', 'south')}`)
 })
 const layerMode = document.querySelector<HTMLSelectElement>('#layerMode')!, volumeControls = document.querySelector<HTMLDivElement>('#volumeControls')!
 layerMode.addEventListener('change', () => { const mode = layerMode.value as LayerMode; setView({ layerMode: mode }); volumeControls.hidden = mode !== 'volume' })
@@ -789,7 +798,7 @@ canvas.addEventListener('pointerup', event => {
   pressed = null
   const r = canvas.getBoundingClientRect(), nx = (event.clientX - r.left) / r.width, ny = (event.clientY - r.top) / r.height
   if (placingStation) { placingStation = false; stationGround = sim.placeStation(nx, ny); station.toggle(true); return }
-  if (pickingGround) { if (sim.standAt(nx, ny)) { picking(false); showGround() } else pickHint.textContent = 'Здесь нет земли области — щёлкните по земле · Esc — отмена'; return }
+  if (pickingGround) { if (sim.standAt(nx, ny)) { picking(false); showGround() } else pickHint.textContent = L('Здесь нет земли области — щёлкните по земле · Esc — отмена', 'No ground of the domain here — click the ground · Esc — cancel'); return }
   const g = sim.groundPoint(nx, ny), cell = sim.cells.nearest(g.x, g.y, sim.model)
   if (cell) selectCell(cell.id)
 })
@@ -797,17 +806,17 @@ document.querySelector('#cellAll')!.addEventListener('click', () => selectCell(n
 document.querySelector('#cellList')!.addEventListener('click', event => { const b = (event.target as HTMLElement).closest<HTMLElement>('[data-cell]'); if (b) selectCell(Number(b.dataset.cell)) })
 const cellLabels = document.querySelector<HTMLDivElement>('#cellLabels')!
 cellLabels.addEventListener('click', event => { const b = (event.target as HTMLElement).closest<HTMLElement>('[data-cell]'); if (b) selectCell(Number(b.dataset.cell)) })
-const COMPASS = ['С', 'СВ', 'В', 'ЮВ', 'Ю', 'ЮЗ', 'З', 'СЗ']
+const COMPASS = L('С СВ В ЮВ Ю ЮЗ З СЗ', 'N NE E SE S SW W NW').split(' ')
 const heading = (u: number, v: number) => COMPASS[Math.round(((Math.atan2(u, v) * 180 / Math.PI + 360) % 360) / 45) % 8]
-const ORIGIN = { thermal: 'возникла из термика', split: 'отделилась при расщеплении', 'gust-front': 'возникла на фронте порывов' } as const
+const ORIGIN = { thermal: L('возникла из термика', 'grew from a thermal'), split: L('отделилась при расщеплении', 'split off'), 'gust-front': L('возникла на фронте порывов', 'grew on the gust front') } as const
 /** Cell list, labels over the 3D view, the selection ring and, for a selected cell, its own numbers in the panel. */
 function updateCells() {
   const tracker = sim.cells
   if (selectedCell !== null && !tracker.find(selectedCell)) {
     // The selected cell merged into another (follow it there) or decayed (back to the whole domain).
     const end = tracker.ended.find(e => e.id === selectedCell)
-    if (end?.into) { const from = selectedCell; selectCell(end.into); cellNote = `№${from} слилась с №${end.into}` }
-    else { const from = selectedCell; selectCell(null); cellNote = `ячейка №${from} распалась` }
+    if (end?.into) { const from = selectedCell; selectCell(end.into); cellNote = L(`№${from} слилась с №${end.into}`, `#${from} merged into #${end.into}`) }
+    else { const from = selectedCell; selectCell(null); cellNote = L(`ячейка №${from} распалась`, `cell #${from} dissipated`) }
   }
   const cell = tracker.find(selectedCell)
   sim.setSelection(cell ? { x: cell.x, y: cell.y } : null)
@@ -816,11 +825,11 @@ function updateCells() {
   if (key !== cellListKey) {
     cellListKey = key
     document.querySelector('#cellList')!.innerHTML = (tracker.cells.length
-      ? tracker.cells.map(c => `<button class="cell" data-cell="${c.id}" aria-pressed="${c.id === selectedCell}" title="${CELL_STAGES[c.stage].hint}"><span class="cell__id">№${c.id}</span><span class="cell__kind"><span class="dot${cellDot(c)}"></span>${CELL_STAGES[c.stage].name}</span><span class="cell__val"><span data-cell-w></span> <span class="unit">м/с</span></span></button>`).join('')
-      : '<div class="cells__empty">Ячеек пока нет. Щелчок по ячейке на 3D-виде или в списке закрепляет за ней показатели ниже</div>')
-      + (cumulus ? `<div class="cells__more" title="Восходящие ядра, ещё не ставшие грозой: номер получает ядро, чей поток поднялся выше 6 км и окреп до 10 м/с">+ ${cumulus} кучевых без номера</div>` : '')
+      ? tracker.cells.map(c => `<button class="cell" data-cell="${c.id}" aria-pressed="${c.id === selectedCell}" title="${CELL_STAGES[c.stage].hint}"><span class="cell__id">${NO}${c.id}</span><span class="cell__kind"><span class="dot${cellDot(c)}"></span>${CELL_STAGES[c.stage].name}</span><span class="cell__val"><span data-cell-w></span> <span class="unit">${L('м/с', 'm/s')}</span></span></button>`).join('')
+      : `<div class="cells__empty">${L('Ячеек пока нет. Щелчок по ячейке на 3D-виде или в списке закрепляет за ней показатели ниже', 'No cells yet. A click on a cell in the 3D view or in the list ties the values below to it')}</div>`)
+      + (cumulus ? `<div class="cells__more" title="${L('Восходящие ядра, ещё не ставшие грозой: номер получает ядро, чей поток поднялся выше 6 км и окреп до 10 м/с', 'Updraught cores not yet storms: a core gets a number once its updraught rises above 6 km and reaches 10 m/s')}">+ ${cumulus} ${L('кучевых без номера', 'cumulus without a number')}</div>` : '')
     document.querySelector('#cellAll')!.setAttribute('aria-pressed', String(selectedCell === null))
-    text('cellCount', tracker.cells.length ? `Ячейки · ${tracker.cells.length}` : 'Ячейки')
+    text('cellCount', tracker.cells.length ? `${L('Ячейки', 'Cells')} · ${tracker.cells.length}` : L('Ячейки', 'Cells'))
   }
   for (const c of tracker.cells) { const w = document.querySelector(`#cellList [data-cell="${c.id}"] [data-cell-w]`); if (w) w.textContent = c.stats.updraft.toFixed(0) }
   // Labels over the cloud tops.
@@ -834,12 +843,12 @@ function updateCells() {
     seen.add(id)
   }
   cellLabels.querySelectorAll<HTMLElement>('[data-cell]').forEach(l => { if (!seen.has(l.dataset.cell!)) l.remove() })
-  text('metricScope', cell ? `Показатели ячейки №${cell.id}${cellNote ? ` (${cellNote})` : ''}` : `Показатели по всей области${cellNote ? ` (${cellNote})` : ''}`)
+  text('metricScope', (cell ? L(`Показатели ячейки №${cell.id}`, `Values of cell #${cell.id}`) : L('Показатели по всей области', 'Values over the whole domain')) + (cellNote ? ` (${cellNote})` : ''))
   const stage = document.querySelector<HTMLElement>('#cellStage')!
   if (!cell) {
     // The whole domain: the strongest cell's stage under the storm mode.
     const top = tracker.cells.reduce<typeof tracker.cells[number] | null>((a, b) => !a || b.stats.updraft > a.stats.updraft ? b : a, null)
-    const html = top ? `сильнейшая — <span class="num">№${top.id}</span> · ${CELL_STAGES[top.stage].name}<small>${CELL_STAGES[top.stage].hint}</small>` : ''
+    const html = top ? `${L('сильнейшая', 'strongest')} — <span class="num">${NO}${top.id}</span> · ${CELL_STAGES[top.stage].name}<small>${CELL_STAGES[top.stage].hint}</small>` : ''
     if (stage.innerHTML !== html) stage.innerHTML = html
     return
   }
@@ -847,7 +856,7 @@ function updateCells() {
   // The tracker follows cells in the domain's frame; over the ground they also move with the domain.
   const [fu, fv] = sim.model.frame, gu = cell.u + fu, gv = cell.v + fv
   const s = cell.stats, age = Math.floor((sim.time - cell.born) / 60), speed = Math.hypot(gu, gv), followed = cell.trail[cell.trail.length - 1].t - cell.trail[0].t >= 120
-  const html = `<span class="num">№${cell.id}</span> · ${CELL_STAGES[cell.stage].name}<small>${CELL_STAGES[cell.stage].hint}. Возраст ${age} мин, ${ORIGIN[cell.origin]}${cell.parent ? ` (от №${cell.parent})` : ''}; ${!followed ? 'движение уточняется' : speed < 1 ? 'почти стоит' : `движется на ${heading(gu, gv)}, ${speed.toFixed(0)} м/с`}</small>`
+  const html = `<span class="num">${NO}${cell.id}</span> · ${CELL_STAGES[cell.stage].name}<small>${CELL_STAGES[cell.stage].hint}. ${L(`Возраст ${age} мин`, `Age ${age} min`)}, ${ORIGIN[cell.origin]}${cell.parent ? L(` (от №${cell.parent})`, ` (from #${cell.parent})`) : ''}; ${!followed ? L('движение уточняется', 'motion being estimated') : speed < 1 ? L('почти стоит', 'nearly stationary') : L(`движется на ${heading(gu, gv)}, ${speed.toFixed(0)} м/с`, `moving ${heading(gu, gv)}, ${speed.toFixed(0)} m/s`)}</small>`
   if (stage.innerHTML !== html) stage.innerHTML = html
   text('updraft', s.updraft.toFixed(1)); text('downdraft', s.downdraft.toFixed(1)); text('uh', s.uh.toFixed(0)); text('uhLow', `${s.uh01.toFixed(0)} / ${s.uh03.toFixed(0)}`)
   text('cloudTop', s.cloudTop.toFixed(1)); text('coldPool', s.coldPool.toFixed(1)); showRain(s.rainRate)
@@ -907,15 +916,15 @@ function showSpeed() {
   if (now - speedShown < 1000) return
   speedShown = now
   const real = sim.realSpeed, warn = document.querySelector<HTMLElement>('#speedWarn')!, low = running && real > 0 && real < .7 * config.speed
-  text('speedReal', running && real > 0 ? `фактически ×${real < 10 ? real.toFixed(1) : real.toFixed(0)}` : '')
+  text('speedReal', running && real > 0 ? `${L('фактически', 'actually')} ×${real < 10 ? real.toFixed(1) : real.toFixed(0)}` : '')
   warn.hidden = !low
-  if (low) warn.querySelector('.notice__text')!.textContent = `Компьютер успевает только ×${real.toFixed(real < 10 ? 1 : 0)}: модель идёт медленнее выбранной скорости. Быстрее — меньше область или расчёт на видеокарте (WebGPU, в плане).`
+  if (low) warn.querySelector('.notice__text')!.textContent = L(`Компьютер успевает только ×${real.toFixed(real < 10 ? 1 : 0)}: модель идёт медленнее выбранной скорости. Быстрее — меньше область или расчёт на видеокарте (WebGPU, в плане).`, `The computer keeps up only ×${real.toFixed(real < 10 ? 1 : 0)}: the model runs slower than the chosen speed. Faster — a smaller domain, or the computation on the GPU (WebGPU, planned).`)
 }
 /** Domain size and grid in the header and footer, and how fast the domain moves with the storm. */
 function showDomain() {
   const { nx, ny, nz, width, depth, height } = sim.model.grid, [fu, fv] = sim.model.frame, speed = Math.hypot(fu, fv)
-  text('domainSize', `${width / 1000} × ${depth / 1000} × ${Math.round(height / 1000)} км`); text('gridSize', `${nx} × ${ny} × ${nz}`)
-  text('frameMotion', speed < .1 ? 'неподвижна' : `движется на ${heading(fu, fv)}, ${speed.toFixed(1)} м/с`)
+  text('domainSize', `${width / 1000} × ${depth / 1000} × ${Math.round(height / 1000)}${KM}`); text('gridSize', `${nx} × ${ny} × ${nz}`)
+  text('frameMotion', speed < .1 ? L('неподвижна', 'fixed') : L(`движется на ${heading(fu, fv)}, ${speed.toFixed(1)} м/с`, `moving ${heading(fu, fv)}, ${speed.toFixed(1)} m/s`))
 }
 // A thermal where the surface is double-clicked, or double-tapped on a touch screen: the taps are matched here, since
 // mobile browsers (iOS above all) do not reliably send dblclick; the dblclick that may still follow a double tap is
@@ -940,12 +949,12 @@ const pickHint = document.querySelector<HTMLElement>('#pickHint')!
 /** Waiting for a click on the ground to stand there (the menu's «Выбрать место»). */
 let pickingGround = false
 const showGround = () => groundToggle.setAttribute('aria-pressed', String(sim.fromGround))
-const picking = (on: boolean) => { pickingGround = on; pickHint.hidden = !on; pickHint.textContent = 'Щёлкните по земле, где встать · Esc — отмена' }
+const picking = (on: boolean) => { pickingGround = on; pickHint.hidden = !on; pickHint.textContent = L('Щёлкните по земле, где встать · Esc — отмена', 'Click the ground where to stand · Esc — cancel') }
 groundMenu.addEventListener('beforetoggle', e => {
   if ((e as ToggleEvent).newState !== 'open') return
   const station = groundMenu.querySelector<HTMLButtonElement>('[data-stand="station"]')!
   station.disabled = !sim.station
-  groundMenu.querySelector('[data-station-note]')!.textContent = sim.station ? 'там, где стоит станция: смотреть на грозу и на её показания' : 'сначала поставьте станцию (прибор «Станция»)'
+  groundMenu.querySelector('[data-station-note]')!.textContent = sim.station ? L('там, где стоит станция: смотреть на грозу и на её показания', 'where the station stands: watch the storm and its readings') : L('сначала поставьте станцию (прибор «Станция»)', 'place a station first (the “Station” instrument)')
   groundMenu.querySelector<HTMLElement>('[data-stand="leave"]')!.hidden = !sim.fromGround
 })
 groundMenu.addEventListener('click', e => {
@@ -981,6 +990,12 @@ document.querySelector('#snapshotButton')!.addEventListener('click', async () =>
   const a = document.createElement('a'), local = timeOfDay(config.hour, sim.time).replace(':', '-')
   a.href = URL.createObjectURL(blob); a.download = `meteolab-${local}.png`; a.click()
   setTimeout(() => URL.revokeObjectURL(a.href), 10_000)
+})
+// The language switch: the same page in the other language, with the run's settings (the address's query and hash).
+document.addEventListener('click', e => {
+  if (!(e.target as Element).closest('#langSwitch, [data-lang-switch]')) return
+  e.preventDefault(); rememberLang(lang() === 'en' ? 'ru' : 'en')
+  location.href = otherLanguagePath(location.pathname, import.meta.env.BASE_URL) + location.search + location.hash
 })
 // Full screen without the interface (users' request 14.10.2026): the page's own fullscreen where the browser has it (not
 // iOS Safari: there the view just fills the window), the panels hidden; out by the corner button, Esc or F again.
@@ -1041,11 +1056,11 @@ const T_MIN = -75, T_MAX = 45, Z_MAX = 18
 /** The sounding chart: the environment, dew point and parcel by height, CAPE and CIN shaded (the side column's, or the sounding dialog's preview). */
 function drawSounding(canvas = 'sounding', s: Sounding = sim.sounding()){
   const { ctx, w, h } = prepareCanvas(canvas)
-  const L = 22, R = w - 30, T = 6, B = h - 14
-  const X = (t: number) => L + (t - T_MIN) / (T_MAX - T_MIN) * (R - L), Y = (z: number) => T + (1 - z / Z_MAX) * (B - T)
+  const x0 = 22, R = w - 30, T = 6, B = h - 14
+  const X = (t: number) => x0 + (t - T_MIN) / (T_MAX - T_MIN) * (R - x0), Y = (z: number) => T + (1 - z / Z_MAX) * (B - T)
   const c = chartPalette()
   ctx.strokeStyle = c.grid; ctx.lineWidth = 1; ctx.fillStyle = c.label
-  for (let z = 0; z <= Z_MAX; z += 5) { ctx.beginPath(); ctx.moveTo(L, Y(z)); ctx.lineTo(R, Y(z)); ctx.stroke(); ctx.fillText(`${z}`, 4, Y(z) + 3) }
+  for (let z = 0; z <= Z_MAX; z += 5) { ctx.beginPath(); ctx.moveTo(x0, Y(z)); ctx.lineTo(R, Y(z)); ctx.stroke(); ctx.fillText(`${z}`, 4, Y(z) + 3) }
   for (let t = -60; t <= 40; t += 20) { ctx.beginPath(); ctx.moveTo(X(t), T); ctx.lineTo(X(t), B); ctx.stroke(); ctx.fillText(`${t}°`, X(t) - 8, h - 3) }
   ctx.strokeStyle = '#8fbcd4'; ctx.setLineDash([3, 3]); ctx.beginPath(); ctx.moveTo(X(0), T); ctx.lineTo(X(0), B); ctx.stroke(); ctx.setLineDash([])
   // CAPE: parcel warmer than environment between LFC and EL; CIN: parcel colder below LFC.
@@ -1058,29 +1073,29 @@ function drawSounding(canvas = 'sounding', s: Sounding = sim.sounding()){
     ctx.beginPath(); ctx.moveTo(X(a.env), Y(a.z)); ctx.lineTo(X(a.parcel), Y(a.z)); ctx.lineTo(X(b.parcel), Y(b.z)); ctx.lineTo(X(b.env), Y(b.z)); ctx.fill()
   }
   const curve = (value: (p: typeof s.profile[number]) => number, color: string, dash: number[] = []) => {
-    ctx.beginPath(); s.profile.forEach((p, i) => { const x = Math.max(L, X(value(p))), y = Y(p.z); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y) })
+    ctx.beginPath(); s.profile.forEach((p, i) => { const x = Math.max(x0, X(value(p))), y = Y(p.z); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y) })
     ctx.strokeStyle = color; ctx.lineWidth = 1.8; ctx.setLineDash(dash); ctx.stroke(); ctx.setLineDash([])
   }
   curve(p => p.dew, '#5a9a6a', [4, 3]); curve(p => p.env, '#4f7180'); curve(p => p.parcel, '#b46e43')
   const levels: [string, number | null, string][] = [['LCL', s.lcl, '#6f9fb0'], ['LFC', s.lfc, '#c39a4f'], ['EL', s.el, '#c0735b']]
   for (const [name, z, color] of levels) {
     if (z === null) continue
-    ctx.strokeStyle = color; ctx.setLineDash([2, 2]); ctx.beginPath(); ctx.moveTo(L, Y(z)); ctx.lineTo(R, Y(z)); ctx.stroke(); ctx.setLineDash([])
+    ctx.strokeStyle = color; ctx.setLineDash([2, 2]); ctx.beginPath(); ctx.moveTo(x0, Y(z)); ctx.lineTo(R, Y(z)); ctx.stroke(); ctx.setLineDash([])
     ctx.fillStyle = color; ctx.fillText(name, R + 3, Y(z) + 3)
   }
 }
 /** The rotation profile of the most rotating core (spin.ts) and the w-ζ correlation. */
 function drawSpin(){
-  const { ctx, w, h } = prepareCanvas('spin'), p = spinProfile(sim.model), top = 14, L = 22, R = w - 6, T = 4, B = h - 12
-  const peak = Math.max(50, ...p.wz), X = (v: number) => L + (R - L) * Math.max(0, v) / peak, Y = (z: number) => B - (B - T) * z / top
+  const { ctx, w, h } = prepareCanvas('spin'), p = spinProfile(sim.model), top = 14, x0 = 22, R = w - 6, T = 4, B = h - 12
+  const peak = Math.max(50, ...p.wz), X = (v: number) => x0 + (R - x0) * Math.max(0, v) / peak, Y = (z: number) => B - (B - T) * z / top
   const colors = chartPalette()
   ctx.strokeStyle = colors.grid; ctx.fillStyle = colors.label; ctx.lineWidth = 1
-  for (let z = 0; z <= top; z += 2) { ctx.beginPath(); ctx.moveTo(L, Y(z)); ctx.lineTo(R, Y(z)); ctx.stroke(); if (z % 4 === 0) ctx.fillText(`${z}`, 4, Y(z) + 3) }
-  ctx.fillText(`w·ζ до ${peak.toFixed(0)}·10⁻³ м/с²`, R - 92, h - 2)
+  for (let z = 0; z <= top; z += 2) { ctx.beginPath(); ctx.moveTo(x0, Y(z)); ctx.lineTo(R, Y(z)); ctx.stroke(); if (z % 4 === 0) ctx.fillText(`${z}`, 4, Y(z) + 3) }
+  ctx.fillText(L(`w·ζ до ${peak.toFixed(0)}·10⁻³ м/с²`, `w·ζ up to ${peak.toFixed(0)}·10⁻³ m/s²`), R - 92, h - 2)
   ctx.fillStyle = 'rgba(123, 63, 160, .55)'
-  for (let k = 1; k + 1 < p.z.length && p.z[k] <= top; k++) if (p.wz[k] > 0) ctx.fillRect(L, Y(p.z[k + 1]), X(p.wz[k]) - L, Y(p.z[k]) - Y(p.z[k + 1]))
+  for (let k = 1; k + 1 < p.z.length && p.z[k] <= top; k++) if (p.wz[k] > 0) ctx.fillRect(x0, Y(p.z[k + 1]), X(p.wz[k]) - x0, Y(p.z[k]) - Y(p.z[k + 1]))
   const c = p.correlation, layer = rotationSummary(sim.model.rotation, p)
-  text('spinNote', c === null ? layer : `${layer}. Корреляция w–ζ 2–6 км ${c.toFixed(2)}: ${c >= SPIN_SUPERCELL ? 'поток и вращение совпадают, как в суперячейке' : 'вращение рядом с потоком, не в нём'}`)
+  text('spinNote', c === null ? layer : `${layer}. ${L('Корреляция w–ζ 2–6 км', 'w–ζ correlation 2–6 km')} ${c.toFixed(2)}: ${c >= SPIN_SUPERCELL ? L('поток и вращение совпадают, как в суперячейке', 'the updraught and the rotation coincide, as in a supercell') : L('вращение рядом с потоком, не в нём', 'the rotation is beside the updraught, not in it')}`)
 }
 // The hodograph editor (hodograph.ts): handles at the wind nodes of 0-10 km. A drag shows the new hodograph and storm
 // motion at once; the drop restarts the run, as a wind slider does. The handles show the wind the settings ask for, the
@@ -1168,7 +1183,7 @@ function drawHodograph(){
   ctx.strokeStyle = c.grid; ctx.fillStyle = c.label; ctx.lineWidth = 1
   ctx.beginPath(); ctx.moveTo(cx - maxRing * scale, cy); ctx.lineTo(cx + maxRing * scale, cy); ctx.moveTo(cx, cy - maxRing * scale); ctx.lineTo(cx, cy + maxRing * scale); ctx.stroke()
   for (let r = 10; r <= maxRing; r += 10) { ctx.beginPath(); ctx.arc(cx, cy, r * scale, 0, Math.PI * 2); ctx.stroke(); ctx.fillText(`${r}`, cx + r * scale * .71 + 2, cy - r * scale * .71 - 2) }
-  ctx.fillText('С', cx + 3, 10); ctx.fillText('В', w - 10, cy - 3)
+  ctx.fillText(COMPASS[0], cx + 3, 10); ctx.fillText(COMPASS[2], w - 10, cy - 3)
   const P = (p: { u: number, v: number }) => [cx + p.u * scale, cy - p.v * scale] as const
   // Bunkers right (RM) and left (LM) movers.
   for (const [label, [u, v]] of [['RM', preview?.right ?? sim.storm.rightMover], ['LM', preview?.left ?? sim.storm.leftMover]] as const) { const [x, y] = P({ u, v }); ctx.fillStyle = '#7b3fa0'; ctx.beginPath(); ctx.arc(x, y, 2.6, 0, Math.PI * 2); ctx.fill(); ctx.fillText(label, x + 4, y + 9) }
@@ -1184,11 +1199,11 @@ function drawHodograph(){
   // Handles: rings at the wind the settings ask for, the dragged one filled.
   ctx.lineWidth = 1.5
   winds.forEach(([u, v], k) => { const [x, y] = P({ u, v }); ctx.strokeStyle = c.text; ctx.beginPath(); ctx.arc(x, y, 5.5, 0, Math.PI * 2); ctx.stroke(); if (hodoDrag?.k === k) { ctx.globalAlpha = .35; ctx.fillStyle = c.text; ctx.fill(); ctx.globalAlpha = 1 } })
-  text('hodoHint', !editable ? 'Ветер задан формулами WK и здесь не меняется.' : config.sounding ? 'Кружки 0; 0,5; 1; 3; 6 и 10 км можно тянуть: ветер зондирования поправится между соседними кружками, расчёт начнётся заново.' : 'Кружки 0; 0,5; 1; 3; 6 и 10 км можно тянуть, как ползунки ветра: расчёт начнётся заново.')
+  text('hodoHint', !editable ? L('Ветер задан формулами WK и здесь не меняется.', 'The wind is set by the WK formulas and cannot be changed here.') : config.sounding ? L('Кружки 0; 0,5; 1; 3; 6 и 10 км можно тянуть: ветер зондирования поправится между соседними кружками, расчёт начнётся заново.', 'The circles at 0, 0.5, 1, 3, 6 and 10 km can be dragged: the sounding’s wind is adjusted between neighbouring circles and the run starts again.') : L('Кружки 0; 0,5; 1; 3; 6 и 10 км можно тянуть, как ползунки ветра: расчёт начнётся заново.', 'The circles at 0, 0.5, 1, 3, 6 and 10 km can be dragged like the wind sliders: the run starts again.'))
   document.querySelector<HTMLElement>('#hodoReset')!.hidden = !windChanged()
   const w0 = wind[0], w6 = wind.find(p => Math.abs(p.z - 6) < 1e-6)!, shear = Math.hypot(w6.u - w0.u, w6.v - w0.v)
-  text('shear', `${shear.toFixed(0)} м/с`)
-  text('shearHint', shear < 10 ? 'слабый: одиночные ячейки' : shear < 20 ? 'умеренный: мультиячейки' : 'сильный: возможны суперячейки')
+  text('shear', `${shear.toFixed(0)}${MS}`)
+  text('shearHint', shear < 10 ? L('слабый: одиночные ячейки', 'weak: single cells') : shear < 20 ? L('умеренный: мультиячейки', 'moderate: multicells') : L('сильный: возможны суперячейки', 'strong: supercells possible'))
 }
 const timeline = new Timeline()
 // The phone layout's overlay and bottom bar (hud.ts; hidden on a desktop by CSS).
@@ -1200,10 +1215,10 @@ showThemeChoice()
 let shownLive: Live | null = null
 function frame(now:number){
   const elapsed=Math.min(.2,(now-last)/1000);last=now;if(running)sim.advance(elapsed);if(!(radar.open||skewt.open||station.open||detector.open||zonesPanel.open||analysis.open))sim.render();const d=sim.diagnostics()
-  text('cape',d.cape.toFixed(0));text('mlcape',d.indices.ml.cape.toFixed(0));text('mlcin',d.indices.ml.cin.toFixed(0));text('mucape',d.indices.mu.cape.toFixed(0));text('dcape',d.indices.dcape.toFixed(0));text('srh01',d.storm.srh01.toFixed(0));text('srh03',d.storm.srh03.toFixed(0));text('scp',d.storm.scp.toFixed(1));text('stp',d.storm.stp.toFixed(1));text('cin',d.cin.toFixed(0));text('updraft',d.updraft.toFixed(1));text('downdraft',d.downdraft.toFixed(1));text('uh',d.updraftHelicity.toFixed(0));text('uhLow',`${d.uh01.toFixed(0)} / ${d.uh03.toFixed(0)}`);text('cloudTop',d.cloudTop.toFixed(1));text('thermalTop',d.thermalTop.toFixed(1));text('cloudWater',d.cloudWater.toFixed(2));text('coldPool',d.coldPool.toFixed(1));text('gust',d.gust.toFixed(1));text('hail',d.hail>=1?(d.hail/10).toFixed(1):'—');text('hailSwath',d.hailSwath>=1?`за прогон до ${(d.hailSwath/10).toFixed(1)} см`:'');showMode(d.hail>=1);text('clipped',String(d.clipped));showRain(d.rain);text('hailWord',hailWord(d.hail));text('cloudGenus',d.cloud);text('rainTotal',d.rainTotal.toFixed(1));text('lcl',d.lcl===null?'—':`${d.lcl.toFixed(1)} км`);text('lfc',d.lfc===null?'—':`${d.lfc.toFixed(1)} км`);text('el',d.el===null?'—':`${d.el.toFixed(1)} км`);text('cellType',d.cellType);text('cellReason',d.cellReason);text('logicText',d.logic);text('sun',`${d.insolation.toFixed(0)} Вт/м²`);text('sunElevation',d.sunElevation>0?`${d.sunElevation.toFixed(0)}° над горизонтом`:'ночь')
-  text('surfaceReadout',({grass:'ТРАВА',dry:'СУХАЯ ПОЧВА',water:'ВОДА',urban:'ГОРОД'} as const)[config.surfaceType])
-  const b=sim.balance;text('rkw',b?b.ratio.toFixed(1):'—');text('rkwNote',b?`C ${b.c.toFixed(0)} / Δu ${b.deltaU.toFixed(0)} м/с`:'купола нет');const card=document.querySelector<HTMLElement>('#rkwCard')!;card.dataset.base??=card.title;card.title=b?`${card.dataset.base}\n\nСейчас: ${describeBalance(b)}.`:card.dataset.base
-  text('time',runTime(sim.time));text('localTime',timeOfDay(config.hour,sim.time));text('threads',String(sim.threads));text('freezing',d.freezing===null?'—':`${d.freezing.toFixed(1)} км`);if(sim.live!==shownLive){shownLive=sim.live;skewt.setLive(shownLive.env,shownLive)}const sampled=timeline.record({t:sim.time,cape:sim.live.indices.sb.cape,cin:sim.live.indices.sb.cin,updraft:d.updraft,uh:d.updraftHelicity,rain:d.rain,rainTotal:d.rainTotal,rotationHeld:sim.model.rotation.persisted,flashes:sim.model.flashes.filter(f=>f.time>sim.time-60).length});if(frameCount++%20===0){drawSounding();drawHodograph();drawSpin()}if(sampled||frameCount%20===1){const{ctx,w,h}=prepareCanvas('timeline');timeline.draw(ctx,w,h)}updateCells();radar.refresh();const probe=sim.cells.find(selectedCell);skewt.refresh(probe?{id:probe.id,x:probe.x,y:probe.y,u:probe.u+sim.model.frame[0],v:probe.v+sim.model.frame[1]}:null);station.refresh(sim.station,placingStation);detector.refresh(sim.model);analysis.refresh(sim.model);showSpeed();showTornado();zonesPanel.refresh(sim.model);listRewind();markStory();hud.update({time:sim.time,local:timeOfDay(config.hour,sim.time),updraft:d.updraft,rain:d.rain,uh:d.updraftHelicity,mesocyclone:sim.model.rotation.persisted>=MESO_PERSISTENCE,regime:document.querySelector('#cellType')!.textContent??'',running,speed:config.speed,story:storyText(),sky:[d.cloud.split(' — ')[0],rainWord(d.rain)].filter(Boolean).join(' · ')});canvas.style.cursor=placingStation||pickingGround?'crosshair':'';requestAnimationFrame(frame)
+  text('cape',d.cape.toFixed(0));text('mlcape',d.indices.ml.cape.toFixed(0));text('mlcin',d.indices.ml.cin.toFixed(0));text('mucape',d.indices.mu.cape.toFixed(0));text('dcape',d.indices.dcape.toFixed(0));text('srh01',d.storm.srh01.toFixed(0));text('srh03',d.storm.srh03.toFixed(0));text('scp',d.storm.scp.toFixed(1));text('stp',d.storm.stp.toFixed(1));text('cin',d.cin.toFixed(0));text('updraft',d.updraft.toFixed(1));text('downdraft',d.downdraft.toFixed(1));text('uh',d.updraftHelicity.toFixed(0));text('uhLow',`${d.uh01.toFixed(0)} / ${d.uh03.toFixed(0)}`);text('cloudTop',d.cloudTop.toFixed(1));text('thermalTop',d.thermalTop.toFixed(1));text('cloudWater',d.cloudWater.toFixed(2));text('coldPool',d.coldPool.toFixed(1));text('gust',d.gust.toFixed(1));text('hail',d.hail>=1?(d.hail/10).toFixed(1):'—');text('hailSwath',d.hailSwath>=1?L(`за прогон до ${(d.hailSwath/10).toFixed(1)} см`,`up to ${(d.hailSwath/10).toFixed(1)} cm this run`):'');showMode(d.hail>=1);text('clipped',String(d.clipped));showRain(d.rain);text('hailWord',hailWord(d.hail));text('cloudGenus',d.cloud);text('rainTotal',d.rainTotal.toFixed(1));text('lcl',d.lcl===null?'—':`${d.lcl.toFixed(1)}${KM}`);text('lfc',d.lfc===null?'—':`${d.lfc.toFixed(1)}${KM}`);text('el',d.el===null?'—':`${d.el.toFixed(1)}${KM}`);text('cellType',d.cellType);text('cellReason',d.cellReason);text('logicText',d.logic);text('sun',`${d.insolation.toFixed(0)} ${L('Вт/м²','W/m²')}`);text('sunElevation',d.sunElevation>0?L(`${d.sunElevation.toFixed(0)}° над горизонтом`,`${d.sunElevation.toFixed(0)}° above the horizon`):L('ночь','night'))
+  text('surfaceReadout',({grass:L('ТРАВА','GRASS'),dry:L('СУХАЯ ПОЧВА','DRY SOIL'),water:L('ВОДА','WATER'),urban:L('ГОРОД','CITY')})[config.surfaceType])
+  const b=sim.balance;text('rkw',b?b.ratio.toFixed(1):'—');text('rkwNote',b?`C ${b.c.toFixed(0)} / Δu ${b.deltaU.toFixed(0)}${MS}`:L('купола нет','no cold pool'));const card=document.querySelector<HTMLElement>('#rkwCard')!;card.dataset.base??=card.title;card.title=b?`${card.dataset.base}\n\n${L('Сейчас','Now')}: ${describeBalance(b)}.`:card.dataset.base
+  text('time',runTime(sim.time));text('localTime',timeOfDay(config.hour,sim.time));text('threads',String(sim.threads));text('freezing',d.freezing===null?'—':`${d.freezing.toFixed(1)}${KM}`);if(sim.live!==shownLive){shownLive=sim.live;skewt.setLive(shownLive.env,shownLive)}const sampled=timeline.record({t:sim.time,cape:sim.live.indices.sb.cape,cin:sim.live.indices.sb.cin,updraft:d.updraft,uh:d.updraftHelicity,rain:d.rain,rainTotal:d.rainTotal,rotationHeld:sim.model.rotation.persisted,flashes:sim.model.flashes.filter(f=>f.time>sim.time-60).length});if(frameCount++%20===0){drawSounding();drawHodograph();drawSpin()}if(sampled||frameCount%20===1){const{ctx,w,h}=prepareCanvas('timeline');timeline.draw(ctx,w,h)}updateCells();radar.refresh();const probe=sim.cells.find(selectedCell);skewt.refresh(probe?{id:probe.id,x:probe.x,y:probe.y,u:probe.u+sim.model.frame[0],v:probe.v+sim.model.frame[1]}:null);station.refresh(sim.station,placingStation);detector.refresh(sim.model);analysis.refresh(sim.model);showSpeed();showTornado();zonesPanel.refresh(sim.model);listRewind();markStory();hud.update({time:sim.time,local:timeOfDay(config.hour,sim.time),updraft:d.updraft,rain:d.rain,uh:d.updraftHelicity,mesocyclone:sim.model.rotation.persisted>=MESO_PERSISTENCE,regime:document.querySelector('#cellType')!.textContent??'',running,speed:config.speed,story:storyText(),sky:[d.cloud.split(' — ')[0],rainWord(d.rain)].filter(Boolean).join(' · ')});canvas.style.cursor=placingStation||pickingGround?'crosshair':'';requestAnimationFrame(frame)
 }
 showDomain()
 requestAnimationFrame(frame)

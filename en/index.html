@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="MeteoLab: a numerical atmosphere lab — a thunderstorm computed from physics, in the browser">
+    <title>MeteoLab — a numerical atmosphere lab</title>
+    <script>
+      try { const t = localStorage.getItem('meteolab-theme'); if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t } catch {}
+    </script>
+  </head>
+  <body class="site">
+    <header class="site-header"><div class="container site-header__in">
+      <a class="logo" href="./" style="font-size:19px"><span class="logo__mark" style="width:22px;height:22px"></span>MeteoLab</a>
+      <nav class="site-nav"><a href="simulator/">Simulator</a><a href="#scenarios">Scenarios</a><a href="guide/">How to use it</a><a href="about/">About the model</a><a href="https://github.com/Bandananor/MeteoLAB">GitHub</a><a href="https://t.me/MeteoLabBnor" class="nav-channel">Telegram</a><a href="../" data-lang-switch hreflang="ru" title="Русская версия">RU</a></nav>
+      <div class="seg seg--text" role="group" aria-label="Theme"><button data-theme-set="auto" title="As the system">Auto</button><button data-theme-set="light">Light</button><button data-theme-set="dark">Dark</button></div>
+      <div class="site-header__menu"><button class="btn btn--quiet btn--icon btn--touch" data-theme-toggle aria-label="Light or dark theme">◐</button><button class="btn btn--quiet btn--icon btn--touch" data-menu-toggle aria-expanded="false" aria-label="Menu" style="color:var(--text)">☰</button></div>
+      <div class="menu menu--touch site-menu" id="siteMenu" hidden><a class="menu__item" href="simulator/">Simulator</a><a class="menu__item" href="#scenarios">Scenarios</a><a class="menu__item" href="guide/">How to use it</a><a class="menu__item" href="about/">About the model</a><a class="menu__item" href="https://github.com/Bandananor/MeteoLAB">GitHub</a><a class="menu__item" href="https://t.me/MeteoLabBnor">The project’s Telegram channel</a><a class="menu__item" href="../" data-lang-switch hreflang="ru">Русская версия</a></div>
+    </div></header>
+    <main class="container">
+      <section class="hero">
+        <div class="hero__text">
+          <div class="t-eyebrow">A numerical atmosphere lab · the StormLab model</div>
+          <h1 class="t-display" style="margin:0">A thunderstorm computed from physics — in your browser</h1>
+          <p class="hero__lead">Set the temperature, humidity and wind by height — and watch a storm grow: from a single cell to a supercell with a mesocyclone. For lessons, for study and for storm watchers.</p>
+          <div class="hero__actions"><a class="btn btn--primary btn--hero" href="simulator/">Launch the simulator</a><a class="btn btn--hero" href="about/">How it works</a></div>
+          <a class="hero__channel" href="https://t.me/MeteoLabBnor">Project news, new versions and experiments explained — on Telegram (in Russian): t.me/MeteoLabBnor →</a>
+        </div>
+        <figure class="media" style="margin:0;aspect-ratio:1179/591"><img src="../src/site/hero-wk.jpg" alt="A supercell in the model: a cloud with an anvil over a green plain" width="1179" height="591"><figcaption class="media__caption ov-badge" style="letter-spacing:0">WK supercell · a frame of the model</figcaption></figure>
+      </section>
+      <div class="facts"><div><b data-fact="domain">48 × 36 × 18.9 km</b><span>domain</span></div><div><b data-fact="grid">~1.2 km</b><span>grid spacing</span></div><div><b data-fact="dt">3 s</b><span>time step</span></div><div><b data-fact="scenarios">9</b><span>scenarios</span></div></div>
+      <section class="section" id="scenarios">
+        <div class="section__head"><div class="section__title"><span class="t-eyebrow">01</span><h2 data-fact="scenarioTitle">Nine scenarios</h2><p>Ready-made settings, checked by runs in the cloud. Click one — the simulator opens with it right away.</p></div><a class="btn btn--quiet" href="simulator/">All the settings — in the simulator →</a></div>
+        <div class="grid-3" id="scenarioCards"></div>
+        <button class="btn btn--touch btn--block only-phone" id="moreScenarios">More scenarios</button>
+      </section>
+      <section class="section"><div class="section__title"><span class="t-eyebrow">02</span><h2>What’s inside</h2></div><ol class="features">
+        <li><div><h3>A real 3D model</h3><p>The equations of motion, pressure, buoyancy, cloud, rain, snow, graupel and hail on a ~1 km grid. Not an animation — every frame is computed.</p></div></li>
+        <li><div><h3>Radar, Skew-T, station</h3><p>Three instruments on their own screens: a dual-polarization Doppler radar with cross-sections and mesocyclones, a thermodynamic diagram, a meteogram.</p></div></li>
+        <li><div><h3>The day from dawn</h3><p>The sun heats the ground, eats the night inversion — and in the afternoon the first storms grow out of the heating.</p></div></li>
+        <li><div><h3>Works on a phone</h3><p>3D on the whole screen, large numbers, a panel for the thumb.</p></div></li>
+        <li><div><h3>A link and a run file</h3><p>A link opens the same experiment with the same settings. A run can be saved to a file and continued from the same minute.</p></div></li>
+        <li><div><h3>Checked against the literature</h3><p>Benchmark tests: the Bryan–Fritsch warm bubble, the Straka cold bubble; the parcel — against MetPy; calibration by the Weisman–Klemp experiment.</p></div></li>
+      </ol></section>
+      <section class="study"><div class="section__title"><span class="t-eyebrow">03</span><h2>For teaching</h2><p>An experiment opens from a link with the same settings — hand it out to a class or show it on a projector in the light theme.</p></div><div class="grid-3">
+        <article class="task"><span class="t-eyebrow">Task 1</span><h3>Where did the rain go?</h3><span class="task__scen">“Summer day” with a moist and a dry middle</span><p>Note the rain total after 40 minutes, then make the middle layer dry (3–7 km humidity — 15 %) and repeat. How did the rain and the cold outflow change? Use the “What is happening” text and the humidity by layer to explain where the water went. The whole class gets the same numbers from the link to the run.</p><span class="task__meta">20 min · ages 14–15</span></article>
+        <article class="task"><span class="t-eyebrow">Task 2</span><h3>Where rotation comes from</h3><span class="task__scen">“Multicell storm” and “Classic supercell”</span><p>Both experiments have vortices, but only one has a mesocyclone. Compare the hodographs and the 0–6 km wind shear, find the mesocyclone mark on the radar.</p><span class="task__meta">30 min · ages 16–17</span></article>
+        <article class="task"><span class="t-eyebrow">Task 3</span><h3>When will the storm start</h3><span class="task__scen">“Diurnal cycle”</span><p>Follow on the Skew-T how the sun eats the night inversion. Note the time of the first cumulus and the first storm, compare with a forecast from the level of free convection.</p><span class="task__meta">45 min · club, university</span></article>
+      </div></section>
+      <section class="channel" id="channel"><div class="channel__text"><span class="t-eyebrow">04</span><h2>The project’s Telegram channel</h2><p>MeteoLab news comes out there (in Russian): new versions and scenarios, storms computed by the model explained, plans and polls on what to do next. You can also ask a question there or send your own experiment as a link.</p></div><a class="btn btn--primary btn--hero" href="https://t.me/MeteoLabBnor">Open t.me/MeteoLabBnor</a></section>
+    </main>
+    <footer class="site-footer"><div class="container site-footer__in"><div><a class="logo" href="./"><span class="logo__mark"></span>MeteoLab</a><p>A numerical atmosphere lab on the StormLab thunderstorm model. MIT licence · © 2026 Bandananor</p><p class="footer-channel"><a href="https://t.me/MeteoLabBnor">The project’s Telegram channel — t.me/MeteoLabBnor</a></p><p class="faint">The EMSquad team · <a href="https://t.me/EMSquad">t.me/EMSquad</a></p></div><nav><a href="simulator/">Simulator</a><a href="#scenarios">Scenarios</a><a href="guide/">How to use it</a><a href="about/">About the model</a><a href="about/#changelog">Changelog</a><a href="https://github.com/Bandananor/MeteoLAB">GitHub</a><a href="../" data-lang-switch hreflang="ru">Русская версия</a><span class="num faint" style="font-size:12px">v2.7.0.1</span></nav></div></footer>
+    <script type="module" src="/src/site/landing.ts"></script>
+  </body>
+</html>

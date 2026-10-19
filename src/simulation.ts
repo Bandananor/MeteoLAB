@@ -1,3 +1,4 @@
+import type { Lang } from './i18n'
 // Message protocol between the main thread (Atmosphere) and the physics worker (simulation.worker.ts).
 import type { Flash, ModelDiagnostics, RotationState, SimConfig } from './core'
 
@@ -18,8 +19,9 @@ export const BATCH_BUDGET_MS = 60
 export const MAX_THREADS = 6
 
 export type WorkerRequest =
+  /** lang: the page's language (src/i18n.ts), for any text the worker makes. */
   /** threads: an upper limit for the physics threads (the page's ?threads= parameter, to compare speeds). */
-  | { type: 'init'; config: SimConfig; threads?: number }
+  | { type: 'init'; config: SimConfig; threads?: number; lang?: Lang }
   | { type: 'advance'; seconds: number }
   | { type: 'config'; config: SimConfig }
   | { type: 'perturb'; x: number; y: number; strength: number }

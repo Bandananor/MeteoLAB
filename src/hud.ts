@@ -1,3 +1,4 @@
+import { L } from './i18n'
 // The phone layout (release 2.0): the 3D view fills the screen with a few large numbers and the storm mode over it, a
 // bar at the bottom holds what a thumb needs (scenarios, pause, restart, speed, data, instruments), and the two side
 // columns of the desktop page become sheets that slide up over the bar. The page itself is the same; CSS rearranges it
@@ -42,13 +43,13 @@ export function askLayout(then?: () => void) {
     const pic = phone ? '<span class="layout-pic layout-pic--phone"><i></i><i class="v"></i><i></i></span>'
       : '<span class="layout-pic layout-pic--desktop"><i></i><span class="layout-pic__cols"><i></i><i class="v"></i><i></i></span></span>'
     return `<button class="choice${recommended ? ' is-recommended' : ''}" data-layout="${layout}"><span class="choice__pic">${pic}</span><span style="display:flex;flex-direction:column;gap:5px;min-width:0">`
-      + `<span class="choice__name">${phone ? 'Телефон' : 'Компьютер'}${recommended ? '<span class="choice__tag">подходит этому экрану</span>' : ''}</span>`
-      + `<span class="choice__desc">${phone ? '3D во весь экран, крупные цифры, панель под палец' : 'Три колонки: обстановка, 3D, данные'}</span></span></button>`
+      + `<span class="choice__name">${phone ? L('Телефон', 'Phone') : L('Компьютер', 'Computer')}${recommended ? `<span class="choice__tag">${L('подходит этому экрану', 'fits this screen')}</span>` : ''}</span>`
+      + `<span class="choice__desc">${phone ? L('3D во весь экран, крупные цифры, панель под палец', '3D on the whole screen, large numbers, a panel for the thumb') : L('Три колонки: обстановка, 3D, данные', 'Three columns: setting, 3D, data')}</span></span></button>`
   }
   dialog.className = 'modal modal--wide'
-  dialog.innerHTML = `<h2 class="modal__title" style="font-size:24px;line-height:30px">Как показывать MeteoLab?</h2>
+  dialog.innerHTML = `<h2 class="modal__title" style="font-size:24px;line-height:30px">${L('Как показывать MeteoLab?', 'How should MeteoLab look?')}</h2>
     <div class="choice-list">${card(suggested)}${card(suggested === 'phone' ? 'desktop' : 'phone')}</div>
-    <p class="modal__text" style="color:var(--text-3)">Выбор запомнится. Переключить можно в любой момент — в шапке или в меню «Приборы» на телефоне.</p>`
+    <p class="modal__text" style="color:var(--text-3)">${L('Выбор запомнится. Переключить можно в любой момент — в шапке или в меню «Приборы» на телефоне.', 'The choice is remembered. Switch any time — in the header, or in the “Instruments” menu on a phone.')}</p>`
   const choose = (layout: Layout) => { applyLayout(layout); dialog.close(); dialog.remove(); then?.() }
   dialog.addEventListener('click', e => {
     const layout = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-layout]')?.dataset.layout as Layout | undefined
@@ -67,9 +68,9 @@ export function askGuide() {
   try { if (localStorage.getItem(GUIDE_KEY)) return } catch { /* ask */ }
   const dialog = document.createElement('dialog')
   dialog.className = 'modal guide-offer'
-  dialog.innerHTML = `<h2 class="modal__title">Сложно? Посмотрите наш гайд</h2>
-    <p class="modal__text">Где какие кнопки, как менять параметры погоды, как пользоваться радаром и Skew-T — коротко и по шагам. Гайд всегда под рукой: кнопка «Справка» в шапке (на телефоне — в меню «Приборы»).</p>
-    <div class="modal__actions"><button class="btn btn--danger" data-guide="no">Я знаю, что делаю</button><button class="btn btn--primary" data-guide="yes">Хорошо, посмотрю</button></div>`
+  dialog.innerHTML = `<h2 class="modal__title">${L('Сложно? Посмотрите наш гайд', 'Complicated? Have a look at our guide')}</h2>
+    <p class="modal__text">${L('Где какие кнопки, как менять параметры погоды, как пользоваться радаром и Skew-T — коротко и по шагам. Гайд всегда под рукой: кнопка «Справка» в шапке (на телефоне — в меню «Приборы»).', 'Where the buttons are, how to change the weather, how to use the radar and the Skew-T — short and step by step. The guide is always at hand: the “Guide” button in the header (on a phone — in the “Instruments” menu).')}</p>
+    <div class="modal__actions"><button class="btn btn--danger" data-guide="no">${L('Я знаю, что делаю', 'I know what I’m doing')}</button><button class="btn btn--primary" data-guide="yes">${L('Хорошо, посмотрю', 'OK, I’ll look')}</button></div>`
   const done = (open: boolean) => {
     try { localStorage.setItem(GUIDE_KEY, '1') } catch { /* asked again next time */ }
     dialog.close(); dialog.remove()
@@ -110,8 +111,8 @@ export class Hud {
     overlay.innerHTML = `
       <div class="ov-nums">
         <div class="ov-num"><span class="ov-num__label">T+ · <span data-hud="local">—</span></span><span class="ov-num__value" data-hud="time">0:00</span></div>
-        <div class="ov-num"><span class="ov-num__label">поток, м/с</span><span class="ov-num__value" data-hud="updraft">0</span></div>
-        <div class="ov-num"><span class="ov-num__label">дождь, мм/ч</span><span class="ov-num__value" data-hud="rain">0</span></div>
+        <div class="ov-num"><span class="ov-num__label">${L('поток, м/с', 'updraught, m/s')}</span><span class="ov-num__value" data-hud="updraft">0</span></div>
+        <div class="ov-num"><span class="ov-num__label">${L('дождь, мм/ч', 'rain, mm/h')}</span><span class="ov-num__value" data-hud="rain">0</span></div>
         <div class="ov-num"><span class="ov-num__label">UH</span><span class="ov-num__value" data-hud="uh">0</span></div>
       </div>
       <div class="ov-modeline"><span class="ov-mode"><span><span data-hud="regime">—</span><small class="ov-mode__sky" data-hud="sky"></small></span></span><p class="ov-story" data-hud="story" hidden></p><p class="ov-story" data-hud="notice" hidden></p></div>`
@@ -120,15 +121,15 @@ export class Hud {
     try { seen = localStorage.getItem(GESTURE_KEY) === '1' } catch { /* show it */ }
     if (!seen) {
       const hint = document.createElement('div'); hint.className = 'ov-bottom m-only'
-      hint.innerHTML = '<div class="ov-gesture"><span style="flex:1">Палец — вращение · щипок — масштаб · двойной тап — термик</span><button aria-label="Скрыть">×</button></div>'
+      hint.innerHTML = `<div class="ov-gesture"><span style="flex:1">${L('Палец — вращение · щипок — масштаб · двойной тап — термик', 'Finger — rotate · pinch — zoom · double tap — thermal')}</span><button aria-label="${L('Скрыть', 'Hide')}">×</button></div>`
       hint.querySelector('button')!.addEventListener('click', () => { hint.remove(); try { localStorage.setItem(GESTURE_KEY, '1') } catch { /* this visit only */ } })
       viewport.appendChild(hint)
     }
-    this.bar = document.createElement('nav'); this.bar.className = 'bottombar m-only'; this.bar.setAttribute('aria-label', 'Управление')
+    this.bar = document.createElement('nav'); this.bar.className = 'bottombar m-only'; this.bar.setAttribute('aria-label', L('Управление', 'Controls'))
     const item = (act: string, glyph: string, label: string, expandable = false) =>
       `<button data-act="${act}"${expandable ? ' aria-expanded="false"' : ''}><span class="bottombar__glyph"${act === 'pause' || act === 'speed' ? ` data-hud="${act}"` : ''}>${glyph}</span><span class="bottombar__label"${act === 'pause' ? ' data-hud="pauseText"' : ''}>${label}</span></button>`
-    this.bar.innerHTML = item('scenarios', '☰', 'Сценарии', true) + item('pause', '❚❚', 'Пауза') + item('restart', '↻', 'Заново') +
-      item('speed', '×8', 'Скорость') + item('data', '▤', 'Данные', true) + item('tools', '◉', 'Приборы', true)
+    this.bar.innerHTML = item('scenarios', '☰', L('Сценарии', 'Scenarios'), true) + item('pause', '❚❚', L('Пауза', 'Pause')) + item('restart', '↻', L('Заново', 'Restart')) +
+      item('speed', '×8', L('Скорость', 'Speed')) + item('data', '▤', L('Данные', 'Data'), true) + item('tools', '◉', L('Приборы', 'Instruments'), true)
     this.bar.querySelector('[data-act="speed"]')!.setAttribute('title', SPEEDS.map(s => `×${s}`).join(' → '))
     app.appendChild(this.bar)
     this.scrim = document.createElement('div'); this.scrim.className = 'sheet-scrim m-only'; this.scrim.hidden = true
@@ -136,31 +137,32 @@ export class Hud {
     app.appendChild(this.scrim)
     this.menu = document.createElement('div'); this.menu.className = 'menu-anchor m-only'; this.menu.hidden = true
     this.menu.innerHTML = `<div class="menu menu--touch" role="menu">
-      <button class="menu__item" role="menuitem" data-tool="#radarOpen"><span class="menu__glyph">◉</span>Радар</button>
+      <button class="menu__item" role="menuitem" data-tool="#radarOpen"><span class="menu__glyph">◉</span>${L('Радар', 'Radar')}</button>
       <button class="menu__item" role="menuitem" data-tool="#skewOpen"><span class="menu__glyph">⟋</span>Skew-T</button>
-      <button class="menu__item" role="menuitem" data-tool="#zonesOpen"><span class="menu__glyph">▦</span>Зоны</button>
-      <button class="menu__item" role="menuitem" data-tool="#detectorOpen"><span class="menu__glyph">ϟ</span>Молнии</button>
-      <button class="menu__item" role="menuitem" data-tool="#analysisOpen"><span class="menu__glyph">≋</span>Анализ</button>
-      <button class="menu__item" role="menuitem" data-tool="#stationOpen"><span class="menu__glyph">⌂</span>Станция</button>
+      <button class="menu__item" role="menuitem" data-tool="#zonesOpen"><span class="menu__glyph">▦</span>${L('Зоны', 'Zones')}</button>
+      <button class="menu__item" role="menuitem" data-tool="#detectorOpen"><span class="menu__glyph">ϟ</span>${L('Молнии', 'Lightning')}</button>
+      <button class="menu__item" role="menuitem" data-tool="#analysisOpen"><span class="menu__glyph">≋</span>${L('Анализ', 'Analysis')}</button>
+      <button class="menu__item" role="menuitem" data-tool="#stationOpen"><span class="menu__glyph">⌂</span>${L('Станция', 'Station')}</button>
       <div class="menu__sep"></div>
-      <button class="menu__item" role="menuitem" data-tool="#groundToggle"><span class="menu__glyph">⛰</span>Вид с земли</button>
-      <button class="menu__item" role="menuitem" data-tool="#snapshotButton"><span class="menu__glyph">◫</span>Снимок</button>
-      <button class="menu__item" role="menuitem" data-tool="#immersiveToggle"><span class="menu__glyph">⛶</span>Во весь экран</button>
+      <button class="menu__item" role="menuitem" data-tool="#groundToggle"><span class="menu__glyph">⛰</span>${L('Вид с земли', 'View from the ground')}</button>
+      <button class="menu__item" role="menuitem" data-tool="#snapshotButton"><span class="menu__glyph">◫</span>${L('Снимок', 'Snapshot')}</button>
+      <button class="menu__item" role="menuitem" data-tool="#immersiveToggle"><span class="menu__glyph">⛶</span>${L('Во весь экран', 'Full screen')}</button>
       <div class="menu__sep"></div>
-      <button class="menu__item" role="menuitem" data-tool="#layoutToggle"><span class="menu__glyph">▭</span>Компьютерный вид</button>
-      <a class="menu__item" role="menuitem" href="../guide/" target="_blank" rel="noopener"><span class="menu__glyph">?</span>Как пользоваться</a>
-      <a class="menu__item" role="menuitem" href="https://t.me/MeteoLabBnor" target="_blank" rel="noopener"><span class="menu__glyph">✈</span>Канал проекта</a>
+      <button class="menu__item" role="menuitem" data-tool="#layoutToggle"><span class="menu__glyph">▭</span>${L('Компьютерный вид', 'Computer layout')}</button>
+      <a class="menu__item" role="menuitem" href="../guide/" target="_blank" rel="noopener"><span class="menu__glyph">?</span>${L('Как пользоваться', 'How to use it')}</a>
+      <a class="menu__item" role="menuitem" href="https://t.me/MeteoLabBnor" target="_blank" rel="noopener"><span class="menu__glyph">✈</span>${L('Канал проекта', 'Project channel')}</a>
+      <a class="menu__item" role="menuitem" href="#" data-lang-switch><span class="menu__glyph">⇄</span>${L('English version', 'Русская версия')}</a>
       <div class="menu__sep"></div>
-      <div class="menu__group"><span class="label">Качество картинки</span><div class="seg seg--text seg--block seg--touch" role="group" aria-label="Качество картинки"><button data-quality-set="auto">Авто</button><button data-quality-set="low">Низкое</button><button data-quality-set="medium">Среднее</button><button data-quality-set="high">Высокое</button></div></div>
-      <div class="menu__group"><span class="label">Тема</span><div class="seg seg--text seg--block seg--touch" role="group" aria-label="Тема"><button data-theme-set="auto">Авто</button><button data-theme-set="light">Светлая</button><button data-theme-set="dark">Тёмная</button></div></div>
+      <div class="menu__group"><span class="label">${L('Качество картинки', 'Picture quality')}</span><div class="seg seg--text seg--block seg--touch" role="group" aria-label="${L('Качество картинки', 'Picture quality')}"><button data-quality-set="auto">${L('Авто', 'Auto')}</button><button data-quality-set="low">${L('Низкое', 'Low')}</button><button data-quality-set="medium">${L('Среднее', 'Medium')}</button><button data-quality-set="high">${L('Высокое', 'High')}</button></div></div>
+      <div class="menu__group"><span class="label">${L('Тема', 'Theme')}</span><div class="seg seg--text seg--block seg--touch" role="group" aria-label="${L('Тема', 'Theme')}"><button data-theme-set="auto">${L('Авто', 'Auto')}</button><button data-theme-set="light">${L('Светлая', 'Light')}</button><button data-theme-set="dark">${L('Тёмная', 'Dark')}</button></div></div>
     </div>`
     app.appendChild(this.menu)
     // The side columns become the sheets: a handle, a title and «Свернуть» on top (hidden on a desktop).
     const left = document.querySelector<HTMLElement>('.side--left')!, right = document.querySelector<HTMLElement>('.side--right')!
     this.sheets = { scenarios: left, data: right }
-    for (const [panel, title] of [[left, 'Сценарии'], [right, 'Данные']] as const) {
+    for (const [panel, title] of [[left, L('Сценарии', 'Scenarios')], [right, L('Данные', 'Data')]] as const) {
       const head = document.createElement('div'); head.className = 'sheet-top m-only'
-      head.innerHTML = `<span class="sheet__handle"></span><div class="sheet__head"><h2 class="sheet__title">${title}</h2><button class="btn btn--quiet btn--touch">Свернуть</button></div>`
+      head.innerHTML = `<span class="sheet__handle"></span><div class="sheet__head"><h2 class="sheet__title">${title}</h2><button class="btn btn--quiet btn--touch">${L('Свернуть', 'Hide')}</button></div>`
       head.querySelector('button')!.addEventListener('click', () => this.show(null))
       panel.prepend(head)
     }
@@ -207,6 +209,6 @@ export class Hud {
     set('regime', s.regime); set('story', s.story); set('sky', s.sky)
     for (const el of document.querySelectorAll<HTMLElement>('[data-hud="story"]')) el.hidden = !s.story
     document.querySelector('.ov-mode')!.classList.toggle('is-meso', s.mesocyclone)
-    set('pause', s.running ? '❚❚' : '▶'); set('pauseText', s.running ? 'Пауза' : 'Пуск'); set('speed', `×${s.speed}`)
+    set('pause', s.running ? '❚❚' : '▶'); set('pauseText', s.running ? L('Пауза', 'Pause') : L('Пуск', 'Run')); set('speed', `×${s.speed}`)
   }
 }

@@ -1,3 +1,4 @@
+import { decimal, L } from '../i18n'
 import { type AtmosphereModel, densityCurrentSpeed, Environment, type FrontConfig, headingVector, parcelIndices, stormMotion, type ZoneConfig, zoneProfile } from '../core'
 import { help, instrumentPalette, instrumentScreen, numbers, readings, section } from '../instrument'
 import { MONO } from '../theme'
@@ -11,14 +12,15 @@ const FRONT_DEFAULTS: Record<FrontConfig['kind'], FrontConfig> = {
 }
 /** The front's sliders: key, label, range, step, unit. */
 const FRONT_SLIDERS: [keyof FrontConfig, string, number, number, number, string][] = [
-  ['contrast', 'Контраст: насколько холоднее холодный воздух', 1, 12, .5, ' K'],
-  ['depth', 'Глубина холодного воздуха', .3, 3, .1, ' км'],
-  ['slope', 'Наклон фронтальной поверхности, 1 : …', 30, 300, 10, ''],
-  ['speed', 'Скорость фронта', 0, 20, .5, ' м/с'],
-  ['heading', 'Куда движется', 0, 355, 5, '°'],
-  ['start', 'Где в начале: от центра области', -40, 40, 1, ' км'],
+  ['contrast', L('Контраст: насколько холоднее холодный воздух', 'Contrast: how much colder the cold air is'), 1, 12, .5, ' K'],
+  ['depth', L('Глубина холодного воздуха', 'Depth of the cold air'), .3, 3, .1, L(' км', ' km')],
+  ['slope', L('Наклон фронтальной поверхности, 1 : …', 'Slope of the frontal surface, 1 : …'), 30, 300, 10, ''],
+  ['speed', L('Скорость фронта', 'Front speed'), 0, 20, .5, L(' м/с', ' m/s')],
+  ['heading', L('Куда движется', 'Moving towards'), 0, 355, 5, '°'],
+  ['start', L('Где в начале: от центра области', 'Start position: from the domain’s centre'), -40, 40, 1, L(' км', ' km')],
 ]
-const POINTS8 = ['север', 'северо-восток', 'восток', 'юго-восток', 'юг', 'юго-запад', 'запад', 'северо-запад']
+const LEFT = L('левая', 'left')
+const POINTS8 = L('север северо-восток восток юго-восток юг юго-запад запад северо-запад', 'north north-east east south-east south south-west west north-west').split(' ')
 const fmt = (v: number, digits = 1) => `${v > 0 ? '+' : v < 0 ? '−' : ''}${Math.abs(v).toFixed(digits).replace('.', ',')}`
 
 /**
@@ -43,18 +45,18 @@ export class ZonesPanel {
 
   constructor(host: HTMLElement) {
     const range = (id: string, label: string, min: number, max: number) => `<label class="field"><span class="field__head"><span class="field__label">${label}</span><output class="field__value" id="${id}Out"></output></span><input class="range" type="range" id="${id}" min="${min}" max="${max}" step="0.5" value="0"></label>`
-    this.root = instrumentScreen(host, 'zones-app', 'METEOLAB · ЗОНЫ СРЕДЫ',
-      '<span>ЗОН <b id="zoneCount">0</b></span><span id="zoneState"></span>',
-      section('Зоны', `<button class="btn btn--block" id="zoneDraw" title="Щелчками по карте поставьте углы зоны, затем «Готово»">Нарисовать зону</button>
-          <div class="side__row"><button class="btn" id="zoneDone" disabled>Готово</button><button class="btn" id="zoneCancel" disabled>Отмена</button></div>
+    this.root = instrumentScreen(host, 'zones-app', L('METEOLAB · ЗОНЫ СРЕДЫ', 'METEOLAB · ENVIRONMENT ZONES'),
+      `<span>${L('ЗОН', 'ZONES')} <b id="zoneCount">0</b></span><span id="zoneState"></span>`,
+      section(L('Зоны', 'Zones'), `<button class="btn btn--block" id="zoneDraw" title="${L('Щелчками по карте поставьте углы зоны, затем «Готово»', 'Click the map to place the zone’s corners, then “Done”')}">${L('Нарисовать зону', 'Draw a zone')}</button>
+          <div class="side__row"><button class="btn" id="zoneDone" disabled>${L('Готово', 'Done')}</button><button class="btn" id="zoneCancel" disabled>${L('Отмена', 'Cancel')}</button></div>
           <p class="psec__hint" id="zoneHint"></p>`)
-      + section('Выбранная зона', `<div id="zoneEdit">${range('zoneT', 'Температура у земли', -T_RANGE, T_RANGE)}${range('zoneQ', 'Влажность у земли (водяной пар)', -Q_RANGE, Q_RANGE)}
-          <div id="zoneNumbers"></div><button class="btn btn--block" id="zoneDelete">Удалить зону</button></div><span class="t-caption" id="zoneNone">Щёлкните по зоне на карте</span>`)
-      + section('Фронт', `<div class="seg seg--block seg--instrument" data-seg="frontKind"><button data-value="none">Нет</button><button data-value="cold">Холодный</button><button data-value="warm">Тёплый</button></div>
+      + section(L('Выбранная зона', 'Selected zone'), `<div id="zoneEdit">${range('zoneT', L('Температура у земли', 'Surface temperature'), -T_RANGE, T_RANGE)}${range('zoneQ', L('Влажность у земли (водяной пар)', 'Surface moisture (water vapour)'), -Q_RANGE, Q_RANGE)}
+          <div id="zoneNumbers"></div><button class="btn btn--block" id="zoneDelete">${L('Удалить зону', 'Delete the zone')}</button></div><span class="t-caption" id="zoneNone">${L('Щёлкните по зоне на карте', 'Click a zone on the map')}</span>`)
+      + section(L('Фронт', 'Front'), `<div class="seg seg--block seg--instrument" data-seg="frontKind"><button data-value="none">${L('Нет', 'None')}</button><button data-value="cold">${L('Холодный', 'Cold')}</button><button data-value="warm">${L('Тёплый', 'Warm')}</button></div>
           <div id="frontEdit">${FRONT_SLIDERS.map(([key, label, min, max, step]) => `<label class="field"><span class="field__head"><span class="field__label">${label}</span><output class="field__value" id="front_${key}Out"></output></span><input class="range" type="range" id="front_${key}" min="${min}" max="${max}" step="${step}"></label>`).join('')}
           <p class="psec__hint" id="frontNote"></p></div>`)
-      + section('Расчёт', `<button class="btn btn--block btn--primary" id="zoneApply">Применить — расчёт заново</button><button class="btn btn--block" id="zoneClear">Убрать все зоны</button>`)
-      + help('Зона — участок земли со своим воздухом у земли: теплее или холоднее, влажнее или суше, чем профиль; к 1,5 км разница сходит на нет, края размыты на 2 км. Так задают то, что в природе делает погоду неоднородной: полосу влажного воздуха, сухую линию, остывшее после дождя пятно, тёплый город. Гроза, которая идёт через зоны, сама растёт там, где ей хватает тепла и влаги, и слабеет там, где нет. Зоны лежат на земле: область модели едет вместе с грозой, а зоны стоят. Модель мягко держит воздух каждой зоны (за ~15 минут), но не выше 1,5 км и не снаружи: отток грозы течёт свободно. Тёплая зона — как остров тепла: на её краях возникает ветерок, воздух сходится и поднимается — там могут зарождаться грозы. CAPE и CIN — частица от земли в зоне и в среде вокруг. Линии на карте — куда пойдут грозы от термика (○) за 40 минут (у края земля повторяется, как сама область): суперячейка обычно уходит по красному пути (правая ячейка по Банкерсу), её левая пара — по синему, обычные грозы — по серому (средний ветер 0–6 км). Путь меняется с ветром: поправьте годограф — и он повернёт; зону ставьте на пути, минут на 30–40 впереди.'))
+      + section(L('Расчёт', 'Run'), `<button class="btn btn--block btn--primary" id="zoneApply">${L('Применить — расчёт заново', 'Apply — restart the run')}</button><button class="btn btn--block" id="zoneClear">${L('Убрать все зоны', 'Remove all zones')}</button>`)
+      + help(L('Зона — участок земли со своим воздухом у земли: теплее или холоднее, влажнее или суше, чем профиль; к 1,5 км разница сходит на нет, края размыты на 2 км. Так задают то, что в природе делает погоду неоднородной: полосу влажного воздуха, сухую линию, остывшее после дождя пятно, тёплый город. Гроза, которая идёт через зоны, сама растёт там, где ей хватает тепла и влаги, и слабеет там, где нет. Зоны лежат на земле: область модели едет вместе с грозой, а зоны стоят. Модель мягко держит воздух каждой зоны (за ~15 минут), но не выше 1,5 км и не снаружи: отток грозы течёт свободно. Тёплая зона — как остров тепла: на её краях возникает ветерок, воздух сходится и поднимается — там могут зарождаться грозы. CAPE и CIN — частица от земли в зоне и в среде вокруг. Линии на карте — куда пойдут грозы от термика (○) за 40 минут (у края земля повторяется, как сама область): суперячейка обычно уходит по красному пути (правая ячейка по Банкерсу), её левая пара — по синему, обычные грозы — по серому (средний ветер 0–6 км). Путь меняется с ветром: поправьте годограф — и он повернёт; зону ставьте на пути, минут на 30–40 впереди.', 'A zone is a patch of ground with its own near-surface air: warmer or colder, moister or drier than the profile; the difference fades out by 1.5 km, the edges are blurred over 2 km. This is how you set what makes the weather uneven in nature: a tongue of moist air, a dry line, a rain-cooled patch, a warm city. A storm passing through the zones grows where it finds enough heat and moisture and weakens where it does not. The zones lie on the ground: the model’s domain travels with the storm, the zones stay. The model gently holds each zone’s air (over ~15 minutes), but not above 1.5 km and not outside it: the storm’s outflow flows freely. A warm zone is like a heat island: a breeze rises at its edges, the air converges and lifts — storms can start there. CAPE and CIN — the surface parcel in the zone and in the environment around it. The lines on the map show where storms from the thermal (○) will go in 40 minutes (at the edge the ground repeats, like the domain itself): a supercell usually takes the red path (the Bunkers right mover), its left partner the blue one, ordinary storms the grey one (the 0–6 km mean wind). The path changes with the wind: adjust the hodograph and it turns; place a zone on the path, some 30–40 minutes ahead.')))
     this.canvas = this.root.querySelector('canvas')!; this.ctx = this.canvas.getContext('2d')!
     const $ = <T extends HTMLElement>(id: string) => this.root.querySelector<T>(`#${id}`)!
     this.root.querySelector('.ibar__close')!.addEventListener('click', () => this.toggle(false))
@@ -140,7 +142,7 @@ export class ZonesPanel {
       ctx.strokeStyle = z.moisture > 0 ? '#4fc46a' : z.moisture < 0 ? '#c49a5a' : '#9aa5ab'; ctx.lineWidth = k === this.chosen ? 3 : 1.5
       ctx.beginPath(); z.points.forEach(([x, y], i) => i ? ctx.lineTo(X(x), Y(y)) : ctx.moveTo(X(x), Y(y))); ctx.closePath(); ctx.fill(); ctx.stroke()
       const cx = z.points.reduce((s, p) => s + p[0], 0) / z.points.length, cy = z.points.reduce((s, p) => s + p[1], 0) / z.points.length
-      ctx.fillStyle = pal.text; ctx.fillText(`${fmt(z.temperature)}° ${fmt(z.moisture)} г/кг`, X(cx) - 40, Y(cy) + 4)
+      ctx.fillStyle = pal.text; ctx.fillText(`${fmt(z.temperature)}° ${fmt(z.moisture)} ${L('г/кг', 'g/kg')}`, X(cx) - 40, Y(cy) + 4)
     })
     if (this.drawing) {
       ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1.5; ctx.setLineDash([4, 3]); ctx.beginPath()
@@ -150,7 +152,7 @@ export class ZonesPanel {
     // Where storms will go in 40 minutes (from the starting thermal, ground-relative Bunkers motion of the environment):
     // lines broken at the edge and continued on the other side (the ground repeats, as the domain), ticks every 10 min.
     const motion = stormMotion(m.env), start = m.config.profile === 'weisman-klemp' ? [W * .3, D * .5] : [W * .38, D * .45]
-    const tracks: [string, readonly [number, number], string][] = [['правая', motion.rightMover, '#ff6b6b'], ['левая', motion.leftMover, '#6ba8ff'], ['средний ветер', motion.meanWind, '#c9d1d5']]
+    const tracks: [string, readonly [number, number], string][] = [[L('правая', 'right'), motion.rightMover, '#ff6b6b'], [LEFT, motion.leftMover, '#6ba8ff'], [L('средний ветер', 'mean wind'), motion.meanWind, '#c9d1d5']]
     const wrap = (x: number, size: number) => (x % size + size) % size
     for (const [name, [u, v], color] of tracks) {
       ctx.strokeStyle = ctx.fillStyle = color; ctx.lineWidth = 2
@@ -163,7 +165,7 @@ export class ZonesPanel {
         if (t % 10 === 0) {
           ctx.stroke(); ctx.beginPath(); ctx.arc(X(x), Y(y), t === 40 ? 4 : 3, 0, Math.PI * 2); ctx.fill(); ctx.beginPath(); ctx.moveTo(X(x), Y(y))
           // The left mover's labels under its dots: the two movers' tracks often end close together.
-          if (t % 20 === 0) ctx.fillText(`${t}′${t === 40 ? ' ' + name : ''}`, X(x) + 7, Y(y) + (name === 'левая' ? 15 : -7))
+          if (t % 20 === 0) ctx.fillText(`${t}′${t === 40 ? ' ' + name : ''}`, X(x) + 7, Y(y) + (name === LEFT ? 15 : -7))
         }
       }
       ctx.stroke()
@@ -179,7 +181,7 @@ export class ZonesPanel {
       ctx.restore(); ctx.setLineDash([])
     }
     ctx.fillStyle = pal.label
-    ctx.fillText(`км · север вверху · ○ термик, линии — путь гроз за 40 мин (метки каждые 10 мин; правая и левая ячейки по Банкерсу, средний ветер)${m.time > 0 ? ' · жёлтый пунктир — где область сейчас' : ''}`, X(0), Y(D) - 8)
+    ctx.fillText(L('км · север вверху · ○ термик, линии — путь гроз за 40 мин (метки каждые 10 мин; правая и левая ячейки по Банкерсу, средний ветер)', 'km · north up · ○ thermal, lines — the storms’ paths over 40 min (marks every 10 min; Bunkers right and left movers, mean wind)') + (m.time > 0 ? L(' · жёлтый пунктир — где область сейчас', ' · yellow dashes — where the domain is now') : ''), X(0), Y(D) - 8)
     this.side()
   }
 
@@ -192,12 +194,12 @@ export class ZonesPanel {
     for (const [key, , min, max, , unit] of FRONT_SLIDERS) {
       const v = f[key] as number, input = this.root.querySelector<HTMLInputElement>(`#front_${key}`)!
       input.value = String(v); input.style.setProperty('--p', `${(v - min) / (max - min) * 100}%`)
-      this.text(`front_${key}Out`, key === 'heading' ? `${v}° — на ${compass(v)}` : key === 'slope' ? `1 : ${v}` : `${String(v).replace('.', ',').replace('-', '−')}<span class="u">${unit}</span>`)
+      this.text(`front_${key}Out`, key === 'heading' ? `${v}° — ${L('на', 'towards')} ${compass(v)}` : key === 'slope' ? `1 : ${v}` : `${decimal(v, String(v).split('.')[1]?.length ?? 0).replace('-', '−')}<span class="u">${unit}</span>`)
     }
     const own = densityCurrentSpeed(f)
     this.text('frontNote', f.kind === 'cold'
-      ? `Холодный воздух такой глубины и контраста сам шёл бы со скоростью ~${own.toFixed(0)} м/с (плотностное течение); заданная скорость поддерживается крупномасштабным «подталкиванием». У земли — крутая голова фронта: на ней поднимается тёплый воздух и прорывается задерживающий слой.`
-      : `Тёплый воздух натекает на клин холодного и поднимается по нему; клин пологий: на 100 км он поднимается на ${(100 / f.slope).toFixed(1).replace('.', ',')} км. Грозы — над холодным слоем (приподнятая конвекция).`)
+      ? L(`Холодный воздух такой глубины и контраста сам шёл бы со скоростью ~${own.toFixed(0)} м/с (плотностное течение); заданная скорость поддерживается крупномасштабным «подталкиванием». У земли — крутая голова фронта: на ней поднимается тёплый воздух и прорывается задерживающий слой.`, `Cold air of this depth and contrast would move at ~${own.toFixed(0)} m/s by itself (a density current); the set speed is kept by a large-scale “push”. At the ground the front has a steep head: the warm air rises over it and breaks through the cap.`)
+      : L(`Тёплый воздух натекает на клин холодного и поднимается по нему; клин пологий: на 100 км он поднимается на ${(100 / f.slope).toFixed(1).replace('.', ',')} км. Грозы — над холодным слоем (приподнятая конвекция).`, `The warm air flows onto the cold wedge and rises along it; the wedge is gentle: over 100 km it rises ${(100 / f.slope).toFixed(1)} km. Storms form above the cold layer (elevated convection).`))
   }
 
   /** The front on the map: now (solid, with its symbols, the cold air shaded) and in 20 and 40 minutes (dashed). */
@@ -230,21 +232,21 @@ export class ZonesPanel {
   private side() {
     const m = this.model!, changed = this.key() !== this.applied, z = this.zones[this.chosen]
     this.sideFront()
-    this.text('zoneCount', String(this.zones.length)); this.text('zoneState', changed ? '<b>НЕ ПРИМЕНЕНЫ</b>' : '')
-    this.text('zoneHint', this.drawing ? `Углов: ${this.drawing.length}. Щёлкайте по карте; «Готово» (или двойной щелчок) замыкает зону, Esc — отмена.` : this.zones.length ? 'Щёлкните по зоне, чтобы выбрать её.' : 'Зон нет: среда одна на всю область.')
+    this.text('zoneCount', String(this.zones.length)); this.text('zoneState', changed ? `<b>${L('НЕ ПРИМЕНЕНЫ', 'NOT APPLIED')}</b>` : '')
+    this.text('zoneHint', this.drawing ? L(`Углов: ${this.drawing.length}. Щёлкайте по карте; «Готово» (или двойной щелчок) замыкает зону, Esc — отмена.`, `Corners: ${this.drawing.length}. Click the map; “Done” (or a double click) closes the zone, Esc — cancel.`) : this.zones.length ? L('Щёлкните по зоне, чтобы выбрать её.', 'Click a zone to select it.') : L('Зон нет: среда одна на всю область.', 'No zones: one environment over the whole domain.'))
     ;(this.root.querySelector('#zoneDone') as HTMLButtonElement).disabled = !this.drawing || this.drawing.length < 3
     ;(this.root.querySelector('#zoneCancel') as HTMLButtonElement).disabled = !this.drawing
     ;(this.root.querySelector('#zoneApply') as HTMLButtonElement).disabled = !changed
     ;(this.root.querySelector('#zoneEdit') as HTMLElement).hidden = !z; (this.root.querySelector('#zoneNone') as HTMLElement).hidden = !!z
     if (!z) return
-    for (const [id, v, unit] of [['zoneT', z.temperature, '°'], ['zoneQ', z.moisture, ' г/кг']] as const) {
+    for (const [id, v, unit] of [['zoneT', z.temperature, '°'], ['zoneQ', z.moisture, L(' г/кг', ' g/kg')]] as const) {
       const input = this.root.querySelector<HTMLInputElement>(`#${id}`)!
       input.value = String(v); input.style.setProperty('--p', `${(v - Number(input.min)) / (Number(input.max) - Number(input.min)) * 100}%`)
       this.text(`${id}Out`, `${fmt(v)}<span class="u">${unit}</span>`)
     }
     const height = m.grid.height, base = parcelIndices(m.env, height).sb, here = parcelIndices(new Environment(m.config, m.grid, zoneProfile(m.env, z)), height).sb
-    this.text('zoneNumbers', numbers([['CAPE в зоне', here.cape.toFixed(0), 'Дж/кг'], ['CIN в зоне', here.cin.toFixed(0), 'Дж/кг']])
-      + `<dl class="kv">${readings([['вокруг', `CAPE ${base.cape.toFixed(0)}, CIN ${base.cin.toFixed(0)} Дж/кг`]])}</dl>`)
+    this.text('zoneNumbers', numbers([[L('CAPE в зоне', 'CAPE in the zone'), here.cape.toFixed(0), L('Дж/кг', 'J/kg')], [L('CIN в зоне', 'CIN in the zone'), here.cin.toFixed(0), L('Дж/кг', 'J/kg')]])
+      + `<dl class="kv">${readings([[L('вокруг', 'around'), `CAPE ${base.cape.toFixed(0)}, CIN ${base.cin.toFixed(0)} ${L('Дж/кг', 'J/kg')}`]])}</dl>`)
   }
 }
 

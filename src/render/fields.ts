@@ -1,3 +1,4 @@
+import { L } from '../i18n'
 import * as THREE from 'three'
 import { type ScalarField, UH_LAYERS, type UhLayer } from '../core'
 
@@ -8,12 +9,12 @@ export interface FieldInfo { title: string; units: string; min: number; max: num
 const DIVERGING = ['#24476b', '#4d86b3', '#a9c9df', '#f1efe9', '#eab58f', '#cf6d49', '#8f2a1f']
 
 export const FIELDS: Record<ScalarField, FieldInfo> = {
-  updraft: { title: 'Вертикальная скорость', units: 'м/с', min: -15, max: 15, diverging: true, threshold: .25, stops: DIVERGING },
-  theta: { title: 'Отклонение температуры от окружения', units: 'K', min: -4, max: 4, diverging: true, threshold: .3, stops: DIVERGING },
-  moisture: { title: 'Относительная влажность', units: '%', min: 0, max: 100, diverging: false, threshold: .85, stops: ['#7a5a33', '#b89a63', '#e3dcc0', '#9ccbbd', '#4b9aa3', '#1f5d78'] },
-  vorticity: { title: 'Вертикальная завихренность', units: '10⁻³ с⁻¹', min: -4, max: 4, diverging: true, threshold: .3, stops: DIVERGING },
-  helicity: { title: 'Вращение восходящего потока UH (слой 2–5 км)', units: 'м²/с²', min: -300, max: 300, diverging: true, threshold: .3, stops: DIVERGING },
-  coldpool: { title: 'Охлаждение от испарения осадков', units: 'K', min: 0, max: 8, diverging: false, threshold: .15, stops: ['#f1efe9', '#b9d7e6', '#6ea6cc', '#3769a0', '#1d3565'] },
+  updraft: { title: L('Вертикальная скорость', 'Vertical velocity'), units: L('м/с', 'm/s'), min: -15, max: 15, diverging: true, threshold: .25, stops: DIVERGING },
+  theta: { title: L('Отклонение температуры от окружения', 'Temperature departure from the environment'), units: 'K', min: -4, max: 4, diverging: true, threshold: .3, stops: DIVERGING },
+  moisture: { title: L('Относительная влажность', 'Relative humidity'), units: '%', min: 0, max: 100, diverging: false, threshold: .85, stops: ['#7a5a33', '#b89a63', '#e3dcc0', '#9ccbbd', '#4b9aa3', '#1f5d78'] },
+  vorticity: { title: L('Вертикальная завихренность', 'Vertical vorticity'), units: L('10⁻³ с⁻¹', '10⁻³ s⁻¹'), min: -4, max: 4, diverging: true, threshold: .3, stops: DIVERGING },
+  helicity: { title: L('Вращение восходящего потока UH (слой 2–5 км)', 'Updraught rotation UH (2–5 km layer)'), units: L('м²/с²', 'm²/s²'), min: -300, max: 300, diverging: true, threshold: .3, stops: DIVERGING },
+  coldpool: { title: L('Охлаждение от испарения осадков', 'Cooling by evaporating precipitation'), units: 'K', min: 0, max: 8, diverging: false, threshold: .15, stops: ['#f1efe9', '#b9d7e6', '#6ea6cc', '#3769a0', '#1d3565'] },
 }
 
 /** A field's description, with the title and colour scale of the chosen UH layer for the helicity map. */
@@ -21,7 +22,7 @@ export function fieldInfo(field: ScalarField, uhLayer: UhLayer = '2-5'): FieldIn
   const info = FIELDS[field]
   if (field !== 'helicity') return info
   const l = UH_LAYERS[uhLayer]
-  return { ...info, title: `Вращение восходящего потока UH, ${l.label}`, min: -l.scale, max: l.scale }
+  return { ...info, title: `${L('Вращение восходящего потока UH', 'Updraught rotation UH')}, ${l.label}`, min: -l.scale, max: l.scale }
 }
 
 export function colormapTexture(stops: string[]) {

@@ -3,6 +3,7 @@
 // the updraught at the gust front stands upright and keeps lifting fresh air (long-lived lines); with a stronger cold
 // pool the gust front runs ahead and the cells lean back over their own outflow and weaken; with stronger shear they
 // lean downshear and the cold pool is too weak to lift air to its LFC on its own.
+import { L } from '../i18n'
 import { G } from './constants'
 import type { Environment } from './environment'
 import type { Grid } from './grid'
@@ -50,7 +51,7 @@ export function coldPoolBalance(m: RkwSource): ColdPoolBalance | null {
 
 /** What the balance means, in a few words. */
 export function describeBalance(b: ColdPoolBalance) {
-  if (b.ratio > 1.5) return 'купол сильнее сдвига: фронт порывов убегает вперёд, ячейки заваливаются назад над оттоком и слабеют'
-  if (b.ratio >= .7) return 'купол и сдвиг уравновешены: поток у фронта порывов стоит прямо, новые ячейки растут на нём — так живут линии шквалов'
-  return 'сдвиг сильнее купола: ячейки наклонены по сдвигу, купол слишком слаб, чтобы сам поднимать воздух'
+  if (b.ratio > 1.5) return L('купол сильнее сдвига: фронт порывов убегает вперёд, ячейки заваливаются назад над оттоком и слабеют', 'the cold pool is stronger than the shear: the gust front runs ahead, the cells lean back over the outflow and weaken')
+  if (b.ratio >= .7) return L('купол и сдвиг уравновешены: поток у фронта порывов стоит прямо, новые ячейки растут на нём — так живут линии шквалов', 'the cold pool and the shear are balanced: the updraught at the gust front stands upright and new cells grow on it — this is how squall lines live')
+  return L('сдвиг сильнее купола: ячейки наклонены по сдвигу, купол слишком слаб, чтобы сам поднимать воздух', 'the shear is stronger than the cold pool: the cells lean with the shear, the pool is too weak to lift the air by itself')
 }

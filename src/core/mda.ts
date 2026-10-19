@@ -1,3 +1,4 @@
+import { L } from '../i18n'
 import { beamHeight, type PPI, RADAR_TILTS } from './ppi'
 
 /** Polar scan of the detection: 500 m gates out to 60 km, 1.5° beams. */
@@ -24,10 +25,10 @@ const TRACK_DISTANCE = 5000
  */
 export type MesoStrength = 'circulation' | 'weak' | 'moderate' | 'strong'
 export const MESO_STRENGTH: Record<MesoStrength, { name: string; vrot: number }> = {
-  circulation: { name: 'Циркуляция (ниже порога мезоциклона)', vrot: MDA_MIN_DV / 2 },
-  weak: { name: 'Слабый мезоциклон', vrot: 12.5 },
-  moderate: { name: 'Умеренный мезоциклон', vrot: 18 },
-  strong: { name: 'Сильный мезоциклон', vrot: 23 },
+  circulation: { name: L('Циркуляция (ниже порога мезоциклона)', 'Circulation (below the mesocyclone threshold)'), vrot: MDA_MIN_DV / 2 },
+  weak: { name: L('Слабый мезоциклон', 'Weak mesocyclone'), vrot: 12.5 },
+  moderate: { name: L('Умеренный мезоциклон', 'Moderate mesocyclone'), vrot: 18 },
+  strong: { name: L('Сильный мезоциклон', 'Strong mesocyclone'), vrot: 23 },
 }
 export const mesoStrength = (vrot: number): MesoStrength => vrot >= MESO_STRENGTH.strong.vrot ? 'strong' : vrot >= MESO_STRENGTH.moderate.vrot ? 'moderate' : vrot >= MESO_STRENGTH.weak.vrot ? 'weak' : 'circulation'
 

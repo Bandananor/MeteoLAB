@@ -1,4 +1,5 @@
 import type { CameraGrade } from './camera'
+import { lang } from './i18n'
 import { applyState, readState, AtmosphereModel, CellTracker, coldPoolBalance, type SavedState, saveState, type ColdPoolBalance, computeSounding, domainPoint, groundPoint, Station, type Environment, insolation, liveSounding, type ModelDiagnostics, parcelIndices, type ParcelIndices, type SimConfig, type Sounding, stormIndices, type StormIndices, sunDirection } from './core'
 import { describeConvection } from './describe'
 import { isPhone, PHONE_THREADS } from './hud'
@@ -66,7 +67,7 @@ export class Atmosphere implements ViewSettings {
     this.worker.addEventListener('message', (event: MessageEvent<Snapshot>) => this.receive(event.data))
     // Fewer threads on a phone (it would overheat), unless the address asks for a number.
     const threads = Number(new URLSearchParams(location.search).get('threads')) || (isPhone() ? PHONE_THREADS : undefined)
-    this.post({ type: 'init', config: { ...config }, threads })
+    this.post({ type: 'init', config: { ...config }, threads, lang: lang() })
   }
 
   get time() { return this.mirror.time }

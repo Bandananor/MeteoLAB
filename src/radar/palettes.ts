@@ -1,3 +1,4 @@
+import { L } from '../i18n'
 // Radar colour palettes: the built-in ones of every product, the user's own (kept in the browser), and the .pal text
 // format the hobby radar programs (GRLevelX and its followers) use and their users share: one stop per line,
 // "Color: value R G B [R G B]" (a gradient from this stop, to the second colour or to the next stop's colour),
@@ -17,11 +18,11 @@ export interface Palette { id: string; name: string; kind: PaletteKind; stops: S
  * (velocity: every echo has some speed).
  */
 export const KINDS: Record<PaletteKind, { label: string; units: string; palUnits: string; min: number; max: number; codes: string[]; clampBelow: boolean; digits: number }> = {
-  Z: { label: 'Отражаемость (Z, CR)', units: 'dBZ', palUnits: 'DBZ', min: -30, max: 90, codes: ['BR', 'CR', 'REF', 'DBZ', 'Z'], clampBelow: false, digits: 0 },
-  V: { label: 'Скорость (V, SRV)', units: 'м/с', palUnits: 'MPS', min: -90, max: 90, codes: ['BV', 'SRV', 'VEL', 'V', 'SR'], clampBelow: true, digits: 0 },
-  ZDR: { label: 'ZDR', units: 'дБ', palUnits: 'DB', min: -6, max: 10, codes: ['ZDR', 'DR'], clampBelow: false, digits: 1 },
+  Z: { label: L('Отражаемость (Z, CR)', 'Reflectivity (Z, CR)'), units: 'dBZ', palUnits: 'DBZ', min: -30, max: 90, codes: ['BR', 'CR', 'REF', 'DBZ', 'Z'], clampBelow: false, digits: 0 },
+  V: { label: L('Скорость (V, SRV)', 'Velocity (V, SRV)'), units: L('м/с', 'm/s'), palUnits: 'MPS', min: -90, max: 90, codes: ['BV', 'SRV', 'VEL', 'V', 'SR'], clampBelow: true, digits: 0 },
+  ZDR: { label: 'ZDR', units: L('дБ', 'dB'), palUnits: 'DB', min: -6, max: 10, codes: ['ZDR', 'DR'], clampBelow: false, digits: 1 },
   RHO: { label: 'ρhv (RHO, CC)', units: '', palUnits: 'NONE', min: 0, max: 1.1, codes: ['CC', 'RHO', 'RHOHV', 'PHV'], clampBelow: false, digits: 2 },
-  KDP: { label: 'KDP', units: '°/км', palUnits: 'DEG/KM', min: -4, max: 12, codes: ['KDP', 'KD'], clampBelow: false, digits: 1 },
+  KDP: { label: 'KDP', units: L('°/км', '°/km'), palUnits: 'DEG/KM', min: -4, max: 12, codes: ['KDP', 'KD'], clampBelow: false, digits: 1 },
 }
 
 const hex = (h: string): RGB => [1, 3, 5].map(k => parseInt(h.slice(k, k + 2), 16)) as unknown as RGB
@@ -32,18 +33,18 @@ const VIRIDIS = ['#440154', '#414487', '#2a788e', '#22a884', '#7ad151', '#fde725
 const viridis = (a: number, b: number, top?: string): Stop[] => [...VIRIDIS, ...(top ? [top] : [])].map((c, i, all) => ({ value: a + (b - a) * i / (all.length - 1), color: hex(c) }))
 
 export const BUILTIN: Palette[] = ([
-  { id: 'z-nws', name: 'NWS (классическая)', kind: 'Z', stops: steps([[5, '#04e9e7'], [10, '#019ff4'], [15, '#0300f4'], [20, '#02fd02'], [25, '#01c501'], [30, '#008e00'], [35, '#fdf802'], [40, '#e5bc00'], [45, '#fd9500'], [50, '#fd0000'], [55, '#d40000'], [60, '#bc0000'], [65, '#f800fd'], [70, '#9854c6'], [75, '#fdfdfd']]) },
-  { id: 'z-dark', name: 'Тёмная плавная', kind: 'Z', stops: smooth([[5, '#27384a'], [15, '#3b6e96'], [20, '#2f9e5c'], [30, '#1a6b2c'], [35, '#e3d63a'], [45, '#ef8c1f'], [50, '#d9302b'], [60, '#8c0f30'], [65, '#e36ae0'], [70, '#9a62d8'], [75, '#ffffff']]) },
-  { id: 'z-cvd', name: 'Для дальтоников (viridis)', kind: 'Z', stops: viridis(5, 65, '#ffffff') },
-  { id: 'v-classic', name: 'Зелёный / красный', kind: 'V', stops: steps([[-40, '#00ffa6'], [-35, '#00e676'], [-30, '#00c85a'], [-25, '#00a845'], [-20, '#008c37'], [-15, '#00702b'], [-10, '#005521'], [-5, '#3d4f42'], [0, '#5a4646'], [5, '#701f1f'], [10, '#8c2424'], [15, '#aa2b2b'], [20, '#c83434'], [25, '#e54242'], [30, '#ff6060'], [35, '#ffa0a0']]) },
-  { id: 'v-smooth', name: 'Плавная', kind: 'V', stops: smooth([[-40, '#b4ffd8'], [-25, '#13d36a'], [-10, '#0b6b34'], [-1, '#4a5a50'], [1, '#5c4646'], [10, '#8a1f24'], [25, '#e8393f'], [40, '#ffc4c4']]) },
-  { id: 'v-cvd', name: 'Для дальтоников (синий / оранжевый)', kind: 'V', stops: smooth([[-40, '#c6dbef'], [-25, '#4292c6'], [-10, '#08306b'], [-1, '#4d4d4d'], [1, '#4d4d4d'], [10, '#7f2704'], [25, '#f16913'], [40, '#fdd0a2']]) },
-  { id: 'zdr-classic', name: 'Классическая', kind: 'ZDR', stops: smooth([[-2, '#3b3b8f'], [0, '#9b9b9b'], [.5, '#4ca7d8'], [1, '#2aa64a'], [1.5, '#a8d82a'], [2, '#f2e33a'], [3, '#f39b2a'], [4, '#e0302a'], [5, '#d22ad8'], [6, '#ffffff']]) },
-  { id: 'zdr-cvd', name: 'Для дальтоников (viridis)', kind: 'ZDR', stops: viridis(-1, 5, '#ffffff') },
-  { id: 'rho-classic', name: 'Классическая', kind: 'RHO', stops: smooth([[.7, '#1b1b70'], [.8, '#3a6ad8'], [.85, '#2ab0c8'], [.9, '#46be4a'], [.93, '#dcd82a'], [.95, '#f0a02a'], [.97, '#e0302a'], [.99, '#a0206a'], [1, '#f2d2f2'], [1.05, '#ffffff']]) },
-  { id: 'rho-cvd', name: 'Для дальтоников (viridis)', kind: 'RHO', stops: viridis(.7, 1, '#ffffff') },
-  { id: 'kdp-classic', name: 'Классическая', kind: 'KDP', stops: smooth([[-1, '#555555'], [0, '#9b9b9b'], [.5, '#4ca7d8'], [1, '#2aa64a'], [2, '#f2e33a'], [3, '#f39b2a'], [4, '#e0302a'], [6, '#d22ad8']]) },
-  { id: 'kdp-cvd', name: 'Для дальтоников (viridis)', kind: 'KDP', stops: viridis(-.5, 5) },
+  { id: 'z-nws', name: L('NWS (классическая)', 'NWS (classic)'), kind: 'Z', stops: steps([[5, '#04e9e7'], [10, '#019ff4'], [15, '#0300f4'], [20, '#02fd02'], [25, '#01c501'], [30, '#008e00'], [35, '#fdf802'], [40, '#e5bc00'], [45, '#fd9500'], [50, '#fd0000'], [55, '#d40000'], [60, '#bc0000'], [65, '#f800fd'], [70, '#9854c6'], [75, '#fdfdfd']]) },
+  { id: 'z-dark', name: L('Тёмная плавная', 'Dark smooth'), kind: 'Z', stops: smooth([[5, '#27384a'], [15, '#3b6e96'], [20, '#2f9e5c'], [30, '#1a6b2c'], [35, '#e3d63a'], [45, '#ef8c1f'], [50, '#d9302b'], [60, '#8c0f30'], [65, '#e36ae0'], [70, '#9a62d8'], [75, '#ffffff']]) },
+  { id: 'z-cvd', name: L('Для дальтоников (viridis)', 'Colour-blind friendly (viridis)'), kind: 'Z', stops: viridis(5, 65, '#ffffff') },
+  { id: 'v-classic', name: L('Зелёный / красный', 'Green / red'), kind: 'V', stops: steps([[-40, '#00ffa6'], [-35, '#00e676'], [-30, '#00c85a'], [-25, '#00a845'], [-20, '#008c37'], [-15, '#00702b'], [-10, '#005521'], [-5, '#3d4f42'], [0, '#5a4646'], [5, '#701f1f'], [10, '#8c2424'], [15, '#aa2b2b'], [20, '#c83434'], [25, '#e54242'], [30, '#ff6060'], [35, '#ffa0a0']]) },
+  { id: 'v-smooth', name: L('Плавная', 'Smooth'), kind: 'V', stops: smooth([[-40, '#b4ffd8'], [-25, '#13d36a'], [-10, '#0b6b34'], [-1, '#4a5a50'], [1, '#5c4646'], [10, '#8a1f24'], [25, '#e8393f'], [40, '#ffc4c4']]) },
+  { id: 'v-cvd', name: L('Для дальтоников (синий / оранжевый)', 'Colour-blind friendly (blue / orange)'), kind: 'V', stops: smooth([[-40, '#c6dbef'], [-25, '#4292c6'], [-10, '#08306b'], [-1, '#4d4d4d'], [1, '#4d4d4d'], [10, '#7f2704'], [25, '#f16913'], [40, '#fdd0a2']]) },
+  { id: 'zdr-classic', name: L('Классическая', 'Classic'), kind: 'ZDR', stops: smooth([[-2, '#3b3b8f'], [0, '#9b9b9b'], [.5, '#4ca7d8'], [1, '#2aa64a'], [1.5, '#a8d82a'], [2, '#f2e33a'], [3, '#f39b2a'], [4, '#e0302a'], [5, '#d22ad8'], [6, '#ffffff']]) },
+  { id: 'zdr-cvd', name: L('Для дальтоников (viridis)', 'Colour-blind friendly (viridis)'), kind: 'ZDR', stops: viridis(-1, 5, '#ffffff') },
+  { id: 'rho-classic', name: L('Классическая', 'Classic'), kind: 'RHO', stops: smooth([[.7, '#1b1b70'], [.8, '#3a6ad8'], [.85, '#2ab0c8'], [.9, '#46be4a'], [.93, '#dcd82a'], [.95, '#f0a02a'], [.97, '#e0302a'], [.99, '#a0206a'], [1, '#f2d2f2'], [1.05, '#ffffff']]) },
+  { id: 'rho-cvd', name: L('Для дальтоников (viridis)', 'Colour-blind friendly (viridis)'), kind: 'RHO', stops: viridis(.7, 1, '#ffffff') },
+  { id: 'kdp-classic', name: L('Классическая', 'Classic'), kind: 'KDP', stops: smooth([[-1, '#555555'], [0, '#9b9b9b'], [.5, '#4ca7d8'], [1, '#2aa64a'], [2, '#f2e33a'], [3, '#f39b2a'], [4, '#e0302a'], [6, '#d22ad8']]) },
+  { id: 'kdp-cvd', name: L('Для дальтоников (viridis)', 'Colour-blind friendly (viridis)'), kind: 'KDP', stops: viridis(-.5, 5) },
 ] as Palette[]).map(p => ({ ...p, builtin: true }))
 
 const sorted = (stops: readonly Stop[]) => [...stops].sort((a, b) => a.value - b.value)
@@ -106,7 +107,7 @@ export function ticks([a, b]: [number, number]) {
 }
 
 /** Reads a .pal file; throws an Error with a message for the user if it has no colours. `kind` is the fallback product. */
-export function parsePal(text: string, fallback: PaletteKind, name = 'Импорт'): Omit<Palette, 'id'> {
+export function parsePal(text: string, fallback: PaletteKind, name = L('Импорт', 'Import')): Omit<Palette, 'id'> {
   let kind: PaletteKind = fallback, scale = 1, offset = 0, units = ''
   const raw: { value: number; color: RGB | null; to?: RGB | null; solid: boolean }[] = []
   const rgb = (n: number[], alpha: boolean): RGB | null => alpha && n[3] === 0 ? null : [n[0], n[1], n[2]].map(c => Math.max(0, Math.min(255, Math.round(c)))) as unknown as RGB
@@ -125,7 +126,7 @@ export function parsePal(text: string, fallback: PaletteKind, name = 'Импор
       raw.push({ value: n[0], color: rgb(n.slice(1), alpha), ...(second !== undefined ? { to: second } : {}), solid: key.startsWith('solid') })
     }
   }
-  if (!raw.length) throw new Error('В файле нет строк Color: или SolidColor:')
+  if (!raw.length) throw new Error(L('В файле нет строк Color: или SolidColor:', 'The file has no Color: or SolidColor: lines'))
   // Velocity in knots or mph without a Scale line: to m/s.
   const unit = kind === 'V' && scale === 1 ? (units === 'KTS' || units === 'KT' ? 1 / .514444 : units === 'MPH' ? 1 / .44704 : 1) : 1
   const stops = raw.map(s => ({ ...s, value: (s.value - offset) / (scale * unit) }))
@@ -166,7 +167,7 @@ export class Palettes {
   /** Adds or replaces a user palette (a built-in id gets a new one) and chooses it. */
   put(p: Omit<Palette, 'id' | 'builtin'> & { id?: string }) {
     const id = p.id && !BUILTIN.some(b => b.id === p.id) ? p.id : `user-${Date.now().toString(36)}-${Math.floor(Math.random() * 1e4)}`
-    const palette: Palette = { id, name: p.name.trim() || 'Своя', kind: p.kind, stops: sorted(p.stops) }
+    const palette: Palette = { id, name: p.name.trim() || L('Своя', 'Own'), kind: p.kind, stops: sorted(p.stops) }
     this.data.user = [...this.data.user.filter(u => u.id !== id), palette]; this.data.chosen[p.kind] = id; this.save()
     return palette
   }

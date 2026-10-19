@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="First steps in the MeteoLab simulator: a first experiment in 10 minutes on a computer and on a phone, a tour of the screen and a “where to find” table for every button">
+    <title>First steps — MeteoLab</title>
+    <script>try { const t = localStorage.getItem('meteolab-theme'); if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t } catch {}</script>
+  </head>
+  <body class="site">
+    <header class="site-header"><div class="container site-header__in">
+      <a class="logo" href="../../" style="font-size:19px"><span class="logo__mark" style="width:22px;height:22px"></span>MeteoLab</a>
+      <nav class="site-nav"><a href="../../simulator/">Simulator</a><a href="../../#scenarios">Scenarios</a><a href="../" aria-current="page">How to use it</a><a href="../../about/">About the model</a><a href="https://github.com/Bandananor/MeteoLAB">GitHub</a><a href="https://t.me/MeteoLabBnor" class="nav-channel">Telegram</a><a href="../../../guide/start/" data-lang-switch hreflang="ru" title="Русская версия">RU</a></nav>
+      <div class="seg seg--text" role="group" aria-label="Theme"><button data-theme-set="auto" title="As the system">Auto</button><button data-theme-set="light">Light</button><button data-theme-set="dark">Dark</button></div>
+      <div class="site-header__menu"><button class="btn btn--quiet btn--icon btn--touch" data-theme-toggle aria-label="Light or dark theme">◐</button><button class="btn btn--quiet btn--icon btn--touch" data-menu-toggle aria-expanded="false" aria-label="Menu" style="color:var(--text)">☰</button></div>
+      <div class="menu menu--touch site-menu" id="siteMenu" hidden><a class="menu__item" href="../../simulator/">Simulator</a><a class="menu__item" href="../../#scenarios">Scenarios</a><a class="menu__item" href="../">How to use it</a><a class="menu__item" href="../../about/">About the model</a><a class="menu__item" href="https://github.com/Bandananor/MeteoLAB">GitHub</a><a class="menu__item" href="https://t.me/MeteoLabBnor">The project’s Telegram channel</a><a class="menu__item" href="../../../guide/start/" data-lang-switch hreflang="ru">Русская версия</a></div>
+    </div></header>
+    <main class="container"><div class="doc">
+      <nav class="toc" aria-label="Contents"><span class="toc__title">Contents</span>
+        <a href="#before"><span class="num">1</span>Before you start</a>
+        <a href="#desktop"><span class="num">2</span>A first experiment on a computer</a>
+        <a href="#phone"><span class="num">3</span>A first experiment on a phone</a>
+        <a href="#tour"><span class="num">4</span>A tour of the screen</a>
+        <a href="#change"><span class="num">5</span>Changing the weather</a>
+        <a href="#inside"><span class="num">6</span>Looking inside the storm</a>
+        <a href="#tools"><span class="num">7</span>Instruments</a>
+        <a href="#keep"><span class="num">8</span>Save and share</a>
+        <a href="#where"><span class="num">9</span>Where to find…</a>
+        <a href="#trouble"><span class="num">10</span>If something is wrong</a>
+        <span class="toc__ver">v2.7.0.1</span></nav>
+      <article class="prose">
+        <span class="t-eyebrow">A guide for newcomers to the site</span>
+        <h1>First steps</h1>
+        <p class="lead">Step by step: how to open the simulator, run your first storm and find any button. The steps for a computer and for a phone are given separately. If some words are unclear (CAPE, wind shear, mesocyclone), they are explained in the <a href="../meteo/">“Meteorology from zero”</a> guide. At the very end is the <a href="#where">“Where to find…”</a> table: every feature and the way to it.</p>
+
+        <h2 id="before"><span class="num">1</span>Before you start</h2>
+        <ul>
+          <li><b>Browser:</b> a recent Chrome, Edge, Firefox or Safari. A graphics card with WebGL is needed (almost everywhere has one).</li>
+          <li><b>Computer or phone:</b> the model is computed on your device — faster and with more to see on a computer; a phone copes too but may get warm.</li>
+          <li><b>Nothing to install</b>, no sign-up. Everything you do stays with you until you save a file or send a link yourself.</li>
+          <li><b>Model time</b> runs faster than real time: 8 times by default (×8). A storm grows over 20–30 model minutes — 3–4 minutes of real time.</li>
+        </ul>
+
+        <h2 id="desktop"><span class="num">2</span>A first experiment on a computer</h2>
+        <ol>
+          <li>Open the <a href="../../simulator/">simulator</a> (on the home page — the “Launch the simulator” button or the “Simulator” item in the header).</li>
+          <li>On the first visit a “How should MeteoLab look?” window appears — press <b>“Computer”</b> (the option that fits your screen is marked). An offer to look at the guide may follow — you can close it.</li>
+          <li>The run is already going: at the top a green “Running” label and the model’s clock <b>T+</b>. The “Summer day” scenario is selected by default.</li>
+          <li>In the <b>left column</b>, in “Scenarios”, press <b>“Classic supercell”</b>. The run starts again from T+00:00.</li>
+          <li>Watch the 3D view in the centre. In 5–10 model minutes a white cloud rises, by minutes 15–20 it grows into an anvil, by minutes 20–30 the downpour and the lightning begin, and a yellow ring appears above the storm — the mesocyclone.</li>
+          <li><b>Turn the camera:</b> hold the left mouse button and drag — the view rotates; the right button pans; the wheel — closer / further.</li>
+          <li><b>On the right</b> watch “Storm mode” (what is happening, in words) and the big numbers: updraught, rotation, rain, gust, hail.</li>
+          <li>Want it faster — find the <b>“Computation”</b> group on the left (at the bottom of the settings, open it with a click) and the “Time acceleration” slider. Pause — the <b>“Pause”</b> button at the bottom of the left column.</li>
+        </ol>
+        <div class="callout"><span class="callout__label">Keys</span><p>R — radar, S — Skew-T, Z — zones, L — lightning, M — station, Esc — close an instrument. A double click on the ground — a new warm bubble (thermal) there.</p></div>
+
+        <h2 id="phone"><span class="num">3</span>A first experiment on a phone</h2>
+        <ol>
+          <li>Open the <a href="../../simulator/">simulator</a>. In the “How should MeteoLab look?” window press <b>“Phone”</b>.</li>
+          <li>The 3D view fills the screen. At the top — the model time, updraught, rain and rotation in large numbers, below them the storm mode.</li>
+          <li>At the bottom — the <b>bottom bar</b> of six buttons: “Scenarios”, “Pause”, “Restart”, “Speed”, “Data”, “Instruments”.</li>
+          <li>Press <b>“Scenarios”</b> — a sheet slides up from below. In it press “Classic supercell”. The sheet closes with the “Hide” button at its top or a tap on the 3D view above it.</li>
+          <li>Watch the storm grow. <b>Gestures:</b> one finger — rotate the view, a two-finger pinch — closer / further, a double tap on the ground — a new thermal.</li>
+          <li><b>“Speed”</b> cycles the acceleration: ×4 → ×8 → ×16 → ×30 → ×60.</li>
+          <li><b>“Data”</b> opens a sheet with the numbers, the “Storm history” chart, the indices and the hodograph — scroll it with a finger.</li>
+          <li><b>“Instruments”</b> opens a menu: Radar, Skew-T, Zones, Lightning, Station, switching to the computer layout, “How to use it”, the project’s channel, the language and the theme (light / dark).</li>
+        </ol>
+
+        <h2 id="tour"><span class="num">4</span>A tour of the screen</h2>
+        <p><b>On a computer</b> the screen has four parts:</p>
+        <dl class="terms">
+          <dt>Top line</dt><dd>on the left — the logo (leads to the home page), the run’s status, the T+ clock, the number of computing threads, the domain size. Then — the instrument buttons “Radar”, “Skew-T”, “Zones”, “Lightning”, “Station”, the “Guide” link (this guide), the language switch (EN / RU), “Phone layout” and the theme “Auto / Light / Dark”.</dd>
+          <dt>Left column</dt><dd>from top to bottom: “Scenarios” (buttons of ready-made weather), the chosen one’s description (with the “More” button and the CAPE, CIN, shear and SRH numbers), “Real sounding…”, then the groups of settings: “Temperature profile”, “Humidity by layer”, “Wind profile”, “3D dynamics”, “Surface and radiation”, “Computation”, “What is computed and what is not”. At the very bottom — “Restart”, “Pause”, “Link to the run”, “Save”, “Open…”, “Go back to minute…”.</dd>
+          <dt>Centre</dt><dd>above the 3D view — the field tabs: “Clouds”, “Vertical motion”, “Temperature”, “Moisture”, “Vorticity”, “Rotation (UH)”, “Cold pool”. On the view itself, top left — the toggles “Flow”, “Snow and rain”, “Mesocyclone”, “Lightning”, “Rain total”. At the bottom — a mouse hint and a line with the grid, the step and where the domain is moving.</dd>
+          <dt>Right column</dt><dd>“Storm mode”, “Cells” (a numbered list of storms and the “Whole domain” button), “Values over the whole domain” (six big numbers), “Storm history” (five charts and a CSV button), then the groups “Instability indices”, “Environment: sounding and levels”, “Wind: hodograph and shear”, “All the storm’s values”, “What is happening”.</dd>
+        </dl>
+        <p><b>On a phone</b> the left column is the “Scenarios” sheet, the right one the “Data” sheet, the instrument buttons are in the “Instruments” menu, the field tabs are a strip under the top line (scroll it sideways with a finger).</p>
+        <p>Many numbers have an <b>i</b> button: press it for an explanation of what it is and where it comes from.</p>
+
+        <h2 id="change"><span class="num">5</span>Changing the weather</h2>
+        <ol>
+          <li>Choose “Summer day”.</li>
+          <li>Open the <b>“Temperature profile”</b> group (on a phone — in the “Scenarios” sheet, below the scenario’s description).</li>
+          <li>Move <b>“Surface temperature”</b> 3 °C higher. Look at the CAPE and CIN numbers under the scenario’s description — they changed at once.</li>
+          <li>Release the slider — it has a <b>↻</b> mark: the run starts again with the new weather. Settings marked ↻ change the atmosphere itself, so the experiment restarts; those without the mark (time of day, sun, acceleration) act at once.</li>
+          <li>Now open <b>“Wind profile”</b> and raise “Wind at 6 km” to 25–30 m/s. On the right (on a phone — “Data”), in the “Wind: hodograph and shear” group, the hodograph’s line stretches and “0–6 km wind shear” grows — with such shear the storm tilts and may start to rotate.</li>
+          <li>The wind can also be set right on the hodograph: drag the circle at the height you want with a mouse or a finger.</li>
+        </ol>
+        <p>What exactly to turn to get a supercell, a microburst or large hail is in the <a href="../recipes/">“Experiments and recipes”</a> guide.</p>
+
+        <h2 id="inside"><span class="num">6</span>Looking inside the storm</h2>
+        <ol>
+          <li>Above the 3D view choose the <b>“Vertical motion”</b> tab. Coloured slices appear: red — the air rises, blue — it sinks.</li>
+          <li>At the top right of the view — the field panel with the colour scale (on a phone — above the view; the slices and the volume are under the “Settings ▾” button). The <b>“Horizontal slice height”</b> slider raises the slice; <b>“Cross-section north ↔ south”</b> moves the vertical section.</li>
+          <li>“Display” → “Volume only” shows the field as a coloured cloud instead of slices.</li>
+          <li>The <b>“Rotation (UH)”</b> tab — where the rising air rotates; its settings have a choice of layer (2–5 km — the mesocyclone, 0–1 km — rotation near the ground).</li>
+          <li>Back to the ordinary view — the “Clouds” tab.</li>
+          <li><b>Pick one storm:</b> click a cloud (or a cell’s number in the list on the right) — the numbers on the right become that cell’s. “Whole domain” — back.</li>
+        </ol>
+
+        <h2 id="tools"><span class="num">7</span>Instruments</h2>
+        <p>Each instrument is a separate screen over the 3D view. Close it with “Close” at the top right or Esc. On a computer the instrument buttons are in the top line, on a phone under “Instruments”.</p>
+        <dl class="terms">
+          <dt>Radar (R)</dt><dd>a weather radar screen. On the right: the product (Z — echo strength, V and SRV — velocity, CR, ZDR, ρhv, KDP), the beam tilt, a vertical cross-section, the palette, the grid, mesocyclones. A click on the screen moves the radar; a section is drawn through any two points of the map (the ends can be dragged), Shift + click — from the radar through a point.</dd>
+          <dt>Skew-T (S)</dt><dd>a thermodynamic diagram — the temperature and humidity profile, the parcel’s path, CAPE and CIN. “Probe in the model” — a profile taken right from the storm.</dd>
+          <dt>Zones (Z)</dt><dd>a map for uneven weather: “Draw a zone” → clicks on the map → “Done” → the temperature and moisture sliders → “Apply — restart the run”. The lines show where storms will go.</dd>
+          <dt>Lightning (L)</dt><dd>a lightning detector: a map of strokes and flashes, “Density”, a period of 10 / 30 / 60 min, a chart of the rate and the jumps; a click on a mark — the flash’s card.</dd>
+          <dt>Station (M)</dt><dd>“Place with a click in 3D” → the screen closes → click the ground in the storm’s path — the station’s screen opens by itself with a meteogram: temperature, pressure, wind, precipitation. “Export CSV” — a table.</dd>
+        </dl>
+
+        <h2 id="keep"><span class="num">8</span>Save and share</h2>
+        <ul>
+          <li><b>“Link to the run”</b> (at the bottom of the left column; on a phone — at the very bottom of the “Scenarios” sheet) copies an address. Send it — the recipient gets the same experiment with the same numbers.</li>
+          <li><b>“Save”</b> — a <code>.meteolab</code> file with the whole run (~4 MB); <b>“Open…”</b> — continue it from the same minute.</li>
+          <li><b>“Go back to minute…”</b> — a drop-down list: the model keeps its state every 5 model minutes; choose a minute and the run goes on from there. You can change a setting and compare what changed.</li>
+          <li><b>“CSV”</b> by the “Storm history” chart and at the station — the data as a table for a spreadsheet.</li>
+        </ul>
+
+        <h2 id="where"><span class="num">9</span>Where to find…</h2>
+        <div class="table-wrap"><table><thead><tr><th>What</th><th>On a computer</th><th>On a phone</th></tr></thead><tbody>
+          <tr><td>Ready-made weather (scenarios)</td><td>left column, “Scenarios”</td><td>“Scenarios” (bottom)</td></tr>
+          <tr><td>Pause / continue</td><td>“Pause” at the bottom of the left column</td><td>“Pause” (bottom)</td></tr>
+          <tr><td>Restart the experiment</td><td>“Restart”</td><td>“Restart” (bottom)</td></tr>
+          <tr><td>Time acceleration</td><td>“Computation” group → “Time acceleration”; below it — how much the computer manages</td><td>“Speed” (bottom), in a cycle</td></tr>
+          <tr><td>Model time</td><td>T+ in the top line (hours:minutes:seconds), next to it the local time of day</td><td>large at the top of the view; the local time above it</td></tr>
+          <tr><td>Temperature, humidity, wind</td><td>the “Temperature profile”, “Humidity by layer”, “Wind profile” groups</td><td>“Scenarios” → the same groups below the description</td></tr>
+          <tr><td>Inversion (“cap”)</td><td>“Temperature profile” → “Cap (inversion)”, “Inversion height”</td><td>the same in the “Scenarios” sheet</td></tr>
+          <tr><td>Advection — the environment changes over hours</td><td>left column, the “Advection: the environment changes” group</td><td>“Scenarios” → the “Advection” group</td></tr>
+          <tr><td>A synoptic situation (a story over hours)</td><td>under the scenarios, “Synoptic situations”; the story is under the description</td><td>“Scenarios” → the situation cards</td></tr>
+          <tr><td>Build your own situation</td><td>under the situations, “Build your own situation”</td><td>in the computer layout</td></tr>
+          <tr><td>Time of day, day of the year, sun, soil, city</td><td>the “Surface and radiation” group</td><td>the same in the “Scenarios” sheet</td></tr>
+          <tr><td>Latitude, turbulence</td><td>the “3D dynamics” group</td><td>the same in the “Scenarios” sheet</td></tr>
+          <tr><td>Domain size, a custom domain</td><td>“Computation” → “Domain size” (including “Custom…”)</td><td>the same in the “Scenarios” sheet</td></tr>
+          <tr><td>Turn off lightning / the domain’s motion</td><td>“Computation” → the “Lightning” and “The domain moves with the storm” boxes</td><td>the same in the “Scenarios” sheet</td></tr>
+          <tr><td>Starting thermal strength</td><td>“Computation” → “Starting thermal strength”</td><td>the same in the “Scenarios” sheet</td></tr>
+          <tr><td>A new thermal at a point</td><td>a double click on the ground</td><td>a double tap on the ground</td></tr>
+          <tr><td>A real sounding</td><td>“Real sounding…” under the scenarios</td><td>“Scenarios” → “Real sounding…”</td></tr>
+          <tr><td>CAPE, CIN, SRH, SCP, STP</td><td>right, “Instability indices”; briefly — under the scenario’s description</td><td>“Data” → “Instability indices”</td></tr>
+          <tr><td>Hodograph, wind shear</td><td>right, “Wind: hodograph and shear”</td><td>“Data” → the same group</td></tr>
+          <tr><td>The LCL, LFC, EL, 0 °C levels</td><td>right, “Environment: sounding and levels”; in detail — Skew-T</td><td>“Data” → the same group</td></tr>
+          <tr><td>What the storm is doing now</td><td>right, “Storm mode”</td><td>at the top of the view, the line under the numbers</td></tr>
+          <tr><td>The list of storms (cells)</td><td>right, “Cells”</td><td>“Data” → “Cells”</td></tr>
+          <tr><td>Charts over time</td><td>right, “Storm history”; “CSV” — export</td><td>“Data” → “Storm history”</td></tr>
+          <tr><td>Low-level rotation (a sign of tornado danger)</td><td>right, “All the storm’s values” → “Low-level rotation (UH 0–1 / 0–3 km)”; the “Rotation (UH)” tab → the 0–1 km layer</td><td>“Data” → “All the storm’s values”; the “Rotation (UH)” tab → “Settings ▾” → layer</td></tr>
+          <tr><td>Fields in colour (updraught, temperature…)</td><td>the tabs above the 3D view</td><td>the strip of tabs under the top line</td></tr>
+          <tr><td>Slice, cross-section, volume</td><td>the field panel at the top right of the view</td><td>the field panel → “Settings ▾”</td></tr>
+          <tr><td>Wind particles, precipitation, mesocyclone, lightning, rain total</td><td>the toggles at the top left of the view</td><td>the same toggles on the view</td></tr>
+          <tr><td>Radar</td><td>the “Radar” button or R</td><td>“Instruments” → “Radar”</td></tr>
+          <tr><td>Skew-T</td><td>the “Skew-T” button or S</td><td>“Instruments” → “Skew-T”</td></tr>
+          <tr><td>Environment zones</td><td>the “Zones” button or Z</td><td>“Instruments” → “Zones”</td></tr>
+          <tr><td>Cold / warm front</td><td>“Zones” → the “Front” section</td><td>“Instruments” → “Zones” → “Front”</td></tr>
+          <tr><td>Tornadogenesis signs</td><td>right, “All the storm’s values” → “Tornadogenesis signs” (thresholds — “Thresholds”)</td><td>“Data” → “All the storm’s values”</td></tr>
+          <tr><td>Lightning detector</td><td>the “Lightning” button or L</td><td>“Instruments” → “Lightning”</td></tr>
+          <tr><td>Surface analysis: isobars, front, stations</td><td>the “Analysis” button or A</td><td>“Instruments” → “Analysis”</td></tr>
+          <tr><td>Weather station</td><td>the “Station” button or M</td><td>“Instruments” → “Station”</td></tr>
+          <tr><td>Link to the run</td><td>“Link to the run” at the bottom of the left column</td><td>“Scenarios” → at the very bottom of the sheet</td></tr>
+          <tr><td>Save / open a file</td><td>“Save”, “Open…”</td><td>“Scenarios” → at the very bottom of the sheet</td></tr>
+          <tr><td>Rewind</td><td>“Go back to minute…”</td><td>“Scenarios” → at the very bottom of the sheet</td></tr>
+          <tr><td>Light / dark theme</td><td>“Auto / Light / Dark” on the right of the top line</td><td>“Instruments” → “Theme”</td></tr>
+          <tr><td>Language</td><td>“RU” in the top line</td><td>“Instruments” → “Русская версия”</td></tr>
+          <tr><td>Phone / computer layout</td><td>“Phone layout” in the top line</td><td>“Instruments” → “Computer layout”</td></tr>
+          <tr><td>This guide</td><td>“Guide” in the top line</td><td>“Instruments” → “How to use it”</td></tr>
+          <tr><td>What the model can and cannot do</td><td>left column, “What is computed and what is not”; the article <a href="../../about/">“About the model”</a></td><td>“Scenarios” → “What is computed and what is not”</td></tr>
+          <tr><td>News and questions</td><td colspan="2">the Telegram channel <a href="https://t.me/MeteoLabBnor">t.me/MeteoLabBnor</a>, in Russian (on a phone — “Instruments” → “Project channel”)</td></tr>
+        </tbody></table></div>
+
+        <h2 id="trouble"><span class="num">10</span>If something is wrong</h2>
+        <dl class="terms">
+          <dt>A black screen instead of 3D</dt><dd>the browser may have taken the graphics card away from the page (often on a phone short of memory) — a message with a reload button appears. Close other tabs and reload.</dd>
+          <dt>Everything is slow</dt><dd>under “Time acceleration” it says how much the computer actually manages. What helps: the standard domain, “Transport: fast”, a smaller acceleration, closing other tabs.</dd>
+          <dt>The cloud does not grow</dt><dd>wait 10 model minutes; look at the CIN under the scenario’s description — a strong “cap” may keep the storm out (that is a result too). In “Diurnal cycle” and “Loaded gun” the storms come only after noon by the model’s clock.</dd>
+          <dt>The sliders do not move the weather</dt><dd>the “WK supercell” and a loaded sounding have their profile set not by the sliders (the groups are dimmed); choose another scenario.</dd>
+          <dt>I could not find a button</dt><dd>see the <a href="#where">“Where to find…”</a> table above or ask in the <a href="https://t.me/MeteoLabBnor">project’s channel</a>.</dd>
+        </dl>
+        <p>Next: <a href="../meteo/">Meteorology from zero</a> — what it all means; <a href="../recipes/">Experiments and recipes</a> — how to get each phenomenon; <a href="../">the interface reference</a> — everything in detail.</p>
+      </article>
+    </div></main>
+    <footer class="site-footer"><div class="container site-footer__in"><div><a class="logo" href="../../"><span class="logo__mark"></span>MeteoLab</a><p>A numerical atmosphere lab on the StormLab thunderstorm model. MIT licence · © 2026 Bandananor</p><p class="footer-channel"><a href="https://t.me/MeteoLabBnor">The project’s Telegram channel — t.me/MeteoLabBnor</a></p><p class="faint">The EMSquad team · <a href="https://t.me/EMSquad">t.me/EMSquad</a></p></div><nav><a href="../../simulator/">Simulator</a><a href="../../#scenarios">Scenarios</a><a href="../">How to use it</a><a href="../../about/">About the model</a><a href="../../about/#changelog">Changelog</a><a href="https://github.com/Bandananor/MeteoLAB">GitHub</a><a href="../../../guide/start/" data-lang-switch hreflang="ru">Русская версия</a><span class="num faint" style="font-size:12px">v2.7.0.1</span></nav></div></footer>
+    <script type="module" src="/src/site/about.ts"></script>
+  </body>
+</html>

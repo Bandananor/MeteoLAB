@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="MeteoLab experiments and recipes: how to get a supercell, a split, a low-level mesocyclone, a microburst, a multicell storm, a cap breaking, a storm in a zone, a storm of a real day and a lightning jump">
+    <title>Experiments and recipes — MeteoLab</title>
+    <script>try { const t = localStorage.getItem('meteolab-theme'); if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t } catch {}</script>
+  </head>
+  <body class="site">
+    <header class="site-header"><div class="container site-header__in">
+      <a class="logo" href="../../" style="font-size:19px"><span class="logo__mark" style="width:22px;height:22px"></span>MeteoLab</a>
+      <nav class="site-nav"><a href="../../simulator/">Simulator</a><a href="../../#scenarios">Scenarios</a><a href="../" aria-current="page">How to use it</a><a href="../../about/">About the model</a><a href="https://github.com/Bandananor/MeteoLAB">GitHub</a><a href="https://t.me/MeteoLabBnor" class="nav-channel">Telegram</a><a href="../../../guide/recipes/" data-lang-switch hreflang="ru" title="Русская версия">RU</a></nav>
+      <div class="seg seg--text" role="group" aria-label="Theme"><button data-theme-set="auto" title="As the system">Auto</button><button data-theme-set="light">Light</button><button data-theme-set="dark">Dark</button></div>
+      <div class="site-header__menu"><button class="btn btn--quiet btn--icon btn--touch" data-theme-toggle aria-label="Light or dark theme">◐</button><button class="btn btn--quiet btn--icon btn--touch" data-menu-toggle aria-expanded="false" aria-label="Menu" style="color:var(--text)">☰</button></div>
+      <div class="menu menu--touch site-menu" id="siteMenu" hidden><a class="menu__item" href="../../simulator/">Simulator</a><a class="menu__item" href="../../#scenarios">Scenarios</a><a class="menu__item" href="../">How to use it</a><a class="menu__item" href="../../about/">About the model</a><a class="menu__item" href="https://github.com/Bandananor/MeteoLAB">GitHub</a><a class="menu__item" href="https://t.me/MeteoLabBnor">The project’s Telegram channel</a><a class="menu__item" href="../../../guide/recipes/" data-lang-switch hreflang="ru">Русская версия</a></div>
+    </div></header>
+    <main class="container"><div class="doc">
+      <nav class="toc" aria-label="Contents"><span class="toc__title">Contents</span>
+        <a href="#how"><span class="num">0</span>How to set up an experiment</a>
+        <a href="#supercell"><span class="num">1</span>Supercell</a>
+        <a href="#split"><span class="num">2</span>Split</a>
+        <a href="#low"><span class="num">3</span>Low-level mesocyclone</a>
+        <a href="#multi"><span class="num">4</span>Multicell storm</a>
+        <a href="#burst"><span class="num">5</span>Microburst</a>
+        <a href="#cap"><span class="num">6</span>The cap and its breaking</a>
+        <a href="#day"><span class="num">7</span>A storm from the sun</a>
+        <a href="#zone"><span class="num">8</span>A storm in a zone</a>
+        <a href="#real"><span class="num">9</span>A storm of a real day</a>
+        <a href="#lightning"><span class="num">10</span>Lightning and the jump</a>
+        <a href="#compare"><span class="num">11</span>Compare two experiments</a>
+        <a href="#front"><span class="num">12</span>Cold front</a>
+        <a href="#advection"><span class="num">13</span>One day — three outcomes</a>
+        <span class="toc__ver">v2.7.0.1</span></nav>
+      <article class="prose">
+        <span class="t-eyebrow">A guide for those who have found their feet</span>
+        <h1>Experiments and recipes</h1>
+        <p class="lead">Ready-made experiments: what to set, how long to wait and where to look to see a particular phenomenon. Where the named sliders and buttons are — in the <a href="../start/#where">“Where to find…”</a> table; what the words mean — in the <a href="../meteo/">“Meteorology from zero”</a> guide.</p>
+        <div class="callout"><span class="callout__label">Time in the recipes</span><p>Model time is given everywhere — the T+ clock (in the top line on a computer, large at the top on a phone). Each start differs a little (small random perturbations at the ground), so the minutes are approximate. To repeat exactly the same run — “Link to the run”.</p></div>
+
+        <h2 id="how"><span class="num">0</span>How to set up an experiment</h2>
+        <ol>
+          <li>Start from the nearest scenario (the buttons in “Scenarios”).</li>
+          <li>Change <b>one</b> slider at a time — otherwise you cannot tell what worked. Sliders marked ↻ restart the run.</li>
+          <li>Before the run look at the numbers under the scenario’s description (CAPE, CIN, shear, SRH) — they hint at what will grow.</li>
+          <li>Save a “Link to the run” or a file before changing things — you can come back to a successful experiment.</li>
+        </ol>
+
+        <h2 id="supercell"><span class="num">1</span>Supercell</h2>
+        <p><b>What you need:</b> instability (CAPE from ~1500 J/kg), strong 0–6 km shear (from ~20 m/s), a wind veering with height.</p>
+        <ol>
+          <li>The <b>“Classic supercell”</b> scenario. In it the surface wind is 8 m/s from the south-east (150°), by 1 km 17 m/s from the south, by 6 km 26 m/s from the west-south-west.</li>
+          <li>Wait: a cloud by minute 10, an anvil by minute 15, the mesocyclone ring on the view by minutes 20–25; “Storm mode” on the right switches to a supercell, and the “mesocyclone” badge appears once the rotation has held for 10 minutes.</li>
+          <li><b>Where to look:</b> the “Rotation (UH)” tab; radar (R) → the SRV product — a green–red pair; radar → Z at a low tilt — a hook on the south-west side; on the right — “Rotation UH 2–5 km” above 400.</li>
+          <li><b>Experiment:</b> lower “Wind at 6 km” to 12 m/s (the “Wind profile” group) — the shear becomes weak, and instead of a supercell there is an ordinary storm that quickly rains itself out.</li>
+        </ol>
+
+        <h2 id="split"><span class="num">2</span>Split into right and left movers</h2>
+        <ol>
+          <li>The <b>“WK supercell”</b> scenario — the textbooks’ classic experiment (Weisman–Klemp).</li>
+          <li>After 30–50 minutes the storm splits in two: the right mover goes to the right of the wind and rotates anticlockwise, the left one to the left and rotates clockwise.</li>
+          <li><b>Where to look:</b> the “Cells” list on the right — two numbered cells (the rotating ones have an orange dot); the “Rotation (UH)” tab — spots of opposite sign; the “Zones” instrument — the red and blue lines show where they will go.</li>
+          <li><b>Experiment:</b> take the “Classic supercell” and on the hodograph (right, “Wind: hodograph and shear”) straighten the whole hodograph — put all the circles (0.5, 1, 3 km) on the straight line between 0 and 6 km: if you straighten only the lower ones, the wind above 1 km stays turned. Without the turning of the wind both cells become nearly alike.</li>
+        </ol>
+
+        <h2 id="low"><span class="num">3</span>Low-level mesocyclone — signs of tornado danger</h2>
+        <p>The model does not show the tornado itself: it is dozens of times smaller than the grid (1.2 km). But it shows what forecasters judge the danger by: the rotation of the rising air right near the ground.</p>
+        <ol>
+          <li>The <b>“Classic supercell”</b> or <b>“HSLC”</b> scenario.</li>
+          <li>Strengthen the twist near the ground: in “Wind profile” set “Wind at 0.5 km” to 18–20 m/s and “Wind at 1 km” to 22–25 m/s without changing the directions. SRH 0–1 km (right, “Instability indices”) grows.</li>
+          <li>Lower the cloud base: “Humidity by layer” → “Surface” to 75–85 % — STP grows.</li>
+          <li>Wait 30–40 minutes.</li>
+          <li><b>Where to look:</b> right → “All the storm’s values” → <b>“Tornadogenesis signs”</b> — the model tells the level and which conditions are met; below — “Low-level rotation (UH 0–1 / 0–3 km)” and the caption under the chart “At what height the updraught rotates” — it will say “a low-level mesocyclone: the updraught rotates right at the ground”. The “Rotation (UH)” tab → in the field panel (on a phone — “Settings ▾”) the layer <b>“0–1 km: rotation at the ground”</b>.</li>
+        </ol>
+
+        <h2 id="multi"><span class="num">4</span>Multicell storm</h2>
+        <ol>
+          <li>The <b>“Multicell storm”</b> scenario.</li>
+          <li>Each cell lives 20–30 minutes, but new ones grow next to it at the edge of the cold outflow.</li>
+          <li><b>Where to look:</b> the “Cold pool” tab — the spreading cold air; new clouds rise at its edge; the “Cells” list — numbers appear and disappear; the “Storm history” chart — the updraught pulses.</li>
+          <li><b>Experiment:</b> a double click on the ground ahead of the outflow’s edge — your own thermal; see whether it grows faster than far away.</li>
+        </ol>
+
+        <h2 id="burst"><span class="num">5</span>Microburst</h2>
+        <ol>
+          <li>The <b>“Microburst”</b> scenario: hot and dry low down, moist at mid-levels.</li>
+          <li>The downpour from a high base evaporates in the dry air, the air cools sharply and falls.</li>
+          <li><b>Where to look:</b> “Surface gust” on the right; the “Vertical motion” tab — a blue core down to the ground; put a <b>Station</b> under the storm — the meteogram shows a sharp gust and a temperature drop.</li>
+          <li><b>Experiment:</b> “Humidity by layer” → “Surface” and “1–3 km” higher (50–60 %) — the gust gets weaker.</li>
+        </ol>
+
+        <h2 id="cap"><span class="num">6</span>The cap and its breaking</h2>
+        <ol>
+          <li>The <b>“Summer day”</b> scenario. “Temperature profile” → <b>“Cap (inversion)”</b> — raise it to 2–3 K. The CIN under the description grows.</li>
+          <li>The thermal does not break the cap: only flat clouds or nothing — that is a result too.</li>
+          <li>Now put several thermals side by side with double clicks or raise the “Surface temperature” — see at what CIN the storm still breaks through.</li>
+          <li>The <b>“Loaded gun”</b> scenario — the cap holds until midday, then the storm bursts out strong at once. Raise the acceleration: it starts around 15:00 by the model’s sun.</li>
+        </ol>
+
+        <h2 id="day"><span class="num">7</span>A storm from the sun, no thermal</h2>
+        <ol>
+          <li>The <b>“Diurnal cycle”</b> scenario: starts at 6 in the morning, a night inversion, no starting thermal.</li>
+          <li>Set the acceleration to ×60 or more (the “Computation” group; on a phone — “Speed”). Under the slider you see how much the computer actually manages.</li>
+          <li><b>Where to look:</b> Skew-T — how the sun “eats” the morning inversion (the dashes are the initial profile); the “Storm history” chart — CAPE grows towards noon; around noon cumulus appear, then the first storms.</li>
+        </ol>
+
+        <h2 id="zone"><span class="num">8</span>A storm in a zone of moist air</h2>
+        <ol>
+          <li>The <b>“Classic supercell”</b> scenario. Open the <b>“Zones”</b> instrument (Z; on a phone — “Instruments” → “Zones”).</li>
+          <li>On the map — the thermal’s circle and the path lines: the red one is where the supercell will go. Find the 20′ mark on the red line and a little beyond.</li>
+          <li>“Draw a zone” → click the 4 corners of a square some 15–20 km around that place → “Done”.</li>
+          <li>The “Surface moisture” slider → +3 g/kg. On the right it shows CAPE in the zone and around it.</li>
+          <li>“Apply — restart the run”, close the screen (Esc). The zone shows on the ground in a greenish tint.</li>
+          <li>When the storm enters the zone (by minutes 35–45), it strengthens: the updraught and the downpour are noticeably higher. For comparison repeat with a −4 g/kg zone — the storm weakens.</li>
+        </ol>
+
+        <h2 id="real"><span class="num">9</span>A storm of a real day</h2>
+        <ol>
+          <li>Open the <a href="https://weather.uwyo.edu/upperair/sounding.shtml">University of Wyoming</a> site, choose a station (for example a US one on the Plains in May, or 27612 — Moscow), a date, the 12 or 00 UTC time and “Text: List”.</li>
+          <li>Select the whole page (Ctrl+A), copy it (Ctrl+C).</li>
+          <li>In the simulator — “Real sounding…” under the scenarios (on a phone — in the “Scenarios” sheet) → paste the text into the window.</li>
+          <li>Before the run you see the profile, CAPE, the shear and what was fixed in the data. Choose the thermal strength and press “Run with this sounding”.</li>
+          <li>The model shows what storm would grow in the atmosphere of that day (without fronts and terrain — one environment for the whole domain; add unevenness with zones).</li>
+        </ol>
+
+        <h2 id="lightning"><span class="num">10</span>Lightning and the lightning jump</h2>
+        <ol>
+          <li>The <b>“Classic supercell”</b> scenario, acceleration ×16.</li>
+          <li>The first lightning — by minutes 18–20. The “Lightning” toggle on the view shows the flashes’ channels.</li>
+          <li>The <b>“Lightning”</b> instrument (L): on the chart below — the rate rising and a ▼ “jump” triangle at a sharp rise (around minute 23). A click on a mark on the map — the flash’s card.</li>
+          <li><b>Experiment:</b> compare with the “Summer day” — less lightning, and it starts later: a weaker updraught means less graupel and fewer collisions.</li>
+        </ol>
+
+        <h2 id="compare"><span class="num">11</span>Compare two experiments</h2>
+        <ol>
+          <li>Run an experiment up to an interesting moment (for example, minute 20).</li>
+          <li>“Go back to minute…” → choose minute 15: the run goes on from there again.</li>
+          <li>Before going on, change a setting without the ↻ mark (time of day, sun, soil moisture, turbulence) — and compare what turned out differently.</li>
+          <li>To compare experiments with different atmospheres — make a “Link to the run” for each and open them in two browser tabs.</li>
+        </ol>
+        <h2 id="front"><span class="num">12</span>Cold front</h2>
+        <ol>
+          <li>The <b>“Cold front”</b> scenario: moist warm air under a weak “cap”, no thermal. A cold front comes from the west — the blue line on the ground.</li>
+          <li>Wait 35–50 minutes (acceleration ×16 or more): the front’s head lifts the warm air, breaks the cap, and storms rise along the front.</li>
+          <li><b>Where to look:</b> the “Temperature” tab — the cold wedge at the ground; “Vertical motion” — the lift over the front’s nose; the “Zones” instrument — the front’s symbols and where it will be in 20 and 40 minutes.</li>
+          <li><b>Experiment 1:</b> “Zones” → “Front” → “None” → “Apply”: the same environment without a front — nothing grows in an hour.</li>
+          <li><b>Experiment 2:</b> make the front weaker (contrast 4 K, depth 1 km) — storms come later or not at all: only a strong enough wedge breaks the cap.</li>
+          <li><b>Experiment 3:</b> “Warm” — warm air flows up over a gentle wedge of cold air: clouds grow above the cold layer, not at the ground.</li>
+        </ol>
+        <h2 id="advection"><span class="num">13</span>One day — three outcomes</h2>
+        <ol>
+          <li>The <b>“Upper trough”</b> situation (under the scenarios, “Synoptic situations”). Acceleration ×30 or more. Follow the story under the description: by 11:30 the sun brings storms.</li>
+          <li><b>Experiment 1 — an ordinary day:</b> on the left, the “Advection: the environment changes” group → “Remove all”. The same storms by 11:30, but by 13:00 everything dies down: the outflow has filled the model’s whole small domain, and no new cold arrives from above. In nature new storms would grow on the outflow’s edges until evening — this is a limit of the 48 × 36 km domain, not a property of an “ordinary day”.</li>
+          <li><b>Experiment 2 — a day without storms:</b> the <b>“Warm air above the layer: no storms”</b> situation. The same air, but at 2–3.5 km it warms by 3 K: the cumulus hit the cap. The CAPE/CIN chart in the “Advection” group shows the CIN growing.</li>
+          <li><b>Experiment 3 — below the layer:</b> in the same situation’s change set the layer to 1–2.5 km. Restart — and there will be more storms: in the daytime the mixed layer grows to ~2 km and the warm air heats all of it, like the sun.</li>
+          <li><b>Where to look:</b> Skew-T (S) — the profile in the model; on the right, “Storm history” — CAPE and CIN over time.</li>
+        </ol>
+        <p>Next: <a href="../meteo/">Meteorology from zero</a>; <a href="../start/">First steps</a>; <a href="../">the interface reference</a>. Your own recipes and questions — in the <a href="https://t.me/MeteoLabBnor">project’s channel</a>.</p>
+      </article>
+    </div></main>
+    <footer class="site-footer"><div class="container site-footer__in"><div><a class="logo" href="../../"><span class="logo__mark"></span>MeteoLab</a><p>A numerical atmosphere lab on the StormLab thunderstorm model. MIT licence · © 2026 Bandananor</p><p class="footer-channel"><a href="https://t.me/MeteoLabBnor">The project’s Telegram channel — t.me/MeteoLabBnor</a></p><p class="faint">The EMSquad team · <a href="https://t.me/EMSquad">t.me/EMSquad</a></p></div><nav><a href="../../simulator/">Simulator</a><a href="../../#scenarios">Scenarios</a><a href="../">How to use it</a><a href="../../about/">About the model</a><a href="../../about/#changelog">Changelog</a><a href="https://github.com/Bandananor/MeteoLAB">GitHub</a><a href="../../../guide/recipes/" data-lang-switch hreflang="ru">Русская версия</a><span class="num faint" style="font-size:12px">v2.7.0.1</span></nav></div></footer>
+    <script type="module" src="/src/site/about.ts"></script>
+  </body>
+</html>

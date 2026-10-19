@@ -1,3 +1,4 @@
+import { L } from '../i18n'
 import { type AtmosphereModel, columnLevels, type Environment, dryAdiabat, environmentLevels, mixingRatioTemperature, moistAdiabat, type ParcelKind, type ParcelPath, parcelIndices, parcelPath, type SkewIndices, skewIndices, type SkewLevel } from '../core'
 import { help, instrumentPalette, instrumentScreen, numbers, press, readings, section } from '../instrument'
 import { MONO } from '../theme'
@@ -7,9 +8,9 @@ const P_BOTTOM = 1050, P_TOP = 100, T_LEFT = -40, T_RIGHT = 50
 const ISOBARS = [1000, 925, 850, 700, 500, 400, 300, 250, 200, 150, 100]
 const MIXING = [1, 2, 4, 7, 10, 16, 24]
 const PARCELS: Record<ParcelKind, { label: string; hint: string }> = {
-  sb: { label: 'SB — от земли', hint: 'Частица от земли с температурой и влажностью приземного воздуха.' },
-  ml: { label: 'ML — перемешанный слой', hint: 'Средние θ и влажность нижних 100 гПа: устойчивее к дневным колебаниям у самой земли, обычный выбор синоптика.' },
-  mu: { label: 'MU — наиболее неустойчивая', hint: 'Частица с наибольшей θe в нижних 300 гПа; над холодным куполом или инверсией может стартовать выше земли.' },
+  sb: { label: L('SB — от земли', 'SB — surface-based'), hint: L('Частица от земли с температурой и влажностью приземного воздуха.', 'A parcel from the ground with the temperature and humidity of the surface air.') },
+  ml: { label: L('ML — перемешанный слой', 'ML — mixed layer'), hint: L('Средние θ и влажность нижних 100 гПа: устойчивее к дневным колебаниям у самой земли, обычный выбор синоптика.', 'The mean θ and humidity of the lowest 100 hPa: steadier against the daytime swings right at the ground, the forecaster’s usual choice.') },
+  mu: { label: L('MU — наиболее неустойчивая', 'MU — most unstable'), hint: L('Частица с наибольшей θe в нижних 300 гПа; над холодным куполом или инверсией может стартовать выше земли.', 'The parcel with the highest θe in the lowest 300 hPa; over a cold pool or an inversion it may start above the ground.') },
 }
 type Probe = 'none' | 'core' | 'inflow'
 /** Distance of the inflow probe from the cell centre, m. */
@@ -41,16 +42,16 @@ export class SkewTPanel {
 
   constructor(host: HTMLElement) {
     this.root = instrumentScreen(host, 'skewt-app', 'METEOLAB · SKEW-T LOG-P',
-      '<span>ЧАСТИЦА <b id="skewKind">ML</b></span><span>ЗОНД <b id="skewProbe">—</b></span><span>СРЕДА <b id="skewLive">ИСХОДНАЯ</b></span><span>T+ <b id="skewTime">00:00</b></span>',
-      section('Частица', `<div class="seg seg--block seg--instrument">${(Object.keys(PARCELS) as ParcelKind[]).map(k => `<button data-kind="${k}" title="${PARCELS[k].hint}">${k.toUpperCase()}</button>`).join('')}</div><p class="psec__hint" id="skewKindHint"></p>`)
-      + section('Индексы частицы', '<div id="skewParcel"></div>')
-      + section('Среда', '<div id="skewEnv"></div>')
-      + section('Зонд в модели', `<div class="seg seg--block seg--text seg--instrument">
-          <button data-probe="inflow" title="Колонка модели в ${INFLOW_DISTANCE / 1000} км от ядра против ветра 0–1 км относительно ячейки: воздух, который ячейка сейчас вдыхает">в притоке</button>
-          <button data-probe="core" title="Колонка модели в центре восходящего ядра ячейки">в ядре</button>
-          <button data-probe="none">нет</button></div><p class="psec__hint" id="skewProbeInfo"></p>`)
-      + section('Курсор', '<dl class="kv" id="skewCursor"></dl>')
-      + help('Изотермы наклонены на 45°, давление — в логарифмическом масштабе. Сплошные коричневые — сухие адиабаты, пунктирные зелёные — влажные, точечные — отношение смеси насыщения (г/кг). Красное — CAPE, синее — CIN. Ветер — флажки в м/с: полное перо 5, половина 2,5, флаг 25. Среда — живое зондирование: профиль модели сейчас, средний по столбцам без облаков, осадков и холодного купола (раз в модельную минуту); бледный пунктир — исходная среда. Зонд в модели (оранжевое и голубое) показывает, как гроза изменила воздух.'))
+      `<span>${L('ЧАСТИЦА', 'PARCEL')} <b id="skewKind">ML</b></span><span>${L('ЗОНД', 'PROBE')} <b id="skewProbe">—</b></span><span>${L('СРЕДА', 'ENVIRONMENT')} <b id="skewLive">${L('ИСХОДНАЯ', 'INITIAL')}</b></span><span>T+ <b id="skewTime">00:00</b></span>`,
+      section(L('Частица', 'Parcel'), `<div class="seg seg--block seg--instrument">${(Object.keys(PARCELS) as ParcelKind[]).map(k => `<button data-kind="${k}" title="${PARCELS[k].hint}">${k.toUpperCase()}</button>`).join('')}</div><p class="psec__hint" id="skewKindHint"></p>`)
+      + section(L('Индексы частицы', 'Parcel indices'), '<div id="skewParcel"></div>')
+      + section(L('Среда', 'Environment'), '<div id="skewEnv"></div>')
+      + section(L('Зонд в модели', 'Probe in the model'), `<div class="seg seg--block seg--text seg--instrument">
+          <button data-probe="inflow" title="${L(`Колонка модели в ${INFLOW_DISTANCE / 1000} км от ядра против ветра 0–1 км относительно ячейки: воздух, который ячейка сейчас вдыхает`, `A model column ${INFLOW_DISTANCE / 1000} km from the core, upwind in the cell-relative 0–1 km wind: the air the cell is breathing in now`)}">${L('в притоке', 'inflow')}</button>
+          <button data-probe="core" title="${L('Колонка модели в центре восходящего ядра ячейки', 'A model column at the centre of the cell’s updraught core')}">${L('в ядре', 'core')}</button>
+          <button data-probe="none">${L('нет', 'none')}</button></div><p class="psec__hint" id="skewProbeInfo"></p>`)
+      + section(L('Курсор', 'Cursor'), '<dl class="kv" id="skewCursor"></dl>')
+      + help(L('Изотермы наклонены на 45°, давление — в логарифмическом масштабе. Сплошные коричневые — сухие адиабаты, пунктирные зелёные — влажные, точечные — отношение смеси насыщения (г/кг). Красное — CAPE, синее — CIN. Ветер — флажки в м/с: полное перо 5, половина 2,5, флаг 25. Среда — живое зондирование: профиль модели сейчас, средний по столбцам без облаков, осадков и холодного купола (раз в модельную минуту); бледный пунктир — исходная среда. Зонд в модели (оранжевое и голубое) показывает, как гроза изменила воздух.', 'The isotherms are skewed by 45°, the pressure is on a logarithmic scale. Solid brown — dry adiabats, dashed green — moist ones, dotted — saturation mixing ratio (g/kg). Red — CAPE, blue — CIN. The wind as barbs in m/s: a full barb 5, a half 2.5, a pennant 25. The environment is the live sounding: the model’s profile now, the mean over columns without cloud, precipitation and cold pool (once a model minute); the pale dashes — the initial environment. The probe in the model (orange and light blue) shows how the storm has changed the air.')))
     this.canvas = this.root.querySelector('canvas')!; this.ctx = this.canvas.getContext('2d')!
     this.root.querySelector('.ibar__close')!.addEventListener('click', () => this.toggle(false))
     this.root.querySelectorAll<HTMLButtonElement>('[data-kind]').forEach(b => b.addEventListener('click', () => { this.kind = b.dataset.kind as ParcelKind; this.mark(); this.draw() }))
@@ -77,7 +78,7 @@ export class SkewTPanel {
     this.env = environmentLevels(env, height)
     this.parcels = { sb: parcelPath(env, height, 'sb'), ml: parcelPath(env, height, 'ml'), mu: parcelPath(env, height, 'mu') }
     this.summary = skewIndices(env, height); this.dcape = parcelIndices(env, height).dcape
-    const t = Math.floor(info.time / 60), label = info.time <= 0 ? 'ИСХОДНАЯ' : `T+${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}, ${info.all ? 'ВСЯ ОБЛАСТЬ' : `${Math.round(info.quiet * 100)} % ОБЛАСТИ`}`
+    const t = Math.floor(info.time / 60), label = info.time <= 0 ? L('ИСХОДНАЯ', 'INITIAL') : `T+${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}, ${info.all ? L('ВСЯ ОБЛАСТЬ', 'WHOLE DOMAIN') : `${Math.round(info.quiet * 100)} % ${L('ОБЛАСТИ', 'OF THE DOMAIN')}`}`
     ;(this.root.querySelector('#skewLive') as HTMLElement).textContent = label
     if (this.open) this.draw()
   }
@@ -101,8 +102,8 @@ export class SkewTPanel {
   private sample() {
     const m = this.model!, cell = this.cell, info = this.root.querySelector('#skewProbeInfo') as HTMLElement, label = this.root.querySelector('#skewProbe') as HTMLElement
     this.column = []
-    if (this.probe === 'none') { label.textContent = 'НЕТ'; info.textContent = 'Зонд в модели не показан.'; return }
-    if (!cell) { label.textContent = '—'; info.textContent = 'Выберите ячейку (щелчок по ней на 3D-виде или в списке): зонд пойдёт в её приток или ядро.'; return }
+    if (this.probe === 'none') { label.textContent = L('НЕТ', 'NONE'); info.textContent = L('Зонд в модели не показан.', 'No probe in the model shown.'); return }
+    if (!cell) { label.textContent = '—'; info.textContent = L('Выберите ячейку (щелчок по ней на 3D-виде или в списке): зонд пойдёт в её приток или ядро.', 'Select a cell (click it in the 3D view or in the list): the probe will go into its inflow or core.'); return }
     let { x, y } = cell
     if (this.probe === 'inflow') {
       // Upstream of the 0-1 km wind relative to the cell (ground-relative environment wind minus the cell's motion).
@@ -113,9 +114,9 @@ export class SkewTPanel {
     }
     const { nx, ny, dx, dy } = m.grid, i = ((Math.round(x / dx) % nx) + nx) % nx, j = ((Math.round(y / dy) % ny) + ny) % ny
     this.column = columnLevels(m, i, j)
-    label.textContent = `№${cell.id} ${this.probe === 'inflow' ? 'ПРИТОК' : 'ЯДРО'}`
+    label.textContent = `${L('№', '#')}${cell.id} ${this.probe === 'inflow' ? L('ПРИТОК', 'INFLOW') : L('ЯДРО', 'CORE')}`
     const ground = this.column[0], base = this.start[0]
-    info.innerHTML = `Ячейка №${cell.id}, точка ${(i * dx / 1000).toFixed(1)}, ${(j * dy / 1000).toFixed(1)} км. У земли <b>${ground.t.toFixed(1)}°</b> / Td <b>${ground.td.toFixed(1)}°</b> (было ${base.t.toFixed(1)}° / ${base.td.toFixed(1)}°).`
+    info.innerHTML = L(`Ячейка №${cell.id}, точка ${(i * dx / 1000).toFixed(1)}, ${(j * dy / 1000).toFixed(1)} км. У земли <b>${ground.t.toFixed(1)}°</b> / Td <b>${ground.td.toFixed(1)}°</b> (было ${base.t.toFixed(1)}° / ${base.td.toFixed(1)}°).`, `Cell #${cell.id}, point ${(i * dx / 1000).toFixed(1)}, ${(j * dy / 1000).toFixed(1)} km. At the ground <b>${ground.t.toFixed(1)}°</b> / Td <b>${ground.td.toFixed(1)}°</b> (was ${base.t.toFixed(1)}° / ${base.td.toFixed(1)}°).`)
   }
 
   private mark() {
@@ -180,7 +181,7 @@ export class SkewTPanel {
     ctx.fillStyle = pal.label
     for (const p of ISOBARS) {
       const z = this.heightAt(p); ctx.fillText(`${p}`, left - 34, this.Y(p) + 3)
-      if (z !== null && !narrow) { ctx.fillStyle = '#4b6670'; ctx.fillText(`${z.toFixed(1)}км`, left - 52, this.Y(p) + 15); ctx.fillStyle = pal.label }
+      if (z !== null && !narrow) { ctx.fillStyle = '#4b6670'; ctx.fillText(`${z.toFixed(1)}${L('км', 'km')}`, left - 52, this.Y(p) + 15); ctx.fillStyle = pal.label }
     }
     for (let t = T_LEFT; t <= T_RIGHT; t += 10) ctx.fillText(`${t}°`, this.X(t, P_BOTTOM) - 8, bottom + 13)
     ctx.fillStyle = '#4f6b55'
@@ -196,7 +197,7 @@ export class SkewTPanel {
     }
     this.barbs(this.env, right + (narrow ? 26 : 34), '#cfe0e5')
     if (probe) this.barbs(this.column.filter((_, k) => k % 3 === 1), right + (narrow ? 58 : 84), '#ffa040')
-    ctx.fillStyle = pal.label; ctx.fillText('среда', right + (narrow ? 8 : 22), top - 4); if (this.live.time > 0) { ctx.fillStyle = '#b04a3f'; ctx.fillText('- - исходная', left + 6, top + 12) } if (this.column.length) { ctx.fillStyle = '#ffa040'; ctx.fillText('зонд', right + (narrow ? 48 : 72), top - 4) }
+    ctx.fillStyle = pal.label; ctx.fillText(L('среда', 'env.'), right + (narrow ? 8 : 22), top - 4); if (this.live.time > 0) { ctx.fillStyle = '#b04a3f'; ctx.fillText(L('- - исходная', '- - initial'), left + 6, top + 12) } if (this.column.length) { ctx.fillStyle = '#ffa040'; ctx.fillText(L('зонд', 'probe'), right + (narrow ? 48 : 72), top - 4) }
     this.cursor(); this.side()
   }
 
@@ -236,22 +237,22 @@ export class SkewTPanel {
 
   private cursor() {
     const out = this.root.querySelector('#skewCursor') as HTMLElement, hv = this.hover, { left, right, top, bottom } = this.box
-    if (!hv || hv.x < left || hv.x > right || hv.y < top || hv.y > bottom) { out.innerHTML = readings([['курсор', 'наведите на диаграмму']]); return }
+    if (!hv || hv.x < left || hv.x > right || hv.y < top || hv.y > bottom) { out.innerHTML = readings([[L('курсор', 'cursor'), L('наведите на диаграмму', 'hover over the diagram')]]); return }
     const p = this.P(hv.y), t = this.T(hv.x, hv.y), z = this.heightAt(p), theta = (t + 273.15) * (1000 / p) ** .2857
     const ctx = this.ctx; ctx.strokeStyle = '#2f7d86'; ctx.setLineDash([2, 3]); ctx.beginPath(); ctx.moveTo(left, hv.y); ctx.lineTo(right, hv.y); ctx.stroke(); ctx.setLineDash([])
     const env = this.env.find(l => l.p <= p)
-    out.innerHTML = readings([['p', `${p.toFixed(0)} гПа${z !== null ? ` · ${z.toFixed(2)} км` : ''}`], ['T', `${t.toFixed(1)}° · θ ${theta.toFixed(1)} K`],
-      ...(env ? [['среда', `${env.t.toFixed(1)}° / Td ${env.td.toFixed(1)}°`], ['ветер', `${Math.hypot(env.u, env.v).toFixed(0)} м/с`]] as [string, string][] : [])])
+    out.innerHTML = readings([['p', `${p.toFixed(0)} ${L('гПа', 'hPa')}${z !== null ? ` · ${z.toFixed(2)} ${L('км', 'km')}` : ''}`], ['T', `${t.toFixed(1)}° · θ ${theta.toFixed(1)} K`],
+      ...(env ? [[L('среда', 'environment'), `${env.t.toFixed(1)}° / Td ${env.td.toFixed(1)}°`], [L('ветер', 'wind'), `${Math.hypot(env.u, env.v).toFixed(0)} ${L('м/с', 'm/s')}`]] as [string, string][] : [])])
   }
 
   private side() {
     const p = this.parcels[this.kind], s = this.summary
-    const km = (z: number | null, pr: number | null) => z === null ? '—' : `${z.toFixed(1)} км · ${pr!.toFixed(0)} гПа`
-    if (p) (this.root.querySelector('#skewParcel') as HTMLElement).innerHTML = numbers([['CAPE', p.cape.toFixed(0), 'Дж/кг'], ['CIN', p.cin.toFixed(0), 'Дж/кг']])
-      + `<dl class="kv">${readings([['LI', p.li === null ? '—' : `${p.li.toFixed(1)} K`], ...(p.start > 0 ? [['старт', `${p.start.toFixed(1)} км`] as [string, string]] : []), ['LCL', km(p.lcl, p.pLcl)], ['LFC', km(p.lfc, p.pLfc)], ['EL', km(p.el, p.pEl)]])}</dl>`
-    const live = this.live.time <= 0 ? 'исходная (расчёт ещё не шёл)' : this.live.all ? 'вся область: столбцов без облаков и оттока меньше 5 %' : `модель сейчас, ${Math.round(this.live.quiet * 100)} % области без облаков и оттока`
+    const km = (z: number | null, pr: number | null) => z === null ? '—' : `${z.toFixed(1)} ${L('км', 'km')} · ${pr!.toFixed(0)} ${L('гПа', 'hPa')}`
+    if (p) (this.root.querySelector('#skewParcel') as HTMLElement).innerHTML = numbers([['CAPE', p.cape.toFixed(0), L('Дж/кг', 'J/kg')], ['CIN', p.cin.toFixed(0), L('Дж/кг', 'J/kg')]])
+      + `<dl class="kv">${readings([['LI', p.li === null ? '—' : `${p.li.toFixed(1)} K`], ...(p.start > 0 ? [[L('старт', 'start'), `${p.start.toFixed(1)} ${L('км', 'km')}`] as [string, string]] : []), ['LCL', km(p.lcl, p.pLcl)], ['LFC', km(p.lfc, p.pLfc)], ['EL', km(p.el, p.pEl)]])}</dl>`
+    const live = this.live.time <= 0 ? L('исходная (расчёт ещё не шёл)', 'initial (the run has not started)') : this.live.all ? L('вся область: столбцов без облаков и оттока меньше 5 %', 'the whole domain: fewer than 5 % of the columns are free of cloud and outflow') : L(`модель сейчас, ${Math.round(this.live.quiet * 100)} % области без облаков и оттока`, `the model now, ${Math.round(this.live.quiet * 100)} % of the domain free of cloud and outflow`)
     if (s) (this.root.querySelector('#skewEnv') as HTMLElement).innerHTML = `<span class="t-caption">${live}</span><dl class="kv">${readings([
-      ['влагосодержание', `${s.pw.toFixed(0)} мм`], ['γ 0–3 км', `${s.lapse03.toFixed(1)} K/км`], ['γ 700–500 гПа', `${s.lapse75.toFixed(1)} K/км`],
-      ['0 °C', s.freezing === null ? '—' : `${s.freezing.toFixed(1)} км`], ['DCAPE', `${this.dcape.toFixed(0)} Дж/кг`], ['сдвиг 0–6 км', `${s.shear06.toFixed(0)} м/с`]])}</dl>`
+      [L('влагосодержание', 'precipitable water'), `${s.pw.toFixed(0)} ${L('мм', 'mm')}`], [L('γ 0–3 км', 'γ 0–3 km'), `${s.lapse03.toFixed(1)} ${L('K/км', 'K/km')}`], [L('γ 700–500 гПа', 'γ 700–500 hPa'), `${s.lapse75.toFixed(1)} ${L('K/км', 'K/km')}`],
+      ['0 °C', s.freezing === null ? '—' : `${s.freezing.toFixed(1)} ${L('км', 'km')}`], ['DCAPE', `${this.dcape.toFixed(0)} ${L('Дж/кг', 'J/kg')}`], [L('сдвиг 0–6 км', 'shear 0–6 km'), `${s.shear06.toFixed(0)} ${L('м/с', 'm/s')}`]])}</dl>`
   }
 }

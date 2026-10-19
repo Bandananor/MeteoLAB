@@ -1,5 +1,6 @@
 // What the lightning detector derives from the model's flashes (core/lightning.ts): where they are on the ground now,
 // the flash rate minute by minute, lightning jumps, the flash density, and the numbers of one flash for its card.
+import { L } from '../i18n'
 import type { Flash, Grid } from '../core'
 
 /** What the detector needs of the model: the grid, the domain's motion over the ground (m/s) and the time now. */
@@ -100,7 +101,7 @@ export function flashFacts(m: DetectorSource, flash: Flash) {
     length += Math.hypot(p.x - q.x - width * Math.round((p.x - q.x) / width), p.y - q.y - depth * Math.round((p.y - q.y) / depth), p.z - q.z)
   }
   return {
-    kind: flash.kind === 'IC' ? 'внутриоблачная (IC)' : flash.charge < 0 ? 'в землю, отрицательная (−CG)' : 'в землю, положительная (+CG)',
+    kind: flash.kind === 'IC' ? L('внутриоблачная (IC)', 'in-cloud (IC)') : flash.charge < 0 ? L('в землю, отрицательная (−CG)', 'to ground, negative (−CG)') : L('в землю, положительная (+CG)', 'to ground, positive (+CG)'),
     /** Height where the breakdown began, km. */ start: start.z / 1000,
     /** Lowest and highest point of the channel, km. */ low: low / 1000, high: high / 1000,
     /** Total length of the channel's segments and its farthest horizontal reach from the start, km. */ length: length / 1000, reach: reach / 1000,

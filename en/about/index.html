@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="How the StormLab thunderstorm model works: equations, grid, clouds and precipitation, tests and limitations">
+    <title>About the model — MeteoLab</title>
+    <script>try { const t = localStorage.getItem('meteolab-theme'); if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t } catch {}</script>
+  </head>
+  <body class="site">
+    <header class="site-header"><div class="container site-header__in">
+      <a class="logo" href="../" style="font-size:19px"><span class="logo__mark" style="width:22px;height:22px"></span>MeteoLab</a>
+      <nav class="site-nav"><a href="../simulator/">Simulator</a><a href="../#scenarios">Scenarios</a><a href="../guide/">How to use it</a><a href="./" aria-current="page">About the model</a><a href="https://github.com/Bandananor/MeteoLAB">GitHub</a><a href="https://t.me/MeteoLabBnor" class="nav-channel">Telegram</a><a href="../../about/" data-lang-switch hreflang="ru" title="Русская версия">RU</a></nav>
+      <div class="seg seg--text" role="group" aria-label="Theme"><button data-theme-set="auto" title="As the system">Auto</button><button data-theme-set="light">Light</button><button data-theme-set="dark">Dark</button></div>
+      <div class="site-header__menu"><button class="btn btn--quiet btn--icon btn--touch" data-theme-toggle aria-label="Light or dark theme">◐</button><button class="btn btn--quiet btn--icon btn--touch" data-menu-toggle aria-expanded="false" aria-label="Menu" style="color:var(--text)">☰</button></div>
+      <div class="menu menu--touch site-menu" id="siteMenu" hidden><a class="menu__item" href="../simulator/">Simulator</a><a class="menu__item" href="../#scenarios">Scenarios</a><a class="menu__item" href="../guide/">How to use it</a><a class="menu__item" href="./">About the model</a><a class="menu__item" href="https://github.com/Bandananor/MeteoLAB">GitHub</a><a class="menu__item" href="https://t.me/MeteoLabBnor">The project’s Telegram channel</a><a class="menu__item" href="../../about/" data-lang-switch hreflang="ru">Русская версия</a></div>
+    </div></header>
+    <main class="container"><div class="doc">
+      <nav class="toc" aria-label="Contents"><span class="toc__title">Contents</span>
+        <a href="#model"><span class="num">1</span>How the model works</a><a class="sub" href="#grid">Domain and grid</a><a class="sub" href="#dynamics">Equations</a><a class="sub" href="#numerics">Numerical methods</a>
+        <a href="#clouds"><span class="num">2</span>Clouds and precipitation</a><a href="#surface"><span class="num">3</span>Surface and sun</a><a href="#storm"><span class="num">4</span>How the model recognizes a storm</a><a href="#checks"><span class="num">5</span>Tests</a><a href="#limits"><span class="num">6</span>Limitations</a><a href="#changelog"><span class="num">7</span>Changelog</a>
+        <span class="toc__ver">v2.7.0.1</span></nav>
+      <article class="prose">
+        <span class="t-eyebrow">About the model · StormLab</span>
+        <h1>How a thunderstorm is computed</h1>
+        <p class="lead">MeteoLab is a cloud-resolving model of deep convection computed right in the browser. You set profiles of temperature, humidity and wind by height and the surface type, and the model then solves the equations of motion, heat and water step by step in a three-dimensional domain the size of a large city. Everything on the screen — the cloud, the rain, the rotation, the gusts at the ground — follows from these equations; only detail smaller than ~1 km (billows, bands, fibres, rain streaks) is drawn in with noise tied to the model’s fields.</p>
+        <div class="callout"><span class="callout__label">Important</span><p>The model is idealized: a horizontally uniform environment, flat ground, periodic edges, a grid spacing of about a kilometre. Some processes are simplified; everything known is listed in the “Limitations” section together with how it affects the numbers.</p></div>
+
+        <h2 id="model"><span class="num">1</span>How the model works</h2>
+        <h3 id="grid">Domain and grid</h3>
+        <div class="table-wrap"><table><thead><tr><th>Parameter</th><th>Value</th></tr></thead><tbody>
+          <tr><td>Domain</td><td>48 × 36 × 18.9 km, periodic horizontally; the large one is 96 × 72 km at the same spacing, ~4 times slower</td></tr>
+          <tr><td>Grid</td><td>40 × 32 × 50 nodes: Δx = 1.2 km, Δy = 1.125 km; vertically the spacing grows from 100 m at the ground to ~1 km at the top — 9 levels below 1 km</td></tr>
+          <tr><td>Time step</td><td>Δt = 3 s; the fall of precipitation is split into smaller steps if drops would fall more than a level in one step</td></tr>
+          <tr><td>Boundaries</td><td>the ground and the top are rigid walls; above max(tropopause + 2.5 km, 14 km) an absorbing layer damps the waves</td></tr>
+          <tr><td>Domain motion</td><td>the domain travels with the storm (the Bunkers right mover in strong shear, else the 0–6 km mean wind), so the storm does not leave over the edge; the ground, the precipitation, the radar and the station are tied to the ground</td></tr>
+        </tbody></table></div>
+        <p>The background is a horizontally uniform environment from the sliders or a scenario: temperature by layers with an optional inversion, humidity by layers, wind at six heights. The pressure comes from hydrostatics. A profile from the sliders goes through a dry convective adjustment: wherever the air would overturn by itself (the virtual potential temperature decreasing with height), it is warmed slightly to neutral — otherwise instability would appear without any storm.</p>
+
+        <h3 id="dynamics">Equations</h3>
+        <p>The core solves the Navier–Stokes equations in the form used in storm models (such as CM1 and WRF). The motion of the air:</p>
+        <div class="eq"><span class="eq__f">∂u/∂t + (u·∇)u = −∇(p′/ρ₀) + B·k − f·k×(u − u_g) + ∇·(K∇u)</span><span class="eq__n">(1)</span></div>
+        <dl class="terms">
+          <dt>(u·∇)u</dt><dd>the transport of momentum by the wind itself</dd>
+          <dt>−∇(p′/ρ₀)</dt><dd>the pressure perturbation: the model finds it anew at every step from condition (2)</dd>
+          <dt>B·k</dt><dd>buoyancy, pointing up</dd>
+          <dt>f·k×(u − u_g)</dt><dd>the Coriolis force on the departure from the background wind (the “Latitude” slider)</dd>
+          <dt>∇·(K∇u)</dt><dd>turbulent mixing in place of molecular viscosity</dd>
+        </dl>
+        <p>The air is treated as anelastic: the mass flux is free of divergence, and the base-state density ρ₀(z) falls several times with height. There are no sound waves in such a solution, so the step can be seconds rather than fractions of a second.</p>
+        <div class="eq"><span class="eq__f">∇·(ρ₀u) = 0</span><span class="eq__n">(2)</span></div>
+        <p>The buoyancy accounts for the vapour, which is lighter than dry air, and the weight of all the water in the cloud — droplets, rain, ice, snow, graupel and hail:</p>
+        <div class="eq"><span class="eq__f">B = g·[(θᵥ − θᵥ₀)/θᵥ₀ − q_c − q_r − q_i − q_s − q_g − q_h]</span><span class="eq__n">(3)</span></div>
+        <p>Here θᵥ = θ·(1 + 0.61·q_v) is the virtual potential temperature, θᵥ₀ its background value at the same height, q the mass fractions of cloud water, rain, cloud ice, snow, graupel and hail.</p>
+        <p>The potential temperature θ and the water fractions are carried by the same wind and mixed; θ changes with the latent heat of condensation, evaporation, freezing and melting. Turbulence below the grid scale follows Smagorinsky–Lilly: K = (C_s·Δ)²·√max(0, |S|² − N²/Pr), separately horizontally and vertically; in stable air it dies out. At the ground there is friction by the surface roughness.</p>
+        <p>The cold pool, the gust front and the microburst are not put in by formulas: they arise by themselves from the cooling by evaporating and melting precipitation, from the weight of the precipitation and from the pressure.</p>
+
+        <h3 id="numerics">Numerical methods</h3>
+        <ul>
+          <li>Transport — in flux form, 5th-order WENO for water and a linear 5th-order scheme for the wind and θ, 3rd-order Runge–Kutta in time. The scheme conserves the water mass by itself; the fallback semi-Lagrangian transport is twice as fast but smears the updraughts.</li>
+          <li>Pressure — an exact projection: a two-dimensional fast Fourier transform horizontally and a tridiagonal solve vertically for each wave. After a step the divergence stays at the level of round-off.</li>
+          <li>The computation runs in a background thread of the browser and is shared between several processor cores through shared memory; a phone gets fewer threads.</li>
+        </ul>
+        <pre><code><span class="tok-k">import</span> { AtmosphereModel, createGrid, DT } <span class="tok-k">from</span> <span class="tok-s">'./src/core'</span>
+
+<span class="tok-k">const</span> model = <span class="tok-k">new</span> AtmosphereModel(config, createGrid())  <span class="tok-c">// 40 × 32 × 50, stretched in height</span>
+<span class="tok-k">for</span> (<span class="tok-k">let</span> s = <span class="tok-n">0</span>; s &lt; <span class="tok-n">3600</span> / DT; s++) { model.step(DT); model.time += DT }  <span class="tok-c">// an hour of the model</span>
+console.log(model.rotation.uh, model.diagnostics().updraft)</code></pre>
+
+        <h2 id="clouds"><span class="num">2</span>Clouds and precipitation</h2>
+        <p>The microphysics is bulk: each kind of water is described by one quantity — its mass fraction. By default the model computes with ice.</p>
+        <ul>
+          <li><b>Cloud.</b> Vapour beyond saturation condenses at once, cloud in unsaturated air evaporates; below 0 °C saturation is taken over a mix of water and ice.</li>
+          <li><b>Rain</b> after Kessler: cloud droplets merge into rain, rain collects cloud, falls at a speed depending on its amount and evaporates in dry air, cooling it.</li>
+          <li><b>Ice, snow and graupel</b> after Lin, Farley and Orville (1983): crystals stick together into snow, snow gets rimed with supercooled droplets and becomes graupel, graupel melts into rain below the 0 °C level.</li>
+          <li><b>Hail</b> — separate dense ice: born from graupel when it collects more supercooled water than it can freeze, it grows and melts. At the ground the hail swath and the largest hailstones are computed — up to about 2 cm: a single-moment scheme gives no giant hail.</li>
+        </ul>
+        <p>The “Warm rain” mode keeps only drops: cheaper, but no anvil of crystals and no latent heat of freezing.</p>
+
+        <h2 id="surface"><span class="num">3</span>Surface and sun</h2>
+        <p>The sun heats only the ground: the insolation depends on the sun’s height from the latitude, the day of the year and the local time. The surface energy balance divides the absorbed heat between heating the air, evaporation and storage in the soil or water; the share of evaporation depends on the surface type and the soil moisture. Grass, dry soil, water and city differ in roughness, albedo and moisture. Clouds do not block the sun, there is no night cooling: a start at dawn is set by the profile — a night inversion at the ground, which the sun then eats.</p>
+
+        <h2 id="storm"><span class="num">4</span>How the model recognizes a storm</h2>
+        <ul>
+          <li><b>Environment indices</b> — CAPE, CIN, LCL, LFC, EL for the surface-based, mixed-layer and most unstable parcels; DCAPE, SRH, SCP, STP. The parcel rises along the dry and the pseudo-moist adiabat and agrees with MetPy within ~1 % in CAPE.</li>
+          <li><b>Updraught rotation, UH</b> — the integral of w·ζ over the 2–5 km layer; from 200 m²/s² the updraught is highlighted as rotating.</li>
+          <li><b>A mesocyclone</b> is decided not by UH but by the rotation of the updraught core itself: the core’s mean vorticity at 2–5 km at least 3·10⁻³ s⁻¹ for 10 minutes. A pair of vortices of opposite sign on the flanks of an ordinary storm does not pass this criterion.</li>
+          <li><b>Cells</b> — connected updraught cores where the updraught in cloud at 1.5–10 km is stronger than 4 m/s; each has a number, an origin, a motion and a stage: cumulus, mature, dissipating, supercell, occluding, left-moving supercell.</li>
+          <li><b>The radar</b> computes reflectivity and Doppler velocity from the model’s fields at 14 beam tilts and finds mesocyclones in the manner of the MDA algorithm: the strength by the rotational velocity — weak from 12.5 m/s, moderate from 18, strong from 23.</li>
+        </ul>
+
+        <h2 id="checks"><span class="num">5</span>Tests</h2>
+        <p>The computing core is checked by tests without a browser; long runs go in the GitHub Actions cloud at every change of the core.</p>
+        <ul>
+          <li><b>Invariants:</b> a background without a thermal stays the background for three hours; the water in a storm over an hour adds up with the rain that fell; no divergence remains after a step.</li>
+          <li><b>The parcel against MetPy 1.7.1:</b> CAPE, CIN, LCL, LFC and EL on six profiles, from a summer day to a cap over a moist layer.</li>
+          <li><b>Benchmarks from the literature:</b> the Straka cold bubble (1993) — the density current’s front, the coldest air and the wind; the Bryan and Fritsch warm bubble (2002) — dry and moist thermals.</li>
+          <li><b>The Weisman–Klemp supercell:</b> splits into a cyclonic right mover and an anticyclonic left mover; on the large domain the first 20 minutes are the same storm as on the standard one.</li>
+          <li><b>Scenarios:</b> each with a starting thermal is run for 40 minutes; none hits the velocity limiter, a mesocyclone appears only where intended. The diurnal cycle — from 06:00 to the first storm; “Loaded gun” — from 09:00 to the cap breaking after 14:00.</li>
+        </ul>
+
+        <h2 id="limits"><span class="num">6</span>Limitations</h2>
+        <div class="table-wrap"><table><thead><tr><th>Limitation</th><th>What it does now</th><th>Plan item</th></tr></thead><tbody>
+          <tr><td>Horizontal spacing ~1.2 km</td><td>entrainment, thin jets and vortices at the ground are not resolved</td><td>level 3: WebGPU, ~500 m spacing</td></tr>
+          <tr><td>Fields in float32</td><td>very slow heating gets rounded, so the heat from the surface goes only into the lowest 500 m</td><td>level 3: radiation</td></tr>
+          <tr><td>Periodic domain</td><td>neighbouring cells “come in” from the other side; the large domain is ~4 times slower</td><td>level 3: WebGPU</td></tr>
+          <tr><td>Single-parameter hail</td><td>hailstones up to about 2 cm, no large hail (5 cm and more); the hail’s reflectivity is a few dBZ too high</td><td>level 3: two-moment microphysics</td></tr>
+          <tr><td>Updraughts in weak shear</td><td>0.5–0.6·√(2·CAPE) in the scenarios, as in nature, but not rechecked at large CAPE</td><td>level 3: ~500 m spacing</td></tr>
+          <tr><td>A broad starting thermal (~8 km)</td><td>a dry middle layer hardly weakens the updraught</td><td>level 3: thermal size</td></tr>
+          <tr><td>ZDR, ρhv, KDP — from the particles’ mean sizes</td><td>single-moment microphysics: the ZDR arc is hardly visible, in a core of small hail with rain ZDR is ~1.5 instead of ~0, KDP comes from rain only</td><td>two-moment microphysics</td></tr>
+          <tr><td>No night cooling</td><td>the diurnal cycle runs from dawn to evening</td><td>level 3: radiation</td></tr>
+          <tr><td>The live sounding is a mean over the “quiet” part of the domain</td><td>a storm that has taken up almost the whole domain gets into the mean</td><td>level 2</td></tr>
+          <tr><td>The interface in English</td><td>the scenarios’ keys in links stay Russian names (links work in both languages); the project’s Telegram channel and the README are in Russian</td><td>—</td></tr>
+        </tbody></table></div>
+
+        <h2 id="changelog"><span class="num">7</span>Changelog</h2>
+        <p>The main points of versions 2.0–2.7. The full log with dates and measurements is in the <a href="https://github.com/Bandananor/MeteoLAB#журнал-изменений">README on GitHub</a> (in Russian).</p>
+        <p><b>2.7.0.1 (15 Oct 2026):</b> fixes from testers’ feedback: rain falls in shafts from the cloud base, no shelf under the anvil, no coloured noise on phones and no “wallpaper” on the anvil from above, the “Instruments” menu on a phone scrolls.</p>
+        <p><b>2.7.0 (15 Oct 2026) “True to life”:</b> the picture reworked — the sky and the time of day from atmospheric physics (sunset, twilight, a night with stars), lightning with branching and subsequent strokes, the shape of storms (billows, the anvil, banded flanks, mammatus), rain shafts and a rainbow, wet ground and hail on the ground, a view from the ground with a choice of place, full screen, quality levels, a radar cross-section through two points. Detail smaller than 1 km, the shadows and the night are only a picture and do not affect the model.</p>
+        <p><b>2.6.1 (13 Oct 2026):</b> fixes from a realism review: the pressure on the surface analysis comes from the model itself (it used to be 2–4 times too high under a storm), the map’s symbols by the WMO, honest texts on the model’s limits in the situations.</p>
+        <p><b>2.6 (13 Oct 2026):</b> advection — the environment changes by itself: over hours the wind brings warm, cold, moist or dry air into a chosen layer, with a chart of CAPE and CIN by the hour. Synoptic situations — 2–3 hour stories (“Warm sector and cold front”, “Upper trough”, “Warm air above the layer: no storms”) and a builder for your own situation. The “Analysis” instrument — a forecaster’s surface map: isobars, H and L, the front, stations.</p>
+        <p><b>2.5 (13 Oct 2026):</b> fronts — cold or warm, with the air masses’ contrast, the depth and slope of the frontal surface, the speed and heading: a cold wedge lifts the warm air and breaks the cap, a new “Cold front” scenario. Tornadogenesis signs on the data panel, the run time in hours and the local time.</p>
+        <p><b>2.4 (13 Oct 2026):</b> environment zones on the map — patches of ground where the air is warmer or colder, moister or drier: a storm passing through them strengthens or weakens by itself, a breeze is born at the edges of warm zones; the storms’ paths on the map, a zone’s CAPE and CIN before the run. A custom domain up to 144 × 108 km, acceleration up to ×120, instruments without lag. New guides: “Meteorology from zero”, “First steps” and “Experiments and recipes”.</p>
+        <p><b>2.3 (13 Oct 2026):</b> lightning from cloud physics — graupel and crystals charge in collisions, the field is computed from the Poisson equation, a discharge lays a branching channel; in-cloud flashes and ground strokes arise by themselves. Channels in 3D and the lightning detector screen: a map of flashes, the density per km², the rate and the “lightning jump”, a card for each flash.</p>
+        <p><b>2.2 (12 Oct 2026):</b> real soundings — a University of Wyoming file, SHARPpy, CM1/WRF <code>input_sounding</code> or CSV: a storm in the atmosphere of a given day, with the station pressure and CAPE/CIN checked against MetPy; the sounding goes into the link and the file; the hodograph is edited by dragging points — for the sliders and for a loaded sounding.</p>
+        <p><b>2.1 (12 Oct 2026):</b> a new set of scenarios — each with its own phenomenon, among them the classic supercell and the “loaded gun”; dual polarization on the radar (ZDR, ρhv, KDP), data in radial cells as on a real radar, an azimuth and range grid, palettes and <code>.pal</code> files; in words — at what height the updraught rotates.</p>
+        <ul>
+          <li>Anelastic equations, accurate WENO5 transport and an exact pressure projection: the model conserves water by itself.</li>
+          <li>Ice, snow, graupel and hail; a stretched grid — 100 m at the ground.</li>
+          <li>A mesocyclone by the rotation of the updraught core; numbered cells with stages.</li>
+          <li>A radar with Doppler velocity, a vertical cross-section along any line and a mesocyclone search, a Skew-T diagram, a weather station.</li>
+          <li>The diurnal cycle from dawn, tropical convection, a domain that moves with the storm.</li>
+          <li>Computation on several cores and a 3 s step; a link to the run, a run file and rewind.</li>
+          <li>A phone layout, a new design, light and dark themes, this site.</li>
+        </ul>
+      </article>
+    </div></main>
+    <footer class="site-footer"><div class="container site-footer__in"><div><a class="logo" href="../"><span class="logo__mark"></span>MeteoLab</a><p>A numerical atmosphere lab on the StormLab thunderstorm model. MIT licence · © 2026 Bandananor</p><p class="footer-channel"><a href="https://t.me/MeteoLabBnor">The project’s Telegram channel — t.me/MeteoLabBnor</a></p><p class="faint">The EMSquad team · <a href="https://t.me/EMSquad">t.me/EMSquad</a></p></div><nav><a href="../simulator/">Simulator</a><a href="../#scenarios">Scenarios</a><a href="../guide/">How to use it</a><a href="./">About the model</a><a href="#changelog">Changelog</a><a href="https://github.com/Bandananor/MeteoLAB">GitHub</a><a href="../../about/" data-lang-switch hreflang="ru">Русская версия</a><span class="num faint" style="font-size:12px">v2.7.0.1</span></nav></div></footer>
+    <script type="module" src="/src/site/about.ts"></script>
+  </body>
+</html>

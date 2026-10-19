@@ -3,6 +3,7 @@
 // whole domain and drawn as five small stacked plots in the side panel. Under the rotation
 // plot, the stretches when the updraught core itself rotated (the model's mesocyclone criterion, MESO_CORE_ZETA) are
 // shaded, dark once that held MESO_PERSISTENCE: UH alone also counts the vortex pairs of weak-shear storms.
+import { L } from './i18n'
 import { MESO_PERSISTENCE } from './core'
 import { minuteMark } from './clock'
 import { chartPalette } from './theme'
@@ -15,11 +16,11 @@ type Key = 'cape' | 'cin' | 'updraft' | 'uh' | 'rain' | 'flashes'
 interface Series { key: Key; label: string; unit: string; color: string; floor: number; rotation?: boolean; second?: { key: Key; label: string; color: string } }
 
 const SERIES: Series[] = [
-  { key: 'cape', label: 'CAPE / CIN от земли', unit: 'Дж/кг', color: '#c97a2a', floor: 500, second: { key: 'cin', label: 'CIN', color: '#4d86b3' } },
-  { key: 'updraft', label: 'Восходящий поток', unit: 'м/с', color: '#c4553a', floor: 10 },
-  { key: 'uh', label: 'UH 2–5 км', unit: 'м²/с²', color: '#7b3fa0', floor: 200, rotation: true },
-  { key: 'rain', label: 'Дождь', unit: 'мм/ч', color: '#3f6fa3', floor: 10 },
-  { key: 'flashes', label: 'Молнии', unit: 'вспышек/мин', color: '#8a6cd8', floor: 10 },
+  { key: 'cape', label: L('CAPE / CIN от земли', 'Surface CAPE / CIN'), unit: L('Дж/кг', 'J/kg'), color: '#c97a2a', floor: 500, second: { key: 'cin', label: 'CIN', color: '#4d86b3' } },
+  { key: 'updraft', label: L('Восходящий поток', 'Updraught'), unit: L('м/с', 'm/s'), color: '#c4553a', floor: 10 },
+  { key: 'uh', label: L('UH 2–5 км', 'UH 2–5 km'), unit: L('м²/с²', 'm²/s²'), color: '#7b3fa0', floor: 200, rotation: true },
+  { key: 'rain', label: L('Дождь', 'Rain'), unit: L('мм/ч', 'mm/h'), color: '#3f6fa3', floor: 10 },
+  { key: 'flashes', label: L('Молнии', 'Lightning'), unit: L('вспышек/мин', 'flashes/min'), color: '#8a6cd8', floor: 10 },
 ]
 
 /** Samples every SAMPLE seconds of model time; a restart (time going back) starts a new record. */
@@ -55,7 +56,7 @@ export class Timeline {
       const now = values.length ? values[values.length - 1] : 0, peak = values.length ? Math.max(...values) : 0
       ctx.fillStyle = c.text2; ctx.fillText(`${s.label}, ${s.unit}`, left, top - 6)
       ctx.fillStyle = c.text
-      const readout = s.second ? `${format(now)} / ${format(second[second.length - 1] ?? 0)}` : `${format(now)} (макс. ${format(peak)})`
+      const readout = s.second ? `${format(now)} / ${format(second[second.length - 1] ?? 0)}` : `${format(now)} (${L('макс.', 'max')} ${format(peak)})`
       ctx.fillText(readout, right - ctx.measureText(readout).width, top - 6)
       ctx.fillStyle = c.label; ctx.fillText(String(max), left + 1, top + 10)
       if (s.rotation) {
@@ -66,7 +67,7 @@ export class Timeline {
           ctx.fillStyle = held >= MESO_PERSISTENCE ? '#cdb8dc' : '#e2d8ea'
           ctx.fillRect(X(pts[i - 1].t), top, X(pts[i].t) - X(pts[i - 1].t) + .5, bottom - top)
         }
-        if (pts.some(p => p.rotationHeld >= MESO_PERSISTENCE)) { ctx.fillStyle = '#8a6ea0'; const label = 'мезоциклон'; ctx.fillText(label, right - ctx.measureText(label).width, top + 10) }
+        if (pts.some(p => p.rotationHeld >= MESO_PERSISTENCE)) { ctx.fillStyle = '#8a6ea0'; const label = L('мезоциклон', 'mesocyclone'); ctx.fillText(label, right - ctx.measureText(label).width, top + 10) }
       }
       if (pts.length < 2) return
       const curve = (key: Key, color: string) => {

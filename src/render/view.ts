@@ -1,3 +1,4 @@
+import { L } from '../i18n'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js'
@@ -298,7 +299,7 @@ export class StormView {
 
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' })
     this.renderer.debug.onShaderError = (gl, program, vs, fs) => {
-      const log = [gl.getShaderInfoLog(fs), gl.getShaderInfoLog(vs), gl.getProgramInfoLog(program)].filter(Boolean).join(' | ').trim() || 'без текста ошибки'
+      const log = [gl.getShaderInfoLog(fs), gl.getShaderInfoLog(vs), gl.getProgramInfoLog(program)].filter(Boolean).join(' | ').trim() || L('без текста ошибки', 'no error text')
       console.error('MeteoLab shader error:', log)
       const info = gl.getExtension('WEBGL_debug_renderer_info'), gpu = String(info ? gl.getParameter(info.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER))
       if (this.shaderRetry === 'pending') return

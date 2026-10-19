@@ -1,3 +1,4 @@
+import { L } from '../i18n'
 import { CP, EPS, G, KAPPA, RD } from './constants'
 import type { EnvironmentProfile } from './environment'
 import { qsatP } from './microphysics'
@@ -24,6 +25,7 @@ export interface SoundingFile {
 }
 
 /** A file that cannot be read, with a message for the user. */
+const KNOTS = L('Ветер переведён из узлов в м/с', 'Wind converted from knots to m/s')
 export class SoundingError extends Error {}
 
 const KNOT = .514444
@@ -51,7 +53,7 @@ export function detect(text: string): SoundingFormat {
   if (lines.length > 2 && /[A-Za-zА-Яа-я]/.test(lines[0]) && /[,;\t]/.test(lines[0])) return 'csv'
   const numbers = (l: string) => l.split(/\s+/).map(Number)
   if (lines.length > 2 && numbers(lines[0]).length === 3 && numbers(lines[0]).every(Number.isFinite) && numbers(lines[1]).length === 5 && numbers(lines[1]).every(Number.isFinite)) return 'input_sounding'
-  throw new SoundingError('Не удалось узнать формат. Понимаю: текст Вайомингского университета (TEXT:LIST, столбцы PRES HGHT TEMP …), SHARPpy (%RAW%), input_sounding CM1/WRF и CSV со строкой заголовков.')
+  throw new SoundingError(L('Не удалось узнать формат. Понимаю: текст Вайомингского университета (TEXT:LIST, столбцы PRES HGHT TEMP …), SHARPpy (%RAW%), input_sounding CM1/WRF и CSV со строкой заголовков.', 'Could not tell the format. Understood: University of Wyoming text (TEXT:LIST, columns PRES HGHT TEMP …), SHARPpy (%RAW%), CM1/WRF input_sounding and CSV with a header row.'))
 }
 
 /** The text of an HTML page (the Wyoming site sends the table in <pre>). */
@@ -87,7 +89,7 @@ function wyoming(text: string): Read {
     const [u, v] = Number.isFinite(dir) && Number.isFinite(sp) ? windUV(dir, knots ? sp * KNOT : sp) : [null, null]
     levels.push({ p, z, t, td: Number.isFinite(td) ? td : Number.isFinite(rh) && Number.isFinite(t) ? dewFromRh(t, rh) : null, u, v })
   }
-  if (knots) notes.push('Ветер переведён из узлов в м/с')
+  if (knots) notes.push(KNOTS)
   // The title and the station block of a full page: "72357 OUN Norman Observations at 12Z 22 May 2011", or the newer
   // "Observations for Station 26781 at 12 UTC 04 Jul 2024" followed by the station's name.
   const title = /^\s*(\d{5})\s+(\S+.*?)\s+Observations at\s+(.+?)\s*$/m.exec(text), newer = /Observations for Station\s+(\S+)\s+at\s+(.+?)\s*\n\s*([^\n]*\S)/.exec(text)
@@ -107,7 +109,7 @@ function sharppy(text: string): Read {
     levels.push({ p: n[0], z: n[1], t: MISSING(n[2]) ? NaN : n[2], td: MISSING(n[3]) ? null : n[3], u, v })
   }
   const title = lines.slice(lines.findIndex(l => /%TITLE%/i.test(l)) + 1).find(l => l.trim())?.trim().split(/\s+/)
-  return { format: 'sharppy', levels, agl: false, notes: ['Ветер переведён из узлов в м/с'], station: title?.[0], time: title?.[1] }
+  return { format: 'sharppy', levels, agl: false, notes: [KNOTS], station: title?.[0], time: title?.[1] }
 }
 
 /**
@@ -130,7 +132,7 @@ function inputSounding(text: string): Read {
   }
   // The surface line has no wind: the lowest level's.
   if (levels.length > 1) { levels[0].u = levels[1].u; levels[0].v = levels[1].v }
-  return { format: 'input_sounding', levels, agl: true, notes: ['Давление посчитано по гидростатике от давления у земли (как в CM1)', 'Температура и точка росы — из θ и q_v'] }
+  return { format: 'input_sounding', levels, agl: true, notes: [L('Давление посчитано по гидростатике от давления у земли (как в CM1)', 'Pressure computed hydrostatically from the surface pressure (as in CM1)'), L('Температура и точка росы — из θ и q_v', 'Temperature and dew point from θ and q_v')] }
 }
 
 /** CSV with a header: columns found by their names (pressure, height, temperature, dew point or humidity, wind as direction and speed or as u and v). */
@@ -141,9 +143,9 @@ function csv(text: string): Read {
   const cp = find(/^(pres|pressure|press|p)\b/), cz = find(/^(hght|height|hgt|alt|altitude|z|geopot)/), ct = find(/^(temp|temperature|t)\b/)
   const cd = find(/^(dwpt|dewpoint|dew|td)\b/), cr = find(/^(relh|rh|humidity)\b/), cdir = find(/^(drct|wdir|dir|direction)\b/)
   const csp = find(/^(sknt|wspd|speed|ws|wind)\b/), cu = find(/^u\b/), cv = find(/^v\b/)
-  if (ct < 0 || (cp < 0 && cz < 0)) throw new SoundingError('В CSV нужны температура и давление или высота: столбцы вроде pres, hght, temp, dwpt (или rh), drct и sknt (или u, v).')
+  if (ct < 0 || (cp < 0 && cz < 0)) throw new SoundingError(L('В CSV нужны температура и давление или высота: столбцы вроде pres, hght, temp, dwpt (или rh), drct и sknt (или u, v).', 'The CSV needs temperature and pressure or height: columns like pres, hght, temp, dwpt (or rh), drct and sknt (or u, v).'))
   const knots = csp >= 0 && /sknt|kt|knot|узл/.test(header[csp]), notes: string[] = []
-  if (knots) notes.push('Ветер переведён из узлов в м/с')
+  if (knots) notes.push(KNOTS)
   const levels: Raw[] = []
   for (const line of lines.slice(1)) {
     const n = line.split(sep).map(s => Number(s.trim().replace(',', '.')))
@@ -154,8 +156,8 @@ function csv(text: string): Read {
     levels.push({ p: at(cp), z: at(cz), t, td, u, v })
   }
   // Only pressure: heights from the hydrostatic equation; only heights: pressure from 1013.25 hPa at the first level.
-  if (cz < 0) { fillHeights(levels); notes.push('Высоты посчитаны по гидростатике (в файле только давление)') }
-  if (cp < 0) { fillPressures(levels); notes.push('Давление посчитано по гидростатике от 1013,25 гПа у земли (в файле только высоты)') }
+  if (cz < 0) { fillHeights(levels); notes.push(L('Высоты посчитаны по гидростатике (в файле только давление)', 'Heights computed hydrostatically (the file has pressure only)')) }
+  if (cp < 0) { fillPressures(levels); notes.push(L('Давление посчитано по гидростатике от 1013,25 гПа у земли (в файле только высоты)', 'Pressure computed hydrostatically from 1013.25 hPa at the ground (the file has heights only)')) }
   return { format: 'csv', levels, agl: false, notes }
 }
 
@@ -182,19 +184,19 @@ function fillPressures(levels: Raw[]) {
 function finish(r: Read): SoundingFile {
   const notes = [...r.notes]
   const valid = r.levels.filter(l => Number.isFinite(l.t) && Number.isFinite(l.p) && Number.isFinite(l.z))
-  if (valid.length < r.levels.length) notes.push(`Пропущено уровней без температуры: ${r.levels.length - valid.length}`)
+  if (valid.length < r.levels.length) notes.push(L(`Пропущено уровней без температуры: ${r.levels.length - valid.length}`, `Levels without temperature skipped: ${r.levels.length - valid.length}`))
   valid.sort((a, b) => a.z - b.z)
-  if (valid.length < 5) throw new SoundingError(`В файле всего ${valid.length} уровней с температурой — для профиля мало (нужно хотя бы 5).`)
+  if (valid.length < 5) throw new SoundingError(L(`В файле всего ${valid.length} уровней с температурой — для профиля мало (нужно хотя бы 5).`, `The file has only ${valid.length} levels with temperature — too few for a profile (5 at least are needed).`))
   const ground = valid[0].z, levels: SoundingLevel[] = []
   for (const l of valid) {
     const last = levels[levels.length - 1]
     if (last && (l.z - ground <= last.z || l.p * 100 >= last.p)) continue
     levels.push({ p: l.p * 100, z: l.z - ground, t: l.t, td: l.td, u: l.u, v: l.v, ...(l.qv !== undefined ? { qv: l.qv } : {}) })
   }
-  if (levels.length < valid.length) notes.push(`Пропущено уровней не по порядку (высота не растёт или давление не падает): ${valid.length - levels.length}`)
+  if (levels.length < valid.length) notes.push(L(`Пропущено уровней не по порядку (высота не растёт или давление не падает): ${valid.length - levels.length}`, `Out-of-order levels skipped (height not rising or pressure not falling): ${valid.length - levels.length}`))
   const missingDew = levels.filter(l => l.td === null).length, missingWind = levels.filter(l => l.u === null).length
-  if (missingDew) notes.push(`Уровней без точки росы: ${missingDew} — влажность там берётся с соседних`)
-  if (missingWind) notes.push(`Уровней без ветра: ${missingWind} — ветер там интерполируется`)
+  if (missingDew) notes.push(L(`Уровней без точки росы: ${missingDew} — влажность там берётся с соседних`, `Levels without dew point: ${missingDew} — the humidity there comes from the neighbours`))
+  if (missingWind) notes.push(L(`Уровней без ветра: ${missingWind} — ветер там интерполируется`, `Levels without wind: ${missingWind} — the wind there is interpolated`))
   return { format: r.format, station: r.station, time: r.time, latitude: r.latitude, elevation: r.agl ? r.elevation : r.elevation ?? ground, levels, notes }
 }
 
@@ -215,13 +217,13 @@ export interface SoundingProfile { profile: EnvironmentProfile; notes: string[];
  * and reported. Throws a SoundingError below MIN_SOUNDING_TOP.
  */
 export function soundingProfile(file: Pick<SoundingFile, 'levels'>, height: number): SoundingProfile {
-  const L = file.levels, n = L.length, notes: string[] = [], top = L[n - 1].z
-  if (top < MIN_SOUNDING_TOP) throw new SoundingError(`Зондирование заканчивается на ${(top / 1000).toFixed(1).replace('.', ',')} км — модели нужны данные хотя бы до ${MIN_SOUNDING_TOP / 1000} км (вершина грозы и тропопауза).`)
-  const z = L.map(l => l.z), p = L.map(l => l.p), t = L.map(l => l.t + 273.15)
+  const lv = file.levels, n = lv.length, notes: string[] = [], top = lv[n - 1].z
+  if (top < MIN_SOUNDING_TOP) throw new SoundingError(L(`Зондирование заканчивается на ${(top / 1000).toFixed(1).replace('.', ',')} км — модели нужны данные хотя бы до ${MIN_SOUNDING_TOP / 1000} км (вершина грозы и тропопауза).`, `The sounding ends at ${(top / 1000).toFixed(1)} km — the model needs data up to ${MIN_SOUNDING_TOP / 1000} km at least (the storm top and the tropopause).`))
+  const z = lv.map(l => l.z), p = lv.map(l => l.p), t = lv.map(l => l.t + 273.15)
   // Relative humidity where the file has vapour or a dew point, interpolated over the gaps, held above the last one.
-  const rh = fillGaps(L.map(l => l.qv !== undefined ? l.qv / qsatP(l.t, l.p) : l.td !== null ? qsatP(l.td, l.p) / qsatP(l.t, l.p) : null), z)
-  const qv = L.map((l, k) => l.qv ?? Math.min(1, rh[k]) * qsatP(l.t, l.p))
-  const u = fillGaps(L.map(l => l.u), z), v = fillGaps(L.map(l => l.v), z)
+  const rh = fillGaps(lv.map(l => l.qv !== undefined ? l.qv / qsatP(l.t, l.p) : l.td !== null ? qsatP(l.td, l.p) / qsatP(l.t, l.p) : null), z)
+  const qv = lv.map((l, k) => l.qv ?? Math.min(1, rh[k]) * qsatP(l.t, l.p))
+  const u = fillGaps(lv.map(l => l.u), z), v = fillGaps(lv.map(l => l.v), z)
   // Above the data: the top 2 km's lapse rate, bounded, hydrostatic pressure, the last humidity and wind.
   if (top < height) {
     const below = z.findIndex(h => h >= top - 2000), lapse = Math.max(-3e-3, Math.min(7e-3, (t[below] - t[n - 1]) / Math.max(1, top - z[below])))
@@ -229,7 +231,7 @@ export function soundingProfile(file: Pick<SoundingFile, 'levels'>, height: numb
       const k = z.length - 1, tk = Math.max(193.15, t[k] - lapse * 250), pk = p[k] * Math.exp(-G * 250 / (RD * (t[k] + tk) / 2))
       z.push(h); t.push(tk); p.push(pk); qv.push(Math.min(qv[k], rh[n - 1] * qsatP(tk - 273.15, pk))); u.push(u[k]); v.push(v[k])
     }
-    notes.push(`Выше ${(top / 1000).toFixed(1).replace('.', ',')} км данных нет: температура продолжена с градиентом верхних 2 км (${(lapse * 1000).toFixed(1).replace('.', ',')} K/км), ветер и влажность — как на верхнем уровне`)
+    notes.push(L(`Выше ${(top / 1000).toFixed(1).replace('.', ',')} км данных нет: температура продолжена с градиентом верхних 2 км (${(lapse * 1000).toFixed(1).replace('.', ',')} K/км), ветер и влажность — как на верхнем уровне`, `No data above ${(top / 1000).toFixed(1)} km: the temperature is continued with the lapse rate of the top 2 km (${(lapse * 1000).toFixed(1)} K/km), the wind and humidity as at the top level`))
   }
   const theta = t.map((tk, k) => tk * (1e5 / p[k]) ** KAPPA)
   // Dry convective adjustment in virtual potential temperature, from the ground up.
@@ -239,7 +241,7 @@ export function soundingProfile(file: Pick<SoundingFile, 'levels'>, height: numb
     if (thv < level - 1e-9) { const warm = level / moist - theta[k]; theta[k] += warm; fixed++; if (warm > worst) { worst = warm; where = z[k] } }
     level = Math.max(level, theta[k] * moist)
   }
-  if (fixed) notes.push(`Неустойчивых уровней (воздух перевернулся бы сам): ${fixed}, прогреты до нейтральных; наибольшая поправка ${worst.toFixed(1).replace('.', ',')} K на ${(where / 1000).toFixed(1).replace('.', ',')} км`)
+  if (fixed) notes.push(L(`Неустойчивых уровней (воздух перевернулся бы сам): ${fixed}, прогреты до нейтральных; наибольшая поправка ${worst.toFixed(1).replace('.', ',')} K на ${(where / 1000).toFixed(1).replace('.', ',')} км`, `Superadiabatic levels (the air would overturn by itself): ${fixed}, warmed to neutral; the largest correction ${worst.toFixed(1)} K at ${(where / 1000).toFixed(1)} km`))
   const at = (f: number[], h: number) => {
     if (h <= z[0]) return f[0]
     if (h >= z[z.length - 1]) return f[f.length - 1]
