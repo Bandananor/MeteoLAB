@@ -47,6 +47,7 @@ export interface Circulation {
   /** Heights of the lowest and highest feature, m, and the number of tilts. */ base: number; top: number; tilts: number
   strength: MesoStrength
   /** Hook echo around it at the lowest tilt, if there is one (see hookEcho). */ hook: HookEcho | null
+  /** The tornadic vortex signature in it, if any (see vortexSignature), and its largest gate-to-gate ΔV, m/s, with or without one. */ tvs: VortexSignature | null; gateDv: number
   features: ShearFeature[]
 }
 
@@ -114,8 +115,8 @@ export class MesocycloneDetector {
   /** One volume scan; with the storm motion (u, v, m/s) hook echoes are checked against the inflow side. */
   scan(ppi: PPI, time: number, motion: readonly [number, number] | null = null) {
     ppi.prepare()
-    const all: ShearFeature[] = []
-    for (const tilt of RADAR_TILTS) all.push(...features(ppi, tilt, ppi.polar(tilt, STEP, GATES, BEAMS).velocity))
+    const all: ShearFeature[] = [], velocities = new Map<number, Float32Array>()
+    for (const tilt of RADAR_TILTS) { const v = ppi.polar(tilt, STEP, GATES, BEAMS).velocity; velocities.set(tilt, v); all.push(...features(ppi, tilt, v)) }
     // Stack from the lowest tilt up: each feature joins the nearest stack whose top is one or two tilts below.
     const stacks: ShearFeature[][] = []
     for (const f of all) {
@@ -138,7 +139,7 @@ export class MesocycloneDetector {
       const base = s[0], top = s[s.length - 1], peak = strongest(s)
       return {
         id: 0, born: time, x: mod(base.x, width), y: mod(base.y, depth), range: base.range, azimuth: base.azimuth, vrot: peak.vrot, diameter: peak.diameter,
-        lowVrot: base.vrot, base: base.height, top: top.height, tilts: s.length, strength: mesoStrength(peak.vrot), features: [...s], hook: null,
+        lowVrot: base.vrot, base: base.height, top: top.height, tilts: s.length, strength: mesoStrength(peak.vrot), features: [...s], hook: null, tvs: null, gateDv: 0,
       }
     }).sort((a, b) => b.vrot - a.vrot)
     for (let merged = true; merged;) {
@@ -159,10 +160,60 @@ export class MesocycloneDetector {
       const same = previous.find(p => Math.hypot(wrap(p.x - c.x, width), wrap(p.y - c.y, depth)) < TRACK_DISTANCE && !found.some(n => n.id === p.id))
       c.id = same?.id ?? this.nextId++; c.born = same?.born ?? time
       c.hook = hookEcho(ppi, c, motion)
+      const levels = gateToGate(c, velocities)
+      c.tvs = vortexSignature(levels); c.gateDv = Math.max(0, ...levels.map(l => l.dv))
     }
     this.detections = found
     return this.detections
   }
+}
+
+/**
+ * The tornadic vortex signature after the NSSL Tornado Detection Algorithm (Mitchell et al. 1998) in outline: the
+ * gate-to-gate velocity difference (between neighbouring beams at one range) near each of the circulation's features, at
+ * least TDA_MIN_DV to count on a tilt; a TVS needs TDA_LOW_DV at its base on the lowest tilt (or below TDA_BASE), TDA_MAX_DV
+ * somewhere and TDA_DEPTH of depth, an elevated one (ETVS) the same with its base higher. A tornado is far below the ~1.2 km
+ * grid and the 1.5° beams, so a model TVS is the strongest, lowest part of the mesocyclone's shear: rare, and weaker
+ * than a real one (real TVS reach 50-100 m/s); a hint, as on a real radar, not a tornado.
+ */
+export const TDA_MIN_DV = 11, TDA_LOW_DV = 25, TDA_MAX_DV = 36, TDA_DEPTH = 1500, TDA_BASE = 600
+
+export interface VortexSignature {
+  kind: 'TVS' | 'ETVS'
+  /** Gate-to-gate velocity difference at the base and the largest one, m/s. */ lowDv: number; maxDv: number
+  /** Heights of the base and the top, m. */ base: number; top: number
+}
+
+/** The largest gate-to-gate ΔV near the circulation's features on each tilt (m/s; tilts without features left out). */
+export function gateToGate(c: Pick<Circulation, 'features'>, velocities: Map<number, Float32Array>) {
+  const levels: { tilt: number; height: number; dv: number }[] = []
+  for (const tilt of RADAR_TILTS) {
+    const v = velocities.get(tilt), here = c.features.filter(f => f.tilt === tilt)
+    if (!v || !here.length) continue
+    let dv = 0
+    for (const f of here) {
+      const g0 = Math.round(f.range / STEP) - 1, b0 = Math.round(f.azimuth * BEAMS / 360)
+      for (let g = Math.max(0, g0 - 3); g <= Math.min(GATES - 1, g0 + 3); g++) for (let b = b0 - 4; b <= b0 + 4; b++) {
+        const d = v[mod(b + 1, BEAMS) * GATES + g] - v[mod(b, BEAMS) * GATES + g]
+        if (d > dv) dv = d
+      }
+    }
+    levels.push({ tilt, height: here[0].height, dv })
+  }
+  return levels
+}
+
+/** The TVS or ETVS of a circulation's gate-to-gate ΔV per tilt (gateToGate), or none. */
+export function vortexSignature(all: { tilt: number; height: number; dv: number }[]): VortexSignature | null {
+  const levels = all.filter(l => l.dv >= TDA_MIN_DV)
+  if (!levels.length) return null
+  // The contiguous run from the lowest tilt with a vector (one tilt missing allowed, as the stacking).
+  const run = [levels[0]]
+  for (const l of levels.slice(1)) { if (RADAR_TILTS.indexOf(l.tilt as typeof RADAR_TILTS[number]) - RADAR_TILTS.indexOf(run[run.length - 1].tilt as typeof RADAR_TILTS[number]) > TILT_GAP) break; run.push(l) }
+  const base = run[0], top = run[run.length - 1], maxDv = Math.max(...run.map(l => l.dv))
+  if (maxDv < TDA_MAX_DV || top.height - base.height < TDA_DEPTH) return null
+  const low = base.tilt === RADAR_TILTS[0] || base.height <= TDA_BASE
+  return { kind: low && base.dv >= TDA_LOW_DV ? 'TVS' : 'ETVS', lowDv: base.dv, maxDv, base: base.height, top: top.height }
 }
 
 const mod = (a: number, n: number) => ((a % n) + n) % n

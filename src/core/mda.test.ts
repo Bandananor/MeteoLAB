@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { AtmosphereModel, createGrid, hookEcho, MesocycloneDetector, mesoStrength, PPI } from '.'
+import { AtmosphereModel, createGrid, hookEcho, MesocycloneDetector, mesoStrength, PPI, TDA_LOW_DV, TDA_MAX_DV } from '.'
 import { QUIET } from './fixtures'
 
 /** A 500 m grid with rain everywhere (echo for the Doppler velocity) and calm air; the radar at (4, 4) km. */
@@ -35,6 +35,24 @@ describe('mesocyclone detection (MDA)', () => {
     expect(d.vrot).toBeGreaterThan(14); expect(d.vrot).toBeLessThan(21)
     expect(d.diameter).toBeGreaterThan(2500); expect(d.diameter).toBeLessThan(6000)
     expect(d.top - d.base).toBeGreaterThan(3000); expect(d.strength).not.toBe('circulation')
+    // A broad mesocyclone: the velocity changes gently from beam to beam, no vortex signature.
+    expect(d.tvs).toBeNull()
+  })
+
+  it('finds a tornadic vortex signature in a tight strong vortex down to the ground, an elevated one higher up (2.8)', () => {
+    const { m, ppi } = scene()
+    // 30 m/s at 600 m from the centre: ~45-60 m/s between neighbouring beams at 12-15 km from the radar.
+    vortex(m, 16_000, 12_000, 30, 600, 8000)
+    const [d] = new MesocycloneDetector().scan(ppi, 0)
+    expect(d.tvs?.kind).toBe('TVS'); expect(d.tvs!.lowDv).toBeGreaterThanOrEqual(TDA_LOW_DV); expect(d.tvs!.maxDv).toBeGreaterThanOrEqual(TDA_MAX_DV)
+    expect(d.tvs!.top - d.tvs!.base).toBeGreaterThanOrEqual(1500)
+    // The same vortex only from 2.5 km up: an elevated signature.
+    const high = scene()
+    vortex(high.m, 16_000, 12_000, 30, 600, 8000)
+    const { layer, zs } = high.m.grid
+    for (let z = 0; zs[z] < 2500; z++) for (let c = 0; c < layer; c++) { high.m.u[c + z * layer] = 0; high.m.v[c + z * layer] = 0 }
+    const [e] = new MesocycloneDetector().scan(high.ppi, 0)
+    expect(e.tvs?.kind).toBe('ETVS'); expect(e.tvs!.base).toBeGreaterThan(2000)
   })
 
   it('ignores anticyclonic and shallow rotation, and uniform wind', () => {

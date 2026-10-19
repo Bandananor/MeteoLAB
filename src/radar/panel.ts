@@ -1,5 +1,5 @@
 import { L } from '../i18n'
-import { type AtmosphereModel, type Circulation, DBZ_FLOOR, DUAL_MIN_DBZ, MESO_STRENGTH, type MesoStrength, MesocycloneDetector, PPI, RADAR_TILTS } from '../core'
+import { type AtmosphereModel, type Circulation, DBZ_FLOOR, DUAL_MIN_DBZ, MESO_STRENGTH, type MesoStrength, MesocycloneDetector, PPI, RADAR_TILTS, TDA_LOW_DV, TDA_MAX_DV } from '../core'
 import { help, instrumentPalette, instrumentScreen, press, readings, section } from '../instrument'
 import { download } from '../share'
 import { MONO } from '../theme'
@@ -560,7 +560,8 @@ export class RadarPanel {
       for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++) if (Math.hypot(wrap(x * dx + ox - d.x, width), wrap(y * dy + oy - d.y, depth)) < 5000) uh = Math.max(uh, m.uhColumn[x + nx * y])
       const age = Math.floor((m.time - d.born) / 60)
       return `<div class="mda mda--${d.strength}"><div class="mda__head"><span class="mda__id">M${d.id}</span><span class="mda__name">${MESO_STRENGTH[d.strength].name}</span></div>`
-        + `<dl class="kv">${readings([['Vrot', L(`${d.vrot.toFixed(1)} м/с · у основания ${d.lowVrot.toFixed(1)}`, `${d.vrot.toFixed(1)} m/s · at the base ${d.lowVrot.toFixed(1)}`)], ['Ø', `${(d.diameter / 1000).toFixed(1)} ${L('км', 'km')}`], [L('слой', 'layer'), L(`${(d.base / 1000).toFixed(1)}–${(d.top / 1000).toFixed(1)} км · ${d.tilts} наклонов`, `${(d.base / 1000).toFixed(1)}–${(d.top / 1000).toFixed(1)} km · ${d.tilts} tilts`)], [L('где', 'where'), `${this.azimuthText(d.azimuth)} / ${(d.range / 1000).toFixed(0)} ${L('км', 'km')} · ${age ? `${age} ${L('мин', 'min')}` : L('новый', 'new')}`]])}</dl>`
+        + `<dl class="kv">${readings([['Vrot', L(`${d.vrot.toFixed(1)} м/с · у основания ${d.lowVrot.toFixed(1)}`, `${d.vrot.toFixed(1)} m/s · at the base ${d.lowVrot.toFixed(1)}`)], ['Ø', `${(d.diameter / 1000).toFixed(1)} ${L('км', 'km')}`], [L('ΔV луч–луч', 'ΔV beam–beam'), L(`${d.gateDv.toFixed(0)} м/с · TVS от ${TDA_LOW_DV} у земли и ${TDA_MAX_DV} в столбе`, `${d.gateDv.toFixed(0)} m/s · a TVS from ${TDA_LOW_DV} at the ground and ${TDA_MAX_DV} in the column`)], [L('слой', 'layer'), L(`${(d.base / 1000).toFixed(1)}–${(d.top / 1000).toFixed(1)} км · ${d.tilts} наклонов`, `${(d.base / 1000).toFixed(1)}–${(d.top / 1000).toFixed(1)} km · ${d.tilts} tilts`)], [L('где', 'where'), `${this.azimuthText(d.azimuth)} / ${(d.range / 1000).toFixed(0)} ${L('км', 'km')} · ${age ? `${age} ${L('мин', 'min')}` : L('новый', 'new')}`]])}</dl>`
+        + (d.tvs ? `<div class="mda__hook">${d.tvs.kind === 'TVS' ? L('<b>TVS</b> — вихревая сигнатура смерча', '<b>TVS</b> — tornadic vortex signature') : L('<b>ETVS</b> — приподнятая вихревая сигнатура', '<b>ETVS</b> — elevated vortex signature')}: ${L(`ΔV между соседними лучами ${d.tvs.lowDv.toFixed(0)} м/с у основания, до ${d.tvs.maxDv.toFixed(0)}; ${(d.tvs.base / 1000).toFixed(1)}–${(d.tvs.top / 1000).toFixed(1)} км. Сам смерч сетка не разрешает — это признак, как на настоящем радаре`, `ΔV between neighbouring beams ${d.tvs.lowDv.toFixed(0)} m/s at the base, up to ${d.tvs.maxDv.toFixed(0)}; ${(d.tvs.base / 1000).toFixed(1)}–${(d.tvs.top / 1000).toFixed(1)} km. The grid does not resolve the tornado itself — a sign, as on a real radar`)}</div>` : '')
         + (d.hook ? `<div class="mda__hook">${L('<b>КРЮК</b> — эхо обвивает вращение на 0,5°, вырез притока справа от движения', '<b>HOOK</b> — the echo wraps around the rotation at 0.5°, an inflow notch to the right of the motion')}</div>` : '')
         + `<div class="mda__model">${L('в модели рядом', 'in the model nearby')}: UH ${uh.toFixed(0)} ${L('м²/с²', 'm²/s²')}</div></div>`
     }).join('')
@@ -665,6 +666,14 @@ export class RadarPanel {
       ctx.strokeStyle = color; ctx.lineWidth = d.strength === 'circulation' ? 1.5 : 2.5; ctx.setLineDash(d.strength === 'circulation' ? [4, 3] : [])
       ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([])
       ctx.fillStyle = color; ctx.fillText(`M${d.id}`, cx + r * .75 + 3, cy - r * .75 - 3)
+      if (d.tvs) {
+        // The TVS mark as on NWS radar displays: an inverted triangle at the circulation, red, an elevated one hollow.
+        const t = 9
+        ctx.beginPath(); ctx.moveTo(cx - t, cy - t * .8); ctx.lineTo(cx + t, cy - t * .8); ctx.lineTo(cx, cy + t * .9); ctx.closePath()
+        ctx.lineWidth = 2.5; ctx.strokeStyle = '#ff3b3b'; ctx.fillStyle = '#ff3b3b'
+        if (d.tvs.kind === 'TVS') ctx.fill(); else ctx.stroke()
+        ctx.fillText(d.tvs.kind, cx + t + 4, cy + 4)
+      }
       if (!d.hook) continue
       // The hook: the arc of echo wrapped around the circulation (azimuths clockwise from north; canvas angles from east).
       const h = d.hook, a0 = (h.from - 90) * Math.PI / 180, a1 = (h.from + h.span - 90) * Math.PI / 180
