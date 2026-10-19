@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createGrid, domainGrid, Environment, derechoParameter, hailParameter, parcelIndices, SCENARIOS, type SimConfig, stormIndices } from '.'
+import { createGrid, domainGrid, Environment, derechoParameter, effectiveLayer, hailParameter, parcelIndices, SCENARIOS, type SimConfig, stormIndices } from '.'
 import { CAPPED, SUMMER_DAY, SUPERCELL } from './fixtures'
 
 // MetPy 1.7.1 (bunkers_storm_motion, storm_relative_helicity for the right mover, supercell_composite with SRH 0-3 km
@@ -57,5 +57,27 @@ describe('derecho composite parameter (2.8)', () => {
     }
     expect(dcp('Классическая суперячейка')).toBeGreaterThan(4); expect(dcp('Многоячейковая гроза')).toBeGreaterThan(2)
     expect(dcp('Летний день')).toBeLessThan(1); expect(dcp('Микропорыв')).toBeLessThan(1)
+  })
+})
+
+describe('the effective inflow layer (2.8)', () => {
+  it('starts at the ground under a surface-based storm and gives its SRH and shear, and is above the ground over a cold layer', () => {
+    const indices = (name: string) => {
+      const config = { ...SUMMER_DAY, ...SCENARIOS.find(s => s.name === name)!.values }, env = new Environment(config, createGrid(domainGrid(config.domain, config.top, config.domainSize)))
+      return stormIndices(env, parcelIndices(env, 18_000))
+    }
+    // The classic supercell: 0-1.9 km, SRH ~240, 28 m/s; HSLC SRH ~340; the summer day ~20.
+    const sc = indices('Классическая суперячейка').effective!
+    expect(sc.base).toBe(0); expect(sc.top).toBeGreaterThan(1000); expect(sc.srh).toBeGreaterThan(150); expect(sc.shear).toBeGreaterThan(18)
+    expect(indices('HSLC').effective!.srh).toBeGreaterThan(250); expect(indices('Летний день').effective!.srh).toBeLessThan(50)
+  })
+
+  it('is above the ground over a cold, stable surface layer, and missing without CAPE', () => {
+    const config = { ...SUMMER_DAY }, env = new Environment(config, createGrid(domainGrid(config.domain, config.top, config.domainSize)))
+    // A 12 K inversion in the lowest 800 m (rain-cooled air under an elevated storm): parcels from there cannot rise; from above it they still can.
+    const cold = Object.create(env, { temperatureEnv: { value: (z: number) => env.temperatureEnv(z) - Math.max(0, 12 * (1 - z / 800)) } })
+    const layer = effectiveLayer(cold, 18_000)!
+    expect(layer.base).toBeGreaterThanOrEqual(300)
+    expect(effectiveLayer(Object.create(env, { qEnv: { value: () => 1e-4 } }), 18_000)).toBeNull()
   })
 })

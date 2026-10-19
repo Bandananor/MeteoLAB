@@ -153,3 +153,23 @@ export function parcelIndices(env: Environment, height: number): ParcelIndices {
   }
   return { sb, ml, mu, dcape }
 }
+
+/** The effective inflow layer's parcels: CAPE at least this and CIN no stronger than this, J/kg (Thompson et al. 2007). */
+export const EFFECTIVE_CAPE = 100, EFFECTIVE_CIN = -250
+/** Heights tried, m: every EFFECTIVE_STEP within the lowest 300 hPa. */
+const EFFECTIVE_STEP = 100
+
+/**
+ * The effective inflow layer (Thompson et al. 2007): the lowest run of levels whose parcels, lifted without entrainment,
+ * have CAPE >= EFFECTIVE_CAPE and CIN >= EFFECTIVE_CIN — the air a storm actually feeds on, which may lie above the ground
+ * (an elevated storm) — as base and top heights, m; null when no level qualifies.
+ */
+export function effectiveLayer(env: Environment, height: number): { base: number; top: number } | null {
+  const last = heightOf(env, env.pressureAt(0) - 30000, height)
+  let base = -1, top = -1
+  for (let z = 0; z <= last; z += EFFECTIVE_STEP) {
+    const a = ascend(env, height, z, env.temperatureEnv(z), env.qEnv(z), 0), ok = a.cape >= EFFECTIVE_CAPE && a.cin >= EFFECTIVE_CIN
+    if (ok) { if (base < 0) base = z; top = z } else if (base >= 0) break
+  }
+  return base < 0 ? null : { base, top }
+}

@@ -1,5 +1,8 @@
 import type { Environment } from './environment'
-import { heightOf, type ParcelIndices } from './sounding'
+import { effectiveLayer, heightOf, type ParcelIndices } from './sounding'
+
+/** An effective layer of one level still has this depth for its SRH, m. */
+const EFFECTIVE_STEP_MIN = 100
 
 export interface StormIndices {
   /** Bunkers right-mover motion (u, v), m/s. */ rightMover: readonly [number, number]
@@ -11,6 +14,11 @@ export interface StormIndices {
   /** Significant hail parameter (MUCAPE, the MU parcel's mixing ratio, 700-500 hPa lapse rate, T at 500 hPa, bulk shear 0-6 km). */ ship: number
   /** Temperature lapse rate between 700 and 500 hPa, °C/km. */ lapse75: number
   /** Derecho composite parameter (DCAPE, MUCAPE, bulk shear and mean wind 0-6 km). */ dcp: number
+  /**
+   * The effective inflow layer (sounding.ts effectiveLayer), base and top m, with its SRH (m²/s², the right mover) and
+   * the effective bulk shear (m/s, from its base to half the MU parcel's EL), as SPC; null without one (no storms to feed).
+   */
+  effective: { base: number; top: number; srh: number; shear: number } | null
 }
 
 /**
@@ -47,10 +55,10 @@ function meanWind(env: Environment, z0: number, z1: number) {
   return [u / weight, v / weight] as const
 }
 
-/** Storm-relative helicity of the layer 0..top for a storm moving at (cu, cv): -sum over layers of (V - c) x dV. */
-function helicity(env: Environment, top: number, cu: number, cv: number) {
-  let srh = 0, [u0, v0] = env.windUV(0)
-  for (let z = STEP; z <= top + 1e-6; z += STEP) {
+/** Storm-relative helicity of the layer bottom..top (m) for a storm moving at (cu, cv): -sum over layers of (V - c) x dV. */
+function helicity(env: Environment, top: number, cu: number, cv: number, bottom = 0) {
+  let srh = 0, [u0, v0] = env.windUV(bottom)
+  for (let z = bottom + STEP; z <= top + 1e-6; z += STEP) {
     const [u1, v1] = env.windUV(z)
     srh += (u1 - cu) * (v0 - cv) - (u0 - cu) * (v1 - cv); u0 = u1; v0 = v1
   }
@@ -95,5 +103,11 @@ export function stormIndices(env: Environment, parcels: ParcelIndices): StormInd
   let freezing = 0; while (freezing < height && env.temperatureEnv(freezing) > 0) freezing += 10
   const ship = hailParameter(parcels.mu.cape, env.qEnv(parcels.mu.start * 1000), lapse75, t5, shear06, freezing)
   const dcp = derechoParameter(parcels.dcape, parcels.mu.cape, shear06, Math.hypot(...meanWind(env, 0, 6000)))
-  return { rightMover, leftMover, srh01, srh03, shear06, scp, stp, ship, lapse75, dcp }
+  const layer = effectiveLayer(env, height), el = (parcels.mu.el ?? 0) * 1000
+  let effective: StormIndices['effective'] = null
+  if (layer) {
+    const top = Math.max(layer.top, layer.base + EFFECTIVE_STEP_MIN), [ub, vb] = env.windUV(layer.base), [ut, vt] = env.windUV(Math.max(layer.base, layer.base + (el - layer.base) / 2))
+    effective = { ...layer, srh: helicity(env, top, ...rightMover, layer.base), shear: el > layer.base ? Math.hypot(ut - ub, vt - vb) : 0 }
+  }
+  return { rightMover, leftMover, srh01, srh03, shear06, scp, stp, ship, lapse75, dcp, effective }
 }
