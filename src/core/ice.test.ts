@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { CP, KAPPA } from './constants'
-import { cooperCrystals, CRYSTAL_MASS, fragmentsPerKg, freezeRain, iceProcesses, LF, LS, qsatIce, saturationAdjustMixed, snowFallSpeed, snowProcesses, SPLINTERS, splintering } from './ice'
+import { cooperCrystals, CRYSTAL_MASS, crystalSize, fragmentsPerKg, freezeRain, iceProcesses, koenigGrowth, plateSize, LF, LS, qsatIce, saturationAdjustMixed, snowFallSpeed, snowProcesses, SPLINTERS, splintering } from './ice'
 import { qsatP } from './microphysics'
 
 const one = (x: number) => Float32Array.of(x)
@@ -22,6 +22,15 @@ describe('ice microphysics (stage 1)', () => {
     // Rain of mean drop size 1 / λ = 0.5 mm: per drop of the mass-weighted size (~3.5 mm by Bigg's law) its D⁴ fragments.
     const perDrop = fragmentsPerKg(2000) * 1000 * Math.PI / 6 * (7 / 2000) ** 3
     expect(perDrop).toBeCloseTo(2.5e13 * (7 / 2000) ** 4, 0)
+  })
+
+  it('grows crystals by habit: fastest at -15 °C (dendrites), a second peak at -5 (needles), slow at -9; plates wider than spheres', () => {
+    const m = 1e-10
+    expect(koenigGrowth(-15, m)).toBeGreaterThan(4 * koenigGrowth(-9, m)); expect(koenigGrowth(-5, m)).toBeGreaterThan(1.5 * koenigGrowth(-9, m))
+    expect(koenigGrowth(-15.5, m)).toBeLessThan(koenigGrowth(-15, m)); expect(koenigGrowth(-40, m)).toBe(koenigGrowth(-31, m))
+    // At -15 °C a crystal of 1e-10 kg gains about its own mass in a minute.
+    expect(koenigGrowth(-15, m) * 60 / m).toBeGreaterThan(.5); expect(koenigGrowth(-15, m) * 60 / m).toBeLessThan(5)
+    expect(plateSize(m) * 1e6).toBeCloseTo(103, -1); expect(plateSize(m)).toBeGreaterThan(1.5 * crystalSize(m, 1, 1))
   })
 
   it('lets 1 g/m3 of snow fall at about 1 m/s near the ground', () => {

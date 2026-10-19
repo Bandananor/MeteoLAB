@@ -2,7 +2,7 @@ import { G } from './constants'
 import { EPSILON0 } from './electric'
 import { N0G, RHO_G } from './graupel'
 import { N0H, RHO_H } from './hail'
-import { N0S, RHO_S } from './ice'
+import { N0S, plateSize, RHO_S } from './ice'
 
 // Electrification, 2.3 step 2: the charge carried by the hydrometeors and the non-inductive charging that separates it.
 // Four carriers, each with its own charge per kilogram of air (C/kg, transported like the water it rides on): cloud
@@ -102,9 +102,9 @@ export function chargingRate(tc: number, rho: number, cloud: number, ice: number
   if (tc >= 0 || tc < CHARGING_COLDEST || cloud <= 0 || ice + snow <= 0 || graupel + hail <= 0) return 0
   // Called at every mixed-phase node each step: no arrays, two rimers by two crystal kinds written out.
   const rebound = 1 - Math.exp(.09 * tc), water = rho * cloud * 1000
-  // The model's own crystals (per m³) when it carries them, else the number estimated from the mass.
+  // The model's own crystals (per m³, plates of their mean mass) when it carries them, else the number estimated from the mass.
   const ni = ice <= 0 ? 0 : crystals ?? crystalNumber(tc, ice, rho)
-  const di = ice <= 0 ? 0 : crystals ? Math.min(CRYSTAL_RANGE[1], Math.max(CRYSTAL_RANGE[0], Math.cbrt(6 * rho * ice / (Math.PI * 900 * crystals)))) : crystalDiameter(ice, rho, tc)
+  const di = ice <= 0 ? 0 : crystals ? Math.min(CRYSTAL_RANGE[1], Math.max(CRYSTAL_RANGE[0], plateSize(rho * ice / crystals))) : crystalDiameter(ice, rho, tc)
   const snowSlope = snow > 0 ? (Math.PI * RHO_S * N0S / (rho * snow)) ** .25 : 0, ns = snow > 0 ? N0S / snowSlope : 0, ds = snow > 0 ? 1 / snowSlope : 0
   let rate = 0
   if (graupel > 0 && !wetGraupel) rate += rimerRate(GRAUPEL, graupel, tc, rho, water, rebound, ni, di, ns, ds, snowFall)

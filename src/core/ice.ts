@@ -107,13 +107,35 @@ export function freezeRain(theta: Float32Array, rain: Float32Array, graupel: Flo
 export function crystalSize(qi: number, n: number, rho: number) { return Math.cbrt(6 * rho * qi / (Math.PI * RHO_I * n)) }
 
 /**
+ * Size of a crystal of mass m (kg) as a hexagonal plate, m: m = 0.00739 D^2.45 in g and cm (Mitchell 1996). A plate is
+ * wider than a sphere of the same mass (~100 µm against 60 at 1e-10 kg): the size the charging per collision uses.
+ */
+export function plateSize(m: number) { return .01 * (m * 1000 / .00739) ** (1 / 2.45) }
+
+// Growth of one crystal at water saturation, dm/dt = a1 m^a2 in g and g/s (Koenig 1971; the table of the Goddard scheme
+// in WRF), by whole degrees from -1 to -31 °C: fastest at -15 °C (dendrites) with a second peak at -5 (needles), slowest
+// at -8…-10 and below -20 (columns, thick plates). A sphere of the same mass grows evenly at all temperatures.
+const KOENIG_A1 = [.7939e-7, .7841e-6, .3369e-5, .4336e-5, .5285e-5, .3728e-5, .1852e-5, .2991e-6, .4248e-6, .7434e-6, .1812e-5, .4394e-5, .9145e-5, .1725e-4, .3348e-4,
+  .1725e-4, .9175e-5, .4412e-5, .2252e-5, .9115e-6, .4876e-6, .3473e-6, .4758e-6, .6306e-6, .8573e-6, .7868e-6, .7192e-6, .6513e-6, .5956e-6, .5333e-6, .4834e-6]
+const KOENIG_A2 = [.4006, .4831, .5320, .5307, .5319, .5249, .4888, .3894, .4047, .4318, .4771, .5183, .5463, .5651, .5813,
+  .5655, .5478, .5203, .4906, .4447, .4126, .3960, .4149, .4320, .4506, .4483, .4460, .4433, .4413, .4382, .4361]
+
+/** Growth of one crystal of mass m (kg) at water saturation at tc °C, kg/s (Koenig 1971; between the whole degrees by interpolation, -31 °C below). */
+export function koenigGrowth(tc: number, m: number) {
+  const x = clamp(-tc, 1, 31) - 1, k = Math.min(29, Math.floor(x)), f = x - k, g = m * 1000
+  return 1e-3 * ((1 - f) * KOENIG_A1[k] * g ** KOENIG_A2[k] + f * KOENIG_A1[k + 1] * g ** KOENIG_A2[k + 1])
+}
+
+/**
  * Cloud ice between 0 and -38 °C at cell i over dt, the source of the ice instead of a share by temperature
  * (Rutledge & Hobbs 1983; the Cooper 1986 number as in Thompson et al. 2008), with `number` the crystals per kg of air:
  * - nucleation: in air supersaturated over ice, crystals are added up to the Cooper number, each of CRYSTAL_MASS;
- * - deposition and sublimation: each crystal (a sphere, capacitance D/2) grows at 2 π D (S_i - 1) / (A + B), with
- *   A = L_s² / (K_a R_v T²) and B = 1 / (rho q_si ψ); in a cloud the vapour is held at water saturation, so the crystals
- *   grow at the droplets' expense (the Bergeron process: the adjustment after evaporates the droplets to make up the
- *   vapour). Never past ice saturation, never more than the ice; sublimating crystals vanish with their mass;
+ * - deposition: each crystal grows at its habit's rate at water saturation (koenigGrowth), scaled by the supersaturation
+ *   over ice as a share of water saturation's; in a cloud the vapour is held at water saturation, so the crystals grow
+ *   at the droplets' expense (the Bergeron process: the adjustment after evaporates the droplets to make up the
+ *   vapour). Never past ice saturation;
+ * - sublimation: each crystal (a sphere, capacitance D/2) loses 2 π D (1 - S_i) / (A + B), with A = L_s² / (K_a R_v T²)
+ *   and B = 1 / (rho q_si ψ), never more than the ice; sublimating crystals vanish with their mass;
  * - conversion to snow: the cloud ice beyond MAX_CRYSTAL_MASS per crystal has grown into snow (the largest crystals:
  *   the number stays with the many small ones).
  * Every phase change takes or gives its latent heat. Returns the cooling of theta by sublimation, K, for the cold-pool
@@ -127,10 +149,12 @@ export function iceProcesses(theta: Float32Array, q: Float32Array, ice: Float32A
   if (limit > 0 && lacking > 0) { change = Math.min(limit, lacking * CRYSTAL_MASS); number[i] += change / CRYSTAL_MASS }
   const qi = ice[i] + change, n = number[i]
   if (qi > 1e-12 && n > 0) {
-    const a = LS * LS / (KA * RV * tk * tk), b = 1 / (rho * qsi * PSI)
-    const rate = n * 2 * Math.PI * crystalSize(qi, n * rho, rho) * (q[i] / qsi - 1) / (a + b) * dt
-    if (rate > 0) change += Math.min(rate, limit - change)
-    else { const lost = Math.min(qi, -rate); change -= lost; number[i] *= 1 - lost / qi }
+    if (q[i] > qsi) change += Math.min(n * koenigGrowth(tc, qi / n) * (q[i] - qsi) / (qsatP(tc, p) - qsi) * dt, limit - change)
+    else {
+      const a = LS * LS / (KA * RV * tk * tk), b = 1 / (rho * qsi * PSI)
+      const lost = Math.min(qi, n * 2 * Math.PI * crystalSize(qi, n * rho, rho) * (1 - q[i] / qsi) / (a + b) * dt)
+      change -= lost; number[i] *= 1 - lost / qi
+    }
   }
   ice[i] += change; q[i] -= change; theta[i] += heat * change
   const excess = ice[i] - number[i] * MAX_CRYSTAL_MASS
