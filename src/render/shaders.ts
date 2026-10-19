@@ -770,6 +770,25 @@ void main(){
  * piece is dimmed by the cloud between it and the eye (16 steps through the cloud texture, the density as the clouds
  * draw it): deep inside a cloud the channel is not seen, only the cloud's glow; what comes out of it is sharp.
  */
+// The cloud's optical depth between a point and the camera (lightning and sprites seen through the cloud).
+const cloudBetween = /* glsl */`
+// Optical depth of the cloud and precipitation between a point and the camera.
+float cloudBetween(vec3 p){
+  vec3 rd = cameraPosition - p;
+  float far = length(rd);
+  rd /= far;
+  vec3 inv = 1.0 / rd, t0 = (uBoxMin - p) * inv, t1 = (uBoxMax - p) * inv, lo = min(t0, t1), hi = max(t0, t1);
+  float a = max(max(max(lo.x, lo.y), lo.z), 0.0), b = min(min(min(hi.x, hi.y), hi.z), far);
+  if(b <= a) return 0.0;
+  float ds = (b - a) / 16.0, od = 0.0;
+  for(int i = 0; i < 16; i++){
+    vec2 c = fields(p + rd * (a + ds * (float(i) + 0.5)));
+    od += clamp(c.r * 1.35 - 0.1, 0.0, 1.0) + c.g * 0.35;
+  }
+  return od * ds * uExtinction;
+}
+`
+
 export const lightningVertex = /* glsl */`
 ${volumeCommon}
 ${cloudSampling}
@@ -793,22 +812,7 @@ varying float vArc;
 varying float vBeads;
 varying vec3 vTint;
 
-// Optical depth of the cloud and precipitation between a point and the camera.
-float cloudBetween(vec3 p){
-  vec3 rd = cameraPosition - p;
-  float far = length(rd);
-  rd /= far;
-  vec3 inv = 1.0 / rd, t0 = (uBoxMin - p) * inv, t1 = (uBoxMax - p) * inv, lo = min(t0, t1), hi = max(t0, t1);
-  float a = max(max(max(lo.x, lo.y), lo.z), 0.0), b = min(min(min(hi.x, hi.y), hi.z), far);
-  if(b <= a) return 0.0;
-  float ds = (b - a) / 16.0, od = 0.0;
-  for(int i = 0; i < 16; i++){
-    vec2 c = fields(p + rd * (a + ds * (float(i) + 0.5)));
-    od += clamp(c.r * 1.35 - 0.1, 0.0, 1.0) + c.g * 0.35;
-  }
-  return od * ds * uExtinction;
-}
-
+${cloudBetween}
 void main(){
   vec4 f = uFlash[int(aInfo.x + 0.5)];
   // By kind: a branch, the main channel, a new ground contact's path, the old path below where that leaves.
@@ -865,4 +869,73 @@ void main(){
   // Through a thin veil of cloud the core is dimmed more than the glow, which the veil itself scatters.
   float I = vI * bead;
   gl_FragColor = vec4((vec3(1.0) * core * I * 1.4 * vSeen + halo * glow * I * 0.38 * pow(vSeen, 0.6)) * vTint, 1.0);
+}`
+
+/**
+ * Sprites and halos above the storm (sprites.ts): a sprite's columns, each a camera-facing vertical ribbon from its
+ * top down to its tendrils, red above (the N2 first positive band) and blue-violet in the tendrils below ~60 km (Pasko
+ * 2010, colour photos of Stenbaek-Nielsen et al.); a halo a dim red disc of tens of km at the ionosphere's edge. Seen
+ * through the cloud and the haze like the lightning.
+ */
+export const spriteVertex = /* glsl */`
+${volumeCommon}
+${cloudSampling}
+${cloudBetween}
+attribute vec3 aBase;
+attribute vec4 aShape;
+attribute vec2 aCorner;
+attribute float aHead;
+uniform float uSprite[8];
+varying vec2 vUv;
+varying float vH;
+varying float vHead;
+varying float vKind;
+varying float vI;
+varying float vSeen;
+varying vec3 vTint;
+
+void main(){
+  // aShape: x the slot, y the half width, z the height of the top above aBase (km), w the kind (0 column, 1 halo).
+  float I = uSprite[int(aShape.x + 0.5)];
+  if(I < 0.002){ gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
+  vec3 p;
+  if(aShape.w < 0.5){
+    vec3 look = aBase - cameraPosition;
+    vec3 side = normalize(vec3(-look.z, 0.0, look.x) + vec3(1e-5, 0.0, 0.0));
+    p = aBase + vec3(0.0, aCorner.y * aShape.z, 0.0) + side * aCorner.x * aShape.y;
+  } else p = aBase + vec3(aCorner.x * aShape.y, 0.0, (aCorner.y * 2.0 - 1.0) * aShape.y);
+  gl_Position = projectionMatrix * viewMatrix * vec4(p, 1.0);
+  vUv = aCorner; vH = p.y; vHead = aHead; vKind = aShape.w; vI = I;
+  vSeen = exp(-cloudBetween(p));
+  vTint = exp(-length(cameraPosition - p) * vec3(0.004, 0.007, 0.012));
+}`
+
+export const spriteFragment = /* glsl */`
+precision highp float;
+varying vec2 vUv;
+varying float vH;
+varying float vHead;
+varying float vKind;
+varying float vI;
+varying float vSeen;
+varying vec3 vTint;
+
+void main(){
+  vec3 c;
+  if(vKind < 0.5){
+    // A carrot: the bright head where the streamers start, the diffuse red body above it fading to the top, the
+    // tendrils below it thin, branching to nothing and bluer (Stenbaek-Nielsen et al. 2000, Pasko 2010).
+    float up = vH - vHead, x = abs(vUv.x);
+    float body = exp(-max(up, 0.0) / 5.0) * exp(-x * x * 3.0) * (1.0 - smoothstep(0.85, 1.0, vUv.y));
+    float strands = 0.55 + 0.45 * sin(vUv.x * 9.0 + vH * 0.7);
+    float tendril = exp(max(-up, 0.0) * -0.12) * exp(-x * x * 14.0) * strands;
+    float head = exp(-up * up / 2.0) * exp(-x * x * 5.0);
+    float a = up > 0.0 ? body : tendril;
+    vec3 col = mix(vec3(0.42, 0.3, 1.0), vec3(1.0, 0.2, 0.16), smoothstep(-12.0, 2.0, up));
+    c = col * (a * 0.8 + head * 0.6) * smoothstep(0.0, 0.08, vUv.y);
+  } else {
+    float r = length(vec2(vUv.x, vUv.y * 2.0 - 1.0));
+    c = vec3(1.0, 0.3, 0.22) * 0.35 * exp(-r * r * 3.0) * (1.0 - smoothstep(0.85, 1.0, r));
+  }
+  gl_FragColor = vec4(c * vI * vSeen * vTint, 1.0);
 }`

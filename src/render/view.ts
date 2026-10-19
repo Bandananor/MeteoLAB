@@ -7,6 +7,7 @@ import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeome
 import { FlashVolume, LightVolume } from './light'
 import { noiseTexture } from './noise'
 import { LightningView } from './lightning'
+import { SpriteView } from './sprites'
 import { type GroundPoint, Observer } from './observer'
 import { type CameraGrade, gradeFilter, NEUTRAL_GRADE } from '../camera'
 import { type AtmosphereModel, computeScalarField, groundRepeats, headingVector, heightAt, levelAt, MESO_PERSISTENCE, sunDirection, UH_ROTATING, type UhLayer } from '../core'
@@ -275,6 +276,8 @@ export class StormView {
   private shaderRetry: 'none' | 'pending' | 'done' = 'none'
   /** The lightning channels (lightning.ts). */
   private readonly lightning: LightningView; private readonly drawingBuffer = new THREE.Vector2()
+  /** Sprites and halos above the CG that make them (sprites.ts). */
+  private readonly sprites: SpriteView
   /**
    * The volume textures are uniform in height (the shaders map height linearly onto them). On a stretched grid every
    * texture level t is interpolated between model levels k0[t] and k0[t] + 1 with weight f[t]; on a uniform grid the
@@ -467,6 +470,11 @@ if(abs(uSurface - 2.0) < 0.5){
 
     // Lines a few pixels wide, drawn over the cloud: inside a sunlit cloud a thin white channel would not be seen.
     this.lightning = new LightningView(model, (x, y, z) => this.toWorld(x, y, z), this.shared, this.volumeTexture); this.scene.add(this.lightning.mesh)
+    this.sprites = new SpriteView((x, y, z) => this.toWorld(x, y, z), f => [(f.ground % model.grid.nx) * model.grid.dx, Math.floor(f.ground / model.grid.nx) * model.grid.dy], this.shared, this.volumeTexture); this.scene.add(this.sprites.mesh)
+    this.lightning.onEvent = (f, at, rate) => this.sprites.add(f, at, rate)
+    // A teaser for the channel, never in the release: on a local server ?tle=sprite gives every CG a sprite (the post
+    // must say it was called by hand).
+    if (typeof location !== 'undefined' && /^(localhost|127\.0\.0\.1)$/.test(location.hostname) && new URLSearchParams(location.search).get('tle') === 'sprite') this.lightning.forceEvent = { kind: 'sprite', height: 76_000, ratio: 4 }
     // A CG lights the ground and the rain around where it strikes.
     this.strikeLight = new THREE.PointLight(0xdfe2ff, 0, 30, 2); this.strikeLight.visible = false; this.scene.add(this.strikeLight)
 
@@ -478,7 +486,7 @@ if(abs(uSurface - 2.0) < 0.5){
 
   dispose() {
     this.controls.dispose()
-    ;[this.groundState, this.windTexture, this.skyTexture, this.skyMaterial, this.skyDome.geometry, this.volumeTexture, this.noise, this.columnTexture, this.fieldTexture, this.colormap, this.volumeMaterial, this.fieldMaterial, this.sliceMaterial, this.volumeMesh.geometry, this.sliceH.geometry, this.sliceV.geometry, this.precipGeometry, this.precipMaterial, this.swathTexture, this.cityTexture, this.zoneTexture, this.frontLine?.geometry, this.frontLine?.material as THREE.Material | undefined, this.swath.geometry, this.swath.material as THREE.Material, this.mesoMarker.geometry, this.mesoMarker.material as THREE.Material, this.selectionMarker.geometry, this.selectionMarker.material as THREE.Material, this.stationMarker.geometry, this.stationMarker.material as THREE.Material, this.lightning, this.light, this.flashLight].forEach(r => r?.dispose())
+    ;[this.groundState, this.windTexture, this.skyTexture, this.skyMaterial, this.skyDome.geometry, this.volumeTexture, this.noise, this.columnTexture, this.fieldTexture, this.colormap, this.volumeMaterial, this.fieldMaterial, this.sliceMaterial, this.volumeMesh.geometry, this.sliceH.geometry, this.sliceV.geometry, this.precipGeometry, this.precipMaterial, this.swathTexture, this.cityTexture, this.zoneTexture, this.frontLine?.geometry, this.frontLine?.material as THREE.Material | undefined, this.swath.geometry, this.swath.material as THREE.Material, this.mesoMarker.geometry, this.mesoMarker.material as THREE.Material, this.selectionMarker.geometry, this.selectionMarker.material as THREE.Material, this.stationMarker.geometry, this.stationMarker.material as THREE.Material, this.lightning, this.sprites, this.light, this.flashLight].forEach(r => r?.dispose())
     this.renderer.dispose()
   }
 
@@ -576,6 +584,7 @@ if(abs(uSurface - 2.0) < 0.5){
    */
   debugSunHour: number | null = null
   get debugLightning() { return this.lightning }
+  get debugSprites() { return this.sprites }
   /** Shows the last flash again (a CG if there was one lately), `rate` times as fast as real time; false without one. */
   replayLightning(rate: number) { return this.lightning.replay(rate) }
   debugCamera(position: [number, number, number], target: [number, number, number]) { this.camera.position.set(...position); this.controls.target.set(...target); this.controls.update() }
@@ -1072,6 +1081,7 @@ if(abs(uSurface - 2.0) < 0.5){
     this.updateSun()
     // A flash lights the cloud from inside.
     const glow = this.lightning.update(performance.now(), s.showLightning, this.renderer.getDrawingBufferSize(this.drawingBuffer), ratio)
+    this.sprites.update(performance.now(), this.night, s.showLightning)
     const lit = this.lightning, vu = this.volumeMaterial.uniforms
     if (glow > 0 && lit.changed.some(c => c)) { this.flashLight.update(this.renderer, lit.points, lit.changed); lit.taken() }
     vu.uFlashOn.value = glow > 0 && this.flashLight.ready ? 1 : 0

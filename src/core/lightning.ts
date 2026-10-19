@@ -1,6 +1,7 @@
 import { ElectricSolver, EPSILON0 } from './electric'
 import type { Grid } from './grid'
 import { mulberry32 } from './math'
+import { transientEvent, type TransientEvent } from './tle'
 
 // Lightning, 2.3 step 3: the branched bidirectional discharge of Mansell et al. (2002), in the form of Mansell et al.
 // (2010): a flash starts where the field exceeds the runaway breakdown threshold, its channel grows node by node through
@@ -79,6 +80,13 @@ export interface Flash {
   charge: number
   /** CG: the node where the channel touched the ground; -1 for IC. */
   ground: number
+  /**
+   * CG: the charge moment change, C m — the charge lowered from each node times its height, summed (positive when it
+   * lowered positive charge); 0 for IC. What drives the field above the storm, and with it sprites and halos (tle.ts).
+   */
+  moment: number
+  /** CG: the transient luminous event above it, if its moment change was enough (tle.ts). */
+  tle?: TransientEvent
 }
 
 /**
@@ -106,6 +114,8 @@ export class Lightning {
   readonly rho: Float64Array; readonly phi: Float64Array
   /** Charge the flashes have taken from the ground since the start, C (a negative CG takes positive charge up: > 0). */
   fromGround = 0
+  /** Charge moment change of the flash being grown, C m. */
+  private moment = 0
   /**
    * Charge the air has lost by conduction (to the ground and the upper atmosphere) and gained from the corona since the
    * start, C: > 0 when it lost positive charge.
@@ -253,7 +263,7 @@ export class Lightning {
     const { layer } = this.grid, id = ++this.flashId, { frontier, weight, scale, link } = this
     const nodes: number[] = [], parent: number[] = [], polarity: number[] = []
     let sum = 0, potential = 0, ground = -1, before = 0, touched = false, left = false, neutralized = 0, lowered = 0, strokes = 0
-    this.size = 0
+    this.size = 0; this.moment = 0
     const add = (j: number, from: number) => {
       this.mark[j] = id; nodes.push(j); parent.push(from)
       if (j < layer) {
@@ -305,7 +315,9 @@ export class Lightning {
       this.solve(carriers)
       if (ground < 0) { sum = 0; for (const i of nodes) sum += this.phi[i]; potential = sum / nodes.length }
     }
-    return { time, kind: ground >= 0 ? 'CG' : 'IC', start, nodes: Int32Array.from(nodes), parent: Int32Array.from(parent), polarity: Int8Array.from(polarity), potential: ground >= 0 ? before : potential, charge: ground >= 0 ? lowered : neutralized, ground }
+    const flash: Flash = { time, kind: ground >= 0 ? 'CG' : 'IC', start, nodes: Int32Array.from(nodes), parent: Int32Array.from(parent), polarity: Int8Array.from(polarity), potential: ground >= 0 ? before : potential, charge: ground >= 0 ? lowered : neutralized, ground, moment: ground >= 0 ? this.moment : 0 }
+    if (ground >= 0) { const tle = transientEvent(this.moment); if (tle) flash.tle = tle }
+    return flash
   }
 
   /** Whether node i is clear air for the channel: not charged cloud (|ρ| below RHO_MIN, or no cloud there when the hydrometeors are known). */
@@ -337,9 +349,10 @@ export class Lightning {
       for (let c = 0; c < nodes.length; c++) deposit[c] *= deposit[c] > 0 ? (positive > 0 ? both / positive : 0) : (negative > 0 ? both / negative : 0)
       charge = both
     } else {
-      // Deposited in the cloud from the ground: the charge lowered to the ground is its opposite.
+      // Deposited in the cloud from the ground: the charge lowered to the ground is its opposite, from the height of each node.
       charge = negative - positive
       this.fromGround -= charge
+      for (let c = 0; c < nodes.length; c++) if (deposit[c] !== 0) this.moment -= deposit[c] * this.grid.zs[Math.floor(nodes[c] / layer)]
     }
     for (let c = 0; c < nodes.length; c++) if (deposit[c] !== 0) this.neutralize(carriers, nodes[c], deposit[c])
     return charge

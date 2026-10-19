@@ -33,7 +33,7 @@ for (let t = DT; t <= minutes * 60; t += DT) {
     const path = []; for (let c = f.nodes.indexOf(f.ground); c >= 0; c = f.parent[c]) path.push(f.nodes[c])
     let exit = 0; for (const i of path) { const z = Math.floor(i / layer); if (Math.abs(model.lightning.rho[i]) >= 1e-10 && model.cloud[i] + model.ice[i] + model.snow[i] > 1e-5) { exit = zs[z] / 1000; break } }
     const after = f.nodes.length - 1 - f.nodes.indexOf(f.ground)
-    console.log(`     CG ${f.charge > 0 ? '+' : '-'} ${Math.abs(f.charge).toFixed(0)} C start ${(zs[Math.floor(f.start / layer)] / 1000).toFixed(1)} km V ${(f.potential / 1e6).toFixed(0)} MV leaves charge at ${exit.toFixed(1)} km, ${f.nodes.length} nodes, ${(after / f.nodes.length * 100).toFixed(0)}% after`)
+    console.log(`     CG ${f.charge > 0 ? '+' : '-'} ${Math.abs(f.charge).toFixed(0)} C start ${(zs[Math.floor(f.start / layer)] / 1000).toFixed(1)} km ΔM ${(f.moment / 1e3).toFixed(0)} C km${f.tle ? ` ${f.tle.kind} ${(f.tle.height / 1e3).toFixed(0)} km` : ""} V ${(f.potential / 1e6).toFixed(0)} MV leaves charge at ${exit.toFixed(1)} km, ${f.nodes.length} nodes, ${(after / f.nodes.length * 100).toFixed(0)}% after`)
   }
   const describe = (list) => list.length ? `${list.length} (start ${(list.reduce((a, s) => a + s.start, 0) / list.length).toFixed(1)} km, extent ${(list.reduce((a, s) => a + s.extent, 0) / list.length).toFixed(1)}/${Math.max(...list.map(s => s.extent)).toFixed(1)} km, top ${Math.max(...list.map(s => s.top)).toFixed(1)} km, ${(list.reduce((a, s) => a + s.charge, 0) / list.length).toFixed(1)} C)` : '0'
   // The anvil: columns with cloud ice above 9 km but no updraught over 2 m/s at 4-10 km (away from the core).

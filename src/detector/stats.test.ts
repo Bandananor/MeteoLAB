@@ -6,7 +6,7 @@ const grid = createGrid(DEFAULT_GRID), { nx, layer, dx, dy } = grid
 const node = (x: number, y: number, z: number) => x + y * nx + z * layer
 /** A flash with a straight channel through the given nodes, each grown from the one before. */
 function flash(time: number, kind: 'IC' | 'CG', nodes: number[], charge = kind === 'CG' ? -5 : 8): Flash {
-  return { time, kind, start: nodes[0], nodes: Int32Array.from(nodes), parent: Int32Array.from(nodes, (_, k) => k - 1), polarity: Int8Array.from(nodes, (_, k) => k % 2 ? 1 : -1), potential: -3e7, charge, ground: kind === 'CG' ? nodes[nodes.length - 1] : -1 }
+  return { time, kind, start: nodes[0], nodes: Int32Array.from(nodes), parent: Int32Array.from(nodes, (_, k) => k - 1), polarity: Int8Array.from(nodes, (_, k) => k % 2 ? 1 : -1), potential: -3e7, charge, ground: kind === 'CG' ? nodes[nodes.length - 1] : -1, moment: 0 }
 }
 
 describe('lightning detector statistics', () => {

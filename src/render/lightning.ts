@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { type AtmosphereModel, channelShape, type Flash } from '../core'
+import { type AtmosphereModel, channelShape, type Flash, type TransientEvent } from '../core'
 import { mulberry32 } from '../core/math'
 import { FLASH_POINTS } from './light'
 import { lightningFragment, lightningVertex } from './shaders'
@@ -113,6 +113,10 @@ export class LightningView {
   private seen = 0; private drawn = 0; private lastArrival = 0
   /** For checks of the picture: every flash shown held at this moment of its course, ms (null: running). */
   freeze: number | null = null
+  /** Called when a CG with a sprite or halo starts to show: the flash, when its first return stroke comes (performance.now() ms), the replay rate. */
+  onEvent?: (flash: Flash, at: number, rate: number) => void
+  /** For the checks of the picture and a teaser (view.ts, ?tle=sprite on a local server): every CG gets this event. */
+  forceEvent?: TransientEvent
   /** Per slot: the points of the channel that light the cloud (world km), whether they changed since taken(), how bright the flash is now. */
   readonly points: (Float32Array | null)[] = Array(SLOTS).fill(null)
   readonly changed: boolean[] = Array(SLOTS).fill(true)
@@ -163,6 +167,9 @@ export class LightningView {
       if (now - q.at > QUEUE_WAIT) continue
       if (slot < 0) { this.queue.unshift(q); break }
       this.shown[slot] = { flash: q.flash, course: this.courseOf(q.flash), start: now, rate: q.rate ?? 1, slot }; changed = true
+      // A sprite or halo above a CG: it starts after the first return stroke (sprites.ts).
+      const tle = q.flash.tle ?? (q.flash.kind === 'CG' ? this.forceEvent : undefined)
+      if (tle) this.onEvent?.({ ...q.flash, tle }, now + this.shown[slot]!.course.strokes[0].at / (q.rate ?? 1), q.rate ?? 1)
     }
     if (changed) this.rebuild()
     let glow = 0
