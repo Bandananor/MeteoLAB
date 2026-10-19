@@ -5,7 +5,9 @@ import { download } from '../share'
 import { MONO } from '../theme'
 import { cssGradient, extent, KINDS, lookup, lutIndex, type Palette, type PaletteKind, Palettes, parsePal, type RGB, type Stop, ticks, toPal } from './palettes'
 
-type Product = 'Z' | 'V' | 'SRV' | 'CR' | 'ZDR' | 'RHO' | 'KDP'
+type Product = 'Z' | 'V' | 'SRV' | 'CR' | 'ZDR' | 'RHO' | 'KDP' | 'VIL' | 'ET'
+/** Products of the whole volume scan (PPI.composite), not of one tilt. */
+const VOLUME: readonly Product[] = ['CR', 'VIL', 'ET']
 /** What the vertical section shows. */
 type XsField = 'Z' | 'V' | 'SRV' | 'ZDR' | 'RHO' | 'KDP'
 type Point = { x: number; y: number }
@@ -32,6 +34,8 @@ const PRODUCTS: Record<Product, { label: string; title: string; kind: PaletteKin
   ZDR: { label: L('ZDR — дифференциальная отражаемость', 'ZDR — differential reflectivity'), title: L('ZDR · ДИФФ. ОТРАЖАЕМОСТЬ', 'ZDR · DIFF. REFLECTIVITY'), kind: 'ZDR' },
   RHO: { label: L('ρhv (RHO, CC) — коэффициент корреляции', 'ρhv (RHO, CC) — correlation coefficient'), title: L('ρhv · КОРРЕЛЯЦИЯ', 'ρhv · CORRELATION'), kind: 'RHO' },
   KDP: { label: L('KDP — удельная дифференциальная фаза', 'KDP — specific differential phase'), title: L('KDP · ДИФФ. ФАЗА', 'KDP · DIFF. PHASE'), kind: 'KDP' },
+  VIL: { label: L('VIL — водозапас столба', 'VIL — vertically integrated liquid'), title: L('VIL · ВОДОЗАПАС СТОЛБА', 'VIL · VERTICALLY INTEGRATED LIQUID'), kind: 'VIL' },
+  ET: { label: L('ET — высота эха', 'ET — echo tops'), title: L('ET · ВЫСОТА ЭХА', 'ET · ECHO TOPS'), kind: 'ET' },
 }
 const XS_FIELDS: Record<XsField, { name: string; short: string; reading: string; kind: PaletteKind }> = {
   Z: { name: L('отражаемость', 'reflectivity'), short: 'Z', reading: L('Отражаемость', 'Reflectivity'), kind: 'Z' }, V: { name: L('скорость вдоль луча', 'velocity along the beam'), short: 'V', reading: L('Скорость', 'Velocity'), kind: 'V' },
@@ -49,6 +53,8 @@ const HELP: Record<Product, string> = {
   ZDR: L(`Дифференциальная отражаемость: насколько эхо в горизонтальной поляризации сильнее, чем в вертикальной. Крупные капли сплюснуты — ZDR +1…+4 дБ; град и крупа кувыркаются и почти круглые — около 0; сухой снег — 0…+0,5. Колонна ZDR — капли, вынесенные потоком выше 0 °C (высокие наклоны и разрез): признак сильного потока, раньше роста отражаемости. Высокая Z при ZDR около 0 — ядро града. ${DUAL_NOTE}`, `Differential reflectivity: how much stronger the echo is in horizontal polarization than in vertical. Large drops are flattened — ZDR +1…+4 dB; hail and graupel tumble and are nearly round — about 0; dry snow — 0…+0.5. A ZDR column — drops lofted by the updraught above 0 °C (high tilts and the cross-section): a sign of a strong updraught, ahead of the reflectivity’s growth. High Z with ZDR near 0 — a hail core. ${DUAL_NOTE}`),
   RHO: L(`Коэффициент корреляции ρhv: насколько одинаково эхо в двух поляризациях. Чистый дождь или снег — 0,97–1; смесь разных частиц — ниже: полоса таяния (снег и крупа тают в дождь) — около 0,9, град с дождём — 0,85–0,95. Обломки смерча (TDS, ρhv < 0,8) модель не показывает: вихрь мельче её сетки. ${DUAL_NOTE}`, `The correlation coefficient ρhv: how alike the echo is in the two polarizations. Pure rain or snow — 0.97–1; a mix of particles — lower: the melting layer (snow and graupel melting into rain) — about 0.9, hail with rain — 0.85–0.95. Tornado debris (TDS, ρhv < 0.8) the model does not show: the vortex is smaller than its grid. ${DUAL_NOTE}`),
   KDP: L(`Удельная дифференциальная фаза, °/км: насколько горизонтальная волна отстаёт от вертикальной в дожде. Растёт с количеством воды и почти не замечает града, поэтому по KDP находят сильный ливень внутри ядра града. Здесь — только от дождя. ${DUAL_NOTE}`, `Specific differential phase, °/km: how much the horizontal wave lags the vertical one in rain. It grows with the amount of water and hardly notices hail, so KDP finds heavy rain inside a hail core. Here — from rain only. ${DUAL_NOTE}`),
+  VIL: L('Водозапас столба: сколько воды «в каплях» над каждой точкой, кг/м², — по отражаемости всех 14 наклонов (Greene и Clark 1972; эхо сильнее 56 dBZ считается как 56, чтобы град не шёл за воду). Больше 40–50 — мощное ядро, вероятен град; под курсором — и плотность VIL (VIL на высоту эха): от 3,5 г/м³ — вероятен крупный град. В модели и одиночная ячейка доходит до ~40 при плотности ~4,5: ядро крупы отражает сильнее природного (одномоментная микрофизика); у суперячеек — 50–60.', 'Vertically integrated liquid: how much water “as drops” is above each point, kg/m², from the reflectivity of all 14 tilts (Greene and Clark 1972; echo over 56 dBZ counts as 56, so hail is not taken for water). Above 40–50 — a strong core, hail likely; under the cursor also the VIL density (VIL over the echo top): from 3.5 g/m³ large hail is likely. In the model a single cell too reaches ~40 at a density of ~4.5: its graupel core echoes more strongly than in nature (one-moment microphysics); supercells give 50–60.'),
+  ET: L('Высота эха: самый высокий луч с эхом от 18 dBZ (как у NWS). Показывает, как высоко поднялся восходящий поток: 12–16 км — мощная гроза; вершина над тропопаузой — сильный поток пробил её (купол над наковальней). Ступенька на ~1 км — от шага наклонов, а вблизи радара даже наклон 19,5° не достаёт до вершины («конус молчания»): там высота — нижняя оценка, под курсором — «≥». Так и на настоящем радаре.', 'Echo tops: the highest beam with at least 18 dBZ echo (as the NWS). Shows how high the updraught has risen: 12–16 km — a strong storm; a top above the tropopause — a strong updraught has punched through it (the dome over the anvil). Steps of ~1 km come from the tilts’ spacing, and near the radar even the 19.5° tilt does not reach the top (the cone of silence): there the height is a lower bound, “≥” under the cursor. So it is on a real radar too.'),
 }
 const NO_ECHO = L('нет эха', 'no echo'), DELETE = L('Удалить', 'Delete')
 const XS_HELP = L('Разрез — вертикальный срез по линии A–B через весь объём: видно, как высоко поднимается эхо, свод слабого эха (BWER) над восходящим потоком, нависающее эхо, ядро града, наковальню, колонну ZDR. Тонкие линии — лучи 14 наклонов там, где они пересекают линию: так их видит радар (вдали от радара лучи выше, между ними — пропуски). Пунктир — изотермы 0 °C (ниже тает снег и крупа) и −20 °C (около неё растёт град и разделяются заряды). Разрез от радара через точку — как RHI настоящего радара; на линии в стороне от радара скорость — всё равно вдоль его луча к каждой точке. По вертикали масштаб растянут.', 'The cross-section is a vertical slice along the line A–B through the whole volume: how high the echo rises, the bounded weak echo region (BWER) over the updraught, the overhanging echo, the hail core, the anvil, the ZDR column. Thin lines are the beams of the 14 tilts where they cross the line: as the radar sees them (far from the radar the beams are higher, with gaps between them). Dashed — the 0 °C isotherm (snow and graupel melt below it) and −20 °C (hail grows and charges separate near it). A section from the radar through a point is like a real radar’s RHI; on a line off to the side the velocity is still along the radar’s beam to each point. The vertical scale is stretched.')
@@ -246,12 +252,12 @@ export class RadarPanel {
   refresh(force = false) {
     const ppi = this.ppi
     if (!this.open || !ppi) return
-    const now = performance.now(), time = ppi.model.time, every = this.product === 'CR' ? 1000 : 200
-    if (!force && (time === this.lastTime || now - (this.product === 'CR' ? this.lastComposite : this.lastDraw) < every)) return
+    const now = performance.now(), time = ppi.model.time, every = VOLUME.includes(this.product) ? 1000 : 200
+    if (!force && (time === this.lastTime || now - (VOLUME.includes(this.product) ? this.lastComposite : this.lastDraw) < every)) return
     this.lastTime = time; this.lastDraw = now
     ppi.stormMotion = this.product === 'SRV' ? this.motion : null
     ppi.dual = RadarPanel.dual(this.kind()) || (this.xs.on && RadarPanel.dual(this.xsKind()))
-    if (this.product === 'CR') { ppi.composite(); this.lastComposite = now } else ppi.sample()
+    if (VOLUME.includes(this.product)) { ppi.composite(); this.lastComposite = now } else ppi.sample()
     this.cutSection()
     // New model time (or a new radar site): rescan, at most every MDA_EVERY ms. The detection's prepare() leaves the
     // dual-polarisation nodes as they are (it needs only Z and V).
@@ -339,12 +345,12 @@ export class RadarPanel {
     this.root.classList.toggle('is-section', on)
   }
 
-  private setTilt(tilt: number) { if (!this.ppi) return; this.ppi.tilt = tilt; if (this.product === 'CR') this.setProduct('Z'); this.markTilt(); this.refresh(true) }
+  private setTilt(tilt: number) { if (!this.ppi) return; this.ppi.tilt = tilt; if (VOLUME.includes(this.product)) this.setProduct('Z'); this.markTilt(); this.refresh(true) }
 
   private setProduct(product: Product) {
     this.product = product
     // The section shows the same kind of product as the map unless chosen otherwise (the composite: reflectivity).
-    this.xs.field = product === 'CR' ? 'Z' : product
+    this.xs.field = product === 'CR' || product === 'VIL' || product === 'ET' ? 'Z' : product
     press(this.root.querySelectorAll<HTMLButtonElement>('[data-product]'), b => b.dataset.product === product)
     this.root.querySelector<HTMLElement>('#radarProduct')!.textContent = PRODUCTS[product].title
     this.root.querySelector<HTMLElement>('#radarProductLabel')!.textContent = PRODUCTS[product].label
@@ -379,7 +385,7 @@ export class RadarPanel {
   }
 
   private markTilt() {
-    const t = this.ppi?.tilt ?? RADAR_TILTS[0], all = this.product === 'CR'
+    const t = this.ppi?.tilt ?? RADAR_TILTS[0], all = VOLUME.includes(this.product)
     press(this.root.querySelectorAll<HTMLButtonElement>('[data-tilt]'), b => !all && Number(b.dataset.tilt) === t)
     this.root.querySelector<HTMLElement>('#radarTilt')!.textContent = all ? L('ВСЕ', 'ALL') : `${t.toFixed(1)}°`
   }
@@ -405,7 +411,7 @@ export class RadarPanel {
   private values(): Float32Array | null {
     const ppi = this.ppi
     if (!ppi) return null
-    return { Z: ppi.dbz, V: ppi.velocity, SRV: ppi.velocity, CR: ppi.compositeDbz, ZDR: ppi.zdr, RHO: ppi.rho, KDP: ppi.kdp }[this.product]
+    return { Z: ppi.dbz, V: ppi.velocity, SRV: ppi.velocity, CR: ppi.compositeDbz, ZDR: ppi.zdr, RHO: ppi.rho, KDP: ppi.kdp, VIL: ppi.vil, ET: ppi.echoTop }[this.product]
   }
 
   /** The values of the section's field. */
@@ -486,6 +492,8 @@ export class RadarPanel {
     if (kind === 'V') return `${v > 0 ? '+' : ''}${v.toFixed(1)} ${L('м/с', 'm/s')}${inbound && ` ${v > 0 ? L('(от радара)', '(outbound)') : L('(к радару)', '(inbound)')}`}`
     if (kind === 'ZDR') return `${v > 0 ? '+' : ''}${v.toFixed(2)} ${L('дБ', 'dB')}`
     if (kind === 'RHO') return v.toFixed(3)
+    if (kind === 'VIL') return v < 1 ? NO_ECHO : `${v.toFixed(0)} ${L('кг/м²', 'kg/m²')}`
+    if (kind === 'ET') return v <= 0 ? NO_ECHO : `${v.toFixed(1)} ${L('км', 'km')}`
     return `${v.toFixed(2)} ${L('°/км', '°/km')}`
   }
 
@@ -777,9 +785,11 @@ export class RadarPanel {
     if (!this.hover || !values) { out.innerHTML = readings([[L('курсор', 'cursor'), L('вне экрана', 'off the screen')]]); return }
     const { width, depth } = ppi.model.grid
     const b = ppi.beamAt(this.hover.x, this.hover.y), px = Math.min(ppi.w - 1, Math.floor(this.hover.x / width * ppi.w)), py = Math.min(ppi.h - 1, Math.floor((depth - this.hover.y) / depth * ppi.h)), i = px + py * ppi.w
-    const kind = this.kind(), name = { Z: L('Отражаемость', 'Reflectivity'), V: L('Скорость', 'Velocity'), ZDR: 'ZDR', RHO: 'ρhv', KDP: 'KDP' }[kind]
-    out.innerHTML = readings([[L('Азимут', 'Azimuth'), this.azimuthText(b.azimuth)], [L('Дальность', 'Range'), `${(b.range / 1000).toFixed(1)} ${L('км', 'km')}`], ...(this.product === 'CR' ? [] : [[L('Высота луча', 'Beam height'), `${(b.height / 1000).toFixed(2)} ${L('км', 'km')}`] as [string, string]]),
-      ...(kind === 'Z' ? [] : [[L('Отражаемость', 'Reflectivity'), ppi.dbz[i] < 5 ? NO_ECHO : `${ppi.dbz[i].toFixed(0)} dBZ`] as [string, string]]), [name, this.describe(values[i], kind, 'in')]])
+    const kind = this.kind(), name = { Z: L('Отражаемость', 'Reflectivity'), V: L('Скорость', 'Velocity'), ZDR: 'ZDR', RHO: 'ρhv', KDP: 'KDP', VIL: 'VIL', ET: L('Высота эха', 'Echo top') }[kind], volume = VOLUME.includes(this.product)
+    out.innerHTML = readings([[L('Азимут', 'Azimuth'), this.azimuthText(b.azimuth)], [L('Дальность', 'Range'), `${(b.range / 1000).toFixed(1)} ${L('км', 'km')}`], ...(volume ? [] : [[L('Высота луча', 'Beam height'), `${(b.height / 1000).toFixed(2)} ${L('км', 'km')}`] as [string, string]]),
+      ...(kind === 'Z' ? [] : [[volume ? L('Сильнейшее эхо', 'Strongest echo') : L('Отражаемость', 'Reflectivity'), (volume ? ppi.compositeDbz : ppi.dbz)[i] < 5 ? NO_ECHO : `${(volume ? ppi.compositeDbz : ppi.dbz)[i].toFixed(0)} dBZ`] as [string, string]]),
+      // VIL density (VIL over the echo top): from ~3.5 g/m³ large hail is likely (Amburn & Wolf 1997).
+      ...(this.product === 'VIL' && ppi.vil[i] >= 1 && ppi.echoTop[i] > 0 ? [[L('Плотность VIL', 'VIL density'), `${(ppi.vil[i] / ppi.echoTop[i]).toFixed(1)} ${L('г/м³', 'g/m³')}`] as [string, string]] : []), [name, this.product === 'ET' && ppi.echoTopped[i] ? L(`≥ ${this.describe(values[i], kind)}: верх не виден, выше верхнего наклона`, `≥ ${this.describe(values[i], kind)}: the top is not seen, above the highest tilt`) : this.describe(values[i], kind, 'in')]])
   }
 
   // ---- The palette editor: a copy of the chosen palette as rows "value · colour · what follows", previewed live.

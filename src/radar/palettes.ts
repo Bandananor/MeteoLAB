@@ -5,8 +5,8 @@ import { L } from '../i18n'
 // "SolidColor: value R G B" (one colour up to the next stop), Color4 / SolidColor4 with an alpha, "Product:", "Units:",
 // "Scale:" and "Offset:" (file value = value x Scale + Offset), comments after ";".
 
-/** What a palette colours: reflectivity (Z, CR, the section), radial velocity (V, SRV), ZDR, rho_hv, KDP. */
-export type PaletteKind = 'Z' | 'V' | 'ZDR' | 'RHO' | 'KDP'
+/** What a palette colours: reflectivity (Z, CR, the section), radial velocity (V, SRV), ZDR, rho_hv, KDP, VIL, echo tops. */
+export type PaletteKind = 'Z' | 'V' | 'ZDR' | 'RHO' | 'KDP' | 'VIL' | 'ET'
 export type RGB = readonly [number, number, number]
 /** A stop: from `value` up, `color` (null: transparent); `solid` holds it to the next stop, otherwise it blends to `to` or to the next stop's colour. */
 export interface Stop { value: number; color: RGB | null; to?: RGB | null; solid?: boolean }
@@ -23,6 +23,8 @@ export const KINDS: Record<PaletteKind, { label: string; units: string; palUnits
   ZDR: { label: 'ZDR', units: L('дБ', 'dB'), palUnits: 'DB', min: -6, max: 10, codes: ['ZDR', 'DR'], clampBelow: false, digits: 1 },
   RHO: { label: 'ρhv (RHO, CC)', units: '', palUnits: 'NONE', min: 0, max: 1.1, codes: ['CC', 'RHO', 'RHOHV', 'PHV'], clampBelow: false, digits: 2 },
   KDP: { label: 'KDP', units: L('°/км', '°/km'), palUnits: 'DEG/KM', min: -4, max: 12, codes: ['KDP', 'KD'], clampBelow: false, digits: 1 },
+  VIL: { label: 'VIL', units: L('кг/м²', 'kg/m²'), palUnits: 'KG/M2', min: 0, max: 100, codes: ['VIL', 'DVL'], clampBelow: false, digits: 0 },
+  ET: { label: L('Высота эха (ET)', 'Echo tops (ET)'), units: L('км', 'km'), palUnits: 'KM', min: 0, max: 25, codes: ['ET', 'EET'], clampBelow: false, digits: 1 },
 }
 
 const hex = (h: string): RGB => [1, 3, 5].map(k => parseInt(h.slice(k, k + 2), 16)) as unknown as RGB
@@ -45,6 +47,10 @@ export const BUILTIN: Palette[] = ([
   { id: 'rho-cvd', name: L('Для дальтоников (viridis)', 'Colour-blind friendly (viridis)'), kind: 'RHO', stops: viridis(.7, 1, '#ffffff') },
   { id: 'kdp-classic', name: L('Классическая', 'Classic'), kind: 'KDP', stops: smooth([[-1, '#555555'], [0, '#9b9b9b'], [.5, '#4ca7d8'], [1, '#2aa64a'], [2, '#f2e33a'], [3, '#f39b2a'], [4, '#e0302a'], [6, '#d22ad8']]) },
   { id: 'kdp-cvd', name: L('Для дальтоников (viridis)', 'Colour-blind friendly (viridis)'), kind: 'KDP', stops: viridis(-.5, 5) },
+  { id: 'vil-classic', name: L('Классическая', 'Classic'), kind: 'VIL', stops: smooth([[5, '#3b6e96'], [10, '#2f9e5c'], [20, '#e3d63a'], [35, '#ef8c1f'], [50, '#d7301f'], [65, '#c51b8a'], [80, '#ffffff']]) },
+  { id: 'vil-cvd', name: L('Для дальтоников (viridis)', 'Colour-blind friendly (viridis)'), kind: 'VIL', stops: viridis(1, 70, '#ffffff') },
+  { id: 'et-classic', name: L('Классическая', 'Classic'), kind: 'ET', stops: smooth([[1, '#3b5878'], [3, '#3b6e96'], [6, '#2f9e5c'], [9, '#e3d63a'], [12, '#ef8c1f'], [15, '#d7301f'], [17, '#c51b8a'], [19, '#ffffff']]) },
+  { id: 'et-cvd', name: L('Для дальтоников (viridis)', 'Colour-blind friendly (viridis)'), kind: 'ET', stops: viridis(1, 18, '#ffffff') },
 ] as Palette[]).map(p => ({ ...p, builtin: true }))
 
 const sorted = (stops: readonly Stop[]) => [...stops].sort((a, b) => a.value - b.value)

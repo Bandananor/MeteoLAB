@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { AtmosphereModel, createGrid, PPI } from '.'
+import { AtmosphereModel, beamHeight, createGrid, ECHO_TOP_DBZ, PPI, RADAR_TILTS, VIL_MAX_DBZ } from '.'
 import { QUIET } from './fixtures'
 
 // A domain fixed to the ground: the model winds set below are the winds over the ground.
@@ -69,5 +69,23 @@ describe('Doppler velocity and composite reflectivity', () => {
       for (let i = 0; i < ppi.dbz.length; i++) expect(ppi.compositeDbz[i]).toBeGreaterThanOrEqual(ppi.dbz[i] - 1e-6)
     }
     expect(Math.max(...ppi.compositeDbz)).toBeGreaterThan(30)
+  })
+
+  it('integrates VIL between the tilts and finds the echo top (2.8)', () => {
+    // Rain of 1 g/kg up to 6 km everywhere: every beam of this small domain (below ~3.5 km) is in it.
+    const model = small(), { layer, nz, zs } = model.grid
+    for (let z = 0; z < nz; z++) if (zs[z] < 6000) for (let c = 0; c < layer; c++) model.rain[c + z * layer] = 1e-3
+    const ppi = new PPI(model, 64, 45)
+    ppi.composite()
+    for (const [px, py] of [[50, 10], [40, 30], [10, 40]]) {
+      const i = px + py * ppi.w, g = ppi.ground(px, py), { range } = ppi.beamAt(g.x, g.y), low = beamHeight(range, RADAR_TILTS[0]), high = beamHeight(range, RADAR_TILTS[RADAR_TILTS.length - 1])
+      // Even the highest tilt is in the rain: the top is above it, the echo top only a lower bound.
+      expect(ppi.echoTop[i] * 1000).toBeCloseTo(high, -2); expect(ppi.echoTopped[i]).toBe(1)
+      // Z within a few dB from level to level (density): VIL within ~15 % of 3.44e-6 Z^(4/7) over the beams' depth.
+      const expected = 3.44e-6 * (10 ** (ppi.compositeDbz[i] / 10)) ** (4 / 7) * (high - low)
+      expect(ppi.vil[i] / expected).toBeGreaterThan(.8); expect(ppi.vil[i] / expected).toBeLessThan(1.05)
+    }
+    // Echo above VIL_MAX_DBZ counts as VIL_MAX_DBZ: hail adds no more.
+    expect(VIL_MAX_DBZ).toBe(56); expect(ECHO_TOP_DBZ).toBe(18)
   })
 })

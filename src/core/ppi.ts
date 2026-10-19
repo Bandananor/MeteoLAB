@@ -1,4 +1,4 @@
-import { levelAt } from './grid'
+import { heightAt, levelAt } from './grid'
 import type { AtmosphereModel } from './model'
 import { dualPol } from './polarimetry'
 import { DBZ_FLOOR, reflectivity, reflectivityFallSpeed } from './radar'
@@ -32,10 +32,17 @@ export const DUAL_MIN_DBZ = 10
  * `section` also give the dual-polarisation products (polarimetry.ts): ZDR (dB), rho_hv and KDP (deg/km), NaN below
  * DUAL_MIN_DBZ.
  */
+/** The echo top's reflectivity, dBZ (NWS enhanced echo tops), and the reflectivity VIL counts at most, dBZ (hail above it). */
+export const ECHO_TOP_DBZ = 18, VIL_MAX_DBZ = 56
+
 export class PPI {
   readonly w: number; readonly h: number
   readonly dbz: Float32Array; readonly velocity: Float32Array; readonly compositeDbz: Float32Array
   readonly zdr: Float32Array; readonly rho: Float32Array; readonly kdp: Float32Array
+  /** From the whole volume scan with composite(): vertically integrated liquid (kg/m²) and the echo top (km, 0: none). */
+  readonly vil: Float32Array; readonly echoTop: Float32Array
+  /** 1 where even the highest tilt still has ECHO_TOP_DBZ: the echo top is above it (the cone of silence), a lower bound. */
+  readonly echoTopped: Uint8Array
   private readonly gx: Float32Array; private readonly gy: Float32Array; private readonly sinAz: Float32Array; private readonly cosAz: Float32Array
   /** Grid level of the beam per tilt (-1 above the model top), for the current site. */
   private readonly levels = new Map<number, Float32Array>()
@@ -59,7 +66,7 @@ export class PPI {
   constructor(model: AtmosphereModel, w: number, h: number) {
     this.model = model; this.w = w; this.h = h
     const n = w * h, f = () => new Float32Array(n)
-    this.dbz = f(); this.velocity = f(); this.compositeDbz = f(); this.zdr = f(); this.rho = f(); this.kdp = f(); this.gx = f(); this.gy = f(); this.sinAz = f(); this.cosAz = f()
+    this.dbz = f(); this.velocity = f(); this.compositeDbz = f(); this.zdr = f(); this.rho = f(); this.kdp = f(); this.vil = f(); this.echoTop = f(); this.echoTopped = new Uint8Array(n); this.gx = f(); this.gy = f(); this.sinAz = f(); this.cosAz = f()
     this.nodeDbz = new Float32Array(model.grid.n); this.nodeFall = new Float32Array(model.grid.n)
     this.nodeZdr = new Float32Array(model.grid.n); this.nodeRho = new Float32Array(model.grid.n).fill(1); this.nodeKdp = new Float32Array(model.grid.n)
     this.site = { x: model.grid.width / 2, y: model.grid.depth / 2 }
@@ -155,15 +162,30 @@ export class PPI {
     }
   }
 
-  /** Composite reflectivity: the strongest echo of the volume scan over each pixel. */
+  /**
+   * The volume scan's products over each pixel: the composite reflectivity (the strongest echo), the echo top (the
+   * highest beam with at least ECHO_TOP_DBZ, as the NWS enhanced echo tops) and VIL — the liquid water the reflectivity
+   * implies, integrated between the tilts' beam heights: 3.44e-6 Z^(4/7) kg/m³ (Greene & Clark 1972), Z (mm⁶/m³) capped at
+   * VIL_MAX_DBZ so hail does not count as water.
+   */
   composite() {
     this.prepare()
-    const out = this.compositeDbz, m = this.model
-    const [ox, oy] = this.shift()
-    out.fill(DBZ_FLOOR)
+    const out = this.compositeDbz, m = this.model, grid = m.grid, vil = this.vil, top = this.echoTop
+    const [ox, oy] = this.shift(), last = new Float32Array(out.length).fill(NaN), lastH = new Float32Array(out.length)
+    out.fill(DBZ_FLOOR); vil.fill(0); top.fill(0); this.echoTopped.fill(0)
     for (const tilt of RADAR_TILTS) {
       const gz = this.levelsFor(tilt)
-      for (let i = 0; i < out.length; i++) { const z = gz[i]; if (z >= 0) { const d = m.sample(this.nodeDbz, this.gx[i] - ox, this.gy[i] - oy, z); if (d > out[i]) out[i] = d } }
+      for (let i = 0; i < out.length; i++) {
+        const z = gz[i]
+        if (z < 0) continue
+        const d = m.sample(this.nodeDbz, this.gx[i] - ox, this.gy[i] - oy, z), h = heightAt(grid, z)
+        if (d > out[i]) out[i] = d
+        if (d >= ECHO_TOP_DBZ) top[i] = Math.max(top[i], h / 1000)
+        if (tilt === RADAR_TILTS[RADAR_TILTS.length - 1]) this.echoTopped[i] = d >= ECHO_TOP_DBZ ? 1 : 0
+        const zl = d > DBZ_FLOOR ? 10 ** (Math.min(d, VIL_MAX_DBZ) / 10) : 0
+        if (!Number.isNaN(last[i]) && h > lastH[i]) vil[i] += 3.44e-6 * ((last[i] + zl) / 2) ** (4 / 7) * (h - lastH[i])
+        last[i] = zl; lastH[i] = h
+      }
     }
   }
 
