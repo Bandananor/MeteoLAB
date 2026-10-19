@@ -217,7 +217,12 @@ export const luminance = (c: ArrayLike<number>) => .2126 * c[0] + .7152 * c[1] +
 /**
  * The eye's adaptation: how much brighter than the noon's the view is drawn for a ground irradiance `light` (sun and sky,
  * relative to the sun above the air). Partial (the cube root of the ratio: at sunset the view is darker, in the deep
- * twilight dark), up to ADAPT_MAX; below that the night floor (view.ts) takes over.
+ * twilight dark), up to ADAPT_MAX; below that the night floor (view.ts) takes over. In the full day the view is drawn
+ * NOON_DIM as bright, as a camera stops down in the sun (the testers and the user 19.10.2026: the noon sky glared
+ * and the clouds were lost in it), back to full from DIM_UNTIL (the sun ~10° high), so the evening is as it was.
  */
-export const NOON_LIGHT = .8, ADAPT_MAX = 25
-export function adaptation(light: number) { return Math.min(ADAPT_MAX, Math.max(1, Math.cbrt(NOON_LIGHT / Math.max(light, 1e-9)))) }
+export const NOON_LIGHT = .8, ADAPT_MAX = 25, NOON_DIM = .75, DIM_UNTIL = 2
+export function adaptation(light: number) {
+  const a = Math.min(ADAPT_MAX, Math.max(1, Math.cbrt(NOON_LIGHT / Math.max(light, 1e-9))))
+  return a * (NOON_DIM + (1 - NOON_DIM) * Math.min(1, (a - 1) / (DIM_UNTIL - 1)))
+}
