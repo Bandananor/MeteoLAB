@@ -3,7 +3,8 @@ import { CP, EPS, G, KAPPA, LV, RD } from './constants'
 import type { Environment } from './environment'
 import { lerp } from './math'
 
-export interface ParcelPoint { z: number; env: number; dew: number; parcel: number; buoyancy: number }
+/** A point of a lifted parcel: height km; the environment's temperature, dew point and the parcel's temperature, °C; buoyancy; the virtual temperatures of the parcel and the environment, °C (what CAPE is counted by). */
+export interface ParcelPoint { z: number; env: number; dew: number; parcel: number; buoyancy: number; tv?: number; envTv?: number }
 export interface WindPoint { z: number; u: number; v: number }
 export interface Sounding {
   profile: ParcelPoint[]; wind: WindPoint[]
@@ -47,7 +48,7 @@ function ascend(env: Environment, height: number, z0: number, temp: number, q: n
         else if (rising && z / 1000 > lfc + .2) { rising = false; el = z / 1000; cape = area - b * dz }
       }
     }
-    profile.push({ z: z / 1000, env: envT, dew: env.dewpoint(env.qEnv(z), z), parcel: temp, buoyancy: b })
+    profile.push({ z: z / 1000, env: envT, dew: env.dewpoint(env.qEnv(z), z), parcel: temp, buoyancy: b, tv: tv - 273.15, envTv: envTv - 273.15 })
     // The parcel follows the environment's pressure: dry adiabat (theta conserved) below the LCL, pseudo-adiabat
     // dT/dp above it. Height-based lapse rates assume T_parcel = T_env and made the parcel too warm aloft.
     const p0 = env.pressureAt(z), p1 = env.pressureAt(z + dz)

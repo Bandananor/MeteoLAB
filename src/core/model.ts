@@ -85,7 +85,11 @@ export interface ModelDiagnostics {
   /** Largest rain total on the ground since the start, mm. */ rainTotal: number
   updraft: number; downdraft: number; cloudTop: number; thermalTop: number
   maxCloud: number; coldMax: number; cores: number; shear06: number
-  /** Strongest wind over the ground at the ~100 m level, m/s: outflow and downburst gusts. */ gust: number
+  /**
+   * Strongest wind over the ground at the ground node (its half layer, ~0-50 m, with the surface drag), m/s: outflow and
+   * downburst gusts, the level the weather station reads too (was ~100 m, the station z = 0: a tester saw two winds).
+   * A mean over a ~1 km cell: a real gust in it is ~1.3-1.5 times stronger.
+   */ gust: number
   /** Diameter of the largest hailstones reaching the ground now, mm (0: no hail at the ground). */ hail: number
   /**
    * Velocity components clipped by the safety limits since the start. The limits (|u|, |v| <= 120, |w| <= 100 m/s,
@@ -935,8 +939,8 @@ export class AtmosphereModel implements TaskModel {
     // Surface precipitation flux, rain and snow as water (was the largest q_r anywhere times 12000, 2-2.5x too low).
     const rho0 = this.env.rho[0]
     let rainTotal = 0, gust = 0
-    const near = this.grid.zs.findIndex(z => z >= 100) * this.grid.layer, [fu, fv] = this.frame
-    for (let c = 0; c < this.grid.layer; c++) gust = Math.max(gust, Math.hypot(this.u[near + c] + fu, this.v[near + c] + fv))
+    const [fu, fv] = this.frame
+    for (let c = 0; c < this.grid.layer; c++) gust = Math.max(gust, Math.hypot(this.u[c] + fu, this.v[c] + fv))
     for (let i = 0; i < this.grid.layer; i++) { rainRate = Math.max(rainRate, rho0 * (this.rain[i] * fallSpeed(this.rain[i], rho0, rho0) + this.snow[i] * snowFallSpeed(this.snow[i], rho0, rho0) + this.graupel[i] * graupelFallSpeed(this.graupel[i], rho0) + this.hail[i] * hailFallSpeed(this.hail[i], rho0)) * 3600); rainTotal = Math.max(rainTotal, this.precipitation[i]) }
     // Largest hailstones reaching the ground now (falling through the ground node), mm.
     let hail = 0

@@ -42,7 +42,8 @@ export function columnLevels(m: ColumnSource, x: number, y: number): SkewLevel[]
 
 /** A lifted standard parcel as a path in pressure (hPa) with its indices; heights of the levels in km, pressures in hPa. */
 export interface ParcelPath {
-  kind: ParcelKind; path: { p: number; t: number; tEnv: number }[]
+  /** The path every 100 m: pressure, hPa; the parcel's and the environment's temperature and virtual temperature, °C. */
+  kind: ParcelKind; path: { p: number; t: number; tEnv: number; tv: number; tvEnv: number }[]
   cape: number; cin: number; start: number
   lcl: number | null; lfc: number | null; el: number | null
   pLcl: number | null; pLfc: number | null; pEl: number | null
@@ -53,7 +54,7 @@ export interface ParcelPath {
 export function parcelPath(env: Environment, height: number, kind: ParcelKind): ParcelPath {
   const a = liftParcel(env, height, kind), pAt = (z: number | null) => z === null ? null : env.pressureAt(z * 1000) / 100
   // Every 100 m is plenty for drawing (the ascent itself steps 25 m).
-  const path = a.profile.filter((_, k) => k % 4 === 0).map(pt => ({ p: env.pressureAt(pt.z * 1000) / 100, t: pt.parcel, tEnv: pt.env }))
+  const path = a.profile.filter((_, k) => k % 4 === 0).map(pt => ({ p: env.pressureAt(pt.z * 1000) / 100, t: pt.parcel, tEnv: pt.env, tv: pt.tv ?? pt.parcel, tvEnv: pt.envTv ?? pt.env }))
   let li: number | null = null
   for (let k = 1; k < a.profile.length; k++) {
     const lo = a.profile[k - 1], hi = a.profile[k], pLo = env.pressureAt(lo.z * 1000) / 100, pHi = env.pressureAt(hi.z * 1000) / 100

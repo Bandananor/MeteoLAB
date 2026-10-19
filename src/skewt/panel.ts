@@ -51,7 +51,7 @@ export class SkewTPanel {
           <button data-probe="core" title="${L('Колонка модели в центре восходящего ядра ячейки', 'A model column at the centre of the cell’s updraught core')}">${L('в ядре', 'core')}</button>
           <button data-probe="none">${L('нет', 'none')}</button></div><p class="psec__hint" id="skewProbeInfo"></p>`)
       + section(L('Курсор', 'Cursor'), '<dl class="kv" id="skewCursor"></dl>')
-      + help(L('Изотермы наклонены на 45°, давление — в логарифмическом масштабе. Сплошные коричневые — сухие адиабаты, пунктирные зелёные — влажные, точечные — отношение смеси насыщения (г/кг). Красное — CAPE, синее — CIN. Ветер — флажки в м/с: полное перо 5, половина 2,5, флаг 25. Среда — живое зондирование: профиль модели сейчас, средний по столбцам без облаков, осадков и холодного купола (раз в модельную минуту); бледный пунктир — исходная среда. Зонд в модели (оранжевое и голубое) показывает, как гроза изменила воздух.', 'The isotherms are skewed by 45°, the pressure is on a logarithmic scale. Solid brown — dry adiabats, dashed green — moist ones, dotted — saturation mixing ratio (g/kg). Red — CAPE, blue — CIN. The wind as barbs in m/s: a full barb 5, a half 2.5, a pennant 25. The environment is the live sounding: the model’s profile now, the mean over columns without cloud, precipitation and cold pool (once a model minute); the pale dashes — the initial environment. The probe in the model (orange and light blue) shows how the storm has changed the air.')))
+      + help(L('Изотермы наклонены на 45°, давление — в логарифмическом масштабе. Сплошные коричневые — сухие адиабаты, пунктирные зелёные — влажные, точечные — отношение смеси насыщения (г/кг). Красное — CAPE, синее — CIN; они закрашены между виртуальными температурами частицы и среды (тонкие точечные линии рядом с кривыми): влага делает воздух легче, и CAPE считается по ним. Ветер — флажки в м/с: полное перо 5, половина 2,5, флаг 25. Среда — живое зондирование: профиль модели сейчас, средний по столбцам без облаков, осадков и холодного купола (раз в модельную минуту); бледный пунктир — исходная среда. Зонд в модели (оранжевое и голубое) показывает, как гроза изменила воздух.', 'The isotherms are skewed by 45°, the pressure is on a logarithmic scale. Solid brown — dry adiabats, dashed green — moist ones, dotted — saturation mixing ratio (g/kg). Red — CAPE, blue — CIN; they are shaded between the virtual temperatures of the parcel and the environment (the thin dotted lines beside the curves): moisture makes the air lighter, and CAPE is counted by them. The wind as barbs in m/s: a full barb 5, a half 2.5, a pennant 25. The environment is the live sounding: the model’s profile now, the mean over columns without cloud, precipitation and cold pool (once a model minute); the pale dashes — the initial environment. The probe in the model (orange and light blue) shows how the storm has changed the air.')))
     this.canvas = this.root.querySelector('canvas')!; this.ctx = this.canvas.getContext('2d')!
     this.root.querySelector('.ibar__close')!.addEventListener('click', () => this.toggle(false))
     this.root.querySelectorAll<HTMLButtonElement>('[data-kind]').forEach(b => b.addEventListener('click', () => { this.kind = b.dataset.kind as ParcelKind; this.mark(); this.draw() }))
@@ -162,19 +162,22 @@ export class SkewTPanel {
     for (let t0 = -16; t0 <= 36; t0 += 4) line(moistAdiabat(t0), '#1f3a26', 1, [4, 4])
     for (const r of MIXING) line(span(P_BOTTOM, 600, p => mixingRatioTemperature(r / 1000, p)), '#2b3a2f', 1, [1, 3])
     for (const p of ISOBARS) { ctx.strokeStyle = pal.grid; ctx.beginPath(); ctx.moveTo(left, this.Y(p)); ctx.lineTo(right, this.Y(p)); ctx.stroke() }
-    // CAPE (parcel warmer) and CIN (colder, below the LFC) between the parcel and the environment.
+    // CAPE (parcel warmer) and CIN (colder, below the LFC) between the parcel and the environment, by their virtual
+    // temperatures, as CAPE is counted (the moisture makes the air lighter: ~1-2 K near the ground in summer).
     if (parcel) for (let k = 0; k + 1 < parcel.path.length; k++) {
-      const a = parcel.path[k], b = parcel.path[k + 1], warm = a.t > a.tEnv
+      const a = parcel.path[k], b = parcel.path[k + 1], warm = a.tv > a.tvEnv
       const aboveLfc = parcel.pLfc !== null && a.p <= parcel.pLfc && (parcel.pEl === null || a.p > parcel.pEl)
       const belowLfc = parcel.pLfc !== null && a.p > parcel.pLfc
       if (!(warm && aboveLfc) && !(!warm && belowLfc)) continue
       ctx.fillStyle = warm ? 'rgba(232,88,64,.32)' : 'rgba(70,130,220,.32)'
-      ctx.beginPath(); ctx.moveTo(this.X(a.tEnv, a.p), this.Y(a.p)); ctx.lineTo(this.X(a.t, a.p), this.Y(a.p)); ctx.lineTo(this.X(b.t, b.p), this.Y(b.p)); ctx.lineTo(this.X(b.tEnv, b.p), this.Y(b.p)); ctx.fill()
+      ctx.beginPath(); ctx.moveTo(this.X(a.tvEnv, a.p), this.Y(a.p)); ctx.lineTo(this.X(a.tv, a.p), this.Y(a.p)); ctx.lineTo(this.X(b.tv, b.p), this.Y(b.p)); ctx.lineTo(this.X(b.tvEnv, b.p), this.Y(b.p)); ctx.fill()
     }
     // The model column (thinner), the environment, the parcel.
     if (this.column.length) { line(this.column.map(l => ({ p: l.p, t: l.td })), '#4fc3e6', 1.6); line(this.column.map(l => ({ p: l.p, t: l.t })), '#ffa040', 1.6) }
     if (this.live.time > 0) { line(this.start.map(l => ({ p: l.p, t: l.td })), '#3f8a55', 1.3, [4, 3]); line(this.start.map(l => ({ p: l.p, t: l.t })), '#b04a3f', 1.3, [4, 3]) }
     line(this.env.map(l => ({ p: l.p, t: l.td })), '#3ecf6a', 2.2); line(this.env.map(l => ({ p: l.p, t: l.t })), '#ff4a3d', 2.2)
+    // The virtual temperatures, thin and dotted: the environment's beside its temperature, the parcel's beside its path.
+    if (parcel) { line(parcel.path.map(q => ({ p: q.p, t: q.tvEnv })), '#ff4a3d', 1, [1, 3]); line(parcel.path.map(q => ({ p: q.p, t: q.tv })), '#e9eef0', 1, [1, 3]) }
     if (parcel) line(parcel.path, '#e9eef0', 1.4, [6, 4])
     ctx.restore()
     ctx.strokeStyle = pal.gridStrong; ctx.lineWidth = 1; ctx.strokeRect(left + .5, top + .5, right - left, bottom - top)
