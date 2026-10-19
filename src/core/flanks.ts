@@ -91,3 +91,48 @@ export function flankMask(grid: Grid, f: StormFlanks, out = new Uint8Array(grid.
 }
 
 const mod = (a: number, n: number) => ((a % n) + n) % n
+
+/** The inflow label stands this far (m) from the mesocyclone, upstream of the 0-1 km storm-relative wind. */
+export const INFLOW_DISTANCE = 8000
+/** The anvil: cloud ice and snow at least this (kg/kg) at its level, beyond ANVIL_FROM (m) of the updraught and within ANVIL_REACH. */
+export const ANVIL_ICE = 5e-5, ANVIL_FROM = 8000, ANVIL_REACH = 30_000
+
+/**
+ * Where the storm's warm moist inflow comes from, m from the domain corner: upstream of the mesocyclone along the mean
+ * 0-1 km wind relative to the storm (the storm moves at the Bunkers right mover; the air enters along its own relative
+ * motion), INFLOW_DISTANCE away.
+ */
+export function inflowPoint(m: Pick<AtmosphereModel, 'grid' | 'env'>, f: StormFlanks, motion: readonly [number, number]): [number, number] {
+  const { nx, dx, dy } = m.grid
+  let u = 0, v = 0
+  for (let z = 0; z <= 1000; z += 100) { const [a, b] = m.env.windUV(z); u += a / 11; v += b / 11 }
+  const su = u - motion[0], sv = v - motion[1], s = Math.hypot(su, sv) || 1
+  return [(f.centre % nx) * dx - su / s * INFLOW_DISTANCE, Math.floor(f.centre / nx) * dy - sv / s * INFLOW_DISTANCE]
+}
+
+/**
+ * The storm's anvil for its label, m from the domain corner and its height: at the level with the most cloud ice and snow
+ * within ANVIL_REACH of the mesocyclone, along the wind there relative to the storm (the anvil spreads downstream of the
+ * updraught, as Rasmussen & Straka 1998 sort supercells by it), halfway out to where the ice thins below ANVIL_ICE
+ * (from ANVIL_FROM); null without one. The centre of the anvil's ice would not do: a mature anvil covers the whole domain.
+ */
+export function anvilPoint(m: Pick<AtmosphereModel, 'grid' | 'env' | 'ice' | 'snow'>, f: StormFlanks, motion: readonly [number, number]) {
+  // At most half the domain each way: across the periodic edges a wider reach would count the same columns twice.
+  const { nx, ny, nz, dx, dy, zs, layer } = m.grid, x0 = f.centre % nx, y0 = Math.floor(f.centre / nx)
+  const rx = Math.min(Math.ceil(ANVIL_REACH / dx), Math.floor((nx - 1) / 2)), ry = Math.min(Math.ceil(ANVIL_REACH / dy), Math.floor((ny - 1) / 2))
+  const at = (x: number, y: number, k: number) => { const c = ((Math.round(x) % nx) + nx) % nx + nx * (((Math.round(y) % ny) + ny) % ny) + k * layer; return m.ice[c] + m.snow[c] }
+  let level = -1, most = 0
+  for (let k = zs.findIndex(z => z >= 6000); k >= 0 && k < nz; k++) {
+    let sum = 0
+    for (let j = -ry; j <= ry; j++) for (let i = -rx; i <= rx; i++) if (Math.hypot(i * dx, j * dy) <= ANVIL_REACH) sum += at(x0 + i, y0 + j, k)
+    if (sum > most) { most = sum; level = k }
+  }
+  if (level < 0) return null
+  const [u, v] = m.env.windUV(zs[level]), su = u - motion[0], sv = v - motion[1], s = Math.hypot(su, sv) || 1, ex = su / s, ey = sv / s
+  const reach = Math.min(ANVIL_REACH, rx * dx, ry * dy)
+  let out = 0
+  for (let d = ANVIL_FROM; d <= reach; d += Math.min(dx, dy) / 2) { if (at(x0 + ex * d / dx, y0 + ey * d / dy, level) < ANVIL_ICE) break; out = d }
+  if (!out) return null
+  const d = (ANVIL_FROM + out) / 2
+  return { x: x0 * dx + ex * d, y: y0 * dy + ey * d, z: zs[level] }
+}

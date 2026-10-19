@@ -1121,7 +1121,8 @@ if(abs(uSurface - 2.0) < 0.5){
       this.mesoMarker.position.x = wx; this.mesoMarker.position.z = wz
       ;(this.mesoMarker.material as THREE.MeshBasicMaterial).color.set(r.persisted >= MESO_PERSISTENCE ? 0xf0b44c : 0xc9d6dc)
     }
-    this.flanks.update(s.showFlanks && !this.observer, new THREE.Vector2(this.canvas.width, this.canvas.height))
+    const vtop = this.vortexLevels[this.vortexLevels.length - 1]
+    this.flanks.update(s.showFlanks && !this.observer, new THREE.Vector2(this.canvas.width, this.canvas.height), vtop ? { x: vtop.x, y: vtop.y, z: vtop.z } : null)
     this.selectionMarker.visible = !!this.selection
     if (this.selection) { const [wx, , wz] = this.toWorld(this.selection.x, this.selection.y, 0); this.selectionMarker.position.x = wx; this.selectionMarker.position.z = wz }
     this.stationMarker.visible = !!this.station && !this.observer

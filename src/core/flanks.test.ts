@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { AtmosphereModel, createGrid, DEFAULT_GRID, flankMask, mesocycloneColumn, outflowDeficit, stormFlanks } from '.'
+import { AtmosphereModel, anvilPoint, createGrid, DEFAULT_GRID, flankMask, INFLOW_DISTANCE, inflowPoint, mesocycloneColumn, outflowDeficit, stormFlanks } from '.'
 import { QUIET } from './fixtures'
 
 describe('the supercell’s flanks (2.8)', () => {
@@ -23,5 +23,21 @@ describe('the supercell’s flanks (2.8)', () => {
     expect([mask[ahead], mask[behind], mask[far], mask[meso]]).toEqual([1, 2, 0, 0])
     // Moving north instead, the same downdraught ahead-east is beside the mesocyclone: the RFD's.
     expect(stormFlanks(model, meso, 0, 10, rain, outflowDeficit(model)).rfd!.columns).toContain(ahead)
+  })
+
+  it('finds where the inflow comes from and where the anvil spreads, for the labels of the 3D view', () => {
+    const grid = createGrid({ ...DEFAULT_GRID, nx: 40, ny: 30, width: 40 * 1200, depth: 30 * 1200 })
+    const model = new AtmosphereModel({ ...QUIET, wind0: 0, wind05: 0, wind1: 0, wind3: 0, wind6: 0, wind10: 0 }, grid), { nx, layer, zs, dx } = model.grid
+    const f = stormFlanks(model, 15 + nx * 15, 1, 0, new Float32Array(layer), outflowDeficit(model))
+    // Calm air and a storm moving east at 10 m/s: relative to it the air comes from the east, so the inflow is east of it.
+    const [ix, iy] = inflowPoint(model, f, [10, 0])
+    expect(ix - 15 * dx).toBeCloseTo(INFLOW_DISTANCE, -1); expect(iy - 15 * dx).toBeCloseTo(0, -1)
+    // A storm moving west at 10 m/s in calm air: at the anvil's level the wind relative to it blows east, so the anvil
+    // spreads east. Ice at ~10 km in the columns 8-15 km east of it: the label halfway out, at its level; none without ice.
+    expect(anvilPoint(model, f, [-10, 0])).toBeNull()
+    const k = zs.findIndex(z => z >= 10_000)
+    for (let x = 21; x <= 28; x++) for (let y = 13; y <= 17; y++) model.ice[x + nx * y + k * layer] = 2e-4
+    const a = anvilPoint(model, f, [-10, 0])!
+    expect((a.x - 15 * dx) / 1000).toBeGreaterThan(10); expect((a.x - 15 * dx) / 1000).toBeLessThan(13); expect(Math.abs(a.y - 15 * dx)).toBeLessThan(600); expect(a.z).toBe(zs[k])
   })
 })
