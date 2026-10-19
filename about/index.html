@@ -20,7 +20,7 @@
       <nav class="toc" aria-label="Содержание"><span class="toc__title">Содержание</span>
         <a href="#model"><span class="num">1</span>Как устроена модель</a><a class="sub" href="#grid">Область и сетка</a><a class="sub" href="#dynamics">Уравнения</a><a class="sub" href="#numerics">Численные методы</a>
         <a href="#clouds"><span class="num">2</span>Облака и осадки</a><a href="#surface"><span class="num">3</span>Поверхность и солнце</a><a href="#storm"><span class="num">4</span>Как модель узнаёт грозу</a><a href="#checks"><span class="num">5</span>Проверки</a><a href="#limits"><span class="num">6</span>Ограничения</a><a href="#changelog"><span class="num">7</span>Журнал изменений</a>
-        <span class="toc__ver">v2.7.2</span></nav>
+        <span class="toc__ver">v2.8.0</span></nav>
       <article class="prose">
         <span class="t-eyebrow">О модели · StormLab</span>
         <h1>Как считается гроза</h1>
@@ -114,7 +114,8 @@ console.log(model.rotation.uh, model.diagnostics().updraft)</code></pre>
         </tbody></table></div>
 
         <h2 id="changelog"><span class="num">7</span>Журнал изменений</h2>
-        <p>Главное в версиях 2.0–2.7.2. Полный журнал с датами и замерами — в <a href="https://github.com/Bandananor/MeteoLAB#журнал-изменений">README на GitHub</a>.</p>
+        <p>Главное в версиях 2.0–2.8.0. Полный журнал с датами и замерами — в <a href="https://github.com/Bandananor/MeteoLAB#журнал-изменений">README на GitHub</a>.</p>
+        <p><b>2.8.0 (19.10.2026) «Устройство грозы»:</b> настоящий холод оттока (θv′); нисходящие потоки суперячейки FFD и RFD с фронтами порывов и подписи частей грозы на 3D-виде; мезоциклон столбом; на радаре — TVS, VIL, высота эха, размер града (MESH) и складывание скоростей; новый прибор «Спутник» с видимым и инфракрасным каналами и перегревающимися вершинами; «Чего ждать» — прогноз по среде по статистике настоящих гроз рядом с тем, что вышло в модели; DCP и эффективный слой притока; тип облака у каждой ячейки.</p>
         <p><b>2.7.2 (19.10.2026) «Лёд и спрайты»:</b> лёд рождается из процессов — капли жидкие до −38 °C, кристаллы зарождаются и растут по форме, их число пополняют осколки; суперячейки сверкают как в природе (~70 вспышек в минуту); спрайты и гало над сильными ударами в землю ночью и на пеленгаторе; SHIP; честный определитель смерча; фронт на карте анализа по краю холодного воздуха; знаки станций по ВМО.</p>
         <p><b>2.7.1 (19.10.2026) «English»:</b> английская версия сайта, симулятора и справки (переключатель RU / EN); станция и город при фронте остаются на земле; подписи «Дождь в ядре сейчас» и «Сумма в самой мокрой точке»; камера в полноэкранном режиме; снимок 3D-вида и приборов; тип облака и дождь с градом словами; сообщение вместо чёрного 3D-вида на телефонах; снег под наковальней и солнце в плотном облаке — правдоподобнее; тексты по разбору метеоролога.</p>
         <p><b>2.7.0.1 (15.10.2026):</b> исправления по отзывам тестеров: дождь струями от основания облака, без полки под наковальней, без цветного мусора на телефонах и «обоев» на наковальне сверху, меню «Приборы» на телефоне прокручивается.</p>
@@ -137,7 +138,7 @@ console.log(model.rotation.uh, model.diagnostics().updraft)</code></pre>
         </ul>
       </article>
     </div></main>
-    <footer class="site-footer"><div class="container site-footer__in"><div><a class="logo" href="../"><span class="logo__mark"></span>MeteoLab</a><p>Численная лаборатория атмосферы на модели грозы StormLab. Лицензия MIT · © 2026 Bandananor</p><p class="footer-channel"><a href="https://t.me/MeteoLabBnor">Telegram-канал проекта — t.me/MeteoLabBnor</a></p><p class="faint">Команда EMSquad · <a href="https://t.me/EMSquad">t.me/EMSquad</a></p></div><nav><a href="../simulator/">Симулятор</a><a href="../#scenarios">Сценарии</a><a href="../guide/">Как пользоваться</a><a href="./">О модели</a><a href="#changelog">Журнал изменений</a><a href="https://github.com/Bandananor/MeteoLAB">GitHub</a><a href="../en/about/" data-lang-switch hreflang="en">English</a><span class="num faint" style="font-size:12px">v2.7.2</span></nav></div></footer>
+    <footer class="site-footer"><div class="container site-footer__in"><div><a class="logo" href="../"><span class="logo__mark"></span>MeteoLab</a><p>Численная лаборатория атмосферы на модели грозы StormLab. Лицензия MIT · © 2026 Bandananor</p><p class="footer-channel"><a href="https://t.me/MeteoLabBnor">Telegram-канал проекта — t.me/MeteoLabBnor</a></p><p class="faint">Команда EMSquad · <a href="https://t.me/EMSquad">t.me/EMSquad</a></p></div><nav><a href="../simulator/">Симулятор</a><a href="../#scenarios">Сценарии</a><a href="../guide/">Как пользоваться</a><a href="./">О модели</a><a href="#changelog">Журнал изменений</a><a href="https://github.com/Bandananor/MeteoLAB">GitHub</a><a href="../en/about/" data-lang-switch hreflang="en">English</a><span class="num faint" style="font-size:12px">v2.8.0</span></nav></div></footer>
     <script type="module" src="/src/site/about.ts"></script>
   </body>
 </html>
