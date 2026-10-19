@@ -89,6 +89,16 @@ export interface Cell {
   /** Recent centres, unwrapped across the periodic edges, for the motion. */ trail: { t: number; x: number; y: number }[]
 }
 
+/** Precipitation reaching the ground per column, mm/h of water: rain, snow, graupel and hail through the ground node. */
+export function groundPrecipitation(m: Pick<AtmosphereModel, 'grid' | 'env' | 'rain' | 'snow' | 'graupel' | 'hail'>) {
+  const { layer } = m.grid, rho0 = m.env.rho[0], out = new Float32Array(layer)
+  for (let c = 0; c < layer; c++) {
+    const r = m.rain[c], s = m.snow[c], g = m.graupel[c], h = m.hail[c]
+    out[c] = rho0 * (r * fallSpeed(r, rho0, rho0) + s * snowFallSpeed(s, rho0, rho0) + g * graupelFallSpeed(g, rho0) + h * hailFallSpeed(h, rho0)) * 3600
+  }
+  return out
+}
+
 /** What the cell's numbers say its stage is now (before the STAGE_HOLD smoothing). */
 export function cellStage(c: Pick<Cell, 'supercell' | 'leftMover' | 'occluded' | 'peakW' | 'peakUH'> & { age: number; stage?: CellStage }, s: CellStats): CellStage {
   // The updraught core itself must rotate (its own columns only, so a left mover splitting off does not cancel it).
@@ -143,12 +153,8 @@ export class CellTracker {
     this.time = time; this.ended = []
     // Per column: the updraught core, the strongest up/downdraught, cloud top, ground rain, cold pool and low-level UH.
     const core = new Float32Array(layer), coreTop = new Float32Array(layer), up = new Float32Array(layer), down = new Float32Array(layer), top = new Float32Array(layer)
-    const outflow = outflowDeficit(m), rain = new Float32Array(layer), cold = new Float32Array(layer), uh01 = new Float32Array(layer), uh03 = new Float32Array(layer)
-    const { rightMover } = stormMotion(m.env), rho0 = m.env.rho[0], top1 = zs.findLastIndex(z => z <= 1000), top3 = zs.findLastIndex(z => z <= 3000)
-    for (let c = 0; c < layer; c++) {
-      const r = m.rain[c], s = m.snow[c], g = m.graupel[c], h = m.hail[c]
-      rain[c] = rho0 * (r * fallSpeed(r, rho0, rho0) + s * snowFallSpeed(s, rho0, rho0) + g * graupelFallSpeed(g, rho0) + h * hailFallSpeed(h, rho0)) * 3600
-    }
+    const outflow = outflowDeficit(m), rain = groundPrecipitation(m), cold = new Float32Array(layer), uh01 = new Float32Array(layer), uh03 = new Float32Array(layer)
+    const { rightMover } = stormMotion(m.env), top1 = zs.findLastIndex(z => z <= 1000), top3 = zs.findLastIndex(z => z <= 3000)
     for (let z = 0, i = 0; z < nz; z++) {
       const alt = zs[z], inCore = alt >= CORE_BASE && alt <= CORE_TOP
       for (let c = 0; c < layer; c++, i++) {
