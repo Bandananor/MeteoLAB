@@ -19,7 +19,7 @@ import { SatellitePanel } from './satellite/panel'
 import { elapsed as runTime, timeOfDay } from './clock'
 import { ZonesPanel } from './zones/panel'
 import { AdvectionEditor, advectionMarkup } from './largescale-ui'
-import { CELL_STAGES, type Flank, type StormFlanks, AIR_MASSES, buildSituation, SHEARS, type StoryStage, storyStage, TRIGGERS, MESO_PERSISTENCE, TORNADO_DEFAULTS, TORNADO_LEVELS, TORNADO_NOTES, tornadoSigns, type TornadoThresholds, UH_ROTATING, readState, createGrid, describeBalance, DT, Environment, parcelIndices, SCENARIOS, type SimConfig, rotationSummary, SPIN_SUPERCELL, spinProfile, stormIndices, stormMotion, UH_LAYERS, type UhLayer, environmentProfile, parseSounding, soundingProfile, SoundingError, computeSounding, type Sounding } from './core'
+import { CELL_STAGES, type Expectation, expectations, type Flank, type StormFlanks, AIR_MASSES, buildSituation, SHEARS, type StoryStage, storyStage, TRIGGERS, MESO_PERSISTENCE, TORNADO_DEFAULTS, TORNADO_LEVELS, TORNADO_NOTES, tornadoSigns, type TornadoThresholds, UH_ROTATING, readState, createGrid, describeBalance, DT, Environment, parcelIndices, SCENARIOS, type SimConfig, rotationSummary, SPIN_SUPERCELL, spinProfile, stormIndices, stormMotion, UH_LAYERS, type UhLayer, environmentProfile, parseSounding, soundingProfile, SoundingError, computeSounding, type Sounding } from './core'
 import { type FieldMode, fieldInfo } from './render/fields'
 import { type LayerMode, OBSERVER_BACK, OBSERVER_NEAR, type Quality } from './render/view'
 import { cleanSettings, decodeSettings, download, encodeSettings, toCsv } from './share'
@@ -245,6 +245,7 @@ app.innerHTML = `<div class="app">
       <section class="chart"><div class="chart__head"><span class="chart__title">${L('Ход грозы', 'Storm history')}</span><button class="btn btn--xs" id="timelineCsv" title="${L('Выгрузить ряды «Хода грозы» в CSV (таблица или скрипт): время, CAPE и CIN, поток, UH, дождь', 'Export the “Storm history” series to CSV (a spreadsheet or a script): time, CAPE and CIN, updraught, UH, rain')}">CSV</button></div>
         <canvas id="timeline" title="${L('Ход грозы по модельному времени (вся область, точка каждые 30 с): неустойчивость среды сейчас (CAPE и CIN частицы от земли по живому зондированию — вдали от гроз, раз в модельную минуту), самый сильный восходящий поток, вращение потока, дождь у земли и вспышки молний за последнюю минуту. Перезапуск начинает графики заново', 'The storm over model time (the whole domain, a point every 30 s): the instability of the environment now (CAPE and CIN of the surface parcel from the live sounding — away from the storms, once a model minute), the strongest updraught, its rotation, the rain at the ground and the lightning flashes in the last minute. A restart begins the charts anew')}"></canvas></section>
       <div class="diag__groups">
+        ${group(L('Чего ждать', 'What to expect'), `<ul class="expect" id="expectList"></ul><p class="t-caption" id="expectNote">${L('Прогноз по среде на старте опыта — по статистике настоящих гроз (источник у каждой строки); справа — что вышло в модели за этот прогон. Расхождение — тоже урок: среда даёт шанс, а не гарантию, и у модели свои пределы (сетка ~1 км, одномоментная микрофизика). У синоптических ситуаций среда меняется по сюжету — прогноз по ней на старте.', 'A forecast from the environment at the start of the run — by the statistics of real storms (the source on each row); on the right, what the model made of it this run. A mismatch is a lesson too: an environment gives a chance, not a guarantee, and the model has its limits (a ~1 km grid, one-moment microphysics). The synoptic situations change their environment as their story goes — the forecast is from the start.')}</p>`, { id: 'expect' })}
         ${group(L('Индексы неустойчивости', 'Instability indices'), `
           ${pair(['cape', 'CAPE', JKG, L('Частица приложения: +0,5 K и вовлечение сухого воздуха (разбавленная CAPE)', 'The app’s parcel: +0.5 K and entrainment of dry air (dilute CAPE)')], ['cin', 'CIN', JKG])}
           ${pair(['mlcape', 'MLCAPE', JKG, L('Перемешанный слой 100 гПа (стандартная частица, без добавок)', 'The 100 hPa mixed layer (the standard parcel, nothing added)')], ['mlcin', 'MLCIN', JKG, L('CIN частицы перемешанного слоя', 'CIN of the mixed-layer parcel')])}
@@ -905,6 +906,33 @@ for (const input of tornadoInputs) input.addEventListener('change', () => {
 document.querySelector('#tornadoReset')!.addEventListener('click', () => { tornado = { ...TORNADO_DEFAULTS }; try { localStorage.removeItem(TORNADO_KEY) } catch { /* nothing kept */ } showThresholds(); tornadoShown = 0 })
 showThresholds()
 let tornadoShown = 0, lowHeld = 0, lowAt = 0
+/**
+ * «What to expect» (core/expect.ts), once a second with the tornado signs: the forecast from the run's starting
+ * environment (the model's own, which the run does not change) and, beside it, the run's outcome so far.
+ */
+let expectFor: { model: unknown; list: Expectation[] } | null = null, outcome = { time: 0, supercell: 0, tornado: 0, hail: 0, gust: 0, cells: 0 }
+function showExpect(tornadoLevel: number) {
+  const m = sim.model, d = sim.diagnostics()
+  if (expectFor?.model !== m) { const p = parcelIndices(m.env, m.grid.height); expectFor = { model: m, list: expectations(p, stormIndices(m.env, p)) } }
+  if (m.time < outcome.time || m.time === 0) outcome = { time: 0, supercell: 0, tornado: 0, hail: 0, gust: 0, cells: 0 }
+  outcome.time = m.time
+  // A supercell: a tracked one, or the model's mesocyclone that has held MESO_PERSISTENCE (also right after a file is opened).
+  if (!outcome.supercell && (sim.cells.cells.some(c => c.supercell) || m.rotation.persisted >= MESO_PERSISTENCE)) outcome.supercell = Math.max(1, m.time - m.rotation.persisted)
+  outcome.tornado = Math.max(outcome.tornado, tornadoLevel); outcome.hail = Math.max(outcome.hail, d.hailSwath); outcome.gust = Math.max(outcome.gust, d.gust)
+  outcome.cells = Math.max(outcome.cells, sim.cells.cells.filter(c => c.id).length)
+  const minutes = (t: number) => L(`с ${Math.round(t / 60)}-й мин`, `from minute ${Math.round(t / 60)}`), early = m.time < 600
+  const got: Record<string, string> = early ? {} : {
+    [L('Гроза', 'Thunderstorm')]: outcome.cells ? L(`была: ячеек до ${outcome.cells}`, `yes: up to ${outcome.cells} cells`) : outcome.supercell ? L('была', 'yes') : d.cloudTop > 6 ? L('глубокое облако', 'a deep cloud') : L('нет', 'no'),
+    [L('Режим', 'Mode')]: outcome.supercell ? L('суперячейка', 'a supercell') : outcome.cells > 1 ? L('многоячейковая', 'multicell') : outcome.cells ? L('одиночная', 'single cell') : '—',
+    [L('Суперячейка', 'Supercell')]: outcome.supercell ? minutes(outcome.supercell) : L('нет', 'no'),
+    [L('Значимый смерч', 'Significant tornado')]: TORNADO_LEVELS[outcome.tornado as 0 | 1 | 2 | 3],
+    [L('Крупный град', 'Large hail')]: outcome.hail >= 1 ? L(`до ${decimal(outcome.hail / 10, 1)} см`, `up to ${decimal(outcome.hail / 10, 1)} cm`) : L('нет', 'no'),
+    [L('Долгий шквал', 'Long-lived wind storm')]: L(`порыв до ${outcome.gust.toFixed(0)} м/с`, `gusts up to ${outcome.gust.toFixed(0)} m/s`),
+  }
+  const html = expectFor.list.map(e => `<li class="expect--${e.level}"><span class="expect__head"><b>${e.topic}</b> — <span class="expect__verdict">${e.verdict}</span></span><em title="${L('вышло в модели', 'what the model made')}">${got[e.topic] ?? (early ? L('ждём…', 'waiting…') : '')}</em><small>${e.detail} · ${e.source}</small></li>`).join('')
+  const list = document.querySelector('#expectList')!
+  if (list.innerHTML !== html) list.innerHTML = html
+}
 function showTornado() {
   const m = sim.model, now = performance.now()
   // The rotation at the ground: held while at the threshold, counted in model time (back to 0 on a restart).
@@ -913,7 +941,7 @@ function showTornado() {
   if (now - tornadoShown < 1000) return
   tornadoShown = now
   const live = sim.live, signs = tornadoSigns({ uh01: m.rotation.uh01, lowHeld, mesoHeld: m.rotation.persisted, stp: live.storm.stp, srh01: live.storm.srh01, lcl: live.indices.sb.lcl, cold: sim.diagnostics().outflowLow }, tornado)
-  text('tornadoLevel', TORNADO_LEVELS[signs.level]); text('tornadoNote', TORNADO_NOTES[signs.level])
+  text('tornadoLevel', TORNADO_LEVELS[signs.level]); text('tornadoNote', TORNADO_NOTES[signs.level]); showExpect(signs.level)
   document.querySelector('#tornadoLevel')?.closest('.stat')?.classList.toggle('stat--warn', signs.level === 2)
   document.querySelector('#tornadoLevel')?.closest('.stat')?.classList.toggle('stat--danger', signs.level === 3)
   const html = signs.checks.map(c => `<li class="${c.ok ? 'is-ok' : ''}"><span>${c.ok ? '✓' : '·'} ${c.name}</span><b>${c.value}</b></li>`).join('')

@@ -19,6 +19,18 @@ export interface StormIndices {
    * the effective bulk shear (m/s, from its base to half the MU parcel's EL), as SPC; null without one (no storms to feed).
    */
   effective: { base: number; top: number; srh: number; shear: number } | null
+  /** The effective-layer STP (Thompson et al. 2012), 0 without an effective layer at the ground. */ stpEffective: number
+}
+
+/**
+ * The effective-layer significant tornado parameter (Thompson et al. 2012, as SPC): MLCAPE / 1500 × (2000 − ML LCL) /
+ * 1000 (1 below 1000 m, 0 above 2000) × ESRH / 150 × EBWD / 20 m/s (0 below 12.5, at most 1.5) × (200 + MLCIN) / 150
+ * (1 above −50 J/kg, 0 below −200); 0 when the effective layer does not start at the ground (an elevated storm).
+ */
+export function effectiveStp(mlCape: number, mlLcl: number, mlCin: number, effective: { base: number; srh: number; shear: number } | null) {
+  if (!effective || effective.base > 0) return 0
+  const lcl = clamp((2000 - mlLcl) / 1000, 0, 1), shear = effective.shear < 12.5 ? 0 : Math.min(1.5, effective.shear / 20), cin = clamp((200 + mlCin) / 150, 0, 1)
+  return Math.max(0, mlCape / 1500 * lcl * (effective.srh / 150) * shear * cin)
 }
 
 /**
@@ -109,5 +121,6 @@ export function stormIndices(env: Environment, parcels: ParcelIndices): StormInd
     const top = Math.max(layer.top, layer.base + EFFECTIVE_STEP_MIN), [ub, vb] = env.windUV(layer.base), [ut, vt] = env.windUV(Math.max(layer.base, layer.base + (el - layer.base) / 2))
     effective = { ...layer, srh: helicity(env, top, ...rightMover, layer.base), shear: el > layer.base ? Math.hypot(ut - ub, vt - vb) : 0 }
   }
-  return { rightMover, leftMover, srh01, srh03, shear06, scp, stp, ship, lapse75, dcp, effective }
+  const stpEffective = effectiveStp(parcels.ml.cape, (parcels.ml.lcl ?? 99) * 1000, parcels.ml.cin, effective)
+  return { rightMover, leftMover, srh01, srh03, shear06, scp, stp, ship, lapse75, dcp, effective, stpEffective }
 }

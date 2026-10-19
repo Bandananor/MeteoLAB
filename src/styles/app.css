@@ -151,6 +151,16 @@ html:not(.layout-phone) .m-only { display: none !important; }
 .tornado__checks li { display: flex; justify-content: space-between; gap: 8px; padding: 2px 0; }
 .tornado__checks li.is-ok { color: var(--text); }
 .tornado__checks b { font-family: var(--font-mono); font-weight: 400; white-space: nowrap; }
+/* «What to expect» (2.8): the forecast by the environment, what the run made of it on the right. */
+.expect { list-style: none; margin: 0; padding: 0; font-size: var(--fs-caption); color: var(--text-2); }
+.expect li { display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; padding: 5px 0; border-bottom: 1px solid var(--line); }
+.expect li:last-child { border-bottom: 0; }
+.expect__head b { color: var(--text); font-weight: 500; }
+.expect__verdict { font-weight: 500; }
+.expect--0 .expect__verdict { color: var(--text-3); } .expect--1 .expect__verdict { color: var(--text); }
+.expect--2 .expect__verdict { color: var(--warn); } .expect--3 .expect__verdict { color: var(--danger); }
+.expect small { grid-column: 1 / -1; color: var(--text-3); line-height: 1.35; }
+.expect em { font-style: normal; font-family: var(--font-mono); color: var(--text); white-space: nowrap; text-align: right; }
 .tornado__more summary { cursor: pointer; font-size: var(--fs-caption); color: var(--text-3); }
 .tornado__grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 10px; margin: 6px 0; }
 .tornado__th { display: flex; flex-direction: column; gap: 2px; font-size: var(--fs-caption); color: var(--text-3); }
