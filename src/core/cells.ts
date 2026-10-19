@@ -5,6 +5,8 @@ import { snowFallSpeed } from './ice'
 import { fallSpeed } from './microphysics'
 import { type AtmosphereModel, MESO_CORE_ZETA, MESO_PERSISTENCE, UH_ROTATING } from './model'
 import { outflowDeficit } from './rkw'
+import { mesocycloneColumn, type StormFlanks, stormFlanks } from './flanks'
+import { stormMotion } from './kinematics'
 
 /** Updraught core of a cell: columns with w above this (m/s) in cloud somewhere between CORE_BASE and CORE_TOP. */
 export const CELL_W = 4
@@ -80,6 +82,8 @@ export interface Cell {
   /** Highest level its own updraught core has reached, m (see CELL_NUMBER_TOP). */ peakTop: number
   /** Has been a supercell (the mesocyclone held MESO_PERSISTENCE), a left mover, has gone through an occlusion. */
   supercell: boolean; leftMover: boolean; occluded: boolean
+  /** A rotating cell's forward- and rear-flank downdraughts (flanks.ts) around its mesocyclone; null without rotation. */
+  flanks: StormFlanks | null
   /** Grid columns of the updraught core. */ columns: Int32Array
   pending: CellStage; pendingSince: number
   /** Recent centres, unwrapped across the periodic edges, for the motion. */ trail: { t: number; x: number; y: number }[]
@@ -140,7 +144,7 @@ export class CellTracker {
     // Per column: the updraught core, the strongest up/downdraught, cloud top, ground rain, cold pool and low-level UH.
     const core = new Float32Array(layer), coreTop = new Float32Array(layer), up = new Float32Array(layer), down = new Float32Array(layer), top = new Float32Array(layer)
     const outflow = outflowDeficit(m), rain = new Float32Array(layer), cold = new Float32Array(layer), uh01 = new Float32Array(layer), uh03 = new Float32Array(layer)
-    const rho0 = m.env.rho[0], top1 = zs.findLastIndex(z => z <= 1000), top3 = zs.findLastIndex(z => z <= 3000)
+    const { rightMover } = stormMotion(m.env), rho0 = m.env.rho[0], top1 = zs.findLastIndex(z => z <= 1000), top3 = zs.findLastIndex(z => z <= 3000)
     for (let c = 0; c < layer; c++) {
       const r = m.rain[c], s = m.snow[c], g = m.graupel[c], h = m.hail[c]
       rain[c] = rho0 * (r * fallSpeed(r, rho0, rho0) + s * snowFallSpeed(s, rho0, rho0) + g * graupelFallSpeed(g, rho0) + h * hailFallSpeed(h, rho0)) * 3600
@@ -225,7 +229,7 @@ export class CellTracker {
       const c: Cell = {
         id: 0, parent: p ? p.id || p.parent : null, origin: p ? 'split' : onGust ? 'gust-front' : 'thermal', born: time,
         x: r.x, y: r.y, u: p?.u ?? 0, v: p?.v ?? 0, stats: emptyStats(), stage: 'growing', since: time, pending: 'growing', pendingSince: time,
-        peakW: 0, peakUH: 0, peakTop: r.top, meso: 0, antiMeso: 0, supercell: false, leftMover: false, occluded: false, columns: Int32Array.from(r.cols), trail: [{ t: time, x: r.x, y: r.y }],
+        peakW: 0, peakUH: 0, peakTop: r.top, meso: 0, antiMeso: 0, supercell: false, leftMover: false, occluded: false, flanks: null, columns: Int32Array.from(r.cols), trail: [{ t: time, x: r.x, y: r.y }],
       }
       next.push(c)
     })
@@ -257,6 +261,9 @@ export class CellTracker {
       for (const c of cell.columns) { sw += m.coreW[c]; swz += m.coreWZ[c] }
       s.coreZeta = sw > 0 ? swz / sw : 0
       this.advance(cell, s, time, dt)
+      // The flanks of a rotating storm, along the Bunkers right mover's heading: the tracked motion wanders by tens of
+      // degrees while the storm organizes (tests/bench/flanks.ts: the classic supercell's ran north-west for minutes).
+      cell.flanks = cell.id && s.uh >= UH_ROTATING ? stormFlanks(m, mesocycloneColumn(m, cell.x, cell.y), ...rightMover, rain, outflow) : null
       if (!cell.id && time - cell.born >= CELL_CONFIRM && cell.peakW >= CELL_NUMBER_W && cell.peakTop >= CELL_NUMBER_TOP) cell.id = this.nextId++
     })
   }

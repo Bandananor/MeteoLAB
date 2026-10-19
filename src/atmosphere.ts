@@ -26,7 +26,7 @@ export interface Live { time: number; quiet: number; all: boolean; env: Environm
  * of every snapshot, so the view and the field slices read it exactly as they would read the live model.
  */
 export class Atmosphere implements ViewSettings {
-  field: FieldMode = 'composite'; uhLayer: UhLayer = '2-5'; showVectors = false; showPrecip = false; layerMode: LayerMode = 'both'; showRainTotal = false; showMesocyclone = true; showLightning = true; volumeThreshold = .1; volumeDensity = 1; sliceHeight = 2; sliceNorth = 0
+  field: FieldMode = 'composite'; uhLayer: UhLayer = '2-5'; showVectors = false; showPrecip = false; layerMode: LayerMode = 'both'; showRainTotal = false; showMesocyclone = true; showFlanks = true; showLightning = true; volumeThreshold = .1; volumeDensity = 1; sliceHeight = 2; sliceNorth = 0
   private readonly mirror: AtmosphereModel; private readonly view: StormView; private readonly worker: Worker
   private readonly config: SimConfig; private sentConfig: string
   private latest: ModelDiagnostics
@@ -180,7 +180,7 @@ export class Atmosphere implements ViewSettings {
     this.post({ type: 'release', buffer: s.buffer }, [s.buffer])
     this.inFlight = false
     // Cells move about a grid column a minute: every 6 s of model time is plenty.
-    if (!(m.time - this.cells.time < 6)) this.cells.update(m)
+    if (!(m.time - this.cells.time < 6)) { this.cells.update(m); this.view.setFlanks(this.cells.cells.flatMap(c => c.flanks ? [c.flanks] : [])) }
     if (this.station) { this.station.observe(m); this.markStation() }
     this.balance = coldPoolBalance(m)
     // A rewind point every HISTORY_EVERY s (the first at the start), within HISTORY_BYTES.

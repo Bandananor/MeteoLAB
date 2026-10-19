@@ -8,9 +8,10 @@ import { FlashVolume, LightVolume } from './light'
 import { noiseTexture } from './noise'
 import { LightningView } from './lightning'
 import { SpriteView } from './sprites'
+import { FlankView } from './flanks'
 import { type GroundPoint, Observer } from './observer'
 import { type CameraGrade, gradeFilter, NEUTRAL_GRADE } from '../camera'
-import { type AtmosphereModel, computeScalarField, groundRepeats, headingVector, heightAt, levelAt, MESO_PERSISTENCE, sunDirection, UH_ROTATING, type UhLayer } from '../core'
+import { type AtmosphereModel, computeScalarField, groundRepeats, headingVector, heightAt, levelAt, MESO_PERSISTENCE, sunDirection, type StormFlanks, UH_ROTATING, type UhLayer } from '../core'
 import { clamp, lerp, mod, mulberry32 } from '../core/math'
 import { qsatP } from '../core/microphysics'
 import { N0G, N0R, RHO_G, RHO_W } from '../core/graupel'
@@ -133,6 +134,7 @@ export interface ViewSettings {
   field: FieldMode; showVectors: boolean; showPrecip: boolean; layerMode: LayerMode
   /** Rain total on the ground since the start (swath), drawn over the ground. */ showRainTotal: boolean
   /** Mark the rotating updraft (UH above the rotation threshold). */ showMesocyclone: boolean
+  /** A rotating storm's FFD and RFD with their gust fronts on the ground (render/flanks.ts). */ showFlanks: boolean
   /** Draw the lightning channels as they flash. */ showLightning: boolean
   /** 'volume' mode: fraction of the colour range below which the field is transparent (0 shows everything). */ volumeThreshold: number
   /** 'volume' mode: opacity multiplier of the field volume. */ volumeDensity: number
@@ -278,6 +280,7 @@ export class StormView {
   private readonly lightning: LightningView; private readonly drawingBuffer = new THREE.Vector2()
   /** Sprites and halos above the CG that make them (sprites.ts). */
   private readonly sprites: SpriteView
+  private readonly flanks: FlankView
   /**
    * The volume textures are uniform in height (the shaders map height linearly onto them). On a stretched grid every
    * texture level t is interpolated between model levels k0[t] and k0[t] + 1 with weight f[t]; on a uniform grid the
@@ -471,6 +474,7 @@ if(abs(uSurface - 2.0) < 0.5){
     // Lines a few pixels wide, drawn over the cloud: inside a sunlit cloud a thin white channel would not be seen.
     this.lightning = new LightningView(model, (x, y, z) => this.toWorld(x, y, z), this.shared, this.volumeTexture); this.scene.add(this.lightning.mesh)
     this.sprites = new SpriteView((x, y, z) => this.toWorld(x, y, z), f => [(f.ground % model.grid.nx) * model.grid.dx, Math.floor(f.ground / model.grid.nx) * model.grid.dy], this.shared, this.volumeTexture); this.scene.add(this.sprites.mesh)
+    this.flanks = new FlankView(model, (x, y, z) => this.toWorld(x, y, z)); this.scene.add(this.flanks.group)
     this.lightning.onEvent = (f, at, rate) => this.sprites.add(f, at, rate)
     // A teaser for the channel, never in the release: on a local server ?tle=sprite gives every CG a sprite (the post
     // must say it was called by hand).
@@ -486,7 +490,7 @@ if(abs(uSurface - 2.0) < 0.5){
 
   dispose() {
     this.controls.dispose()
-    ;[this.groundState, this.windTexture, this.skyTexture, this.skyMaterial, this.skyDome.geometry, this.volumeTexture, this.noise, this.columnTexture, this.fieldTexture, this.colormap, this.volumeMaterial, this.fieldMaterial, this.sliceMaterial, this.volumeMesh.geometry, this.sliceH.geometry, this.sliceV.geometry, this.precipGeometry, this.precipMaterial, this.swathTexture, this.cityTexture, this.zoneTexture, this.frontLine?.geometry, this.frontLine?.material as THREE.Material | undefined, this.swath.geometry, this.swath.material as THREE.Material, this.mesoMarker.geometry, this.mesoMarker.material as THREE.Material, this.selectionMarker.geometry, this.selectionMarker.material as THREE.Material, this.stationMarker.geometry, this.stationMarker.material as THREE.Material, this.lightning, this.sprites, this.light, this.flashLight].forEach(r => r?.dispose())
+    ;[this.groundState, this.windTexture, this.skyTexture, this.skyMaterial, this.skyDome.geometry, this.volumeTexture, this.noise, this.columnTexture, this.fieldTexture, this.colormap, this.volumeMaterial, this.fieldMaterial, this.sliceMaterial, this.volumeMesh.geometry, this.sliceH.geometry, this.sliceV.geometry, this.precipGeometry, this.precipMaterial, this.swathTexture, this.cityTexture, this.zoneTexture, this.frontLine?.geometry, this.frontLine?.material as THREE.Material | undefined, this.swath.geometry, this.swath.material as THREE.Material, this.mesoMarker.geometry, this.mesoMarker.material as THREE.Material, this.selectionMarker.geometry, this.selectionMarker.material as THREE.Material, this.stationMarker.geometry, this.stationMarker.material as THREE.Material, this.lightning, this.sprites, this.flanks, this.light, this.flashLight].forEach(r => r?.dispose())
     this.renderer.dispose()
   }
 
@@ -554,6 +558,8 @@ if(abs(uSurface - 2.0) < 0.5){
 
   /** Rings the selected cell (ground position in m from the domain corner), or removes the ring. */
   setSelection(p: { x: number; y: number } | null) { this.selection = p }
+  /** The rotating storms' flanks (CellTracker: Cell.flanks), drawn on the ground. */
+  setFlanks(flanks: StormFlanks[]) { this.flanks.set(flanks) }
   /** Marks the weather station (its position in the domain now, m), or removes the mark. */
   setStation(p: { x: number; y: number } | null) { this.station = p }
 
@@ -1107,6 +1113,7 @@ if(abs(uSurface - 2.0) < 0.5){
       this.mesoMarker.position.x = wx; this.mesoMarker.position.z = wz
       ;(this.mesoMarker.material as THREE.MeshBasicMaterial).color.set(r.persisted >= MESO_PERSISTENCE ? 0xf0b44c : 0xc9d6dc)
     }
+    this.flanks.update(s.showFlanks && !this.observer, new THREE.Vector2(this.canvas.width, this.canvas.height))
     this.selectionMarker.visible = !!this.selection
     if (this.selection) { const [wx, , wz] = this.toWorld(this.selection.x, this.selection.y, 0); this.selectionMarker.position.x = wx; this.selectionMarker.position.z = wz }
     this.stationMarker.visible = !!this.station && !this.observer
