@@ -5,8 +5,8 @@ import { L } from '../i18n'
 // "SolidColor: value R G B" (one colour up to the next stop), Color4 / SolidColor4 with an alpha, "Product:", "Units:",
 // "Scale:" and "Offset:" (file value = value x Scale + Offset), comments after ";".
 
-/** What a palette colours: reflectivity (Z, CR, the section), radial velocity (V, SRV), ZDR, rho_hv, KDP, VIL, echo tops. */
-export type PaletteKind = 'Z' | 'V' | 'ZDR' | 'RHO' | 'KDP' | 'VIL' | 'ET'
+/** What a palette colours: reflectivity (Z, CR, the section), radial velocity (V, SRV), ZDR, rho_hv, KDP, VIL, echo tops, MESH. */
+export type PaletteKind = 'Z' | 'V' | 'ZDR' | 'RHO' | 'KDP' | 'VIL' | 'ET' | 'MESH'
 export type RGB = readonly [number, number, number]
 /** A stop: from `value` up, `color` (null: transparent); `solid` holds it to the next stop, otherwise it blends to `to` or to the next stop's colour. */
 export interface Stop { value: number; color: RGB | null; to?: RGB | null; solid?: boolean }
@@ -25,6 +25,7 @@ export const KINDS: Record<PaletteKind, { label: string; units: string; palUnits
   KDP: { label: 'KDP', units: L('°/км', '°/km'), palUnits: 'DEG/KM', min: -4, max: 12, codes: ['KDP', 'KD'], clampBelow: false, digits: 1 },
   VIL: { label: 'VIL', units: L('кг/м²', 'kg/m²'), palUnits: 'KG/M2', min: 0, max: 100, codes: ['VIL', 'DVL'], clampBelow: false, digits: 0 },
   ET: { label: L('Высота эха (ET)', 'Echo tops (ET)'), units: L('км', 'km'), palUnits: 'KM', min: 0, max: 25, codes: ['ET', 'EET'], clampBelow: false, digits: 1 },
+  MESH: { label: L('Размер града (MESH)', 'Hail size (MESH)'), units: L('мм', 'mm'), palUnits: 'MM', min: 0, max: 120, codes: ['MESH', 'HAIL'], clampBelow: false, digits: 0 },
 }
 
 const hex = (h: string): RGB => [1, 3, 5].map(k => parseInt(h.slice(k, k + 2), 16)) as unknown as RGB
@@ -50,6 +51,8 @@ export const BUILTIN: Palette[] = ([
   { id: 'vil-classic', name: L('Классическая', 'Classic'), kind: 'VIL', stops: smooth([[5, '#3b6e96'], [10, '#2f9e5c'], [20, '#e3d63a'], [35, '#ef8c1f'], [50, '#d7301f'], [65, '#c51b8a'], [80, '#ffffff']]) },
   { id: 'vil-cvd', name: L('Для дальтоников (viridis)', 'Colour-blind friendly (viridis)'), kind: 'VIL', stops: viridis(1, 70, '#ffffff') },
   { id: 'et-classic', name: L('Классическая', 'Classic'), kind: 'ET', stops: smooth([[1, '#3b5878'], [3, '#3b6e96'], [6, '#2f9e5c'], [9, '#e3d63a'], [12, '#ef8c1f'], [15, '#d7301f'], [17, '#c51b8a'], [19, '#ffffff']]) },
+  { id: 'mesh-classic', name: L('Классическая', 'Classic'), kind: 'MESH', stops: smooth([[5, '#2f9e5c'], [13, '#a8d82a'], [19, '#e3d63a'], [25, '#ef8c1f'], [38, '#d7301f'], [51, '#c51b8a'], [76, '#ffffff']]) },
+  { id: 'mesh-cvd', name: L('Для дальтоников (viridis)', 'Colour-blind friendly (viridis)'), kind: 'MESH', stops: viridis(5, 75, '#ffffff') },
   { id: 'et-cvd', name: L('Для дальтоников (viridis)', 'Colour-blind friendly (viridis)'), kind: 'ET', stops: viridis(1, 18, '#ffffff') },
 ] as Palette[]).map(p => ({ ...p, builtin: true }))
 

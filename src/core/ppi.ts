@@ -43,6 +43,8 @@ export class PPI {
   readonly vil: Float32Array; readonly echoTop: Float32Array
   /** 1 where even the highest tilt still has ECHO_TOP_DBZ: the echo top is above it (the cone of silence), a lower bound. */
   readonly echoTopped: Uint8Array
+  /** The maximum expected size of hail (MESH, mm) from the volume scan, with composite(). */
+  readonly mesh: Float32Array
   private readonly gx: Float32Array; private readonly gy: Float32Array; private readonly sinAz: Float32Array; private readonly cosAz: Float32Array
   /** Grid level of the beam per tilt (-1 above the model top), for the current site. */
   private readonly levels = new Map<number, Float32Array>()
@@ -66,7 +68,7 @@ export class PPI {
   constructor(model: AtmosphereModel, w: number, h: number) {
     this.model = model; this.w = w; this.h = h
     const n = w * h, f = () => new Float32Array(n)
-    this.dbz = f(); this.velocity = f(); this.compositeDbz = f(); this.zdr = f(); this.rho = f(); this.kdp = f(); this.vil = f(); this.echoTop = f(); this.echoTopped = new Uint8Array(n); this.gx = f(); this.gy = f(); this.sinAz = f(); this.cosAz = f()
+    this.dbz = f(); this.velocity = f(); this.compositeDbz = f(); this.zdr = f(); this.rho = f(); this.kdp = f(); this.vil = f(); this.echoTop = f(); this.echoTopped = new Uint8Array(n); this.mesh = f(); this.gx = f(); this.gy = f(); this.sinAz = f(); this.cosAz = f()
     this.nodeDbz = new Float32Array(model.grid.n); this.nodeFall = new Float32Array(model.grid.n)
     this.nodeZdr = new Float32Array(model.grid.n); this.nodeRho = new Float32Array(model.grid.n).fill(1); this.nodeKdp = new Float32Array(model.grid.n)
     this.site = { x: model.grid.width / 2, y: model.grid.depth / 2 }
@@ -166,13 +168,19 @@ export class PPI {
    * The volume scan's products over each pixel: the composite reflectivity (the strongest echo), the echo top (the
    * highest beam with at least ECHO_TOP_DBZ, as the NWS enhanced echo tops) and VIL — the liquid water the reflectivity
    * implies, integrated between the tilts' beam heights: 3.44e-6 Z^(4/7) kg/m³ (Greene & Clark 1972), Z (mm⁶/m³) capped at
-   * VIL_MAX_DBZ so hail does not count as water.
+   * VIL_MAX_DBZ so hail does not count as water. And MESH, the maximum expected size of hail (Witt et al. 1998): the
+   * severe hail index SHI = 0.1 ∫ W_T(H) E dH, the hail kinetic energy flux E = 5e-6 10^(0.084 Z) W(Z) (W from 0 at 40 dBZ to
+   * 1 at 50), weighted W_T from 0 at the melting level to 1 at the -20 °C level (the starting environment's), and
+   * MESH = 2.54 SHI^0.5 mm.
    */
   composite() {
     this.prepare()
     const out = this.compositeDbz, m = this.model, grid = m.grid, vil = this.vil, top = this.echoTop
-    const [ox, oy] = this.shift(), last = new Float32Array(out.length).fill(NaN), lastH = new Float32Array(out.length)
-    out.fill(DBZ_FLOOR); vil.fill(0); top.fill(0); this.echoTopped.fill(0)
+    const [ox, oy] = this.shift(), last = new Float32Array(out.length).fill(NaN), lastH = new Float32Array(out.length), lastE = new Float32Array(out.length), mesh = this.mesh
+    out.fill(DBZ_FLOOR); vil.fill(0); top.fill(0); this.echoTopped.fill(0); mesh.fill(0)
+    let h0 = 0, h20 = 0
+    while (h0 < grid.height && m.env.temperatureEnv(h0) > 0) h0 += 25
+    h20 = h0; while (h20 < grid.height && m.env.temperatureEnv(h20) > -20) h20 += 25
     for (const tilt of RADAR_TILTS) {
       const gz = this.levelsFor(tilt)
       for (let i = 0; i < out.length; i++) {
@@ -184,9 +192,12 @@ export class PPI {
         if (tilt === RADAR_TILTS[RADAR_TILTS.length - 1]) this.echoTopped[i] = d >= ECHO_TOP_DBZ ? 1 : 0
         const zl = d > DBZ_FLOOR ? 10 ** (Math.min(d, VIL_MAX_DBZ) / 10) : 0
         if (!Number.isNaN(last[i]) && h > lastH[i]) vil[i] += 3.44e-6 * ((last[i] + zl) / 2) ** (4 / 7) * (h - lastH[i])
-        last[i] = zl; lastH[i] = h
+        const e = d > 40 ? 5e-6 * 10 ** (.084 * d) * Math.min(1, (d - 40) / 10) * Math.max(0, Math.min(1, (h - h0) / Math.max(1, h20 - h0))) : 0
+        if (!Number.isNaN(last[i]) && h > lastH[i]) mesh[i] += .1 * (lastE[i] + e) / 2 * (h - lastH[i])
+        last[i] = zl; lastH[i] = h; lastE[i] = e
       }
     }
+    for (let i = 0; i < mesh.length; i++) mesh[i] = 2.54 * Math.sqrt(mesh[i])
   }
 
   /**

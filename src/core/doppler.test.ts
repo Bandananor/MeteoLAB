@@ -85,6 +85,14 @@ describe('Doppler velocity and composite reflectivity', () => {
       const expected = 3.44e-6 * (10 ** (ppi.compositeDbz[i] / 10)) ** (4 / 7) * (high - low)
       expect(ppi.vil[i] / expected).toBeGreaterThan(.8); expect(ppi.vil[i] / expected).toBeLessThan(1.05)
     }
+    // Rain below the melting level gives no hail size; strong echo through the hail growth zone does (2.8).
+    expect(Math.max(...ppi.mesh)).toBe(0)
+    const hail = small(), { zs: hz } = hail.grid
+    for (let z = 0; z < nz; z++) if (hz[z] < 10_000) for (let c = 0; c < layer; c++) hail.hail[c + z * layer] = 4e-3
+    const far = new PPI(hail, 64, 45)
+    far.site = { x: 0, y: 0 }; far.layout(); far.composite()
+    const big = Math.max(...far.mesh)
+    expect(big).toBeGreaterThan(19); expect(big).toBeLessThan(150)
     // Echo above VIL_MAX_DBZ counts as VIL_MAX_DBZ: hail adds no more.
     expect(VIL_MAX_DBZ).toBe(56); expect(ECHO_TOP_DBZ).toBe(18)
   })
