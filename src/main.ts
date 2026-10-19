@@ -26,7 +26,7 @@ import { HODOGRAPH_NODES, nudgeSounding, sliderNode } from './hodograph'
 import { applyLayout, askGuide, askLayout, Hud, isPhone, savedLayout, suggestedLayout } from './hud'
 import { Timeline } from './timeline'
 import { DEFAULTS as defaults } from './defaults'
-import { hailWord, rainWord } from './describe'
+import { cloudGenus, hailWord, rainWord } from './describe'
 import { type CameraGrade, GRADE_SLIDERS, loadGrade, NEUTRAL_GRADE, saveGrade } from './camera'
 import { decimal, L, lang, otherLanguagePath, rememberLang } from './i18n'
 
@@ -859,7 +859,9 @@ function updateCells() {
   // The tracker follows cells in the domain's frame; over the ground they also move with the domain.
   const [fu, fv] = sim.model.frame, gu = cell.u + fu, gv = cell.v + fv
   const s = cell.stats, age = Math.floor((sim.time - cell.born) / 60), speed = Math.hypot(gu, gv), followed = cell.trail[cell.trail.length - 1].t - cell.trail[0].t >= 120
-  const html = `<span class="num">${NO}${cell.id}</span> · ${CELL_STAGES[cell.stage].name}<small>${CELL_STAGES[cell.stage].hint}. ${L(`Возраст ${age} мин`, `Age ${age} min`)}, ${ORIGIN[cell.origin]}${cell.parent ? L(` (от №${cell.parent})`, ` (from #${cell.parent})`) : ''}; ${!followed ? L('движение уточняется', 'motion being estimated') : speed < 1 ? L('почти стоит', 'nearly stationary') : L(`движется на ${heading(gu, gv)}, ${speed.toFixed(0)} м/с`, `moving ${heading(gu, gv)}, ${speed.toFixed(0)} m/s`)}${flankText(cell.flanks)}</small>`
+  // The cell's own cloud genus (describe.ts), by its top against the live sounding's levels.
+  const live = sim.live, genus = cloudGenus(s.cloudTop, live.sounding.lcl, live.env.temperatureEnv(s.cloudTop * 1000), live.sounding.el)
+  const html = `<span class="num">${NO}${cell.id}</span> · ${CELL_STAGES[cell.stage].name}<small>${genus ? `${genus}; ` : ''}${CELL_STAGES[cell.stage].hint}. ${L(`Возраст ${age} мин`, `Age ${age} min`)}, ${ORIGIN[cell.origin]}${cell.parent ? L(` (от №${cell.parent})`, ` (from #${cell.parent})`) : ''}; ${!followed ? L('движение уточняется', 'motion being estimated') : speed < 1 ? L('почти стоит', 'nearly stationary') : L(`движется на ${heading(gu, gv)}, ${speed.toFixed(0)} м/с`, `moving ${heading(gu, gv)}, ${speed.toFixed(0)} m/s`)}${flankText(cell.flanks)}</small>`
   if (stage.innerHTML !== html) stage.innerHTML = html
   text('updraft', s.updraft.toFixed(1)); text('downdraft', s.downdraft.toFixed(1)); text('uh', s.uh.toFixed(0)); text('uhLow', `${s.uh01.toFixed(0)} / ${s.uh03.toFixed(0)}`)
   text('cloudTop', s.cloudTop.toFixed(1)); text('coldPool', s.coldPool.toFixed(1)); showRain(s.rainRate)
