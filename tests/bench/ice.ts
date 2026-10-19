@@ -2,11 +2,12 @@
 // The mixed phase of a storm (2.7.2, ice from processes): every 10 model minutes, in the core (updraught over 8 m/s at
 // 4-10 km) by temperature, the mean cloud water, cloud ice, snow, graupel and hail (g/m³); the flashes since the last
 // report (IC / -CG / +CG); the largest hail and graupel content anywhere and the rain at the ground.
-//   npx vite build --ssr tests/bench/ice.ts --outDir .bench/ice && node .bench/ice/ice.js "<scenario>" [minutes=60]
+//   npx vite build --ssr tests/bench/ice.ts --outDir .bench/ice && node .bench/ice/ice.js "<scenario>" [minutes=60] [w=0]
+// With w, the bands count only the core's nodes whose own updraught is at least w m/s (the heart of the updraught).
 import { AtmosphereModel, createGrid, domainGrid, DT, SCENARIOS } from '../../src/core'
 import { SUMMER_DAY } from '../../src/core/fixtures'
 
-const [name, minutesArg] = process.argv.slice(2), minutes = Number(minutesArg ?? 60)
+const [name, minutesArg, strongArg] = process.argv.slice(2), minutes = Number(minutesArg ?? 60), strong = Number(strongArg ?? 0)
 const scenario = SCENARIOS.find(s => s.name === name)
 if (!scenario) { console.log(`no scenario "${name}": ${SCENARIOS.map(s => s.name).join(', ')}`); process.exit(1) }
 const config = { ...SUMMER_DAY, ...scenario.values }, grid = createGrid(domainGrid(config.domain, config.top, config.domainSize))
@@ -26,7 +27,7 @@ for (let t = DT; t <= minutes * 60; t += DT) {
   const bands = Array.from({ length: 9 }, () => ({ n: 0, w: 0, i: 0, s: 0, g: 0, h: 0 }))
   for (const c of core) for (let z = 0; z < nz; z++) {
     const j = c + z * layer, tc = model.theta[j] * model.env.exner[z] - 273.15, b = Math.floor(-tc / 5)
-    if (b < 0 || b >= bands.length) continue
+    if (b < 0 || b >= bands.length || model.w[j] < strong) continue
     const r = rho[z] * 1e3, s = bands[b]; s.n++; s.w += model.cloud[j] * r; s.i += model.ice[j] * r; s.s += model.snow[j] * r; s.g += model.graupel[j] * r; s.h += model.hail[j] * r
   }
   // Crystals per litre by band (mean over the core nodes of the band).
