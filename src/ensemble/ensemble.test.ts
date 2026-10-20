@@ -4,7 +4,7 @@ import { SUMMER_DAY } from '../core/fixtures'
 import { memberPeaks, probabilities, probabilityMap, spread } from './combine'
 import { addSwaths, type MemberResult, type MemberSample, perturbConfig, runMember, SAMPLE_EVERY, UNCERTAINTY } from './member'
 
-const sample = (t: number, o: Partial<MemberSample> = {}): MemberSample => ({ t, updraft: 0, uh: 0, rain: 0, gust: 0, hail: 0, flashes: 0, rotationHeld: 0, ...o })
+const sample = (t: number, o: Partial<MemberSample> = {}): MemberSample => ({ t, updraft: 0, uh: 0, rain: 0, gust: 0, hail: 0, flashes: 0, rotationHeld: 0, cores: 0, ...o })
 /** A 2 x 2 member with the given highlights and swaths. */
 function member(samples: MemberSample[], maps: Partial<Record<'rainTotal' | 'hailSize' | 'gustMax' | 'uhMax', number[]>> = {}): MemberResult {
   const f = (v?: number[]) => Float32Array.from(v ?? [0, 0, 0, 0])

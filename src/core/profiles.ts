@@ -9,7 +9,7 @@ import { soundingProfile } from './soundingfile'
  */
 export function environmentProfile(config: SimConfig, height: number): EnvironmentProfile | undefined {
   if (config.sounding) return soundingProfile(config.sounding, height + 2000).profile
-  return config.profile === 'weisman-klemp' ? weismanKlemp({ qvMax: .016 }) : undefined
+  return config.profile === 'weisman-klemp' ? weismanKlemp({ qvMax: .016, ...config.weismanKlemp }) : undefined
 }
 
 export interface WeismanKlempOptions {

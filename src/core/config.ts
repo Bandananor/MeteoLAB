@@ -40,6 +40,11 @@ export interface SimConfig {
   /** An analytic environment instead of the slider profile: 'weisman-klemp' (WK82 sounding, 16 g/kg, quarter-circle hodograph, one thermal). */
   profile?: 'weisman-klemp'
   /**
+   * The Weisman-Klemp profile's own numbers instead of the scenario's (profiles.ts weismanKlemp; absent = 16 g/kg, an
+   * 8 m/s quarter circle, 30 m/s at 6 km): the regime map (src/regime/) changes its moisture and shear as WK82 did.
+   */
+  weismanKlemp?: { qvMax?: number; radius?: number; u6?: number }
+  /**
    * The domain moves with the storm (default, absent = true): the model works in a frame moving at domainMotion(env), so
    * the storm stays inside instead of leaving on one side and coming back on the other into its own cold pool.
    */

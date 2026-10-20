@@ -3,7 +3,7 @@
 import { MIN_SOUNDING_TOP, type SimConfig, type SoundingLevel } from './core'
 
 /** The settings a link may carry, with what each may be: a number, one of a few words, a flag, a pair of numbers, a sounding or zones. */
-const KINDS: Record<string, 'number' | 'boolean' | 'pair' | 'sounding' | 'zones' | 'front' | 'advection' | readonly string[]> = {
+const KINDS: Record<string, 'number' | 'boolean' | 'pair' | 'sounding' | 'zones' | 'front' | 'advection' | 'wk' | readonly string[]> = {
   surfaceTemp: 'number', lapseLow: 'number', lapseMid: 'number', lapseUpper: 'number', tropopause: 'number', stratoWarming: 'number',
   rhSurface: 'number', rhLow: 'number', rhMid: 'number', rhUpper: 'number',
   wind0: 'number', wind05: 'number', wind1: 'number', wind3: 'number', wind6: 'number', wind10: 'number',
@@ -13,7 +13,7 @@ const KINDS: Record<string, 'number' | 'boolean' | 'pair' | 'sounding' | 'zones'
   speed: 'number', bubble: 'number', bubbleRadius: 'number', city: 'number',
   surfaceType: ['grass', 'dry', 'water', 'urban'], microphysics: ['warm', 'ice'], transport: ['semi-lagrangian', 'weno'],
   profile: ['weisman-klemp'], domain: ['standard', 'large', 'custom'], domainSize: 'pair', edges: ['periodic', 'relaxed', 'relaxed-x'], start: ['thermals', 'line'],
-  followStorm: 'boolean', lightning: 'boolean', frameMotion: 'pair', sounding: 'sounding', zones: 'zones', frontLine: 'front', largeScale: 'advection',
+  followStorm: 'boolean', lightning: 'boolean', frameMotion: 'pair', sounding: 'sounding', zones: 'zones', frontLine: 'front', largeScale: 'advection', weismanKlemp: 'wk',
 }
 /** Numbers from a link are kept within this magnitude (a slider never goes near it). */
 const LIMIT = 1e5
@@ -25,6 +25,8 @@ const fits = (kind: (typeof KINDS)[string], v: unknown) => {
   if (kind === 'zones') return validZones(v)
   if (kind === 'front') return validFront(v)
   if (kind === 'advection') return validAdvection(v)
+  // The Weisman-Klemp numbers (the regime map's): the vapour cap 5-25 g/kg, the hodograph's radius and 6 km wind up to 80 m/s.
+  if (kind === 'wk') return !!v && typeof v === 'object' && Object.entries(v).every(([k, x]) => typeof x === 'number' && (k === 'qvMax' ? x >= .005 && x <= .025 : (k === 'radius' || k === 'u6') && x >= 0 && x <= 80))
   return typeof v === 'string' && kind.includes(v)
 }
 

@@ -6,7 +6,7 @@ import { MONO } from '../theme'
 import { download, toCsv } from '../share'
 import { EVENTS, type EventKind, MAPS, type MapKind, memberPeaks, type MemberPeaks, probabilities, probabilityMap, spread } from './combine'
 import { type MemberResult, perturbConfig, UNCERTAINTY } from './member'
-import type { EnsembleReply, EnsembleRequest } from './ensemble.worker'
+import { poolSize, runPool } from './pool'
 
 const SIZES = [5, 10, 20], LENGTHS = [30, 60, 90, 120]
 const EVENT_NAMES: Record<EventKind, string> = {
@@ -52,8 +52,8 @@ export class EnsemblePanel {
   private size = 10; private minutes = 60; private map: MapKind = 'rain'
   /** What makes the members differ: the seed alone, or the seed and the uncertainty of the starting data (perturbConfig). */
   private mode: 'seed' | 'data' = 'data'
-  private workers: Worker[] = []; private results: MemberResult[] = []; private peaks: MemberPeaks[] = []
-  private running: { total: number; started: number; times: Map<Worker, number>; name: string } | null = null
+  private results: MemberResult[] = []; private peaks: MemberPeaks[] = []
+  private running: { total: number; started: number; times: ReadonlyMap<number, number>; stop: () => void } | null = null
   private name = ''
   open = false
   /** The settings and the name of the run going on. */
@@ -102,35 +102,23 @@ export class EnsemblePanel {
   private start() {
     const { config, name } = this.current(), total = this.size, minutes = this.minutes, mode = this.mode
     const taken = new Set([config.seed]), seeds = [config.seed, ...Array.from({ length: total - 1 }, () => freshSeed(taken))]
-    const parallel = Math.max(1, Math.min(total, (navigator.hardwareConcurrency || 2) - 1, 8))
     this.results = []; this.peaks = []; this.name = name
-    const running = this.running = { total, started: performance.now(), times: new Map<Worker, number>(), name }
-    let next = 0
-    const feed = (w: Worker) => {
-      if (next >= seeds.length) { w.terminate(); this.workers = this.workers.filter(x => x !== w); running.times.delete(w); if (!this.workers.length) this.finish(); return }
-      running.times.set(w, 0)
-      // The first member is the control: the run's own seed and data; the others perturbed within the data's uncertainty (if chosen).
-      const k = next++, member = { ...structuredClone(config), seed: seeds[k] }
-      w.postMessage({ type: 'run', config: k && mode === 'data' ? perturbConfig(member) : member, minutes } satisfies EnsembleRequest)
-    }
-    for (let k = 0; k < parallel; k++) {
-      const w = new Worker(new URL('./ensemble.worker.ts', import.meta.url), { type: 'module' })
-      w.addEventListener('message', ({ data }: MessageEvent<EnsembleReply>) => {
-        if (this.running !== running) return
-        if (data.type === 'progress') { running.times.set(w, data.time); this.progress() }
-        else if (data.type === 'done') { this.results.push(data.result); this.peaks.push(memberPeaks(data.result)); this.draw(); feed(w) }
-        else { this.stop(); this.text('ensHint', `${L('Ошибка расчёта', 'Computation error')}: ${data.message}`) }
-      })
-      this.workers.push(w); feed(w)
-    }
+    // The first member is the control: the run's own seed and data; the others perturbed within the data's uncertainty (if chosen).
+    const configs = seeds.map((seed, k) => { const member = { ...structuredClone(config), seed }; return k && mode === 'data' ? perturbConfig(member) : member })
+    const running = { total, started: performance.now(), times: new Map<number, number>() as ReadonlyMap<number, number>, stop: () => {} }
+    this.running = running
+    running.stop = runPool(configs, minutes, {
+      progress: times => { running.times = times; this.progress() },
+      done: (_, result) => { this.results.push(result); this.peaks.push(memberPeaks(result)); this.draw() },
+      error: message => { this.stop(); this.text('ensHint', `${L('Ошибка расчёта', 'Computation error')}: ${message}`) },
+      finish: () => this.finish(),
+    })
     this.onRunning(true); this.draw()
   }
 
   /** Stops the members still running; the finished ones stay. */
   stop() {
-    for (const w of this.workers) w.terminate()
-    this.workers = []
-    if (this.running) { this.running = null; this.onRunning(false) }
+    if (this.running) { this.running.stop(); this.running = null; this.onRunning(false) }
     this.draw()
   }
 
@@ -162,7 +150,7 @@ export class EnsemblePanel {
     this.root.querySelector<HTMLButtonElement>('#ensCsv')!.disabled = !n
     this.text('ensCount', running ? `${n} / ${this.running!.total}` : n ? String(n) : '—'); this.text('ensName', this.name || '—')
     if (!running) this.text('ensLeft', '')
-    const parallel = Math.max(1, Math.min(this.size, (navigator.hardwareConcurrency || 2) - 1, 8))
+    const parallel = poolSize(this.size)
     this.text('ensHint', running ? L(`Участников сразу: ${Math.min(parallel, this.running!.total - n)}; живой расчёт на паузе.`, `Members at once: ${Math.min(parallel, this.running!.total - n)}; the live run is paused.`)
       : n ? L(`${n} участников по ${this.minutes} мин, настройки «${this.name}».`, `${n} members of ${this.minutes} min, settings “${this.name}”.`)
       : L(`Текущие настройки ${this.size} раз по ${this.minutes} мин с разными зёрнами, по ${parallel} сразу. Один участник на стандартной области — ~2–3 мин на модельный час, на большой — в ~4 раза дольше.`, `The current settings ${this.size} times for ${this.minutes} min with different seeds, ${parallel} at once. One member on the standard domain takes ~2–3 min per model hour, on the large one ~4 times longer.`))

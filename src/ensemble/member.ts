@@ -9,7 +9,7 @@ import { AtmosphereModel, DT, groundRepeats, type SimConfig } from '../core'
 import { clamp, mod, mulberry32 } from '../core/math'
 
 /** The domain's strongest values at one time. */
-export interface MemberSample { t: number; updraft: number; uh: number; rain: number; gust: number; hail: number; flashes: number; rotationHeld: number }
+export interface MemberSample { t: number; updraft: number; uh: number; rain: number; gust: number; hail: number; flashes: number; rotationHeld: number; cores: number }
 export interface MemberResult {
   seed: number; samples: MemberSample[]
   /** The ground columns: nx x ny over the domain's size, m. */
@@ -88,7 +88,7 @@ export function runMember(config: SimConfig, minutes: number, progress?: (time: 
   let flashes = 0
   const sample = () => {
     const d = m.diagnostics(), total = m.flashCount.ic + m.flashCount.cg
-    samples.push({ t: m.time, updraft: d.updraft, uh: m.rotation.uh, rain: d.rainRate, gust: d.gust, hail: d.hail, flashes: (total - flashes) * 60 / SAMPLE_EVERY, rotationHeld: m.rotation.persisted })
+    samples.push({ t: m.time, updraft: d.updraft, uh: m.rotation.uh, rain: d.rainRate, gust: d.gust, hail: d.hail, flashes: (total - flashes) * 60 / SAMPLE_EVERY, rotationHeld: m.rotation.persisted, cores: d.cores })
     flashes = total
     progress?.(m.time)
   }
