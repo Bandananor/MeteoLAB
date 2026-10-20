@@ -147,6 +147,7 @@ export class Hud {
       <div class="menu__sep"></div>
       <button class="menu__item" role="menuitem" data-tool="#groundToggle"><span class="menu__glyph">⛰</span>${L('Вид с земли', 'View from the ground')}</button>
       <button class="menu__item" role="menuitem" data-tool="#snapshotButton"><span class="menu__glyph">◫</span>${L('Снимок', 'Snapshot')}</button>
+      <button class="menu__item" role="menuitem" data-tool="#videoButton"><span class="menu__glyph">▶</span>${L('Видео', 'Video')}</button>
       <button class="menu__item" role="menuitem" data-tool="#immersiveToggle"><span class="menu__glyph">⛶</span>${L('Во весь экран', 'Full screen')}</button>
       <div class="menu__sep"></div>
       <button class="menu__item" role="menuitem" data-tool="#layoutToggle"><span class="menu__glyph">▭</span>${L('Компьютерный вид', 'Computer layout')}</button>

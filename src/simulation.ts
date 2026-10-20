@@ -23,6 +23,8 @@ export type WorkerRequest =
   /** threads: an upper limit for the physics threads (the page's ?threads= parameter, to compare speeds). */
   | { type: 'init'; config: SimConfig; threads?: number; lang?: Lang }
   | { type: 'advance'; seconds: number }
+  /** Exactly this many model steps, however long they take (the video recording, src/record/recorder.ts). */
+  | { type: 'steps'; count: number }
   | { type: 'config'; config: SimConfig }
   | { type: 'perturb'; x: number; y: number; strength: number }
   | { type: 'release'; buffer: ArrayBuffer }

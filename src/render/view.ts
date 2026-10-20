@@ -266,6 +266,12 @@ export class StormView {
   private frame = 0; private readonly lookScratch = new THREE.Vector3()
   /** The camera is being turned (OrbitControls between start and end, and the damping's tail after release: turnedAt). */
   private turning = false; private turnedAt = 0
+  /**
+   * The video recording (recordSize): the picture's own size, drawn at one pixel each and the high quality whatever
+   * the screen manages; the time the frame shows on the recording's clock (ms, for the flashes' course); the quality
+   * chosen before it, to go back to.
+   */
+  private recording: { width: number; height: number; now: number; choice: Quality | 'auto'; level: Quality } | null = null
   /** The quality chosen ('auto' or a level), the level drawn, and the automatic choice's state (setQuality). */
   private qualityChoice: Quality | 'auto' = 'auto'; level: Quality = 'high'
   private autoFrames = 0; private autoStart = 0; private autoLast = 0; private autoFast = 0; private autoCeiling = 2
@@ -656,10 +662,53 @@ if(abs(uSurface - 2.0) < 0.5){
    */
   snapshot() {
     this.turning = false; this.render()
-    // The camera's grade is a filter on the canvas (setGrade): the picture is drawn through the same filter.
-    const filter = gradeFilter(this.grade), out = filter === 'none' ? this.canvas : document.createElement('canvas')
-    if (out !== this.canvas) { out.width = this.canvas.width; out.height = this.canvas.height; const ctx = out.getContext('2d')!; ctx.filter = filter; ctx.drawImage(this.canvas, 0, 0) }
+    const out = this.graded()
     return new Promise<Blob | null>(resolve => out.toBlob(resolve, 'image/png'))
+  }
+
+  /**
+   * The picture just drawn as the screen shows it: the camera's grade is a filter on the canvas (setGrade), so the
+   * picture is drawn through the same filter (into `into`, reused between the frames of a video).
+   */
+  private graded(into?: HTMLCanvasElement) {
+    const filter = gradeFilter(this.grade), out = filter === 'none' ? this.canvas : into ?? document.createElement('canvas')
+    if (out !== this.canvas) {
+      if (out.width !== this.canvas.width || out.height !== this.canvas.height) { out.width = this.canvas.width; out.height = this.canvas.height }
+      const ctx = out.getContext('2d')!; ctx.filter = filter; ctx.drawImage(this.canvas, 0, 0)
+    }
+    return out
+  }
+  private gradeCanvas: HTMLCanvasElement | null = null
+
+  /** The video recording's picture size, or null to go back to the screen's (and to the quality chosen before). */
+  recordSize(size: { width: number; height: number } | null) {
+    if (size) {
+      this.recording = { ...size, now: performance.now(), choice: this.qualityChoice, level: this.level }
+      this.qualityChoice = 'high'; this.applyLevel('high')
+      return
+    }
+    const r = this.recording
+    if (!r) return
+    this.recording = null
+    this.setQuality(r.choice, r.level)
+  }
+
+  /** Draws the frame of a video for `now` (ms on the recording's clock) and gives the picture to encode (read it in this task). */
+  recordFrame(now: number) {
+    this.recording!.now = now; this.turning = false; this.render()
+    return this.graded(this.gradeCanvas ??= document.createElement('canvas'))
+  }
+
+  get screenWidth() { return Math.max(2, this.canvas.clientWidth) }
+  get screenHeight() { return Math.max(2, this.canvas.clientHeight) }
+  /** Whether the GPU gave the recording's whole picture (a drawing buffer larger than it allows comes out smaller). */
+  recordFits() { const r = this.recording, gl = this.renderer.getContext(); return !!r && gl.drawingBufferWidth === r.width && gl.drawingBufferHeight === r.height }
+
+  /** Turns the camera round the point it looks at, about the vertical, by `degrees` (seen from above, anticlockwise). */
+  turnCamera(degrees: number) {
+    const t = this.controls.target, p = this.camera.position, a = degrees * Math.PI / 180, c = Math.cos(a), s = Math.sin(a), x = p.x - t.x, z = p.z - t.z
+    p.x = t.x + x * c + z * s; p.z = t.z - x * s + z * c
+    this.controls.update()
   }
 
   /** The camera's settings (src/camera.ts): the exposure into the tone mapping, the rest as a filter over the frame. */
@@ -1075,7 +1124,9 @@ if(abs(uSurface - 2.0) < 0.5){
 
   render() {
     const s = this.settings, m = this.model, { dx, dy } = m.grid
-    const width = Math.max(2, this.canvas.clientWidth), height = Math.max(2, this.canvas.clientHeight), fit = pixelRatioFor(this.level, width, height, this.turning)
+    const rec = this.recording, now = rec ? rec.now : performance.now()
+    // A video's frame: its own size at one pixel each (the screen shows it stretched meanwhile).
+    const width = rec ? rec.width : Math.max(2, this.canvas.clientWidth), height = rec ? rec.height : Math.max(2, this.canvas.clientHeight), fit = rec ? 1 : pixelRatioFor(this.level, width, height, this.turning)
     if (fit !== this.renderer.getPixelRatio()) this.renderer.setPixelRatio(fit)
     const ratio = this.renderer.getPixelRatio()
     // Against the renderer's own pixel ratio (1 on a phone): compared with 1.5 there, the canvas was resized, and its
@@ -1083,15 +1134,15 @@ if(abs(uSurface - 2.0) < 0.5){
     if (this.canvas.width !== Math.floor(width * ratio) || this.canvas.height !== Math.floor(height * ratio)) {
       this.renderer.setSize(width, height, false); this.camera.aspect = width / height; this.camera.updateProjectionMatrix()
     }
-    this.autoQuality(performance.now())
-    if (this.turning && !this.dragging() && performance.now() - this.turnedAt > 400) this.turning = false
+    if (!rec) this.autoQuality(now)
+    if (this.turning && !this.dragging() && now - this.turnedAt > 400) this.turning = false
     const field = s.field === 'composite' ? null : s.field
     // With a field shown the sky dims toward the lab's dark blue (the field's colours read against it).
     this.skyMaterial.uniforms.uLab.value = field ? .8 : 0
     this.updateSun()
     // A flash lights the cloud from inside.
-    const glow = this.lightning.update(performance.now(), s.showLightning, this.renderer.getDrawingBufferSize(this.drawingBuffer), ratio)
-    this.sprites.update(performance.now(), this.night, s.showLightning)
+    const glow = this.lightning.update(now, s.showLightning, this.renderer.getDrawingBufferSize(this.drawingBuffer), ratio)
+    this.sprites.update(now, this.night, s.showLightning)
     const lit = this.lightning, vu = this.volumeMaterial.uniforms
     if (glow > 0 && lit.changed.some(c => c)) { this.flashLight.update(this.renderer, lit.points, lit.changed); lit.taken() }
     vu.uFlashOn.value = glow > 0 && this.flashLight.ready ? 1 : 0

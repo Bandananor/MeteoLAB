@@ -81,5 +81,12 @@ scope.addEventListener('message', ({ data }) => {
       send()
       break
     }
+    case 'steps': {
+      if (!model) break
+      for (let k = 0; k < data.count; k++) { model.step(DT); model.time += DT }
+      pendingSteps += data.count; accumulator = 0
+      send()
+      break
+    }
   }
 })

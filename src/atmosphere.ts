@@ -1,7 +1,8 @@
 import type { CameraGrade } from './camera'
 import { lang } from './i18n'
-import { applyState, readState, AtmosphereModel, CellTracker, coldPoolBalance, type SavedState, saveState, type ColdPoolBalance, computeSounding, domainPoint, groundPoint, Station, type Environment, insolation, liveSounding, type ModelDiagnostics, parcelIndices, type ParcelIndices, type SimConfig, type Sounding, stormIndices, type StormIndices, sunDirection } from './core'
+import { applyState, readState, AtmosphereModel, DT, CellTracker, coldPoolBalance, type SavedState, saveState, type ColdPoolBalance, computeSounding, domainPoint, groundPoint, Station, type Environment, insolation, liveSounding, type ModelDiagnostics, parcelIndices, type ParcelIndices, type SimConfig, type Sounding, stormIndices, type StormIndices, sunDirection } from './core'
 import { describeConvection } from './describe'
+import { blendWeight } from './record/plan'
 import { isPhone, PHONE_THREADS } from './hud'
 import type { FieldMode } from './render/fields'
 import type { UhLayer } from './core'
@@ -56,6 +57,14 @@ export class Atmosphere implements ViewSettings {
   private speedMark: { real: number; model: number } | null = null
   /** Threads the physics runs on (see simulation.worker.ts). */
   threads = 1
+  /**
+   * The video recording (src/record/recorder.ts): while it runs the page neither sends real time nor draws — the
+   * recorder steps the model and draws each frame itself. The last two states received (in the snapshot's layout) are
+   * held, older first, for the frames between them to show their blend.
+   */
+  private held: { time: number; data: Float32Array }[] | null = null
+  /** Called once the snapshot in flight has arrived. */
+  private arrived: (() => void) | null = null
 
   constructor(canvas: HTMLCanvasElement, config: SimConfig) {
     this.config = config; this.sentConfig = JSON.stringify(config)
@@ -78,6 +87,7 @@ export class Atmosphere implements ViewSettings {
 
   /** Sends the real elapsed time (and any slider change) to the worker; the fields arrive with the next snapshot. */
   advance(realDt: number) {
+    if (this.held) return
     const current = JSON.stringify(this.config)
     if (current !== this.sentConfig) { this.sentConfig = current; Object.assign(this.mirror.config, this.config); this.post({ type: 'config', config: { ...this.config } }) }
     this.waiting += realDt
@@ -86,7 +96,66 @@ export class Atmosphere implements ViewSettings {
     this.post({ type: 'advance', seconds: this.waiting })
     this.waiting = 0
   }
-  render() { this.view.render() }
+  render() { if (!this.held) this.view.render() }
+
+  // ---- The video recording (src/record/recorder.ts).
+
+  get recording() { return !!this.held }
+  /** Stops the run's own clock: once the batch in flight has arrived, the state now is held. */
+  async startRecording() {
+    while (this.inFlight) await new Promise<void>(resolve => { this.arrived = resolve })
+    const data = this.pack()
+    this.held = [{ time: this.mirror.time, data }, { time: this.mirror.time, data: data.slice() }]
+  }
+  /** The model time of the newer state held. */
+  get heldTime() { return this.held ? this.held[1].time : this.mirror.time }
+  /** Steps the model exactly `count` times; resolves once their snapshot is in. */
+  stepModel(count: number) {
+    return new Promise<void>(resolve => { this.arrived = resolve; this.inFlight = true; this.post({ type: 'steps', count }) })
+  }
+  /** Puts into the page's model the blend of the two states held at model time `t` (between them). */
+  showAt(t: number) {
+    const m = this.mirror, [a, b] = this.held!, w = blendWeight(a.time, b.time, t), { n, layer } = m.grid
+    let o = 0
+    const blend = (f: Float32Array | Float64Array, size: number) => { for (let i = 0; i < size; i++) f[i] = a.data[o + i] + (b.data[o + i] - a.data[o + i]) * w; o += size }
+    for (const key of SNAPSHOT_FIELDS) blend(m[key], n)
+    for (const key of SNAPSHOT_COLUMNS) blend(m[key], layer)
+    m.time = a.time + (b.time - a.time) * w
+  }
+  /**
+   * Draws the frame for `now` (ms on the recording's own clock: the flashes' course and the like) at the recording's
+   * picture size; the picture to encode, read in the same task.
+   */
+  recordFrame(now: number) { return this.view.recordFrame(now) }
+  /** The picture size while recording (null: back to the screen's, at the quality chosen before). */
+  recordSize(size: { width: number; height: number } | null) { this.view.recordSize(size) }
+  /** The view's size on the screen, CSS pixels (a video «as the screen» takes its shape). */
+  get viewWidth() { return this.view.screenWidth }
+  get viewHeight() { return this.view.screenHeight }
+  /** Whether the GPU drew the whole picture of the frame just drawn (StormView.recordFits). */
+  recordFits() { return this.view.recordFits() }
+  /** Turns the camera round the point it looks at, degrees (the recording's turn round the storm). */
+  turnCamera(degrees: number) { this.view.turnCamera(degrees) }
+  /** Back to the run's own clock, from the newest state the model has reached. */
+  stopRecording() {
+    const held = this.held
+    if (!held) return
+    this.held = null; this.unpack(held[1].data); this.mirror.time = held[1].time
+  }
+  /** The page's model fields in the snapshot's layout. */
+  private pack(out?: Float32Array) {
+    const m = this.mirror, { n, layer } = m.grid, data = out ?? new Float32Array(SNAPSHOT_FIELDS.length * n + SNAPSHOT_COLUMNS.length * layer)
+    let o = 0
+    for (const key of SNAPSHOT_FIELDS) { data.set(m[key], o); o += n }
+    for (const key of SNAPSHOT_COLUMNS) { data.set(m[key], o); o += layer }
+    return data
+  }
+  private unpack(data: Float32Array) {
+    const m = this.mirror, { n, layer } = m.grid
+    let o = 0
+    for (const key of SNAPSHOT_FIELDS) { m[key].set(data.subarray(o, o + n)); o += n }
+    for (const key of SNAPSHOT_COLUMNS) { m[key].set(data.subarray(o, o + layer)); o += layer }
+  }
   /** The 3D view as a PNG (StormView.snapshot). */
   snapshot() { return this.view.snapshot() }
   /** The picture's quality (StormView.setQuality), the level drawn, and a call when the automatic choice changes it. */
@@ -165,12 +234,12 @@ export class Atmosphere implements ViewSettings {
   private post(request: WorkerRequest, transfer: Transferable[] = []) { this.worker.postMessage(request, transfer) }
 
   private receive(s: Snapshot) {
-    if (this.awaitingLoad && !s.loaded) { this.post({ type: 'release', buffer: s.buffer }, [s.buffer]); this.inFlight = false; return }
+    if (this.awaitingLoad && !s.loaded) { this.post({ type: 'release', buffer: s.buffer }, [s.buffer]); this.inFlight = false; const arrived = this.arrived; this.arrived = null; arrived?.(); return }
     this.awaitingLoad = false
-    const m = this.mirror, { n, layer } = m.grid, data = new Float32Array(s.buffer)
-    let offset = 0
-    for (const key of SNAPSHOT_FIELDS) { m[key].set(data.subarray(offset, offset + n)); offset += n }
-    for (const key of SNAPSHOT_COLUMNS) { m[key].set(data.subarray(offset, offset + layer)); offset += layer }
+    const m = this.mirror, data = new Float32Array(s.buffer)
+    this.unpack(data)
+    // Recording: the older state held gives way to this one.
+    if (this.held) { const [a, b] = this.held; a.data.set(data); a.time = s.time; this.held = [b, a] }
     m.time = s.time; Object.assign(m.rotation, s.rotation); this.latest = s.diagnostics; this.threads = s.threads
     const now = performance.now(), mark = this.speedMark
     if (!mark || m.time < mark.model || now - mark.real > 5000) this.speedMark = { real: now, model: m.time }
@@ -191,6 +260,7 @@ export class Atmosphere implements ViewSettings {
       while (bytes > HISTORY_BYTES && this.history.length > 2) bytes -= this.history.splice(1, 1)[0].buffer.byteLength
     }
     if (!(m.time - this.live.time < LIVE_EVERY && m.time >= this.live.time)) { const l = liveSounding(m); this.live = this.derive(l.env, m.time, l.quiet, l.all) }
-    this.view.afterAdvance(s.steps)
+    this.view.afterAdvance(s.steps * DT)
+    const arrived = this.arrived; this.arrived = null; arrived?.()
   }
 }
