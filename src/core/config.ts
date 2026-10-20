@@ -110,6 +110,11 @@ export interface SimConfig {
    * in the idealised squall lines of Rotunno, Klemp and Weisman (1988).
    */
   start?: 'thermals' | 'line'
+  /**
+   * A shift of the starting thermals, m east and north: an ensemble member's (src/ensemble/member.ts) — where exactly
+   * the first thermal rises is as uncertain as the sounding.
+   */
+  startOffset?: readonly [number, number]
 }
 
 /**

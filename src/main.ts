@@ -15,6 +15,7 @@ import { SkewTPanel } from './skewt/panel'
 import { StationPanel } from './station/panel'
 import { ComparePanel } from './compare/panel'
 import { EchoMaps } from './compare/run'
+import { EnsemblePanel } from './ensemble/panel'
 import { DetectorPanel } from './detector/panel'
 import { AnalysisPanel } from './analysis/panel'
 import { SatellitePanel } from './satellite/panel'
@@ -245,7 +246,7 @@ app.innerHTML = `<div class="app">
           ${metric('gust', L('Порыв у земли', 'Surface gust'), L('м/с', 'm/s'), 'tip-gust')}
           ${metric('hail', L('Град у земли', 'Hail at the ground'), L('см', 'cm'), 'tip-hail', '<div class="t-caption" id="hailWord"></div><div class="t-caption" id="hailSwath"></div>')}
         </div></section>
-      <section class="chart"><div class="chart__head"><span class="chart__title">${L('Ход грозы', 'Storm history')}</span><span class="chart__actions"><button class="btn btn--xs" id="timelineCsv" title="${L('Выгрузить ряды «Хода грозы» в CSV (таблица или скрипт): время, CAPE и CIN, поток, UH, дождь', 'Export the “Storm history” series to CSV (a spreadsheet or a script): time, CAPE and CIN, updraught, UH, rain')}">CSV</button><button class="btn btn--xs" id="compareOpen" title="${L('Сравнение двух опытов (C): запомнить этот как A, изменить настройку и смотреть A и B рядом', 'Comparing two runs (C): remember this one as A, change a setting and watch A and B side by side')}">${L('Сравнить', 'Compare')}</button></span></div>
+      <section class="chart"><div class="chart__head"><span class="chart__title">${L('Ход грозы', 'Storm history')}</span><span class="chart__actions"><button class="btn btn--xs" id="timelineCsv" title="${L('Выгрузить ряды «Хода грозы» в CSV (таблица или скрипт): время, CAPE и CIN, поток, UH, дождь', 'Export the “Storm history” series to CSV (a spreadsheet or a script): time, CAPE and CIN, updraught, UH, rain')}">CSV</button><button class="btn btn--xs" id="compareOpen" title="${L('Сравнение двух опытов (C): запомнить этот как A, изменить настройку и смотреть A и B рядом', 'Comparing two runs (C): remember this one as A, change a setting and watch A and B side by side')}">${L('Сравнить', 'Compare')}</button><button class="btn btn--xs" id="ensembleOpen" title="${L('Ансамбль (E): эти настройки много раз с разными зёрнами — вероятности мезоциклона, града, ветра и карты осадков', 'Ensemble (E): these settings many times with different seeds — the chances of a mesocyclone, hail, wind and rain maps')}">${L('Ансамбль', 'Ensemble')}</button></span></div>
         <canvas id="timeline" title="${L('Ход грозы по модельному времени (вся область, точка каждые 30 с): неустойчивость среды сейчас (CAPE и CIN частицы от земли по живому зондированию — вдали от гроз, раз в модельную минуту), самый сильный восходящий поток, вращение потока, дождь у земли и вспышки молний за последнюю минуту. Перезапуск начинает графики заново', 'The storm over model time (the whole domain, a point every 30 s): the instability of the environment now (CAPE and CIN of the surface parcel from the live sounding — away from the storms, once a model minute), the strongest updraught, its rotation, the rain at the ground and the lightning flashes in the last minute. A restart begins the charts anew')}"></canvas></section>
       <div class="diag__groups">
         ${group(L('Чего ждать', 'What to expect'), `<ul class="expect" id="expectList"></ul><p class="t-caption" id="expectNote">${L('Прогноз по среде на старте опыта — по статистике настоящих гроз (источник у каждой строки); справа — что вышло в модели за этот прогон. Расхождение — тоже урок: среда даёт шанс, а не гарантию, и у модели свои пределы (сетка ~1 км, одномоментная микрофизика). У синоптических ситуаций среда меняется по сюжету — прогноз по ней на старте.', 'A forecast from the environment at the start of the run — by the statistics of real storms (the source on each row); on the right, what the model made of it this run. A mismatch is a lesson too: an environment gives a chance, not a guarantee, and the model has its limits (a ~1 km grid, one-moment microphysics). The synoptic situations change their environment as their story goes — the forecast is from the start.')}</p>`, { id: 'expect' })}
@@ -354,7 +355,7 @@ document.querySelectorAll<HTMLElement>('.popover[popover]').forEach(pop => pop.a
 // R, S, M open and close the instruments (not while typing, not with a modifier).
 addEventListener('keydown', e => {
   if (e.ctrlKey || e.metaKey || e.altKey || (e.target as HTMLElement).closest('input:not([type=range]):not([type=checkbox]), select, textarea, dialog')) return
-  const target = ({ KeyR: '#radarOpen', KeyS: '#skewOpen', KeyM: '#stationOpen', KeyL: '#detectorOpen', KeyZ: '#zonesOpen', KeyA: '#analysisOpen', KeyI: '#satelliteOpen', KeyC: '#compareOpen' } as Record<string, string>)[e.code]
+  const target = ({ KeyR: '#radarOpen', KeyS: '#skewOpen', KeyM: '#stationOpen', KeyL: '#detectorOpen', KeyZ: '#zonesOpen', KeyA: '#analysisOpen', KeyI: '#satelliteOpen', KeyC: '#compareOpen', KeyE: '#ensembleOpen' } as Record<string, string>)[e.code]
   if (target) { e.preventDefault(); document.querySelector<HTMLButtonElement>(target)!.click() }
 })
 const config: SimConfig = { ...defaults, ...SCENARIOS[0].values }
@@ -453,6 +454,12 @@ const compare = new ComparePanel(document.body), echoMaps = new EchoMaps()
 document.querySelector('#compareOpen')!.addEventListener('click', () => compare.toggle())
 compare.onChange = () => drawCharts()
 compare.onReseed = seed => { recreate(seed); running = true; updatePause() }
+// The ensemble (2.9): the current settings with many seeds in workers of its own; the live run pauses meanwhile.
+const ensemble = new EnsemblePanel(document.body)
+document.querySelector('#ensembleOpen')!.addEventListener('click', () => ensemble.toggle())
+ensemble.current = () => ({ config, name: document.querySelector('#scenarioName')!.textContent || '' })
+let ranBeforeEnsemble = false
+ensemble.onRunning = on => { if (on) { ranBeforeEnsemble = running; running = false } else running = ranBeforeEnsemble; updatePause() }
 document.querySelector('#skewOpen')!.addEventListener('click', () => skewt.toggle())
 let running = true
 let last = performance.now(), frameCount = 0
@@ -1274,7 +1281,7 @@ showThemeChoice()
 /** The live sounding last handed to the Skew-T screen (a new one every LIVE_EVERY s of model time). */
 let shownLive: Live | null = null
 function frame(now:number){
-  const elapsed=Math.min(.2,(now-last)/1000);last=now;if(running)sim.advance(elapsed);if(!(radar.open||skewt.open||station.open||detector.open||zonesPanel.open||analysis.open||satellite.open||compare.open))sim.render();const d=sim.diagnostics()
+  const elapsed=Math.min(.2,(now-last)/1000);last=now;if(running)sim.advance(elapsed);if(!(radar.open||skewt.open||station.open||detector.open||zonesPanel.open||analysis.open||satellite.open||compare.open||ensemble.open))sim.render();const d=sim.diagnostics()
   text('cape',d.cape.toFixed(0));text('mlcape',d.indices.ml.cape.toFixed(0));text('mlcin',d.indices.ml.cin.toFixed(0));text('mucape',d.indices.mu.cape.toFixed(0));text('dcape',d.indices.dcape.toFixed(0));text('srh01',d.storm.srh01.toFixed(0));text('srh03',d.storm.srh03.toFixed(0));text('scp',d.storm.scp.toFixed(1));text('stp',d.storm.stp.toFixed(1));text('ship',d.storm.ship.toFixed(1));text('dcp',d.storm.dcp.toFixed(1));text('esrh',d.storm.effective?d.storm.effective.srh.toFixed(0):'—');text('eshear',d.storm.effective?d.storm.effective.shear.toFixed(0):'—');text('lapse75',d.storm.lapse75.toFixed(1));text('cin',d.cin.toFixed(0));text('updraft',d.updraft.toFixed(1));text('downdraft',d.downdraft.toFixed(1));text('uh',d.updraftHelicity.toFixed(0));text('uhLow',`${d.uh01.toFixed(0)} / ${d.uh03.toFixed(0)}`);text('cloudTop',d.cloudTop.toFixed(1));text('thermalTop',d.thermalTop.toFixed(1));text('cloudWater',d.cloudWater.toFixed(2));text('coldPool',d.coldPool.toFixed(1));text('gust',d.gust.toFixed(1));text('hail',d.hail>=1?(d.hail/10).toFixed(1):'—');text('hailSwath',d.hailSwath>=1?L(`за прогон до ${(d.hailSwath/10).toFixed(1)} см`,`up to ${(d.hailSwath/10).toFixed(1)} cm this run`):'');showMode(d.hail>=1);text('clipped',String(d.clipped));showRain(d.rain);text('hailWord',hailWord(d.hail));text('cloudGenus',d.cloud);text('rainTotal',d.rainTotal.toFixed(1));text('lcl',d.lcl===null?'—':`${d.lcl.toFixed(1)}${KM}`);text('lfc',d.lfc===null?'—':`${d.lfc.toFixed(1)}${KM}`);text('el',d.el===null?'—':`${d.el.toFixed(1)}${KM}`);text('cellType',d.cellType);text('cellReason',d.cellReason);text('logicText',d.logic);text('sun',`${d.insolation.toFixed(0)} ${L('Вт/м²','W/m²')}`);text('sunElevation',d.sunElevation>0?L(`${d.sunElevation.toFixed(0)}° над горизонтом`,`${d.sunElevation.toFixed(0)}° above the horizon`):L('ночь','night'))
   text('surfaceReadout',({grass:L('ТРАВА','GRASS'),dry:L('СУХАЯ ПОЧВА','DRY SOIL'),water:L('ВОДА','WATER'),urban:L('ГОРОД','CITY')})[config.surfaceType])
   const b=sim.balance;text('rkw',b?b.ratio.toFixed(1):'—');text('rkwNote',b?`C ${b.c.toFixed(0)} / Δu ${b.deltaU.toFixed(0)}${MS}`:L('купола нет','no cold pool'));const card=document.querySelector<HTMLElement>('#rkwCard')!;card.dataset.base??=card.title;card.title=b?`${card.dataset.base}\n\n${L('Сейчас','Now')}: ${describeBalance(b)}.`:card.dataset.base

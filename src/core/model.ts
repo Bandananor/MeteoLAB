@@ -247,16 +247,17 @@ export class AtmosphereModel implements TaskModel {
       const shape = zoneShape(zs[z]), exner = this.env.exner[z]
       for (let c = 0; c < nx * ny; c++) { const i = c + z * nx * ny; this.theta[i] += zones.theta[c] * shape / exner; this.q[i] = Math.max(0, this.q[i] + zones.vapour[c] * shape) }
     }
-    // The Weisman-Klemp case starts from a single thermal, as in the calibration test.
+    // The Weisman-Klemp case starts from a single thermal, as in the calibration test. An ensemble member's thermals are shifted (startOffset).
+    const [sx, sy] = this.config.startOffset ?? [0, 0], bubble = (x: number, y: number, strength: number) => this.injectBubble(x + sx, y + sy, strength)
     if (this.config.start === 'line') {
       // Thermals every 6 km along y (periodic: the line has no ends), strength x (0.85-1.15).
-      for (let y = 3000; y < D; y += 6000) this.injectBubble(W * .5, y, this.config.bubble * (.85 + .3 * this.rng()))
+      for (let y = 3000; y < D; y += 6000) bubble(W * .5, y, this.config.bubble * (.85 + .3 * this.rng()))
     } else if (this.config.front) {
       for (let z = 0, i = 0; z < nz; z++) for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++, i++) this.theta[i] -= this.frontDeficit(x, y, zs[z])
       // Weak thermals on the warm side, 3 km from the front, between the western zone and the front's end.
-      for (let k = 0; k < 5; k++) this.injectBubble(W * (.18 + .09 * k), D / 2 - 3000, this.config.bubble)
-    } else if (this.config.profile === 'weisman-klemp') this.injectBubble(W * .3, D * .5, this.config.bubble)
-    else { this.injectBubble(W * .38, D * .45, this.config.bubble); this.injectBubble(W * .61, D * .57, .72 * this.config.bubble) }
+      for (let k = 0; k < 5; k++) bubble(W * (.18 + .09 * k), D / 2 - 3000, this.config.bubble)
+    } else if (this.config.profile === 'weisman-klemp') bubble(W * .3, D * .5, this.config.bubble)
+    else { bubble(W * .38, D * .45, this.config.bubble); bubble(W * .61, D * .57, .72 * this.config.bubble) }
   }
 
   /**
