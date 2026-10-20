@@ -229,3 +229,10 @@ html:not(.layout-phone) .m-only { display: none !important; }
 .video-error { color: var(--danger); }
 .layout-phone .video-dialog .modal__actions > .btn { flex: 1; height: var(--h-touch); }
 .chart__actions { display: flex; gap: 6px; }
+
+/* The simple settings (2.9): the essentials only, or all the settings (main.ts settingsMode). */
+.settings-mode { margin-top: 10px; }
+.side--left[data-settings="simple"] details.group:not([data-mode]),
+.side--left[data-settings="simple"] .builder,
+.side--left[data-settings="simple"] #soundingOpen,
+.side--left[data-settings="advanced"] details.group[data-mode="simple"] { display: none; }
