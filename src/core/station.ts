@@ -90,6 +90,8 @@ export interface StationRecord { t: number; temp: number; dew: number; pressure:
 
 /** Seconds of model time per record. */
 export const STATION_RECORD = 60
+/** At most this many stations stand at once (2.9: a line of them shows a gust front reaching each in turn). */
+export const STATION_MAX = 4
 
 export class Station {
   readonly records: StationRecord[] = []

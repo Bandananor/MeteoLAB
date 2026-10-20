@@ -8,7 +8,7 @@ import './styles/base.css'
 import './styles/components.css'
 import './styles/layout.css'
 import './styles/app.css'
-import { applyTheme, chartPalette, MONO, themeChoice, type ThemeChoice } from './theme'
+import { applyTheme, chartPalette, MONO, STATION_LETTERS, themeChoice, type ThemeChoice } from './theme'
 import { Atmosphere, type Live } from './atmosphere'
 import { RadarPanel } from './radar/panel'
 import { SkewTPanel } from './skewt/panel'
@@ -433,9 +433,10 @@ const radar = new RadarPanel(document.body); radar.attach(sim.model, sim.storm.r
 document.querySelector('#radarOpen')!.addEventListener('click', () => radar.toggle())
 const skewt = new SkewTPanel(document.body); skewt.attach(sim.model)
 const station = new StationPanel(document.body)
-/** The next click on the 3D view places the weather station; its ground position survives restarts. */
-let placingStation = false, stationGround: { x: number; y: number } | null = null
-station.onPlace = place => { placingStation = place; if (!place) { stationGround = null; sim.placeStationAt(null) } }
+/** The next click on the 3D view places a weather station; their ground positions survive restarts. */
+let placingStation = false, stationGrounds: ({ x: number; y: number } | null)[] = []
+station.onAdd = () => { placingStation = true }
+station.onRemove = index => { placingStation = false; stationGrounds = index === 'all' ? [] : stationGrounds.map((g, k) => k === index ? null : g); while (stationGrounds.length && !stationGrounds[stationGrounds.length - 1]) stationGrounds.pop(); sim.placeStations(stationGrounds) }
 document.querySelector('#stationOpen')!.addEventListener('click', () => station.toggle())
 const detector = new DetectorPanel(document.body)
 const zonesPanel = new ZonesPanel(document.body)
@@ -448,7 +449,7 @@ document.querySelector('#satelliteOpen')!.addEventListener('click', () => satell
 document.querySelector('#skewOpen')!.addEventListener('click', () => skewt.toggle())
 let running = true
 let last = performance.now(), frameCount = 0
-const recreate = (seed?: number) => { useSeed(seed ?? nextSeed()); const level = sim.level; sim.dispose(); sim = Object.assign(new Atmosphere(canvas, config), view); useQuality(level); if (groundToggle.getAttribute('aria-pressed') === 'true') sim.standSuggested(OBSERVER_BACK); radar.attach(sim.model, sim.storm.rightMover); skewt.attach(sim.model); sim.placeStationAt(stationGround); selectCell(null); showDomain() }
+const recreate = (seed?: number) => { useSeed(seed ?? nextSeed()); const level = sim.level; sim.dispose(); sim = Object.assign(new Atmosphere(canvas, config), view); useQuality(level); if (groundToggle.getAttribute('aria-pressed') === 'true') sim.standSuggested(OBSERVER_BACK); radar.attach(sim.model, sim.storm.rightMover); skewt.attach(sim.model); sim.placeStations(stationGrounds); selectCell(null); showDomain() }
 // Zones of the environment (2.4): applied from their screen, the run starts again with them.
 zonesPanel.onApply = (zones, front) => { config.zones = zones.length ? zones : undefined; config.frontLine = front ?? undefined; recreate(); markModified() }
 // Large-scale advection (2.6): changed in the left column, the run starts again with it.
@@ -805,7 +806,7 @@ canvas.addEventListener('pointerup', event => {
   if (!pressed || Math.hypot(event.clientX - pressed.x, event.clientY - pressed.y) > 4) { pressed = null; return }
   pressed = null
   const r = canvas.getBoundingClientRect(), nx = (event.clientX - r.left) / r.width, ny = (event.clientY - r.top) / r.height
-  if (placingStation) { placingStation = false; stationGround = sim.placeStation(nx, ny); station.toggle(true); return }
+  if (placingStation) { placingStation = false; const slot = stationGrounds.indexOf(null), g = sim.stationPoint(nx, ny); stationGrounds = slot < 0 ? [...stationGrounds, g] : stationGrounds.map((p, k) => k === slot ? g : p); station.chosen = slot < 0 ? stationGrounds.length - 1 : slot; sim.placeStations(stationGrounds); station.refresh(sim.stations, false); station.toggle(true); return }
   if (pickingGround) { if (sim.standAt(nx, ny)) { picking(false); showGround() } else pickHint.textContent = L('Здесь нет земли области — щёлкните по земле · Esc — отмена', 'No ground of the domain here — click the ground · Esc — cancel'); return }
   const g = sim.groundPoint(nx, ny), cell = sim.cells.nearest(g.x, g.y, sim.model)
   if (cell) selectCell(cell.id)
@@ -992,12 +993,16 @@ const pickHint = document.querySelector<HTMLElement>('#pickHint')!
 /** Waiting for a click on the ground to stand there (the menu's «Выбрать место»). */
 let pickingGround = false
 const showGround = () => groundToggle.setAttribute('aria-pressed', String(sim.fromGround))
+/** The station to stand at: the one chosen on the station screen (the first standing when all are compared). */
+const standingStation = () => station.chosen === 'all' ? Math.max(0, sim.stations.findIndex(Boolean)) : station.chosen
 const picking = (on: boolean) => { pickingGround = on; pickHint.hidden = !on; pickHint.textContent = L('Щёлкните по земле, где встать · Esc — отмена', 'Click the ground where to stand · Esc — cancel') }
 groundMenu.addEventListener('beforetoggle', e => {
   if ((e as ToggleEvent).newState !== 'open') return
-  const station = groundMenu.querySelector<HTMLButtonElement>('[data-stand="station"]')!
-  station.disabled = !sim.station
-  groundMenu.querySelector('[data-station-note]')!.textContent = sim.station ? L('там, где стоит станция: смотреть на грозу и на её показания', 'where the station stands: watch the storm and its readings') : L('сначала поставьте станцию (прибор «Станция»)', 'place a station first (the “Station” instrument)')
+  const at = standingStation(), letter = STATION_LETTERS[at], standing = sim.stations.filter(Boolean).length
+  groundMenu.querySelector<HTMLButtonElement>('[data-stand="station"]')!.disabled = !standing
+  groundMenu.querySelector('[data-station-note]')!.textContent = !standing ? L('сначала поставьте станцию (прибор «Станция»)', 'place a station first (the “Station” instrument)')
+    : standing > 1 ? L(`у станции ${letter} (выбранной на её экране): смотреть на грозу и на её показания`, `at station ${letter} (the one chosen on its screen): watch the storm and its readings`)
+    : L('там, где стоит станция: смотреть на грозу и на её показания', 'where the station stands: watch the storm and its readings')
   groundMenu.querySelector<HTMLElement>('[data-stand="leave"]')!.hidden = !sim.fromGround
 })
 groundMenu.addEventListener('click', e => {
@@ -1006,7 +1011,7 @@ groundMenu.addEventListener('click', e => {
   groundMenu.hidePopover(); picking(false)
   if (choice === 'far') sim.standSuggested(OBSERVER_BACK)
   else if (choice === 'near') sim.standSuggested(OBSERVER_NEAR)
-  else if (choice === 'station') sim.standAtStation()
+  else if (choice === 'station') sim.standAtStation(standingStation())
   else if (choice === 'pick') picking(true)
   else sim.leaveGround()
   showGround()
@@ -1265,7 +1270,7 @@ function frame(now:number){
   text('cape',d.cape.toFixed(0));text('mlcape',d.indices.ml.cape.toFixed(0));text('mlcin',d.indices.ml.cin.toFixed(0));text('mucape',d.indices.mu.cape.toFixed(0));text('dcape',d.indices.dcape.toFixed(0));text('srh01',d.storm.srh01.toFixed(0));text('srh03',d.storm.srh03.toFixed(0));text('scp',d.storm.scp.toFixed(1));text('stp',d.storm.stp.toFixed(1));text('ship',d.storm.ship.toFixed(1));text('dcp',d.storm.dcp.toFixed(1));text('esrh',d.storm.effective?d.storm.effective.srh.toFixed(0):'—');text('eshear',d.storm.effective?d.storm.effective.shear.toFixed(0):'—');text('lapse75',d.storm.lapse75.toFixed(1));text('cin',d.cin.toFixed(0));text('updraft',d.updraft.toFixed(1));text('downdraft',d.downdraft.toFixed(1));text('uh',d.updraftHelicity.toFixed(0));text('uhLow',`${d.uh01.toFixed(0)} / ${d.uh03.toFixed(0)}`);text('cloudTop',d.cloudTop.toFixed(1));text('thermalTop',d.thermalTop.toFixed(1));text('cloudWater',d.cloudWater.toFixed(2));text('coldPool',d.coldPool.toFixed(1));text('gust',d.gust.toFixed(1));text('hail',d.hail>=1?(d.hail/10).toFixed(1):'—');text('hailSwath',d.hailSwath>=1?L(`за прогон до ${(d.hailSwath/10).toFixed(1)} см`,`up to ${(d.hailSwath/10).toFixed(1)} cm this run`):'');showMode(d.hail>=1);text('clipped',String(d.clipped));showRain(d.rain);text('hailWord',hailWord(d.hail));text('cloudGenus',d.cloud);text('rainTotal',d.rainTotal.toFixed(1));text('lcl',d.lcl===null?'—':`${d.lcl.toFixed(1)}${KM}`);text('lfc',d.lfc===null?'—':`${d.lfc.toFixed(1)}${KM}`);text('el',d.el===null?'—':`${d.el.toFixed(1)}${KM}`);text('cellType',d.cellType);text('cellReason',d.cellReason);text('logicText',d.logic);text('sun',`${d.insolation.toFixed(0)} ${L('Вт/м²','W/m²')}`);text('sunElevation',d.sunElevation>0?L(`${d.sunElevation.toFixed(0)}° над горизонтом`,`${d.sunElevation.toFixed(0)}° above the horizon`):L('ночь','night'))
   text('surfaceReadout',({grass:L('ТРАВА','GRASS'),dry:L('СУХАЯ ПОЧВА','DRY SOIL'),water:L('ВОДА','WATER'),urban:L('ГОРОД','CITY')})[config.surfaceType])
   const b=sim.balance;text('rkw',b?b.ratio.toFixed(1):'—');text('rkwNote',b?`C ${b.c.toFixed(0)} / Δu ${b.deltaU.toFixed(0)}${MS}`:L('купола нет','no cold pool'));const card=document.querySelector<HTMLElement>('#rkwCard')!;card.dataset.base??=card.title;card.title=b?`${card.dataset.base}\n\n${L('Сейчас','Now')}: ${describeBalance(b)}.`:card.dataset.base
-  text('time',runTime(sim.time));text('localTime',timeOfDay(config.hour,sim.time));text('threads',String(sim.threads));text('freezing',d.freezing===null?'—':`${d.freezing.toFixed(1)}${KM}`);if(sim.live!==shownLive){shownLive=sim.live;skewt.setLive(shownLive.env,shownLive)}const sampled=timeline.record({t:sim.time,cape:sim.live.indices.sb.cape,cin:sim.live.indices.sb.cin,updraft:d.updraft,uh:d.updraftHelicity,rain:d.rain,rainTotal:d.rainTotal,rotationHeld:sim.model.rotation.persisted,flashes:sim.model.flashes.filter(f=>f.time>sim.time-60).length});if(frameCount++%20===0){drawSounding();drawHodograph();drawSpin()}if(sampled||frameCount%20===1){const{ctx,w,h}=prepareCanvas('timeline');timeline.draw(ctx,w,h)}updateCells();radar.refresh();const probe=sim.cells.find(selectedCell);skewt.refresh(probe?{id:probe.id,x:probe.x,y:probe.y,u:probe.u+sim.model.frame[0],v:probe.v+sim.model.frame[1]}:null);station.refresh(sim.station,placingStation);detector.refresh(sim.model);analysis.refresh(sim.model);satellite.refresh(sim.model);showSpeed();showTornado();zonesPanel.refresh(sim.model);listRewind();markStory();hud.update({time:sim.time,local:timeOfDay(config.hour,sim.time),updraft:d.updraft,rain:d.rain,uh:d.updraftHelicity,mesocyclone:sim.model.rotation.persisted>=MESO_PERSISTENCE,regime:document.querySelector('#cellType')!.textContent??'',running,speed:config.speed,story:storyText(),sky:[d.cloud.split(' — ')[0],rainWord(d.rain)].filter(Boolean).join(' · ')});canvas.style.cursor=placingStation||pickingGround?'crosshair':'';requestAnimationFrame(frame)
+  text('time',runTime(sim.time));text('localTime',timeOfDay(config.hour,sim.time));text('threads',String(sim.threads));text('freezing',d.freezing===null?'—':`${d.freezing.toFixed(1)}${KM}`);if(sim.live!==shownLive){shownLive=sim.live;skewt.setLive(shownLive.env,shownLive)}const sampled=timeline.record({t:sim.time,cape:sim.live.indices.sb.cape,cin:sim.live.indices.sb.cin,updraft:d.updraft,uh:d.updraftHelicity,rain:d.rain,rainTotal:d.rainTotal,rotationHeld:sim.model.rotation.persisted,flashes:sim.model.flashes.filter(f=>f.time>sim.time-60).length});if(frameCount++%20===0){drawSounding();drawHodograph();drawSpin()}if(sampled||frameCount%20===1){const{ctx,w,h}=prepareCanvas('timeline');timeline.draw(ctx,w,h)}updateCells();radar.refresh();const probe=sim.cells.find(selectedCell);skewt.refresh(probe?{id:probe.id,x:probe.x,y:probe.y,u:probe.u+sim.model.frame[0],v:probe.v+sim.model.frame[1]}:null);station.refresh(sim.stations,placingStation);detector.refresh(sim.model);analysis.refresh(sim.model);satellite.refresh(sim.model);showSpeed();showTornado();zonesPanel.refresh(sim.model);listRewind();markStory();hud.update({time:sim.time,local:timeOfDay(config.hour,sim.time),updraft:d.updraft,rain:d.rain,uh:d.updraftHelicity,mesocyclone:sim.model.rotation.persisted>=MESO_PERSISTENCE,regime:document.querySelector('#cellType')!.textContent??'',running,speed:config.speed,story:storyText(),sky:[d.cloud.split(' — ')[0],rainWord(d.rain)].filter(Boolean).join(' · ')});canvas.style.cursor=placingStation||pickingGround?'crosshair':'';requestAnimationFrame(frame)
 }
 showDomain()
 requestAnimationFrame(frame)

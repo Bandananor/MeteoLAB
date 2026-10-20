@@ -38,6 +38,8 @@ if (typeof matchMedia === 'function') matchMedia(DARK_QUERY).addEventListener('c
 
 /** Monospace font for the canvases (the same as --font-mono). */
 export const MONO = "'JetBrains Mono', ui-monospace, monospace"
+/** The weather stations' letters and colours, in the order placed: the masts in the 3D view and their lines on the meteogram. */
+export const STATION_LETTERS = ['A', 'B', 'C', 'D'], STATION_COLORS = ['#ffb347', '#6fb4ff', '#e879c6', '#a3e05a']
 
 export interface ChartPalette { grid: string; axis: string; label: string; text: string; text2: string; accent: string; warn: string; danger: string }
 let palette: ChartPalette | null = null

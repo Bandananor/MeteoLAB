@@ -1,6 +1,6 @@
 import type { CameraGrade } from './camera'
 import { lang } from './i18n'
-import { applyState, readState, AtmosphereModel, DT, CellTracker, coldPoolBalance, type SavedState, saveState, type ColdPoolBalance, computeSounding, domainPoint, groundPoint, Station, type Environment, insolation, liveSounding, type ModelDiagnostics, parcelIndices, type ParcelIndices, type SimConfig, type Sounding, stormIndices, type StormIndices, sunDirection } from './core'
+import { applyState, readState, AtmosphereModel, DT, CellTracker, coldPoolBalance, type SavedState, saveState, type ColdPoolBalance, computeSounding, domainPoint, groundPoint, Station, STATION_MAX, type Environment, insolation, liveSounding, type ModelDiagnostics, parcelIndices, type ParcelIndices, type SimConfig, type Sounding, stormIndices, type StormIndices, sunDirection } from './core'
 import { describeConvection } from './describe'
 import { blendWeight } from './record/plan'
 import { isPhone, PHONE_THREADS } from './hud'
@@ -50,8 +50,8 @@ export class Atmosphere implements ViewSettings {
   private awaitingLoad = false
   /** Saved states to rewind to (src/core/state.ts), oldest first. */
   readonly history: { time: number; buffer: ArrayBuffer }[] = []
-  /** The virtual weather station (src/core/station.ts), if one is placed; it records with every snapshot. */
-  station: Station | null = null
+  /** The virtual weather stations (src/core/station.ts) by slot, each its letter and colour (null: an empty slot), up to STATION_MAX; they record with every snapshot. */
+  stations: (Station | null)[] = []
   /** Model seconds per real second over the last couple of seconds: the speed the computer keeps up (0 until measured). */
   realSpeed = 0
   private speedMark: { real: number; model: number } | null = null
@@ -164,14 +164,15 @@ export class Atmosphere implements ViewSettings {
   /**
    * The view from the ground (StormView.stand): at a suggested place `distance` km from the storm; on the ground under a
    * point of the view (false off the domain's ground), keeping the look when already on the ground; at the weather
-   * station (false without one); back to the view from outside. The observer is there for the storm chaser to come.
+   * station `index` (false without it); back to the view from outside. The observer is there for the storm chaser to come.
    */
   standSuggested(distance: number) { this.view.stand(this.view.suggestPlace(distance)) }
   standAt(nx: number, ny: number, keepLook = false) { const p = this.view.groundUnder(nx, ny); if (p) this.view.stand(p, keepLook); return !!p }
-  standAtStation() {
-    if (!this.station) return false
+  standAtStation(index: number) {
+    const s = this.stations[index]
+    if (!s) return false
     // Across periodic edges the station's ground point is wrapped into the domain's span; the observer's is not (they may stand outside it).
-    const d = domainPoint(this.mirror, this.station.x, this.station.y), [fu, fv] = this.mirror.frame, t = this.mirror.time
+    const d = domainPoint(this.mirror, s.x, s.y), [fu, fv] = this.mirror.frame, t = this.mirror.time
     this.view.stand({ x: d.x + fu * t, y: d.y + fv * t }); return true
   }
   leaveGround() { this.view.leaveGround() }
@@ -197,11 +198,18 @@ export class Atmosphere implements ViewSettings {
   groundPoint(nx: number, ny: number) { return this.view.groundPoint(nx, ny) }
   /** Canvas position of a model point (m), or null behind the camera. */
   screenPoint(x: number, y: number, z: number) { return this.view.screenPoint(x, y, z) }
-  /** Places the weather station on the ground under normalised screen coordinates; returns its ground position (m). */
-  placeStation(nx: number, ny: number) { const p = this.view.groundPoint(nx, ny), g = groundPoint(this.mirror, p.x, p.y); this.placeStationAt(g); return g }
-  /** Places the weather station at a ground position (m), or removes it (null). */
-  placeStationAt(g: { x: number; y: number } | null) { this.station = g && new Station(g.x, g.y); if (this.station) this.station.observe(this.mirror); this.markStation() }
-  private markStation() { this.view.setStation(this.station && !this.station.outside ? domainPoint(this.mirror, this.station.x, this.station.y) : null) }
+  /** The ground position (m) under normalised screen coordinates: where a station placed there stands. */
+  stationPoint(nx: number, ny: number) { const p = this.view.groundPoint(nx, ny); return groundPoint(this.mirror, p.x, p.y) }
+  /**
+   * The weather stations at these ground positions (m), one a slot (its letter and colour; null: an empty slot), the
+   * first STATION_MAX. A station already standing at its place keeps its records; a new one records from now.
+   */
+  placeStations(grounds: readonly ({ x: number; y: number } | null)[]) {
+    this.stations = grounds.slice(0, STATION_MAX).map(g => g && (this.stations.find(s => s?.x === g.x && s.y === g.y) ?? new Station(g.x, g.y)))
+    for (const s of this.stations) if (s && !s.records.length) s.observe(this.mirror)
+    this.markStations()
+  }
+  private markStations() { this.view.setStations(this.stations.map(s => !s || s.outside ? null : domainPoint(this.mirror, s.x, s.y))) }
   /** Rings the selected cell in the 3D view. */
   setSelection(p: { x: number; y: number } | null) { this.view.setSelection(p) }
 
@@ -250,7 +258,7 @@ export class Atmosphere implements ViewSettings {
     this.inFlight = false
     // Cells move about a grid column a minute: every 6 s of model time is plenty.
     if (!(m.time - this.cells.time < 6)) { this.cells.update(m); this.view.setFlanks(this.cells.cells.flatMap(c => c.flanks ? [c.flanks] : [])) }
-    if (this.station) { this.station.observe(m); this.markStation() }
+    if (this.stations.length) { for (const s of this.stations) s?.observe(m); this.markStations() }
     this.balance = coldPoolBalance(m)
     // A rewind point every HISTORY_EVERY s (the first at the start), within HISTORY_BYTES.
     const last = this.history[this.history.length - 1]
