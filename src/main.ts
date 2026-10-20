@@ -13,6 +13,8 @@ import { Atmosphere, type Live } from './atmosphere'
 import { RadarPanel } from './radar/panel'
 import { SkewTPanel } from './skewt/panel'
 import { StationPanel } from './station/panel'
+import { ComparePanel } from './compare/panel'
+import { EchoMaps } from './compare/run'
 import { DetectorPanel } from './detector/panel'
 import { AnalysisPanel } from './analysis/panel'
 import { SatellitePanel } from './satellite/panel'
@@ -243,7 +245,7 @@ app.innerHTML = `<div class="app">
           ${metric('gust', L('Порыв у земли', 'Surface gust'), L('м/с', 'm/s'), 'tip-gust')}
           ${metric('hail', L('Град у земли', 'Hail at the ground'), L('см', 'cm'), 'tip-hail', '<div class="t-caption" id="hailWord"></div><div class="t-caption" id="hailSwath"></div>')}
         </div></section>
-      <section class="chart"><div class="chart__head"><span class="chart__title">${L('Ход грозы', 'Storm history')}</span><button class="btn btn--xs" id="timelineCsv" title="${L('Выгрузить ряды «Хода грозы» в CSV (таблица или скрипт): время, CAPE и CIN, поток, UH, дождь', 'Export the “Storm history” series to CSV (a spreadsheet or a script): time, CAPE and CIN, updraught, UH, rain')}">CSV</button></div>
+      <section class="chart"><div class="chart__head"><span class="chart__title">${L('Ход грозы', 'Storm history')}</span><span class="chart__actions"><button class="btn btn--xs" id="timelineCsv" title="${L('Выгрузить ряды «Хода грозы» в CSV (таблица или скрипт): время, CAPE и CIN, поток, UH, дождь', 'Export the “Storm history” series to CSV (a spreadsheet or a script): time, CAPE and CIN, updraught, UH, rain')}">CSV</button><button class="btn btn--xs" id="compareOpen" title="${L('Сравнение двух опытов (C): запомнить этот как A, изменить настройку и смотреть A и B рядом', 'Comparing two runs (C): remember this one as A, change a setting and watch A and B side by side')}">${L('Сравнить', 'Compare')}</button></span></div>
         <canvas id="timeline" title="${L('Ход грозы по модельному времени (вся область, точка каждые 30 с): неустойчивость среды сейчас (CAPE и CIN частицы от земли по живому зондированию — вдали от гроз, раз в модельную минуту), самый сильный восходящий поток, вращение потока, дождь у земли и вспышки молний за последнюю минуту. Перезапуск начинает графики заново', 'The storm over model time (the whole domain, a point every 30 s): the instability of the environment now (CAPE and CIN of the surface parcel from the live sounding — away from the storms, once a model minute), the strongest updraught, its rotation, the rain at the ground and the lightning flashes in the last minute. A restart begins the charts anew')}"></canvas></section>
       <div class="diag__groups">
         ${group(L('Чего ждать', 'What to expect'), `<ul class="expect" id="expectList"></ul><p class="t-caption" id="expectNote">${L('Прогноз по среде на старте опыта — по статистике настоящих гроз (источник у каждой строки); справа — что вышло в модели за этот прогон. Расхождение — тоже урок: среда даёт шанс, а не гарантию, и у модели свои пределы (сетка ~1 км, одномоментная микрофизика). У синоптических ситуаций среда меняется по сюжету — прогноз по ней на старте.', 'A forecast from the environment at the start of the run — by the statistics of real storms (the source on each row); on the right, what the model made of it this run. A mismatch is a lesson too: an environment gives a chance, not a guarantee, and the model has its limits (a ~1 km grid, one-moment microphysics). The synoptic situations change their environment as their story goes — the forecast is from the start.')}</p>`, { id: 'expect' })}
@@ -318,7 +320,7 @@ const showThemeChoice = () => document.querySelectorAll<HTMLButtonElement>('[dat
 document.addEventListener('click', e => { const b = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-theme-set]'); if (b) applyTheme(b.dataset.themeSet as ThemeChoice) })
 addEventListener('themechange', showThemeChoice); showThemeChoice()
 // The side charts redraw every 20 frames; a new theme, or a group opened, repaints them at once.
-const drawCharts = () => { drawSounding(); drawHodograph(); drawSpin(); const { ctx, w, h } = prepareCanvas('timeline'); timeline.draw(ctx, w, h) }
+const drawCharts = () => { drawSounding(); drawHodograph(); drawSpin(); const { ctx, w, h } = prepareCanvas('timeline'); timeline.draw(ctx, w, h, compare.reference?.points) }
 addEventListener('themechange', drawCharts)
 // The right column's collapsible groups stay as they were left (localStorage), and draw their charts when opened.
 const GROUPS_KEY = 'meteolab-groups'
@@ -352,7 +354,7 @@ document.querySelectorAll<HTMLElement>('.popover[popover]').forEach(pop => pop.a
 // R, S, M open and close the instruments (not while typing, not with a modifier).
 addEventListener('keydown', e => {
   if (e.ctrlKey || e.metaKey || e.altKey || (e.target as HTMLElement).closest('input:not([type=range]):not([type=checkbox]), select, textarea, dialog')) return
-  const target = ({ KeyR: '#radarOpen', KeyS: '#skewOpen', KeyM: '#stationOpen', KeyL: '#detectorOpen', KeyZ: '#zonesOpen', KeyA: '#analysisOpen', KeyI: '#satelliteOpen' } as Record<string, string>)[e.code]
+  const target = ({ KeyR: '#radarOpen', KeyS: '#skewOpen', KeyM: '#stationOpen', KeyL: '#detectorOpen', KeyZ: '#zonesOpen', KeyA: '#analysisOpen', KeyI: '#satelliteOpen', KeyC: '#compareOpen' } as Record<string, string>)[e.code]
   if (target) { e.preventDefault(); document.querySelector<HTMLButtonElement>(target)!.click() }
 })
 const config: SimConfig = { ...defaults, ...SCENARIOS[0].values }
@@ -446,10 +448,15 @@ const analysis = new AnalysisPanel(document.body)
 document.querySelector('#analysisOpen')!.addEventListener('click', () => analysis.toggle())
 const satellite = new SatellitePanel(document.body)
 document.querySelector('#satelliteOpen')!.addEventListener('click', () => satellite.toggle())
+// Comparing two runs (2.9): the remembered run A beside the one going on; the echo maps of the run going on are kept for it.
+const compare = new ComparePanel(document.body), echoMaps = new EchoMaps()
+document.querySelector('#compareOpen')!.addEventListener('click', () => compare.toggle())
+compare.onChange = () => drawCharts()
+compare.onReseed = seed => { recreate(seed); running = true; updatePause() }
 document.querySelector('#skewOpen')!.addEventListener('click', () => skewt.toggle())
 let running = true
 let last = performance.now(), frameCount = 0
-const recreate = (seed?: number) => { useSeed(seed ?? nextSeed()); const level = sim.level; sim.dispose(); sim = Object.assign(new Atmosphere(canvas, config), view); useQuality(level); if (groundToggle.getAttribute('aria-pressed') === 'true') sim.standSuggested(OBSERVER_BACK); radar.attach(sim.model, sim.storm.rightMover); skewt.attach(sim.model); sim.placeStations(stationGrounds); selectCell(null); showDomain() }
+const recreate = (seed?: number) => { useSeed(seed ?? compare.seed ?? nextSeed()); const level = sim.level; sim.dispose(); sim = Object.assign(new Atmosphere(canvas, config), view); useQuality(level); if (groundToggle.getAttribute('aria-pressed') === 'true') sim.standSuggested(OBSERVER_BACK); radar.attach(sim.model, sim.storm.rightMover); skewt.attach(sim.model); sim.placeStations(stationGrounds); selectCell(null); showDomain() }
 // Zones of the environment (2.4): applied from their screen, the run starts again with them.
 zonesPanel.onApply = (zones, front) => { config.zones = zones.length ? zones : undefined; config.frontLine = front ?? undefined; recreate(); markModified() }
 // Large-scale advection (2.6): changed in the left column, the run starts again with it.
@@ -714,7 +721,7 @@ const listRewind = () => {
 rewindSelect.addEventListener('change', () => {
   const time = Number(rewindSelect.value)
   if (rewindSelect.value === '') return
-  sim.rewind(time); timeline.truncate(time); rewindSelect.value = ''; running = true; updatePause()
+  sim.rewind(time); timeline.truncate(time); echoMaps.truncate(time); rewindSelect.value = ''; running = true; updatePause()
   note(L(`Расчёт вернулся к ${Math.floor(time / 60)}-й минуте`, `The run went back to minute ${Math.floor(time / 60)}`))
 })
 stateFile.addEventListener('change', async () => {
@@ -726,14 +733,15 @@ stateFile.addEventListener('change', async () => {
     fillLowWind(config); baseScenario = null; built = null; soundingBase = config.sounding ? { sounding: config.sounding } : null; syncControls(); markPreset(null); showScenario()
     // The file's seed: the surface pattern under the domain comes from it and is not in the file.
     recreate(config.seed)
-    timeline.points.length = 0
+    timeline.points.length = 0; echoMaps.maps.length = 0
     sim.loadState(state, buffer); running = true; updatePause()
     note(L(`Открыт расчёт · с ${Math.floor(state.header.time / 60)}-й минуты`, `Run opened · from minute ${Math.floor(state.header.time / 60)}`))
   } catch (error) { note(`${L('Не удалось открыть', 'Could not open it')}: ${(error as Error).message}`) }
 })
 document.querySelector('#timelineCsv')!.addEventListener('click', () => download(`meteolab-hod-grozy-seed${config.seed}.csv`, toCsv(timeline.points, [
   ['time_s', p => p.t], ['sb_cape_jkg', p => p.cape], ['sb_cin_jkg', p => p.cin], ['max_updraft_ms', p => p.updraft], ['uh_2_5km_m2s2', p => p.uh],
-  ['rain_rate_mmh', p => p.rain], ['rain_total_mm', p => p.rainTotal], ['core_rotation_held_s', p => p.rotationHeld],
+  ['rain_rate_mmh', p => p.rain], ['rain_total_mm', p => p.rainTotal], ['core_rotation_held_s', p => p.rotationHeld], ['flashes_per_min', p => p.flashes],
+  ['surface_gust_ms', p => p.gust], ['hail_mm', p => p.hail],
 ])))
 document.querySelector('#pause')!.addEventListener('click', () => { running = !running; updatePause() })
 const updatePause = () => {
@@ -1266,11 +1274,11 @@ showThemeChoice()
 /** The live sounding last handed to the Skew-T screen (a new one every LIVE_EVERY s of model time). */
 let shownLive: Live | null = null
 function frame(now:number){
-  const elapsed=Math.min(.2,(now-last)/1000);last=now;if(running)sim.advance(elapsed);if(!(radar.open||skewt.open||station.open||detector.open||zonesPanel.open||analysis.open||satellite.open))sim.render();const d=sim.diagnostics()
+  const elapsed=Math.min(.2,(now-last)/1000);last=now;if(running)sim.advance(elapsed);if(!(radar.open||skewt.open||station.open||detector.open||zonesPanel.open||analysis.open||satellite.open||compare.open))sim.render();const d=sim.diagnostics()
   text('cape',d.cape.toFixed(0));text('mlcape',d.indices.ml.cape.toFixed(0));text('mlcin',d.indices.ml.cin.toFixed(0));text('mucape',d.indices.mu.cape.toFixed(0));text('dcape',d.indices.dcape.toFixed(0));text('srh01',d.storm.srh01.toFixed(0));text('srh03',d.storm.srh03.toFixed(0));text('scp',d.storm.scp.toFixed(1));text('stp',d.storm.stp.toFixed(1));text('ship',d.storm.ship.toFixed(1));text('dcp',d.storm.dcp.toFixed(1));text('esrh',d.storm.effective?d.storm.effective.srh.toFixed(0):'—');text('eshear',d.storm.effective?d.storm.effective.shear.toFixed(0):'—');text('lapse75',d.storm.lapse75.toFixed(1));text('cin',d.cin.toFixed(0));text('updraft',d.updraft.toFixed(1));text('downdraft',d.downdraft.toFixed(1));text('uh',d.updraftHelicity.toFixed(0));text('uhLow',`${d.uh01.toFixed(0)} / ${d.uh03.toFixed(0)}`);text('cloudTop',d.cloudTop.toFixed(1));text('thermalTop',d.thermalTop.toFixed(1));text('cloudWater',d.cloudWater.toFixed(2));text('coldPool',d.coldPool.toFixed(1));text('gust',d.gust.toFixed(1));text('hail',d.hail>=1?(d.hail/10).toFixed(1):'—');text('hailSwath',d.hailSwath>=1?L(`за прогон до ${(d.hailSwath/10).toFixed(1)} см`,`up to ${(d.hailSwath/10).toFixed(1)} cm this run`):'');showMode(d.hail>=1);text('clipped',String(d.clipped));showRain(d.rain);text('hailWord',hailWord(d.hail));text('cloudGenus',d.cloud);text('rainTotal',d.rainTotal.toFixed(1));text('lcl',d.lcl===null?'—':`${d.lcl.toFixed(1)}${KM}`);text('lfc',d.lfc===null?'—':`${d.lfc.toFixed(1)}${KM}`);text('el',d.el===null?'—':`${d.el.toFixed(1)}${KM}`);text('cellType',d.cellType);text('cellReason',d.cellReason);text('logicText',d.logic);text('sun',`${d.insolation.toFixed(0)} ${L('Вт/м²','W/m²')}`);text('sunElevation',d.sunElevation>0?L(`${d.sunElevation.toFixed(0)}° над горизонтом`,`${d.sunElevation.toFixed(0)}° above the horizon`):L('ночь','night'))
   text('surfaceReadout',({grass:L('ТРАВА','GRASS'),dry:L('СУХАЯ ПОЧВА','DRY SOIL'),water:L('ВОДА','WATER'),urban:L('ГОРОД','CITY')})[config.surfaceType])
   const b=sim.balance;text('rkw',b?b.ratio.toFixed(1):'—');text('rkwNote',b?`C ${b.c.toFixed(0)} / Δu ${b.deltaU.toFixed(0)}${MS}`:L('купола нет','no cold pool'));const card=document.querySelector<HTMLElement>('#rkwCard')!;card.dataset.base??=card.title;card.title=b?`${card.dataset.base}\n\n${L('Сейчас','Now')}: ${describeBalance(b)}.`:card.dataset.base
-  text('time',runTime(sim.time));text('localTime',timeOfDay(config.hour,sim.time));text('threads',String(sim.threads));text('freezing',d.freezing===null?'—':`${d.freezing.toFixed(1)}${KM}`);if(sim.live!==shownLive){shownLive=sim.live;skewt.setLive(shownLive.env,shownLive)}const sampled=timeline.record({t:sim.time,cape:sim.live.indices.sb.cape,cin:sim.live.indices.sb.cin,updraft:d.updraft,uh:d.updraftHelicity,rain:d.rain,rainTotal:d.rainTotal,rotationHeld:sim.model.rotation.persisted,flashes:sim.model.flashes.filter(f=>f.time>sim.time-60).length});if(frameCount++%20===0){drawSounding();drawHodograph();drawSpin()}if(sampled||frameCount%20===1){const{ctx,w,h}=prepareCanvas('timeline');timeline.draw(ctx,w,h)}updateCells();radar.refresh();const probe=sim.cells.find(selectedCell);skewt.refresh(probe?{id:probe.id,x:probe.x,y:probe.y,u:probe.u+sim.model.frame[0],v:probe.v+sim.model.frame[1]}:null);station.refresh(sim.stations,placingStation);detector.refresh(sim.model);analysis.refresh(sim.model);satellite.refresh(sim.model);showSpeed();showTornado();zonesPanel.refresh(sim.model);listRewind();markStory();hud.update({time:sim.time,local:timeOfDay(config.hour,sim.time),updraft:d.updraft,rain:d.rain,uh:d.updraftHelicity,mesocyclone:sim.model.rotation.persisted>=MESO_PERSISTENCE,regime:document.querySelector('#cellType')!.textContent??'',running,speed:config.speed,story:storyText(),sky:[d.cloud.split(' — ')[0],rainWord(d.rain)].filter(Boolean).join(' · ')});canvas.style.cursor=placingStation||pickingGround?'crosshair':'';requestAnimationFrame(frame)
+  text('time',runTime(sim.time));text('localTime',timeOfDay(config.hour,sim.time));text('threads',String(sim.threads));text('freezing',d.freezing===null?'—':`${d.freezing.toFixed(1)}${KM}`);if(sim.live!==shownLive){shownLive=sim.live;skewt.setLive(shownLive.env,shownLive)}const sampled=timeline.record({t:sim.time,cape:sim.live.indices.sb.cape,cin:sim.live.indices.sb.cin,updraft:d.updraft,uh:d.updraftHelicity,rain:d.rain,rainTotal:d.rainTotal,rotationHeld:sim.model.rotation.persisted,flashes:sim.model.flashes.filter(f=>f.time>sim.time-60).length,gust:d.gust,hail:d.hail});if(frameCount++%20===0){drawSounding();drawHodograph();drawSpin()}if(sampled||frameCount%20===1){const{ctx,w,h}=prepareCanvas('timeline');timeline.draw(ctx,w,h,compare.reference?.points)}updateCells();radar.refresh();const probe=sim.cells.find(selectedCell);skewt.refresh(probe?{id:probe.id,x:probe.x,y:probe.y,u:probe.u+sim.model.frame[0],v:probe.v+sim.model.frame[1]}:null);station.refresh(sim.stations,placingStation);echoMaps.record(sim.model);compare.refresh({name:document.querySelector('#scenarioName')!.textContent||'',config,points:timeline.points,maps:echoMaps.maps,time:sim.time});detector.refresh(sim.model);analysis.refresh(sim.model);satellite.refresh(sim.model);showSpeed();showTornado();zonesPanel.refresh(sim.model);listRewind();markStory();hud.update({time:sim.time,local:timeOfDay(config.hour,sim.time),updraft:d.updraft,rain:d.rain,uh:d.updraftHelicity,mesocyclone:sim.model.rotation.persisted>=MESO_PERSISTENCE,regime:document.querySelector('#cellType')!.textContent??'',running,speed:config.speed,story:storyText(),sky:[d.cloud.split(' — ')[0],rainWord(d.rain)].filter(Boolean).join(' · ')});canvas.style.cursor=placingStation||pickingGround?'crosshair':'';requestAnimationFrame(frame)
 }
 showDomain()
 requestAnimationFrame(frame)

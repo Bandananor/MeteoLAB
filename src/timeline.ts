@@ -9,7 +9,10 @@ import { minuteMark } from './clock'
 import { chartPalette } from './theme'
 
 /** One sample: model time (s), the values the plots show and how long (s) the core rotation had held then. */
-export interface TimelinePoint { t: number; cape: number; cin: number; updraft: number; uh: number; rain: number; rainTotal: number; rotationHeld: number; /** Flashes in the last model minute. */ flashes: number }
+export interface TimelinePoint {
+  t: number; cape: number; cin: number; updraft: number; uh: number; rain: number; rainTotal: number; rotationHeld: number; /** Flashes in the last model minute. */ flashes: number
+  /** The surface gust (m/s) and the largest hail at the ground (mm), for the comparison of runs (src/compare). */ gust: number; hail: number
+}
 
 type Key = 'cape' | 'cin' | 'updraft' | 'uh' | 'rain' | 'flashes'
 /** One plot; `second` draws another value on the same axis (CIN under CAPE). */
@@ -41,13 +44,14 @@ export class Timeline {
   /** Drops the points after model time t (a rewind). */
   truncate(t: number) { while (this.points.length && this.points[this.points.length - 1].t > t) this.points.pop() }
 
-  draw(ctx: CanvasRenderingContext2D, w: number, h: number) {
-    const c = chartPalette(), pts = this.points, rows = SERIES.length, rowH = h / rows, left = 4, right = w - 4
-    // At least 30 minutes on the time axis, then the whole run.
-    const span = Math.max(1800, pts.length ? pts[pts.length - 1].t : 0), X = (t: number) => left + (right - left) * t / span
+  /** Draws the plots; `reference` is a remembered run (src/compare) drawn dashed under them, for the comparison. */
+  draw(ctx: CanvasRenderingContext2D, w: number, h: number, reference: readonly TimelinePoint[] = []) {
+    const c = chartPalette(), pts = this.points, rows = SERIES.length, rowH = h / rows, left = 4, right = w - 4, ref = reference
+    // At least 30 minutes on the time axis, then the whole run (and the remembered one).
+    const span = Math.max(1800, pts.length ? pts[pts.length - 1].t : 0, ref.length ? ref[ref.length - 1].t : 0), X = (t: number) => left + (right - left) * t / span
     SERIES.forEach((s, r) => {
       const top = r * rowH + 19, bottom = (r + 1) * rowH - 14, values = pts.map(p => p[s.key]), second = s.second ? pts.map(p => p[s.second!.key]) : []
-      const max = niceMax(Math.max(s.floor, ...values, ...second)), Y = (v: number) => bottom - (bottom - top) * Math.min(1, v / max)
+      const refValues = s.second ? [] : ref.map(p => p[s.key]), max = niceMax(Math.max(s.floor, ...values, ...second, ...refValues)), Y = (v: number) => bottom - (bottom - top) * Math.min(1, v / max)
       ctx.strokeStyle = c.grid; ctx.lineWidth = 1
       ctx.beginPath(); ctx.moveTo(left, bottom + .5); ctx.lineTo(right, bottom + .5); ctx.stroke()
       // Minute ticks every 10 min.
@@ -68,6 +72,14 @@ export class Timeline {
           ctx.fillRect(X(pts[i - 1].t), top, X(pts[i].t) - X(pts[i - 1].t) + .5, bottom - top)
         }
         if (pts.some(p => p.rotationHeld >= MESO_PERSISTENCE)) { ctx.fillStyle = '#8a6ea0'; const label = L('мезоциклон', 'mesocyclone'); ctx.fillText(label, right - ctx.measureText(label).width, top + 10) }
+      }
+      // The remembered run's peak, under the readout (under the mesocyclone's label on the rotation plot).
+      if (refValues.length) { ctx.fillStyle = c.label; const label = `A ${L('макс.', 'max')} ${format(Math.max(...refValues))}`, meso = s.rotation && pts.some(p => p.rotationHeld >= MESO_PERSISTENCE); ctx.fillText(label, right - ctx.measureText(label).width, top + (meso ? 22 : 10)) }
+      // The remembered run (A): its main value dashed, in the labels' colour.
+      if (refValues.length > 1) {
+        ctx.strokeStyle = c.label; ctx.lineWidth = 1.2; ctx.setLineDash([4, 3]); ctx.beginPath()
+        ref.forEach((p, i) => { const x = X(p.t), y = Y(p[s.key]); if (i) ctx.lineTo(x, y); else ctx.moveTo(x, y) })
+        ctx.stroke(); ctx.setLineDash([])
       }
       if (pts.length < 2) return
       const curve = (key: Key, color: string) => {
