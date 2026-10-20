@@ -23,7 +23,7 @@ describe('threaded steps (src/core/threads.ts)', () => {
     const reversed = run(m => { m.transportSlabs = 10; return { run: (phase, tasks, dt) => { for (let k = tasks - 1; k >= 0; k--) m.runTask(phase, k, dt) } } })
     const interleaved = run(m => ({ run: (phase, tasks, dt) => { for (const odd of [1, 0]) for (let k = odd; k < tasks; k += 2) m.runTask(phase, k, dt) } }))
     expect(same(inOrder, slabs)).toBe(true); expect(same(inOrder, reversed)).toBe(true); expect(same(inOrder, interleaved)).toBe(true)
-  }, 120_000)
+  })
 
   it('runs a step through the shared control block like the plain loop (no helpers here)', () => {
     const plain = run(null, 120), memory = new SharedMemory()
