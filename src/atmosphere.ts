@@ -5,7 +5,7 @@ import { describeConvection } from './describe'
 import { blendWeight } from './record/plan'
 import { isPhone, PHONE_THREADS } from './hud'
 import type { FieldMode } from './render/fields'
-import type { UhLayer } from './core'
+import type { InterventionKind, UhLayer } from './core'
 import { type LayerMode, type Quality, StormView, type ViewSettings } from './render/view'
 import { SNAPSHOT_COLUMNS, SNAPSHOT_FIELDS, type Snapshot, type WorkerRequest } from './simulation'
 
@@ -227,7 +227,9 @@ export class Atmosphere implements ViewSettings {
   /** Continues from a saved state (this Atmosphere must have been built with its settings): the page and the worker. */
   loadState(state: SavedState, buffer: ArrayBuffer) { applyState(this.mirror, state); this.awaitingLoad = true; this.live = this.derive(this.mirror.env, -LIVE_EVERY, 1, false); this.post({ type: 'load', buffer }, [buffer]) }
 
-  perturb(nx: number, ny: number, strength = 1) { const p = this.view.groundPoint(nx, ny); this.post({ type: 'perturb', x: p.x, y: p.y, strength }) }
+  perturb(nx: number, ny: number, strength = 1) { this.intervene('thermal', nx, ny, strength) }
+  /** An intervention (core/intervene.ts) where the screen point (nx, ny, 0-1) meets the ground. */
+  intervene(kind: InterventionKind, nx: number, ny: number, strength = 1) { const p = this.view.groundPoint(nx, ny); this.post({ type: 'intervene', intervention: { kind, x: p.x, y: p.y, strength } }) }
 
   diagnostics() {
     const m = this.mirror, d = this.latest, live = this.live, text = describeConvection(d, live.sounding, m.rotation, live.env.temperatureEnv(d.cloudTop * 1000))
@@ -252,7 +254,7 @@ export class Atmosphere implements ViewSettings {
     const now = performance.now(), mark = this.speedMark
     if (!mark || m.time < mark.model || now - mark.real > 5000) this.speedMark = { real: now, model: m.time }
     else if (now - mark.real > 2000) { this.realSpeed = (m.time - mark.model) / ((now - mark.real) / 1000); this.speedMark = { real: now, model: m.time } }
-    m.flashes.push(...s.flashes); m.flashCount = s.flashCount; m.chargeGround = s.chargeGround
+    m.flashes.push(...s.flashes); m.flashCount = s.flashCount; m.chargeGround = s.chargeGround; m.added = s.added
     if (m.flashes.length > KEPT_FLASHES) m.flashes.splice(0, m.flashes.length - KEPT_FLASHES)
     this.post({ type: 'release', buffer: s.buffer }, [s.buffer])
     this.inFlight = false

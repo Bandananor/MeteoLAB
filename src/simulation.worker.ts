@@ -1,7 +1,7 @@
 // Runs the physics off the main thread. The main thread sends real elapsed time, config changes and thermals; the worker
 // answers each batch of steps with a snapshot of the fields the view draws (see Atmosphere), in recycled buffers.
 // With cross-origin isolation the steps are shared with helper threads (step.worker.ts, src/core/threads.ts).
-import { AtmosphereModel, controlBuffer, createGrid, domainGrid, DT, type SimConfig, SharedMemory, ThreadRunner, TRANSPORT_SLABS, applyState, readState } from './core'
+import { AtmosphereModel, controlBuffer, createGrid, domainGrid, DT, type SimConfig, SharedMemory, ThreadRunner, TRANSPORT_SLABS, applyState, readState, intervene } from './core'
 import { BATCH_BUDGET_MS, MAX_STEPS_PER_BATCH, MAX_THREADS, SNAPSHOT_COLUMNS, SNAPSHOT_FIELDS, type Snapshot, type WorkerRequest } from './simulation'
 import type { HelperStart } from './step.worker'
 import { setLang } from './i18n'
@@ -56,7 +56,7 @@ function send() {
   for (const key of SNAPSHOT_COLUMNS) { data.set(model[key], offset); offset += layer }
   const total = flashTotal(model), flashes = model.flashes.slice(Math.max(0, model.flashes.length - (total - sentFlashes)))
   sentFlashes = total
-  const snapshot: Snapshot = { type: 'snapshot', buffer, steps: pendingSteps, flashes, flashCount: { ...model.flashCount }, chargeGround: model.chargeGround, time: model.time, rotation: { ...model.rotation }, diagnostics: model.diagnostics(), threads: pool ? pool.helpers + 1 : 1, loaded }
+  const snapshot: Snapshot = { type: 'snapshot', buffer, steps: pendingSteps, flashes, flashCount: { ...model.flashCount }, chargeGround: model.chargeGround, added: { ...model.added }, time: model.time, rotation: { ...model.rotation }, diagnostics: model.diagnostics(), threads: pool ? pool.helpers + 1 : 1, loaded }
   pendingSteps = 0; loaded = false
   scope.postMessage(snapshot, [buffer])
 }
@@ -65,7 +65,7 @@ scope.addEventListener('message', ({ data }) => {
   switch (data.type) {
     case 'init': accumulator = 0; if (data.lang) setLang(data.lang); start(data.config, data.threads); break
     case 'config': if (model) Object.assign(model.config, data.config); break
-    case 'perturb': model?.injectBubble(data.x, data.y, data.strength); break
+    case 'intervene': if (model) intervene(model, data.intervention); break
     case 'release': free.push(data.buffer); break
     case 'load': if (model) { applyState(model, readState(data.buffer)); sentFlashes = flashTotal(model); loaded = true; send() } break
     case 'advance': {

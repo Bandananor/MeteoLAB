@@ -149,6 +149,7 @@ export class Hud {
       <button class="menu__item" role="menuitem" data-tool="#regimeOpen"><span class="menu__glyph">▦</span>${L('Карта режимов', 'Regime map')}</button>
       <div class="menu__sep"></div>
       <button class="menu__item" role="menuitem" data-tool="#groundToggle"><span class="menu__glyph">⛰</span>${L('Вид с земли', 'View from the ground')}</button>
+      <button class="menu__item" role="menuitem" data-tool="#handToggle"><span class="menu__glyph">✋</span>${L('Воздействие руками', 'Intervene by hand')}</button>
       <button class="menu__item" role="menuitem" data-tool="#snapshotButton"><span class="menu__glyph">◫</span>${L('Снимок', 'Snapshot')}</button>
       <button class="menu__item" role="menuitem" data-tool="#videoButton"><span class="menu__glyph">▶</span>${L('Видео', 'Video')}</button>
       <button class="menu__item" role="menuitem" data-tool="#immersiveToggle"><span class="menu__glyph">⛶</span>${L('Во весь экран', 'Full screen')}</button>

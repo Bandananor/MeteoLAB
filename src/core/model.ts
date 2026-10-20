@@ -22,6 +22,7 @@ import { dragCoefficient, surfaceFluxes } from './surface'
 import { computeSounding, type Sounding } from './sounding'
 import { deficitNear, outflowDeficit } from './rkw'
 import { type Memory, type Phase, PRIVATE_MEMORY, type StepRunner, type TaskModel } from './threads'
+import { intervene } from './intervene'
 
 /** One field a step transports: WENO (monotone) or linear upwind, with the positivity fix or not, and a decay factor per second. */
 interface Carried { field: Float32Array; monotone: boolean; conserve: boolean; decay: number }
@@ -130,6 +131,8 @@ export class AtmosphereModel implements TaskModel {
    * the corona gave it.
    */
   chargeGround = 0
+  /** Heat (J) and vapour (kg) put in by hand during the run (interventions, intervene.ts), and how many times. */
+  added = { heat: 0, vapour: 0, count: 0 }
   /** The latest flashes (lightning.ts), oldest first, at most RECENT_FLASHES; and the counts since the start. */
   readonly flashes: Flash[] = []
   flashCount = { ic: 0, cg: 0 }
@@ -258,6 +261,8 @@ export class AtmosphereModel implements TaskModel {
       for (let k = 0; k < 5; k++) bubble(W * (.18 + .09 * k), D / 2 - 3000, this.config.bubble)
     } else if (this.config.profile === 'weisman-klemp') bubble(W * .3, D * .5, this.config.bubble)
     else { bubble(W * .38, D * .45, this.config.bubble); bubble(W * .61, D * .57, .72 * this.config.bubble) }
+    // The starting thermals are the setup, not something added during the run.
+    this.added = { heat: 0, vapour: 0, count: 0 }
   }
 
   /**
@@ -265,16 +270,7 @@ export class AtmosphereModel implements TaskModel {
    * No added vapour since 2026-09-29 (as in Weisman-Klemp and other reference cases): +3 g/kg gave the bubble air a far
    * larger CAPE than the environment it is meant to probe.
    */
-  injectBubble(cx: number, cy: number, strength: number) {
-    const { nx, ny, nz, dx, dy, zs, width: W, depth: D } = this.grid, radius = (this.config.bubbleRadius ?? 4.2) * 1000
-    // The levels up to 2.7 km (the lowest five on the old uniform grid): the thermal's depth is set in metres, not levels.
-    for (let z = 0; z < nz && zs[z] < 2700; z++) for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++) {
-      let ddx = x * dx - cx, ddy = y * dy - cy
-      if (ddx > W / 2) ddx -= W; if (ddx < -W / 2) ddx += W; if (ddy > D / 2) ddy -= D; if (ddy < -D / 2) ddy += D
-      const d2 = (ddx / radius) ** 2 + (ddy / radius) ** 2 + (zs[z] / 1800) ** 2, a = Math.exp(-d2) * strength, i = x + nx * (y + ny * z)
-      this.theta[i] += 3.2 * a; this.w[i] += 1.1 * a
-    }
-  }
+  injectBubble(cx: number, cy: number, strength: number) { intervene(this, { kind: 'thermal', x: cx, y: cy, strength }) }
 
   /** How much colder the maintained front (SimConfig.front) keeps the air at node column (x, y) and height alt, K. */
   frontDeficit(x: number, y: number, alt: number) {

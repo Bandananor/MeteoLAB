@@ -236,3 +236,6 @@ html:not(.layout-phone) .m-only { display: none !important; }
 .side--left[data-settings="simple"] .builder,
 .side--left[data-settings="simple"] #soundingOpen,
 .side--left[data-settings="advanced"] details.group[data-mode="simple"] { display: none; }
+
+/* Interventions by hand (2.9): the tools menu scrolls on a short screen. */
+.hand-menu { max-height: calc(100vh - 16px); overflow-y: auto; }
