@@ -2,7 +2,8 @@
  * A minimal MP4 writer for one H.264 video track (the video recording, 2.9): the encoded frames as WebCodecs gives them
  * (length-prefixed NAL units, `avc` format) with the decoder's avcC record, all in one chunk after the moov box (moov
  * first, so a player can start before the whole file is read). No audio, no B-frames (WebCodecs' H.264 encoders make
- * none), a constant frame duration; 32-bit offsets, so a file stays under 4 GB (MAX_BYTES).
+ * none), a constant frame duration; 32-bit offsets, so a file stays under 4 GB (MAX_BYTES). Text tags go in moov's udta as
+ * iTunes-style metadata (what ffprobe, exiftool and players show as encoder, description, comment).
  */
 
 /** One encoded frame: its bytes and whether it is a key frame. */
@@ -25,14 +26,24 @@ function box(type: string, ...parts: (number[] | Uint8Array)[]) {
 }
 /** A full box: a box whose body starts with a version byte and three flag bytes. */
 const full = (type: string, version: number, flags: number, ...parts: (number[] | Uint8Array)[]) => box(type, [version, flags >>> 16 & 255, flags >>> 8 & 255, flags & 255], ...parts)
+/** The tags' iTunes atoms: ©too the encoder, desc the description, ©cmt the comment. */
+const TAGS: Record<string, string> = { Software: '©too', Description: 'desc', Comment: '©cmt' }
+const utf8 = new TextEncoder()
+/** udta with the tags (known keys, non-empty texts) or nothing. */
+function userData(tags: Record<string, string>) {
+  const items = Object.entries(tags).filter(([k, v]) => TAGS[k] && v).map(([k, v]) => box(TAGS[k], box('data', u32(1), u32(0), utf8.encode(v))))
+  if (!items.length) return []
+  return [box('udta', full('meta', 0, 0, full('hdlr', 0, 0, u32(0), ascii('mdir'), ascii('appl'), u32(0), u32(0), [0]), box('ilst', ...items)))]
+}
 /** The identity transform of mvhd and tkhd (16.16 and 2.30 fixed point). */
 const MATRIX = [0x10000, 0, 0, 0, 0x10000, 0, 0, 0, 0x40000000].flatMap(u32)
 
 /**
  * The MP4 file of `samples` (in decode order, the first a key frame), `fps` frames a second, the picture `width` x
- * `height`, decoded with `avcC` (VideoDecoderConfig.description from the encoder).
+ * `height`, decoded with `avcC` (VideoDecoderConfig.description from the encoder), with text `tags` (Software,
+ * Description, Comment).
  */
-export function writeMp4(samples: Sample[], avcC: Uint8Array, width: number, height: number, fps: number) {
+export function writeMp4(samples: Sample[], avcC: Uint8Array, width: number, height: number, fps: number, tags: Record<string, string> = {}) {
   if (!samples.length) throw new Error('no frames')
   // The media's clock: 1000 ticks a frame (exact for any whole fps); the movie's in ms.
   const timescale = Math.round(fps * 1000), delta = 1000, count = samples.length
@@ -54,7 +65,8 @@ export function writeMp4(samples: Sample[], avcC: Uint8Array, width: number, hei
             full('stss', 0, 0, u32(samples.filter(s => s.key).length), samples.flatMap((s, k) => s.key ? u32(k + 1) : [])),
             full('stsc', 0, 0, u32(1), u32(1), u32(count), u32(1)),
             full('stsz', 0, 0, u32(0), u32(count), samples.flatMap(s => u32(s.data.length))),
-            full('stco', 0, 0, u32(1), u32(offset)))))))
+            full('stco', 0, 0, u32(1), u32(offset)))))),
+    ...userData(tags))
   const ftyp = box('ftyp', ascii('isom'), u32(0x200), ascii('isomiso2avc1mp41'))
   // The offset of the frames: after ftyp, moov (its size does not depend on the offset) and mdat's header.
   const head = ftyp.length + moov(0).length + 8

@@ -141,6 +141,7 @@
 ds = xr.open_dataset('meteolab-…-t1800s.nc')
 ds.w.isel(time=0).max('z').plot()          # the strongest updraught over each point
 ds.dbz.isel(time=0).sel(z=1000, method='nearest').plot()</code></pre></li>
+          <li><b>Where a file came from.</b> Every export remembers what made it and from which run. A CSV starts with the columns <code>model_version</code> (the model’s exact version), <code>seed</code> and <code>run_link</code> — a link to the run with its settings and seed: open it and the model starts the same run (in the ensemble and the regime map each row has its own member’s link). A NetCDF file has the same in the attributes <code>source</code>, <code>seed</code>, <code>run_link</code>, <code>settings_json</code>. A PNG or MP4 has it in the file’s fields: the program and version, what the frame shows, the link (seen in the file’s properties, exiftool, ffprobe, <code>Image.open(f).text</code> in Python). What was done by hand during a run is not in a link — the run’s file keeps it. How to cite the model in a paper — <a href="https://github.com/Bandananor/MeteoLAB/blob/main/CITATION.cff">CITATION.cff</a> (GitHub shows “Cite this repository”).</li>
         </ul>
 
         <h2 id="phone"><span class="num">9</span>On a phone</h2>

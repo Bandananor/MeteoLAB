@@ -1,0 +1,19 @@
+cff-version: 1.2.0
+message: "If you use MeteoLab in your work, please cite it as below, with the exact version (every export carries it: the model_version column of a CSV, the source attribute of a NetCDF file, the Software field of a PNG or MP4)."
+title: "MeteoLab: a numerical atmosphere laboratory in the browser (StormLab cloud model)"
+abstract: "MeteoLab is a browser-based numerical laboratory of the atmosphere. Its StormLab model is an idealised anelastic, non-hydrostatic cloud-resolving model of deep moist convection (about 1 km grid) with bulk microphysics (rain, cloud ice, snow, graupel, hail), cloud electrification and lightning, surface and radiation effects and synthetic instruments (Doppler radar, Skew-T, surface stations, lightning detector), run in real time with 3D visualisation and exports for analysis (CSV, NetCDF CF-1.8)."
+type: software
+authors:
+  - alias: Bandananor
+repository-code: "https://github.com/Bandananor/MeteoLAB"
+url: "https://bandananor.github.io/MeteoLAB/"
+license: MIT
+version: 2.8.0
+date-released: 2026-10-19
+keywords:
+  - meteorology
+  - deep moist convection
+  - supercell
+  - cloud-resolving model
+  - numerical weather modelling
+  - education

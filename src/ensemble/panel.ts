@@ -4,6 +4,7 @@ import { minuteMark } from '../clock'
 import { help, instrumentPalette, instrumentScreen, press, readings, section } from '../instrument'
 import { MONO } from '../theme'
 import { download, toCsv } from '../share'
+import { stampColumns } from '../export/stamp'
 import { EVENTS, type EventKind, MAPS, type MapKind, memberPeaks, type MemberPeaks, probabilities, probabilityMap, spread } from './combine'
 import { type MemberResult, perturbConfig, UNCERTAINTY } from './member'
 import { poolSize, runPool } from './pool'
@@ -53,6 +54,8 @@ export class EnsemblePanel {
   /** What makes the members differ: the seed alone, or the seed and the uncertainty of the starting data (perturbConfig). */
   private mode: 'seed' | 'data' = 'data'
   private results: MemberResult[] = []; private peaks: MemberPeaks[] = []
+  /** The members' settings (each its seed, perturbed in the «data» mode), for the links in the CSV. */
+  private configs: SimConfig[] = []
   private running: { total: number; started: number; times: ReadonlyMap<number, number>; stop: () => void } | null = null
   private name = ''
   open = false
@@ -89,8 +92,8 @@ export class EnsemblePanel {
     this.root.querySelector('#ensStart')!.addEventListener('click', () => this.running ? this.stop() : this.start())
     this.root.querySelector('#ensCsv')!.addEventListener('click', () => {
       if (!this.peaks.length) return
-      const rows = this.peaks.map((p, k) => ({ ...p, seed: this.results[k].seed }))
-      download(`meteolab-ansambl-${rows.length}.csv`, toCsv(rows, [['seed', r => r.seed], ['max_updraft_ms', r => r.updraft], ['max_uh_2_5km_m2s2', r => r.uh], ['max_rain_rate_mmh', r => r.rain], ['max_rain_total_mm', r => r.rainTotal],
+      const rows = this.peaks.map((p, k) => ({ ...p, seed: this.results[k].seed, config: this.configs[k] }))
+      download(`meteolab-ansambl-${rows.length}.csv`, toCsv(rows, [...stampColumns<(typeof rows)[number]>(r => r.seed, r => r.config), ['max_updraft_ms', r => r.updraft], ['max_uh_2_5km_m2s2', r => r.uh], ['max_rain_rate_mmh', r => r.rain], ['max_rain_total_mm', r => r.rainTotal],
         ['max_surface_wind_ms', r => r.gust], ['max_hail_mm', r => r.hail], ['max_flashes_per_min', r => r.flashes], ['mesocyclone_from_s', r => r.mesocyclone ?? '']]))
     })
     addEventListener('keydown', e => { if (e.key === 'Escape' && this.open) this.toggle(false) })
@@ -105,6 +108,7 @@ export class EnsemblePanel {
     this.results = []; this.peaks = []; this.name = name
     // The first member is the control: the run's own seed and data; the others perturbed within the data's uncertainty (if chosen).
     const configs = seeds.map((seed, k) => { const member = { ...structuredClone(config), seed }; return k && mode === 'data' ? perturbConfig(member) : member })
+    this.configs = configs
     const running = { total, started: performance.now(), times: new Map<number, number>() as ReadonlyMap<number, number>, stop: () => {} }
     this.running = running
     running.stop = runPool(configs, minutes, {

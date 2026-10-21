@@ -2,6 +2,7 @@
 // .instrument): a bar with the instrument's name and readings, the screen, and a side panel of sections. They are
 // always dark (data-theme="dark" on their root, whatever the page's theme) and lie over the simulator.
 import { L } from './i18n'
+import { mediaStamp, stampPngBlob } from './export/stamp'
 import type { MesoStrength } from './core'
 
 /** Builds a hidden instrument screen in `host`; `screen` goes over its canvas, `side` is the side panel's markup. */
@@ -22,8 +23,9 @@ function snapshot(root: HTMLElement, name: string) {
   out.width = canvas.width; out.height = canvas.height
   const ctx = out.getContext('2d')!
   ctx.fillStyle = instrumentPalette(root).bg; ctx.fillRect(0, 0, out.width, out.height); ctx.drawImage(canvas, 0, 0)
-  out.toBlob(blob => {
-    if (!blob) return
+  out.toBlob(async shot => {
+    if (!shot) return
+    const blob = await stampPngBlob(shot, mediaStamp(L(`Экран прибора «${name}»`, `The “${name}” instrument’s screen`)))
     const a = document.createElement('a'), now = new Date(), two = (n: number) => String(n).padStart(2, '0')
     a.href = URL.createObjectURL(blob); a.download = `meteolab-${name}-${two(now.getHours())}-${two(now.getMinutes())}-${two(now.getSeconds())}.png`; a.click()
     setTimeout(() => URL.revokeObjectURL(a.href), 10_000)

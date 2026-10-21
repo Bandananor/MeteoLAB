@@ -19,6 +19,7 @@ import { EnsemblePanel } from './ensemble/panel'
 import { RegimePanel } from './regime/panel'
 import { modelNetCDF } from './export/fields'
 import { MODEL_VERSION } from './version'
+import { mediaStamp, runLink as stampLink, setRunLink, stampColumns, stampPngBlob } from './export/stamp'
 import type { InterventionKind } from './core'
 import { environmentOf, heatOf, moistureOf, turnOf, withHeat, withMoisture, withShear, withTurn } from './settings/simple'
 import { DetectorPanel } from './detector/panel'
@@ -402,7 +403,7 @@ document.querySelectorAll<HTMLElement>('.popover[popover]').forEach(pop => pop.a
 // The model's fields now as a CF NetCDF file (roadmap E2), with the version, the settings and the seed.
 document.querySelector('#exportNetcdf')!.addEventListener('click', () => {
   const time = Math.round(sim.time)
-  download(`meteolab-${config.seed}-t${time}s.nc`, modelNetCDF(sim.model, { version: MODEL_VERSION, seed: config.seed, scenario: document.querySelector('#scenarioName')!.textContent || '', config }), 'application/x-netcdf')
+  download(`meteolab-${config.seed}-t${time}s.nc`, modelNetCDF(sim.model, { version: MODEL_VERSION, seed: config.seed, scenario: document.querySelector('#scenarioName')!.textContent || '', config, link: stampLink() }), 'application/x-netcdf')
 })
 // The layers over the 3D view (one menu, it stays open while they are switched): how many are on, on its button.
 const layersMenu = document.querySelector<HTMLElement>('#layersMenu')!
@@ -504,6 +505,7 @@ const station = new StationPanel(document.body)
 /** The next click on the 3D view places a weather station; their ground positions survive restarts. */
 let placingStation = false, stationGrounds: ({ x: number; y: number } | null)[] = []
 station.onAdd = () => { placingStation = true }
+station.seed = () => config.seed
 station.onRemove = index => { placingStation = false; stationGrounds = index === 'all' ? [] : stationGrounds.map((g, k) => k === index ? null : g); while (stationGrounds.length && !stationGrounds[stationGrounds.length - 1]) stationGrounds.pop(); sim.placeStations(stationGrounds) }
 document.querySelector('#stationOpen')!.addEventListener('click', () => station.toggle())
 const detector = new DetectorPanel(document.body)
@@ -741,13 +743,15 @@ const note = (message: string, ok = false) => {
 stateNote.querySelector('.notice__close')!.addEventListener('click', () => { clearTimeout(noteTimer); stateNote.hidden = true })
 // The link to this run: the settings that differ from the scenario (or the defaults) and the run's seed.
 /** The link to this run: its settings relative to the scenario last chosen (changed sliders unmark it but it is still the starting point). */
-const runLink = () => {
+const runLink = (c = config) => {
   const url = new URL(location.href)
   // The base a link is read against: the defaults and the scenario (not the loaded sounding — the link must carry it).
   const linkBase: SimConfig = { ...defaults, ...(baseScenario === null ? {} : SCENARIOS[baseScenario].values) }; fillLowWind(linkBase)
-  url.searchParams.set('cfg', encodeSettings(config, linkBase, baseScenario === null ? null : SCENARIOS[baseScenario].name)); url.searchParams.set('seed', String(config.seed))
+  url.searchParams.set('cfg', encodeSettings(c, linkBase, baseScenario === null ? null : SCENARIOS[baseScenario].name)); url.searchParams.set('seed', String(c.seed))
   return url
 }
+// Every export carries this link with the model's version (src/export/stamp.ts).
+setRunLink(c => runLink(c).href)
 document.querySelector('#share')!.addEventListener('click', () => {
   const url = runLink()
   navigator.clipboard.writeText(url.href).then(() => note(L('Ссылка на опыт скопирована', 'Link to the run copied'), true), () => { history.replaceState(null, '', url); note(L('Ссылка на опыт — в адресной строке', 'The link to the run is in the address bar')) })
@@ -859,7 +863,7 @@ stateFile.addEventListener('change', async () => {
   } catch (error) { note(`${L('Не удалось открыть', 'Could not open it')}: ${(error as Error).message}`) }
 })
 document.querySelector('#timelineCsv')!.addEventListener('click', () => download(`meteolab-hod-grozy-seed${config.seed}.csv`, toCsv(timeline.points, [
-  ['time_s', p => p.t], ['sb_cape_jkg', p => p.cape], ['sb_cin_jkg', p => p.cin], ['max_updraft_ms', p => p.updraft], ['uh_2_5km_m2s2', p => p.uh],
+  ...stampColumns(() => config.seed), ['time_s', p => p.t], ['sb_cape_jkg', p => p.cape], ['sb_cin_jkg', p => p.cin], ['max_updraft_ms', p => p.updraft], ['uh_2_5km_m2s2', p => p.uh],
   ['rain_rate_mmh', p => p.rain], ['rain_total_mm', p => p.rainTotal], ['core_rotation_held_s', p => p.rotationHeld], ['flashes_per_min', p => p.flashes],
   ['surface_gust_ms', p => p.gust], ['hail_mm', p => p.hail],
 ])))
@@ -1025,7 +1029,7 @@ function blockCsv(block: string, button: HTMLElement) {
   root.querySelectorAll('.pair > div').forEach(d => rows.push({ quantity: clean(d.querySelector('.label')), now: clean(d.querySelector('.metric__num')), max: '', unit: clean(d.querySelector('.unit')) }))
   root.querySelectorAll('.stat').forEach(d => rows.push({ quantity: clean(d.firstElementChild), now: clean(d.querySelector('.stat__v [id]') ?? d.querySelector('.stat__v')), max: '', unit: clean(d.querySelector('.stat__v .unit')) }))
   const time = Math.round(sim.time), seed = config.seed
-  download(`meteolab-${block}-t${time}s.csv`, toCsv(rows, [['model_time_s', () => time], ['seed', () => seed], ['quantity', r => r.quantity], ['value', r => value(r.now)], ['max_this_run', r => value(r.max)], ['unit', r => r.unit]]))
+  download(`meteolab-${block}-t${time}s.csv`, toCsv(rows, [...stampColumns(() => seed), ['model_time_s', () => time], ['quantity', r => r.quantity], ['value', r => value(r.now)], ['max_this_run', r => value(r.max)], ['unit', r => r.unit]]))
 }
 document.querySelectorAll<HTMLElement>('[data-csv]').forEach(b => b.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); blockCsv(b.dataset.csv!, b) }))
 /** A rotating cell's downdraughts in a few words (core/flanks.ts), for its card. */
@@ -1222,8 +1226,9 @@ canvas.addEventListener('pointermove', e => {
 for (const type of ['pointerup', 'pointercancel'] as const) canvas.addEventListener(type, e => { touches.delete(e.pointerId); pinchSpread = touches.size === 2 ? spread() : 0 })
 // A snapshot of the 3D view (PNG), named by the run's local time.
 document.querySelector('#snapshotButton')!.addEventListener('click', async () => {
-  const blob = await sim.snapshot()
-  if (!blob) return
+  const shot = await sim.snapshot()
+  if (!shot) return
+  const blob = await stampPngBlob(shot, mediaStamp(L(`3D-вид модели, T+${runTime(sim.time)}, ${timeOfDay(config.hour, sim.time)} по местному`, `The model's 3D view, T+${runTime(sim.time)}, ${timeOfDay(config.hour, sim.time)} local`)))
   const a = document.createElement('a'), local = timeOfDay(config.hour, sim.time).replace(':', '-')
   a.href = URL.createObjectURL(blob); a.download = `meteolab-${local}.png`; a.click()
   setTimeout(() => URL.revokeObjectURL(a.href), 10_000)

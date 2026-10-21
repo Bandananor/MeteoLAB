@@ -6,7 +6,7 @@
 import { type AtmosphereModel, reflectivity, type SimConfig } from '../core'
 import { type NcAttribute, type NcFile, type NcVariable, writeNetCDF } from './netcdf'
 
-export interface FieldsMeta { version: string; seed: number; scenario: string; config: SimConfig }
+export interface FieldsMeta { version: string; seed: number; scenario: string; config: SimConfig; link?: string }
 
 type Model = Pick<AtmosphereModel, 'grid' | 'env' | 'frame' | 'time' | 'u' | 'v' | 'w' | 'theta' | 'q' | 'cloud' | 'rain' | 'ice' | 'snow' | 'graupel' | 'hail' | 'precipitation' | 'hailSize' | 'uhColumn'>
 
@@ -39,6 +39,7 @@ export function modelFields(m: Model, meta: FieldsMeta): NcFile {
       model_time_s: m.time, seed: meta.seed, start_local_solar_time_h: meta.config.hour, day_of_year: meta.config.dayOfYear ?? 80, latitude_deg: meta.config.latitude,
       domain_velocity: [fu, fv], domain_offset: offset,
       settings_json: JSON.stringify(meta.config),
+      ...(meta.link ? { run_link: meta.link } : {}),
     },
     vars: [
       { name: 'time', dims: ['time'], type: 'double', data: [m.time], attrs: { units: 's', long_name: 'model time since the start of the run (an idealised run has no calendar date; see start_local_solar_time_h)', axis: 'T' } },

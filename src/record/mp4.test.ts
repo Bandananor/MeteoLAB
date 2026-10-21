@@ -12,7 +12,7 @@ function boxes(b: Uint8Array, from = 0, to = b.length) {
 }
 /** The box found down a path of types, each the child of the one before (`skip`: bytes before a box's children). */
 function find(b: Uint8Array, path: string[]) {
-  const skip: Record<string, number> = { stsd: 8, dref: 8, avc1: 78 }
+  const skip: Record<string, number> = { stsd: 8, dref: 8, avc1: 78, meta: 4 }
   let span = { body: 0, end: b.length }, parent = ''
   for (const type of path) { const f = boxes(b, span.body + (skip[parent] ?? 0), span.end).find(x => x.type === type); if (!f) throw new Error(`no ${type}`); span = f; parent = type }
   return span
@@ -53,6 +53,18 @@ describe('MP4 writer', () => {
     expect(Array.from(file.subarray(record.body, record.end))).toEqual(Array.from(avcC))
     const tkhd = find(file, ['moov', 'trak', 'tkhd'])
     expect([v.getUint32(tkhd.body + 76) / 65536, v.getUint32(tkhd.body + 80) / 65536]).toEqual([1280, 720])
+  })
+
+  it('keeps the tags in udta (iTunes-style, UTF-8) and still points at the frames', () => {
+    const tagged = writeMp4(samples, avcC, 1280, 720, 30, { Software: 'MeteoLab v2.9', Comment: 'https://x/?seed=7', Description: '' }), tv = new DataView(tagged.buffer)
+    expect(boxes(tagged).map(b => b.type)).toEqual(['ftyp', 'moov', 'mdat'])
+    const text = (atom: string) => { const d = find(tagged, ['moov', 'udta', 'meta', 'ilst', atom, 'data']); expect(tv.getUint32(d.body)).toBe(1); return new TextDecoder().decode(tagged.subarray(d.body + 8, d.end)) }
+    expect(text('©too')).toBe('MeteoLab v2.9')
+    expect(text('©cmt')).toBe('https://x/?seed=7')
+    // An empty text is left out.
+    expect(() => find(tagged, ['moov', 'udta', 'meta', 'ilst', 'desc'])).toThrow()
+    expect(tv.getUint32(find(tagged, ['moov', 'trak', 'mdia', 'minf', 'stbl', 'stco']).body + 8)).toBe(boxes(tagged)[2].body)
+    expect(() => find(file, ['moov', 'udta'])).toThrow()
   })
 
   it('picks the lowest H.264 level that holds the picture and the rate', () => {

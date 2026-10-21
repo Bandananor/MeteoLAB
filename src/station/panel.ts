@@ -4,6 +4,7 @@ import { minuteMark } from '../clock'
 import { help, instrumentPalette, instrumentScreen, numbers, readings, section } from '../instrument'
 import { MONO, STATION_COLORS, STATION_LETTERS } from '../theme'
 import { download, toCsv } from '../share'
+import { stampColumns } from '../export/stamp'
 
 type Key = keyof Omit<StationRecord, 't'>
 const NO_STATION = L('Станций нет. Поставьте станцию щелчком по 3D-виду — лучше на пути грозы; до четырёх в ряд по пути покажут, как фронт порывов доходит до каждой.', 'No stations. Place one with a click in the 3D view — best in the storm’s path; up to four in a row along it show the gust front reaching each in turn.')
@@ -40,6 +41,8 @@ export class StationPanel {
   onAdd: () => void = () => {}
   /** The user removes station `index`, or all of them. */
   onRemove: (index: number | 'all') => void = () => {}
+  /** The run's seed, for the CSV. */
+  seed: () => number = () => 0
 
   constructor(host: HTMLElement) {
     this.root = instrumentScreen(host, 'station-app', L('METEOLAB · МЕТЕОСТАНЦИИ', 'METEOLAB · WEATHER STATIONS'),
@@ -64,11 +67,11 @@ export class StationPanel {
     this.root.querySelector('[data-station="csv"]')!.addEventListener('click', () => {
       if (this.chosen === 'all') {
         const rows = this.stations.flatMap((s, k) => s ? s.records.map(r => ({ ...r, k, x: s.x, y: s.y })) : [])
-        if (rows.length) download('meteolab-stancii.csv', toCsv(rows, [['station', r => STATION_LETTERS[r.k]], ['x_km', r => r.x / 1000], ['y_km', r => r.y / 1000], ...COLUMNS]))
+        if (rows.length) download('meteolab-stancii.csv', toCsv(rows, [...stampColumns(() => this.seed()), ['station', r => STATION_LETTERS[r.k]], ['x_km', r => r.x / 1000], ['y_km', r => r.y / 1000], ...COLUMNS]))
         return
       }
       const s = this.stations[this.chosen]
-      if (s?.records.length) download(`meteolab-stanciya-${STATION_LETTERS[this.chosen]}-${km(s.x)}-${km(s.y)}km.csv`, toCsv(s.records, COLUMNS))
+      if (s?.records.length) download(`meteolab-stanciya-${STATION_LETTERS[this.chosen]}-${km(s.x)}-${km(s.y)}km.csv`, toCsv(s.records, [...stampColumns(() => this.seed()), ...COLUMNS]))
     })
     addEventListener('keydown', e => { if (e.key === 'Escape' && this.open) this.toggle(false) })
     addEventListener('resize', () => this.open && this.draw())

@@ -6,6 +6,7 @@ import { elapsed, timeOfDay } from '../clock'
 import { DT } from '../core'
 import { decimal, L } from '../i18n'
 import { avcCodec, type Sample, writeMp4 } from './mp4'
+import { mediaStamp } from '../export/stamp'
 import { bitrate, frameCount, frameStamp, frameTime, ORBIT_SPEED, type RecordCamera, type RecordSettings, screenSize, SIZES, stepsTo } from './plan'
 
 const KEY = 'meteolab-video'
@@ -125,6 +126,8 @@ export class VideoRecorder {
     const s = this.settings(), config = await this.encoderConfig(s)
     if (!config) { this.fail(L(`Кодировщик H.264 этого устройства не берёт ${s.width} × ${s.height} при ${s.fps} кадрах в секунду. Выберите размер меньше или 30 кадров.`, `This device’s H.264 encoder does not take ${s.width} × ${s.height} at ${s.fps} frames per second. Choose a smaller size or 30 frames.`)); return }
     const sim = this.sim(), samples: Sample[] = []
+    // The version, the start and the link to the run, in the file's metadata (roadmap E4).
+    const stamp = mediaStamp(L(`Видео модели с T+${elapsed(sim.time)}, ${s.speed}× скорости`, `The model's video from T+${elapsed(sim.time)}, ${s.speed}× speed`))
     let description: Uint8Array | null = null, failure: unknown = null
     const encoder = new VideoEncoder({
       output: (chunk, meta) => {
@@ -168,7 +171,7 @@ export class VideoRecorder {
       await encoder.flush()
       if (failure) throw failure
       if (!description) throw new Error(L('кодировщик не дал описания потока', 'the encoder gave no stream description'))
-      const file = writeMp4(samples, description, s.width, s.height, s.fps), local = timeOfDay(this.hour(), sim.time).replace(':', '-')
+      const file = writeMp4(samples, description, s.width, s.height, s.fps, stamp), local = timeOfDay(this.hour(), sim.time).replace(':', '-')
       const a = document.createElement('a')
       a.href = URL.createObjectURL(new Blob([file], { type: 'video/mp4' })); a.download = `meteolab-${local}.mp4`; a.click()
       setTimeout(() => URL.revokeObjectURL(a.href), 60_000)

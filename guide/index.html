@@ -141,6 +141,7 @@
 ds = xr.open_dataset('meteolab-…-t1800s.nc')
 ds.w.isel(time=0).max('z').plot()          # сильнейший поток над каждой точкой
 ds.dbz.isel(time=0).sel(z=1000, method='nearest').plot()</code></pre></li>
+          <li><b>Откуда файл.</b> Каждая выгрузка помнит, чем и из какого опыта она сделана. В CSV первые столбцы — <code>model_version</code> (точная версия модели), <code>seed</code> и <code>run_link</code> — ссылка на опыт с его настройками и зерном: откройте её, и модель начнёт тот же расчёт (в ансамбле и карте режимов у каждой строки ссылка своего члена). В NetCDF то же — в атрибутах <code>source</code>, <code>seed</code>, <code>run_link</code>, <code>settings_json</code>. В PNG и MP4 — в полях файла: программа и версия, что на кадре, ссылка (видно в свойствах файла, exiftool, ffprobe, <code>Image.open(f).text</code> в Python). Сделанное руками по ходу опыта в ссылку не входит — его хранит файл опыта. Как сослаться на модель в работе — <a href="https://github.com/Bandananor/MeteoLAB/blob/main/CITATION.cff">CITATION.cff</a> (GitHub показывает «Cite this repository»).</li>
         </ul>
 
         <h2 id="phone"><span class="num">9</span>На телефоне</h2>

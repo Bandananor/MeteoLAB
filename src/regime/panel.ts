@@ -3,6 +3,7 @@ import type { SimConfig } from '../core'
 import { help, instrumentPalette, instrumentScreen, press, readings, section } from '../instrument'
 import { MONO } from '../theme'
 import { download, toCsv } from '../share'
+import { stampColumns } from '../export/stamp'
 import { memberPeaks, type MemberPeaks } from '../ensemble/combine'
 import type { MemberResult } from '../ensemble/member'
 import { poolSize, runPool } from '../ensemble/pool'
@@ -67,7 +68,7 @@ export class RegimePanel {
     this.root.querySelector('#regCsv')!.addEventListener('click', () => {
       const rows = this.cells.map((c, k) => ({ c, p: this.peaks[k], r: this.results[k] })).filter(x => x.p && x.r)
       if (!rows.length) return
-      download(`meteolab-rezhimy-${rows.length}.csv`, toCsv(rows, [['moisture_factor', x => GRIDS[this.size].moisture[x.c.row]], ['ml_cape_jkg', x => x.c.cape], ['shear_0_6km_ms', x => x.c.shear], ['regime', x => regimeOf(x.r!, x.p!)],
+      download(`meteolab-rezhimy-${rows.length}.csv`, toCsv(rows, [...stampColumns<(typeof rows)[number]>(x => x.c.config.seed, x => x.c.config), ['moisture_factor', x => GRIDS[this.size].moisture[x.c.row]], ['ml_cape_jkg', x => x.c.cape], ['shear_0_6km_ms', x => x.c.shear], ['regime', x => regimeOf(x.r!, x.p!)],
         ['max_updraft_ms', x => x.p!.updraft], ['max_uh_2_5km_m2s2', x => x.p!.uh], ['max_rain_rate_mmh', x => x.p!.rain], ['max_rain_total_mm', x => x.p!.rainTotal], ['max_surface_wind_ms', x => x.p!.gust], ['max_hail_mm', x => x.p!.hail], ['mesocyclone_from_s', x => x.p!.mesocyclone ?? '']]))
     })
     this.canvas.addEventListener('click', e => {
