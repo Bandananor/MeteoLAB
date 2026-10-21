@@ -9,3 +9,11 @@ export const DEFAULTS: SimConfig = {
   hour:13.5,dayOfYear:80,solarMax:1000,soilMoisture:45,surfaceType:'grass',city:0,
   speed:8,seed:42,bubble:1
 }
+
+// Scenarios without the 0.5 and 1 km wind nodes get them on the straight 0-3 km line, so their hodograph is unchanged
+// and the sliders show where the nodes are.
+export const fillLowWind = (c: SimConfig) => {
+  const along = (a: number, b: number, t: number) => a + (b - a) * t, turn = (a: number, b: number, t: number) => ((a + (((b - a + 540) % 360) - 180) * t) % 360 + 360) % 360
+  c.wind05 ??= along(c.wind0, c.wind3, 1 / 6); c.wind1 ??= along(c.wind0, c.wind3, 1 / 3)
+  c.windDir05 ??= turn(c.windDir0, c.windDir3, 1 / 6); c.windDir1 ??= turn(c.windDir0, c.windDir3, 1 / 3)
+}

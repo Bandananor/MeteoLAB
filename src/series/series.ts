@@ -8,7 +8,8 @@
  * The same file gives the same runs: the seeds come from the file's first seed, and the file itself goes into the
  * NetCDF's attributes.
  */
-import type { SimConfig } from '../core'
+import { SCENARIOS, type SimConfig } from '../core'
+import { DEFAULTS, fillLowWind } from '../defaults'
 import { cleanSettings } from '../share'
 import { environmentOf, withHeat, withMoisture, withShear, withTurn } from '../settings/simple'
 
@@ -89,6 +90,13 @@ export function parseSeries(text: string, scenarios: readonly string[]): { serie
   const runs = vary.reduce((n, [, v]) => n * v.length, seeds.length)
   if (runs > MAX_RUNS) return { error: `${runs} runs: at most ${MAX_RUNS} in a series` }
   return { series: { name: typeof f.name === 'string' ? f.name : '', scenario, settings, vary, seeds, minutes } }
+}
+
+/** A series' base settings: the defaults with its scenario and its settings laid over (as the simulator lays a link's). */
+export function seriesBase(series: Series): SimConfig {
+  const c: SimConfig = { ...structuredClone(DEFAULTS), ...(series.scenario === null ? {} : structuredClone(SCENARIOS.find(x => x.name === series.scenario)!.values)), ...structuredClone(series.settings) }
+  fillLowWind(c)
+  return c
 }
 
 /** A series file of these settings (a template to edit): its name, the scenario and the settings over it. */

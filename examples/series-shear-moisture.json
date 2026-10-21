@@ -1,0 +1,13 @@
+{
+  "meteolab_series": 1,
+  "name": "Supercell: shear x moisture",
+  "scenario": "Классическая суперячейка",
+  "settings": {},
+  "vary": {
+    "shear_0_6km_ms": [10, 20, 30, 40],
+    "moisture_factor": [0.9, 1, 1.1]
+  },
+  "seeds": 3,
+  "first_seed": 2026,
+  "minutes": 90
+}

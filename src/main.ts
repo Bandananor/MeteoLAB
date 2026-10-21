@@ -18,7 +18,7 @@ import { EchoMaps } from './compare/run'
 import { EnsemblePanel } from './ensemble/panel'
 import { RegimePanel } from './regime/panel'
 import { SeriesPanel } from './series/panel'
-import { seriesTemplate } from './series/series'
+import { seriesBase, seriesTemplate } from './series/series'
 import { modelNetCDF } from './export/fields'
 import { MODEL_VERSION } from './version'
 import { mediaStamp, runLink as stampLink, setRunLink, stampColumns, stampPngBlob } from './export/stamp'
@@ -37,7 +37,7 @@ import { cleanSettings, decodeSettings, download, encodeSettings, toCsv } from '
 import { HODOGRAPH_NODES, nudgeSounding, sliderNode } from './hodograph'
 import { applyLayout, askGuide, askLayout, Hud, isPhone, savedLayout, suggestedLayout } from './hud'
 import { Timeline } from './timeline'
-import { DEFAULTS as defaults } from './defaults'
+import { DEFAULTS as defaults, fillLowWind } from './defaults'
 import { cloudGenus, hailWord, rainWord } from './describe'
 import { type CameraGrade, GRADE_SLIDERS, loadGrade, NEUTRAL_GRADE, saveGrade } from './camera'
 import { decimal, L, lang, otherLanguagePath, rememberLang } from './i18n'
@@ -445,13 +445,6 @@ let soundingBase: Partial<SimConfig> | null = null
   // A link with a sounding: that is what the run started from.
   if (config.sounding && baseScenario === null) soundingBase = { sounding: config.sounding }
 }
-// Scenarios without the 0.5 and 1 km wind nodes get them on the straight 0-3 km line, so their hodograph is unchanged
-// and the sliders show where the nodes are.
-const fillLowWind = (c: SimConfig) => {
-  const along = (a: number, b: number, t: number) => a + (b - a) * t, turn = (a: number, b: number, t: number) => ((a + (((b - a + 540) % 360) - 180) * t) % 360 + 360) % 360
-  c.wind05 ??= along(c.wind0, c.wind3, 1 / 6); c.wind1 ??= along(c.wind0, c.wind3, 1 / 3)
-  c.windDir05 ??= turn(c.windDir0, c.windDir3, 1 / 6); c.windDir1 ??= turn(c.windDir0, c.windDir3, 1 / 3)
-}
 fillLowWind(config)
 // Every start, restart and scenario gets a fresh random seed, so no two runs give the same storm. The seed is not shown,
 // only kept in the address (?seed=...), so opening that link repeats the first run of the page.
@@ -546,7 +539,7 @@ series.template = () => {
   const values = decodeSettings(encodeSettings(config, linkBase, name), SCENARIOS.map(s => s.name))?.values ?? {}
   return seriesTemplate(document.querySelector('#scenarioName')!.textContent || '', name, values, config.seed)
 }
-series.base = s => { const c: SimConfig = { ...defaults, ...(s.scenario === null ? {} : SCENARIOS.find(x => x.name === s.scenario)!.values), ...structuredClone(s.settings) }; fillLowWind(c); return c }
+series.base = seriesBase
 regime.onApply = c => { Object.assign(config, c); syncControls(); markPreset(null); recreate(config.seed); running = true; updatePause(); drawHodograph() }
 document.querySelector('#skewOpen')!.addEventListener('click', () => skewt.toggle())
 let running = true
