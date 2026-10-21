@@ -68,9 +68,12 @@ const HAND: [InterventionKind, string, string][] = [
   ['coldPool', L('Холодный купол', 'Cold pool'), L('−6 K в нижних ~700 м: отток выпавшего дождя, растечётся фронтом порывов', '−6 K in the lowest ~700 m: a rained-out outflow that spreads as a gust front')],
   ['vortex', L('Вихрь', 'Vortex'), L('вращение против часовой, 10 м/с на 3 км от центра, до ~3 км вверх', 'an anticlockwise spin, 10 m/s 3 km from the centre, up to ~3 km')],
 ]
+/** A row of the values table: the quantity (with its «i»), now, the most so far this run (or of the chosen cell), the unit. */
+const mrow = (id: string, label: string, unit: string, tip?: string) =>
+  `<tr data-metric="${id}"><th scope="row"><span class="label">${label}</span>${tip ? info(tip) : ''}</th><td class="num mtable__now" id="${id}">—</td><td class="num mtable__max" id="${id}Max">—</td><td class="unit">${unit}</td></tr>`
+/** A block's CSV button (main.ts blockCsv): the block's quantities with the model time and the seed. */
+const csvButton = (block: string) => `<button class="btn btn--xs diag__csv" data-csv="${block}" title="${L('Значения этого блока в CSV — с модельным временем и зерном опыта', 'This block’s values as CSV — with the model time and the run’s seed')}">CSV</button>`
 const info = (tip: string) => `<button class="info" popovertarget="${tip}" aria-expanded="false" aria-label="${L('Что это', 'What is this')}">i</button>`
-const metric = (id: string, label: string, unit: string, tip?: string, extra = '') =>
-  `<div class="metric" data-metric="${id}"><div class="metric__head"><span class="label">${label}</span>${tip ? info(tip) : ''}</div><div class="metric__value"><span class="metric__num" id="${id}">—</span><span class="unit">${unit}</span></div>${extra}</div>`
 type PairItem = [id: string, label: string, unit: string, title?: string]
 const pair = (...items: PairItem[]) => `<div class="pair">${items.map(([id, label, unit, title]) =>
   `<div${title ? ` title="${title}"` : ''}><span class="label">${label}</span><span class="metric__value"><span class="metric__num" id="${id}">—</span><span class="unit">${unit}</span></span></div>`).join('')}</div>`
@@ -272,23 +275,26 @@ app.innerHTML = `<div class="app">
       <div class="readout"><span>${L('Сетка', 'Grid')} <b id="gridSize">40 × 32 × 50</b></span><span>Δx / Δy <b>1.2 / 1.1 ${L('км', 'km')}</b></span><span>Δz <b>0.1 → 1 ${L('км', 'km')}</b></span><span>Δt <b>${DT} ${L('с', 's')}</b></span><span>${L('Область', 'Domain')} <b id="frameMotion">—</b></span><span>${L('Инсоляция', 'Insolation')} <b id="sun">—</b></span><span>${L('Солнце', 'Sun')} <b id="sunElevation">—</b></span></div>
     </section>
 
-    <aside class="side side--right diagnostics" aria-label="${L('Данные', 'Data')}"><div class="diag">
+    <aside class="side side--right diagnostics" aria-label="${L('Диагностика', 'Diagnostics')}"><div class="diag">
       <section class="mode" id="modeCard"><div class="mode__head"><span class="label">${L('Режим грозы', 'Storm mode')}</span><span class="badge" id="mesoBadge" hidden>${L('мезоциклон', 'mesocyclone')}</span></div><div class="mode__title" id="cellType">—</div><div class="mode__reason" id="cellReason">${L('ожидание инициализации', 'waiting for initiation')}</div><div class="mode__reason" id="cloudGenus" title="${L('Самое высокое облако по международной классификации: кучевое по толщине, кучево-дождевое — когда вершина холоднее −20 °C (оледенела), с наковальней — когда растекается на уровне равновесия (EL)', 'The tallest cloud by the international classification: cumulus by its depth, cumulonimbus once the top is colder than −20 °C (glaciated), with an anvil once it spreads at the equilibrium level (EL)')}"></div><div class="mode__cell" id="cellStage"></div></section>
       <section class="cells"><div class="cells__head"><span class="label" id="cellCount">${L('Ячейки', 'Cells')}</span><button class="btn btn--quiet btn--s" id="cellAll" aria-pressed="true" title="${L('Показатели по всей области: максимумы по всем ячейкам', 'Values over the whole domain: maxima over all the cells')}">${L('Вся область', 'Whole domain')}</button></div><div class="cells__list" id="cellList"></div></section>
-      <section class="chart"><div class="diag__scope"><span class="label" id="metricScope">${L('Показатели по всей области', 'Values over the whole domain')}</span></div>
-        <div class="metrics">
-          ${metric('updraft', L('Восх. поток, макс.', 'Max updraught'), L('м/с', 'm/s'))}
-          ${metric('uh', L('Вращение UH 2–5 км', 'Rotation UH 2–5 km'), L('м²/с²', 'm²/s²'), 'tip-uh')}
-          ${metric('rain', L('Дождь в ядре сейчас', 'Rain in the core now'), L('мм/ч', 'mm/h'), 'tip-rain', '<div class="t-caption" id="rainWord"></div>')}
-          ${metric('rainTotal', L('Сумма в самой мокрой точке', 'Total at the wettest point'), L('мм', 'mm'), 'tip-rainTotal')}
-          ${metric('gust', L('Порыв у земли', 'Surface gust'), L('м/с', 'm/s'), 'tip-gust')}
-          ${metric('hail', L('Град у земли', 'Hail at the ground'), L('см', 'cm'), 'tip-hail', '<div class="t-caption" id="hailWord"></div><div class="t-caption" id="hailSwath"></div>')}
-        </div></section>
+      <section class="chart"><div class="diag__scope"><span class="label" id="metricScope">${L('Показатели по всей области', 'Values over the whole domain')}</span>${csvButton('metrics')}</div>
+        <table class="mtable"><thead><tr><th></th><th>${L('сейчас', 'now')}</th><th title="${L('Наибольшее с начала опыта (у выбранной ячейки — с её выбора)', 'The most since the run’s start (of a chosen cell — since it was chosen)')}">${L('макс.', 'max')}</th><th></th></tr></thead><tbody>
+          ${mrow('updraft', L('Восходящий поток', 'Updraught'), L('м/с', 'm/s'))}
+          ${mrow('uh', L('Вращение UH 2–5 км', 'Rotation UH 2–5 km'), L('м²/с²', 'm²/s²'), 'tip-uh')}
+          ${mrow('rain', L('Дождь в ядре', 'Rain in the core'), L('мм/ч', 'mm/h'), 'tip-rain')}
+          ${mrow('rainTotal', L('Сумма в самой мокрой точке', 'Total at the wettest point'), L('мм', 'mm'), 'tip-rainTotal')}
+          ${mrow('gust', L('Ветер у земли', 'Surface wind'), L('м/с', 'm/s'), 'tip-gust')}
+          ${mrow('hail', L('Град у земли', 'Hail at the ground'), L('см', 'cm'), 'tip-hail')}
+        </tbody></table>
+        <div class="mtable__notes t-caption"><span id="rainWord"></span> <span id="hailWord"></span> <span id="hailSwath"></span></div>
+        </section>
       <section class="chart"><div class="chart__head"><span class="chart__title">${L('Ход грозы', 'Storm history')}</span><span class="chart__actions"><button class="btn btn--xs" id="timelineCsv" title="${L('Выгрузить ряды «Хода грозы» в CSV (таблица или скрипт): время, CAPE и CIN, поток, UH, дождь', 'Export the “Storm history” series to CSV (a spreadsheet or a script): time, CAPE and CIN, updraught, UH, rain')}">CSV</button></span></div>
         <canvas id="timeline" title="${L('Ход грозы по модельному времени (вся область, точка каждые 30 с): неустойчивость среды сейчас (CAPE и CIN частицы от земли по живому зондированию — вдали от гроз, раз в модельную минуту), самый сильный восходящий поток, вращение потока, дождь у земли и вспышки молний за последнюю минуту. Перезапуск начинает графики заново', 'The storm over model time (the whole domain, a point every 30 s): the instability of the environment now (CAPE and CIN of the surface parcel from the live sounding — away from the storms, once a model minute), the strongest updraught, its rotation, the rain at the ground and the lightning flashes in the last minute. A restart begins the charts anew')}"></canvas></section>
       <div class="diag__groups">
-        ${group(L('Чего ждать', 'What to expect'), `<ul class="expect" id="expectList"></ul><p class="t-caption" id="expectNote">${L('Прогноз по среде на старте опыта — по статистике настоящих гроз (источник у каждой строки); справа — что вышло в модели за этот прогон. Расхождение — тоже урок: среда даёт шанс, а не гарантию, и у модели свои пределы (сетка ~1 км, одномоментная микрофизика). У синоптических ситуаций среда меняется по сюжету — прогноз по ней на старте.', 'A forecast from the environment at the start of the run — by the statistics of real storms (the source on each row); on the right, what the model made of it this run. A mismatch is a lesson too: an environment gives a chance, not a guarantee, and the model has its limits (a ~1 km grid, one-moment microphysics). The synoptic situations change their environment as their story goes — the forecast is from the start.')}</p>`, { id: 'expect' })}
-        ${group(L('Индексы неустойчивости', 'Instability indices'), `
+        ${group(L('Прогноз по среде: чего ждать', 'Forecast from the environment: what to expect'), `<ul class="expect" id="expectList"></ul><p class="t-caption" id="expectNote">${L('Прогноз по среде на старте опыта — по статистике настоящих гроз (источник у каждой строки); справа — что вышло в модели за этот прогон. Расхождение — тоже урок: среда даёт шанс, а не гарантию, и у модели свои пределы (сетка ~1 км, одномоментная микрофизика). У синоптических ситуаций среда меняется по сюжету — прогноз по ней на старте.', 'A forecast from the environment at the start of the run — by the statistics of real storms (the source on each row); on the right, what the model made of it this run. A mismatch is a lesson too: an environment gives a chance, not a guarantee, and the model has its limits (a ~1 km grid, one-moment microphysics). The synoptic situations change their environment as their story goes — the forecast is from the start.')}</p>`, { id: 'expect' })}
+        ${group(L('Индексы среды (живое зондирование)', 'Environment indices (live sounding)'), `
+          <div class="diag__tools">${csvButton('indices')}</div>
           ${pair(['cape', 'CAPE', JKG, L('Частица приложения: +0,5 K и вовлечение сухого воздуха (разбавленная CAPE)', 'The app’s parcel: +0.5 K and entrainment of dry air (dilute CAPE)')], ['cin', 'CIN', JKG])}
           ${pair(['mlcape', 'MLCAPE', JKG, L('Перемешанный слой 100 гПа (стандартная частица, без добавок)', 'The 100 hPa mixed layer (the standard parcel, nothing added)')], ['mlcin', 'MLCIN', JKG, L('CIN частицы перемешанного слоя', 'CIN of the mixed-layer parcel')])}
           ${pair(['mucape', 'MUCAPE', JKG, L('Наиболее неустойчивая частица в нижних 300 гПа', 'The most unstable parcel in the lowest 300 hPa')], ['dcape', 'DCAPE', JKG, L('Энергия нисходящего потока: сила холодных оттоков и микропорывов', 'Downdraught energy: the strength of cold outflows and microbursts')])}
@@ -307,6 +313,7 @@ app.innerHTML = `<div class="app">
           <div class="hodo-edit"><span class="t-caption" id="hodoHint"></span><button class="btn btn--quiet btn--xs" id="hodoReset" type="button" hidden>${L('Вернуть ветер', 'Restore the wind')}</button></div>
           <div><div class="stat"><span>${L('Сдвиг ветра 0–6 км', '0–6 km wind shear')}</span><span class="stat__v" id="shear">—</span></div><div class="t-caption" id="shearHint"></div></div>`, { id: 'hodograph' })}
         ${group(L('Все показатели грозы', 'All the storm’s values'), `<div>
+          <div class="diag__tools">${csvButton('all')}</div>
           ${stat('downdraft', L('Макс. нисходящий поток', 'Max downdraught'), L('м/с', 'm/s'))}
           ${stat('uhLow', L('Низкое вращение (UH 0–1 / 0–3 км)', 'Low-level rotation (UH 0–1 / 0–3 km)'), L('м²/с²', 'm²/s²'), L('Вращение восходящего потока у земли: низкоуровневый мезоциклон — признак ячейки, опасной по смерчам. На сетке ~0,65 км слой 0–1 км — один уровень, 0–3 км — четыре', 'Rotation of the updraught near the ground: a low-level mesocyclone, the sign of a cell that may produce tornadoes. On the ~0.65 km grid the 0–1 km layer is one level, 0–3 km four'))}
           <div class="tornado" title="${L('Определитель признаков смерчеобразования по всей области: вращение у земли, держащееся несколько минут, мезоциклон над ним, среда (STP, SRH 0–1 км, низкое основание облака) и не слишком холодный отток. Сам смерч сетка ~1 км не разрешает — это признаки, по которым о нём судят синоптики', 'Tornadogenesis signs over the whole domain: rotation at the ground holding for several minutes, a mesocyclone above it, the environment (STP, SRH 0–1 km, a low cloud base) and an outflow not too cold. The ~1 km grid does not resolve the tornado itself — these are the signs forecasters judge it by')}">${stat('tornadoLevel', L('Признаки смерчеобразования', 'Tornadogenesis signs'), '')}<p class="t-caption" id="tornadoNote"></p><ul class="tornado__checks" id="tornadoChecks"></ul>
@@ -987,6 +994,33 @@ function updateCells() {
   text('updraft', s.updraft.toFixed(1)); text('downdraft', s.downdraft.toFixed(1)); text('uh', s.uh.toFixed(0)); text('uhLow', `${s.uh01.toFixed(0)} / ${s.uh03.toFixed(0)}`)
   text('cloudTop', s.cloudTop.toFixed(1)); text('coldPool', s.coldPool.toFixed(1)); showRain(s.rainRate)
 }
+/** The most of each value so far, beside it: of the run over the domain, or of the chosen cell since it was chosen. */
+const peaks: Record<string, number> = {}
+let peakScope = '', peakTime = 0
+function trackPeaks() {
+  const scope = document.querySelector('#metricScope')!.textContent!.replace(/ \(.*\)$/, '')
+  if (scope !== peakScope || sim.time < peakTime) { for (const k in peaks) delete peaks[k]; peakScope = scope }
+  peakTime = sim.time
+  document.querySelectorAll<HTMLElement>('.mtable tr[data-metric]').forEach(row => {
+    const id = row.dataset.metric!, now = Number.parseFloat(document.querySelector(`#${id}`)!.textContent!.replace(',', '.'))
+    if (Number.isFinite(now)) peaks[id] = Math.max(peaks[id] ?? -Infinity, now)
+    const most = peaks[id], digits = (document.querySelector(`#${id}`)!.textContent!.split(/[.,]/)[1] ?? '').length
+    text(`${id}Max`, most === undefined ? '—' : most.toFixed(digits))
+  })
+}
+/** A block's quantities as CSV rows: the values table (now and max), the indices' pairs, the stats. */
+function blockCsv(block: string, button: HTMLElement) {
+  const root = button.closest('section, details')!, rows: { quantity: string; now: string; max: string; unit: string }[] = []
+  const clean = (e: Element | null) => (e?.textContent ?? '').replace(/\s+/g, ' ').trim()
+  // Numbers as numbers (for a spreadsheet or pandas), a dash as empty; «8 / 27» and words stay text.
+  const value = (t: string) => t === '—' ? '' : /^[−-]?\d+([.,]\d+)?$/.test(t) ? Number(t.replace(',', '.').replace('−', '-')) : t
+  root.querySelectorAll('.mtable tr[data-metric]').forEach(tr => rows.push({ quantity: clean(tr.querySelector('.label')), now: clean(tr.querySelector('.mtable__now')), max: clean(tr.querySelector('.mtable__max')), unit: clean(tr.querySelector('.unit')) }))
+  root.querySelectorAll('.pair > div').forEach(d => rows.push({ quantity: clean(d.querySelector('.label')), now: clean(d.querySelector('.metric__num')), max: '', unit: clean(d.querySelector('.unit')) }))
+  root.querySelectorAll('.stat').forEach(d => rows.push({ quantity: clean(d.firstElementChild), now: clean(d.querySelector('.stat__v [id]') ?? d.querySelector('.stat__v')), max: '', unit: clean(d.querySelector('.stat__v .unit')) }))
+  const time = Math.round(sim.time), seed = config.seed
+  download(`meteolab-${block}-t${time}s.csv`, toCsv(rows, [['model_time_s', () => time], ['seed', () => seed], ['quantity', r => r.quantity], ['value', r => value(r.now)], ['max_this_run', r => value(r.max)], ['unit', r => r.unit]]))
+}
+document.querySelectorAll<HTMLElement>('[data-csv]').forEach(b => b.addEventListener('click', e => { e.preventDefault(); e.stopPropagation(); blockCsv(b.dataset.csv!, b) }))
 /** A rotating cell's downdraughts in a few words (core/flanks.ts), for its card. */
 function flankText(f: StormFlanks | null) {
   if (!f || !(f.ffd || f.rfd)) return ''
@@ -1423,6 +1457,7 @@ function frame(now:number){
   // The ledger of what was put in by hand follows the snapshots (an intervention shows once the worker has made it).
   if (handTool && sim.model.added.count !== handShown) showHand()
   const elapsed=Math.min(.2,(now-last)/1000);last=now;if(running)sim.advance(elapsed);if(!(radar.open||skewt.open||station.open||detector.open||zonesPanel.open||analysis.open||satellite.open||compare.open||ensemble.open||regime.open))sim.render();const d=sim.diagnostics()
+  trackPeaks()
   text('cape',d.cape.toFixed(0));text('mlcape',d.indices.ml.cape.toFixed(0));text('mlcin',d.indices.ml.cin.toFixed(0));text('mucape',d.indices.mu.cape.toFixed(0));text('dcape',d.indices.dcape.toFixed(0));text('srh01',d.storm.srh01.toFixed(0));text('srh03',d.storm.srh03.toFixed(0));text('scp',d.storm.scp.toFixed(1));text('stp',d.storm.stp.toFixed(1));text('ship',d.storm.ship.toFixed(1));text('dcp',d.storm.dcp.toFixed(1));text('esrh',d.storm.effective?d.storm.effective.srh.toFixed(0):'—');text('eshear',d.storm.effective?d.storm.effective.shear.toFixed(0):'—');text('lapse75',d.storm.lapse75.toFixed(1));text('cin',d.cin.toFixed(0));text('updraft',d.updraft.toFixed(1));text('downdraft',d.downdraft.toFixed(1));text('uh',d.updraftHelicity.toFixed(0));text('uhLow',`${d.uh01.toFixed(0)} / ${d.uh03.toFixed(0)}`);text('cloudTop',d.cloudTop.toFixed(1));text('thermalTop',d.thermalTop.toFixed(1));text('cloudWater',d.cloudWater.toFixed(2));text('coldPool',d.coldPool.toFixed(1));text('gust',d.gust.toFixed(1));text('hail',d.hail>=1?(d.hail/10).toFixed(1):'—');text('hailSwath',d.hailSwath>=1?L(`за прогон до ${(d.hailSwath/10).toFixed(1)} см`,`up to ${(d.hailSwath/10).toFixed(1)} cm this run`):'');showMode(d.hail>=1);text('clipped',String(d.clipped));showRain(d.rain);text('hailWord',hailWord(d.hail));text('cloudGenus',d.cloud);text('rainTotal',d.rainTotal.toFixed(1));text('lcl',d.lcl===null?'—':`${d.lcl.toFixed(1)}${KM}`);text('lfc',d.lfc===null?'—':`${d.lfc.toFixed(1)}${KM}`);text('el',d.el===null?'—':`${d.el.toFixed(1)}${KM}`);text('cellType',d.cellType);text('cellReason',d.cellReason);text('logicText',d.logic);text('sun',`${d.insolation.toFixed(0)} ${L('Вт/м²','W/m²')}`);text('sunElevation',d.sunElevation>0?L(`${d.sunElevation.toFixed(0)}° над горизонтом`,`${d.sunElevation.toFixed(0)}° above the horizon`):L('ночь','night'))
   text('surfaceReadout',({grass:L('ТРАВА','GRASS'),dry:L('СУХАЯ ПОЧВА','DRY SOIL'),water:L('ВОДА','WATER'),urban:L('ГОРОД','CITY')})[config.surfaceType])
   const b=sim.balance;text('rkw',b?b.ratio.toFixed(1):'—');text('rkwNote',b?`C ${b.c.toFixed(0)} / Δu ${b.deltaU.toFixed(0)}${MS}`:L('купола нет','no cold pool'));const card=document.querySelector<HTMLElement>('#rkwCard')!;card.dataset.base??=card.title;card.title=b?`${card.dataset.base}\n\n${L('Сейчас','Now')}: ${describeBalance(b)}.`:card.dataset.base

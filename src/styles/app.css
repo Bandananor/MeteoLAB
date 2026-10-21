@@ -256,3 +256,18 @@ html:not(.layout-phone) .m-only { display: none !important; }
 .ov-toggle__count { margin-left: 4px; padding: 0 5px; border-radius: 8px; background: var(--surface-3); font-size: var(--fs-label); }
 .ov-toggle--menu::after { content: "▾"; margin-left: 4px; opacity: .7; }
 .ov-toggle--menu::before { display: none; }
+/* The right column's values table (main.ts mrow): now, the most this run, the unit; the blocks' CSV buttons. */
+.mtable { width: 100%; border-collapse: collapse; font-size: var(--fs-body-s); }
+.mtable th, .mtable td { padding: 4px 4px; border-bottom: 1px solid var(--line); text-align: right; white-space: nowrap; }
+.mtable thead th { color: var(--text-3); font-weight: 400; font-size: var(--fs-label); }
+.mtable th[scope="row"] { text-align: left; white-space: normal; font-weight: 400; }
+.mtable th[scope="row"] .label { color: var(--text-2); }
+.mtable td.num { font-family: var(--font-mono); color: var(--text); }
+.mtable td.mtable__max { color: var(--text-3); }
+.mtable td.unit { color: var(--text-3); font-size: var(--fs-label); text-align: left; }
+.mtable tr.metric--danger td.mtable__now, .mtable tr.metric--danger .label { color: var(--danger); }
+.mtable tr.is-empty td.mtable__now { color: var(--text-3); }
+.mtable .info { margin-left: 4px; vertical-align: middle; }
+.mtable__notes { margin-top: 4px; }
+.diag__scope { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.diag__tools { display: flex; justify-content: flex-end; margin-bottom: 4px; }
