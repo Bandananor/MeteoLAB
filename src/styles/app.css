@@ -230,12 +230,13 @@ html:not(.layout-phone) .m-only { display: none !important; }
 .layout-phone .video-dialog .modal__actions > .btn { flex: 1; height: var(--h-touch); }
 .chart__actions { display: flex; gap: 6px; }
 
-/* The simple settings (2.9): the essentials only, or all the settings (main.ts settingsMode). */
-.settings-mode { margin-top: 10px; }
-.side--left[data-settings="simple"] details.group:not([data-mode]),
-.side--left[data-settings="simple"] .builder,
-.side--left[data-settings="simple"] #soundingOpen,
-.side--left[data-settings="advanced"] details.group[data-mode="simple"] { display: none; }
+/* The starting environment's numbers over the left column's groups (main.ts showEnvironment): stays in view while they scroll. */
+.env-summary { position: sticky; top: 0; z-index: 2; padding: 8px 16px 10px; background: var(--surface-1); border-bottom: 1px solid var(--line); }
+.env-summary__head { display: flex; justify-content: space-between; align-items: baseline; font-size: var(--fs-label); font-weight: 600; color: var(--text-2); margin-bottom: 4px; }
+.env-summary__grid { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 12px; margin: 0; }
+.env-summary__grid div { display: flex; justify-content: space-between; gap: 6px; font: var(--fs-caption)/1.5 var(--font-mono); }
+.env-summary__grid dt { color: var(--text-3); white-space: nowrap; }
+.env-summary__grid dd { margin: 0; color: var(--text); white-space: nowrap; }
 
 /* Interventions by hand (2.9): the tools menu scrolls on a short screen. */
 .hand-menu { max-height: calc(100vh - 16px); overflow-y: auto; }

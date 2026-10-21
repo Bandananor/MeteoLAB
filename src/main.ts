@@ -50,10 +50,10 @@ const slider = (key: keyof SimConfig, label: string, min: number, max: number, s
     <input class="range" data-key="${key}" data-unit="${unit}" data-digits="${digits}" type="range" min="${min}" max="${max}" step="${step}" value="${value}"></label>`
 /**
  * A collapsible group; `profile` groups are dimmed when the scenario's profile is analytic, `id` ones remember being
- * open; `mode`: shown only with the simple settings, or with both (absent: with all the settings only).
+ * open.
  */
-const group = (title: string, body: string, o: { count?: number; tag?: string; open?: boolean; profile?: boolean; id?: string; bare?: boolean; mode?: 'simple' | 'both' } = {}) => `
-  <details class="group"${o.open ? ' open' : ''}${o.profile ? ' data-profile' : ''}${o.id ? ` data-group="${o.id}"` : ''}${o.mode ? ` data-mode="${o.mode}"` : ''}><summary><span class="group__title">${title}</span>${o.profile ? `<span class="group__tag" hidden>${L('формулы WK', 'WK formulas')}</span>` : ''}${o.count || o.tag ? `<span class="group__count">${o.count ?? o.tag}</span>` : ''}</summary>${o.bare ? body : `<div class="group__body">${body}</div>`}</details>`
+const group = (title: string, body: string, o: { count?: number; tag?: string; open?: boolean; profile?: boolean; id?: string; bare?: boolean } = {}) => `
+  <details class="group"${o.open ? ' open' : ''}${o.profile ? ' data-profile' : ''}${o.id ? ` data-group="${o.id}"` : ''}><summary><span class="group__title">${title}</span>${o.profile ? `<span class="group__tag" hidden>${L('формулы WK', 'WK formulas')}</span>` : ''}${o.count || o.tag ? `<span class="group__count">${o.count ?? o.tag}</span>` : ''}</summary>${o.bare ? body : `<div class="group__body">${body}</div>`}</details>`
 /** A knob of the simple settings: a slider of its own (src/settings/simple.ts changes the profile), not a SimConfig key. */
 const knob = (id: string, label: string, min: number, max: number, step: number, title: string) => `
   <label class="field" title="${title}"><span class="field__head"><span class="field__label">${label}${RESTART}</span><output class="field__value" id="${id}Out"></output></span>
@@ -121,13 +121,15 @@ app.innerHTML = `<div class="app">
     <div class="seg seg--text" role="group" aria-label="${L('Тема', 'Theme')}"><button data-theme-set="auto" title="${L('Как в системе', 'As the system')}">${L('Авто', 'Auto')}</button><button data-theme-set="light">${L('Светлая', 'Light')}</button><button data-theme-set="dark">${L('Тёмная', 'Dark')}</button></div>
   </header>
   <main class="app__main">
-    <aside class="side side--left" aria-label="${L('Обстановка', 'Setting')}">
+    <aside class="side side--left" aria-label="${L('Начальные условия', 'Initial conditions')}">
       <div class="side__scroll">
         <div class="side__block">
           <h2 class="side__title d-only">${L('Сценарии', 'Scenarios')}</h2>
           <div class="scenarios d-only">${scenarioButtons(plainPresets)}</div>
           <h2 class="side__title side__title--sub d-only" title="${L('Сюжет на несколько часов: воздушная масса, что приносит ветер (адвекция), фронт и солнце', 'A story of a few hours: the air mass, what the wind brings (advection), a front and the sun')}">${L('Синоптические ситуации', 'Synoptic situations')}</h2>
           <div class="scenarios d-only">${scenarioButtons(situationPresets)}</div>
+          <h2 class="side__title side__title--sub d-only">${L('Своя среда', 'Your own environment')}</h2>
+          <button class="btn btn--block" id="soundingOpen" title="${L('Реальное зондирование из файла или вставленного текста: Вайомингский университет, SHARPpy, input_sounding CM1/WRF, CSV — гроза в среде конкретного дня', 'A real sounding from a file or pasted text: University of Wyoming, SHARPpy, CM1/WRF input_sounding, CSV — a storm in the environment of a given day')}">${L('Реальное зондирование…', 'Real sounding…')}</button>
           <details class="builder"><summary>${L('Собрать свою ситуацию', 'Build your own situation')}</summary>
             ${choice('sitMass', L('Воздушная масса', 'Air mass'), AIR_MASSES)}${choice('sitTrigger', L('Что запускает конвекцию', 'What sets off convection'), TRIGGERS)}${choice('sitShear', L('Сдвиг ветра', 'Wind shear'), SHEARS)}
             <div class="field"><span class="field__label">${L('Начало', 'Start')}</span><span class="select"><select id="sitHour">${[8, 9, 10, 11, 12, 13].map(h => `<option value="${h}"${h === 10 ? ' selected' : ''}>${h}:00</option>`).join('')}</select></span></div>
@@ -136,13 +138,17 @@ app.innerHTML = `<div class="app">
           <div class="scenario-note d-only" id="scenarioNote">
             <div class="scenario-note__head"><span class="scenario-note__name" id="scenarioName"></span><button class="btn btn--quiet btn--xs" id="scenarioMore">${L('Подробнее', 'More')}</button></div>
             <div class="scenario-note__text" id="scenarioText"></div>
-            <div class="scenario-note__nums" id="scenarioNums"></div>
             <ol class="story" id="story" hidden></ol>
           </div>
-          <div class="seg seg--text seg--block settings-mode" role="group" aria-label="${L('Настройки', 'Settings')}"><button data-settings-set="simple" title="${L('Несколько понятных ручек: жара, влажность, ветер наверху, поворот ветра, время суток', 'A few plain knobs: heat, moisture, the wind aloft, the wind’s turning, the time of day')}">${L('Главное', 'Essentials')}</button><button data-settings-set="advanced" title="${L('Полный профиль по слоям, годограф, поверхность, расчёт, зондирование и свои ситуации', 'The full profile by layers, the hodograph, the surface, the computation, soundings and own situations')}">${L('Все настройки', 'All settings')}</button></div>
           <div class="notice" id="profileLocked" hidden>${L('Профиль задан формулами — ползунки температуры, влажности и ветра не действуют.', 'The profile is set by formulas — the temperature, humidity and wind sliders have no effect.')}</div>
-          <button class="btn btn--block" id="soundingOpen" title="${L('Реальное зондирование из файла или вставленного текста: Вайомингский университет, SHARPpy, input_sounding CM1/WRF, CSV — гроза в среде конкретного дня', 'A real sounding from a file or pasted text: University of Wyoming, SHARPpy, CM1/WRF input_sounding, CSV — a storm in the environment of a given day')}">${L('Реальное зондирование…', 'Real sounding…')}</button>
         </div>
+        <div class="env-summary" aria-live="polite"><div class="env-summary__head">${L('Среда на старте', 'Starting environment')}<span class="t-caption" title="${L('Частица перемешанного слоя (ML, нижние 100 гПа) по соглашениям MetPy; сдвиг — разность ветра 0–6 км; SRH — для правой ячейки по Банкерсу; DCAPE — нисходящая частица из слоя 700–500 гПа', 'The mixed-layer parcel (ML, the lowest 100 hPa) by the MetPy conventions; the shear — the 0–6 km wind difference; SRH — for the Bunkers right mover; DCAPE — the downdraught parcel from the 700–500 hPa layer')}">ML · MetPy</span></div><dl class="env-summary__grid" id="envSummary"></dl></div>
+        ${group(L('Основные параметры', 'Main parameters'), `
+          ${knob('simpleHeat', L('Жара: воздух у земли', 'Heat: the air near the ground'), -6, 6, .5, L('Теплее или холоднее сценария у земли (до 1,5 км): больше или меньше CAPE', 'Warmer or cooler than the scenario near the ground (up to 1.5 km): more or less CAPE'))}
+          ${knob('simpleMoisture', L('Влажность нижних 1,5 км', 'Moisture of the lowest 1.5 km'), .7, 1.3, .05, L('Пар у земли как доля сценария: топливо грозы — CAPE и низкое основание облаков', 'The vapour near the ground as a share of the scenario’s: the storm’s fuel — CAPE and a low cloud base'))}
+          ${knob('simpleShear', L('Ветер наверху: сдвиг 0–6 км', 'Wind aloft: 0–6 km shear'), 0, 40, 1, L('Насколько ветер на 6 км сильнее, чем у земли: слабый — одиночные ячейки, умеренный — многоячейковые, сильный — суперячейки', 'How much stronger the wind at 6 km is than at the ground: weak — ordinary cells, moderate — multicells, strong — supercells'))}
+          ${knob('simpleTurn', L('Поворот ветра 0–3 км', 'Wind turning 0–3 km'), -45, 180, 5, L('На сколько градусов ветер поворачивает по часовой стрелке от земли до 3 км: поворот даёт спиральность (SRH) и вращение', 'How many degrees the wind turns clockwise from the ground to 3 km: the turning gives helicity (SRH) and rotation'))}
+          <p class="t-caption" id="simpleNote" hidden></p>`, { open: true })}
         ${group(L('Температурный профиль', 'Temperature profile'), `
           ${slider('surfaceTemp',L('Температура у земли', 'Surface temperature'),15,40,.5,30,' °C',1)}
           ${slider('lapseLow',L('Градиент 0–3 км', 'Lapse rate 0–3 km'),3,11,.1,8.4,KKM,1)}
@@ -171,9 +177,6 @@ app.innerHTML = `<div class="app">
           ${slider('windDir3',L('Направление на 3 км', 'Direction at 3 km'),0,360,5,185,'°')}
           ${slider('windDir6',L('Направление на 6 км', 'Direction at 6 km'),0,360,5,215,'°')}
           ${slider('windDir10',L('Направление на 10 км', 'Direction at 10 km'),0,360,5,235,'°')}`, { count: 12, profile: true })}
-        ${group(L('3D-динамика', '3D dynamics'), `
-          ${slider('latitude',L('Широта / Кориолис', 'Latitude / Coriolis'),0,75,1,45,'°')}
-          ${slider('turbulence',L('Субсеточная турбулентность', 'Subgrid turbulence'),0,2,.05,.55,'×',2)}`, { count: 2 })}
         ${group(L('Поверхность и радиация', 'Surface and radiation'), `
           <div class="field"><span class="field__label">${L('Тип поверхности', 'Surface type')}${RESTART}</span><span class="select"><select id="surfaceType"><option value="grass">${L('Трава', 'Grass')}</option><option value="dry">${L('Сухая почва', 'Dry soil')}</option><option value="water">${L('Вода', 'Water')}</option><option value="urban">${L('Город', 'City')}</option></select></span></div>
           ${slider('hour',L('Местное солнечное время', 'Local solar time'),5,21,.25,13.5,L(' ч', ' h'),2)}
@@ -181,8 +184,14 @@ app.innerHTML = `<div class="app">
           ${slider('solarMax',L('Солнце в зените', 'Sun at the zenith'),300,1200,25,1000,L(' Вт/м²', ' W/m²'))}
           ${slider('soilMoisture',L('Влажность почвы', 'Soil moisture'),0,100,1,45,' %')}
           ${slider('city',L('Город в центре, радиус (0 — нет)', 'City in the centre, radius (0 — none)'),0,12,1,0,KM)}`, { count: 6 })}
+        ${group(L('Инициирование', 'Initiation'), `
+          ${slider('bubble',L('Сила начального термика (0 — без термика)', 'Starting thermal strength (0 — no thermal)'),0,2.5,.05,1,'×',2)}
+          <p class="t-caption">${L('Тёплые пузыри у земли на старте (+3,2 K и 1,1 м/с в центре, радиус ~4 км, до 2,7 км) — как в идеализированных опытах; ещё термик — двойным щелчком по земле или меню «Эксперименты» → «Воздействие руками».', 'Warm bubbles near the ground at the start (+3.2 K and 1.1 m/s at the centre, a ~4 km radius, up to 2.7 km), as in idealised experiments; more thermals — a double click on the ground or “Experiments” → “Intervene by hand”.')}</p>`, { count: 1 })}
+        ${group(L('Динамика: Кориолис и турбулентность', 'Dynamics: Coriolis and turbulence'), `
+          ${slider('latitude',L('Широта / Кориолис', 'Latitude / Coriolis'),0,75,1,45,'°')}
+          ${slider('turbulence',L('Субсеточная турбулентность', 'Subgrid turbulence'),0,2,.05,.55,'×',2)}`, { count: 2 })}
         ${group(L('Адвекция: среда меняется', 'Advection: the environment changes'), advectionMarkup(), { id: 'advection' })}
-        ${group(L('Расчёт', 'Computation'), `
+        ${group(L('Численная схема и расчёт', 'Numerics and computation'), `
           <div class="field" title="${L('Точный перенос (WENO 5-го порядка, по умолчанию) почти не размывает восходящие потоки и сам сохраняет массу воды. Быстрый (полулагранжев) примерно вдвое дешевле, но размывает потоки: в сильном сдвиге термик не стартует', 'Accurate transport (5th-order WENO, the default) hardly smears the updraughts and conserves the water mass by itself. Fast (semi-Lagrangian) costs about half as much but smears them: in strong shear the thermal does not start')}"><span class="field__label">${L('Перенос', 'Transport')}</span><span class="select"><select id="transport"><option value="weno">${L('Точный (WENO5)', 'Accurate (WENO5)')}</option><option value="semi-lagrangian">${L('Быстрый (полулагранжев)', 'Fast (semi-Lagrangian)')}</option></select></span></div>
           <label class="check" title="${L('Область сдвигается вместе с грозой (правая ячейка по Банкерсу при сдвиге 0–6 км от 15 м/с, иначе средний ветер 0–6 км): гроза остаётся внутри и не въезжает с другой стороны в собственный холодный отток. Ветер, годограф и радар — относительно земли', 'The domain moves with the storm (the Bunkers right mover with 0–6 km shear from 15 m/s, else the 0–6 km mean wind): the storm stays inside and does not drive into its own cold outflow from the other side. The wind, the hodograph and the radar are ground-relative')}"><input type="checkbox" id="followStorm" checked> ${L('Область движется вместе с грозой', 'The domain moves with the storm')}${RESTART}</label>
           <label class="check" title="${L('Электризация облака и молнии: заряд на крупе, кристаллах и каплях, поле и разряды (IC и в землю). Выключение ускоряет расчёт примерно на четверть; погода от этого не меняется — заряд не влияет на движение воздуха', 'Cloud electrification and lightning: charge on graupel, crystals and drops, the field and the discharges (IC and to the ground). Turning it off speeds the run up by about a quarter; the weather stays the same — the charge does not move the air')}"><input type="checkbox" id="lightning" checked> ${L('Молнии', 'Lightning')}${RESTART}</label>
@@ -192,17 +201,7 @@ app.innerHTML = `<div class="app">
           <div class="notice notice--warn" id="domainWarn" hidden><span class="notice__text">${L('Большая область считается медленнее: время шага растёт с площадью (96 × 72 км — в ~4 раза дольше стандартной). До расчёта на видеокарте (WebGPU, в плане) очень большие области на слабом компьютере идут медленно.', 'A larger domain runs slower: a step’s time grows with the area (96 × 72 km takes ~4 times the standard one). Until the computation moves to the GPU (WebGPU, planned) very large domains are slow on a weak computer.')}</span></div>
           ${slider('speed',L('Ускорение времени', 'Time acceleration'),1,120,1,8,'×')}
           <div class="t-caption" id="speedReal"></div>
-          <div class="notice notice--warn" id="speedWarn" hidden><span class="notice__text"></span></div>
-          ${slider('bubble',L('Сила начального термика (0 — без термика)', 'Starting thermal strength (0 — no thermal)'),0,2.5,.05,1,'×',2)}`, { count: 6 })}
-        ${group(L('Главное', 'Essentials'), `
-          ${knob('simpleHeat', L('Жара: воздух у земли', 'Heat: the air near the ground'), -6, 6, .5, L('Теплее или холоднее сценария у земли (до 1,5 км): больше или меньше CAPE', 'Warmer or cooler than the scenario near the ground (up to 1.5 km): more or less CAPE'))}
-          ${knob('simpleMoisture', L('Влажность нижних 1,5 км', 'Moisture of the lowest 1.5 km'), .7, 1.3, .05, L('Пар у земли как доля сценария: топливо грозы — CAPE и низкое основание облаков', 'The vapour near the ground as a share of the scenario’s: the storm’s fuel — CAPE and a low cloud base'))}
-          ${knob('simpleShear', L('Ветер наверху: сдвиг 0–6 км', 'Wind aloft: 0–6 km shear'), 0, 40, 1, L('Насколько ветер на 6 км сильнее, чем у земли: слабый — одиночные ячейки, умеренный — многоячейковые, сильный — суперячейки', 'How much stronger the wind at 6 km is than at the ground: weak — ordinary cells, moderate — multicells, strong — supercells'))}
-          ${knob('simpleTurn', L('Поворот ветра 0–3 км', 'Wind turning 0–3 km'), -45, 180, 5, L('На сколько градусов ветер поворачивает по часовой стрелке от земли до 3 км: поворот даёт спиральность (SRH) и вращение', 'How many degrees the wind turns clockwise from the ground to 3 km: the turning gives helicity (SRH) and rotation'))}
-          ${slider('hour',L('Местное солнечное время', 'Local solar time'),5,21,.25,13.5,L(' ч', ' h'),2)}
-          ${slider('speed',L('Ускорение времени', 'Time acceleration'),1,120,1,8,'×')}
-          <p class="t-caption" id="simpleNums"></p>
-          <p class="t-caption" id="simpleNote" hidden></p>`, { open: true, mode: 'simple' })}
+          <div class="notice notice--warn" id="speedWarn" hidden><span class="notice__text"></span></div>`, { count: 5 })}
         ${group(L('Что рассчитано, а что нет', 'What is computed and what is not'), `<div class="model-notes">${L(`
           <p><b>Рассчитано по уравнениям</b> на сетке ~1,2 км по горизонтали (у земли 100 м по вертикали, выше — растянуто): ветер во всех трёх направлениях, давление (анеластическое приближение), плавучесть с учётом пара и веса капель, перенос тепла, пара, облака и осадков (WENO 5-го порядка), сила Кориолиса. Потоки шире ~6–8 км (5–7 шагов сетки) разрешены хорошо, более узкие сглажены.</p>
           <p><b>Параметризовано</b> — заменено упрощённой формулой, потому что меньше ячейки сетки: турбулентность мельче сетки (Смагоринский, отдельно по горизонтали и вертикали), микрофизика (объёмная: тёплый дождь по Кесслеру, лёд, снег, крупа и град по Лину — каждая частица описана только массой), потоки тепла и пара от поверхности (баланс энергии, трение по шероховатости), солнце (греет только землю; облака его не заслоняют, ночного выхолаживания нет — тени облаков и ночь на 3D-виде только нарисованы), губка у верха области, периодические края.</p>
@@ -210,12 +209,13 @@ app.innerHTML = `<div class="app">
           <p><b>Computed from the equations</b> on a grid of ~1.2 km horizontally (100 m vertically at the ground, stretched above): the wind in all three directions, the pressure (anelastic approximation), buoyancy with vapour and the weight of the drops, the transport of heat, vapour, cloud and precipitation (5th-order WENO), the Coriolis force. Flows wider than ~6–8 km (5–7 grid steps) are resolved well, narrower ones are smoothed.</p>
           <p><b>Parameterized</b> — replaced by a simplified formula because it is smaller than a grid cell: turbulence below the grid scale (Smagorinsky, separately horizontal and vertical), microphysics (bulk: warm rain after Kessler, ice, snow, graupel and hail after Lin — each kind of particle described by its mass only), heat and vapour fluxes from the surface (energy balance, friction by roughness), the sun (heats only the ground; clouds do not block it, there is no night cooling — cloud shadows and the night in the 3D view are only drawn), a sponge at the top of the domain, periodic edges.</p>
           <p><b>Picture only</b>, not part of the computation: small cloud detail (fractal noise below the grid scale), the rain and snow particles, cloud shadows on the ground. The radar, the station and the indices come from the model’s fields; the station’s pressure is a hydrostatic estimate.</p>`)}
-        </div>`, { mode: 'both' })}
+        </div>`)}
       </div>
       <div class="side__actions">
         <div class="side__row"><button class="btn btn--primary btn--l" id="restart">${L('Перезапустить', 'Restart')}</button><button class="btn btn--l" id="pause">${L('Пауза', 'Pause')}</button></div>
-        <button class="btn btn--block" id="share" title="${L('Скопировать ссылку на этот опыт: все настройки и сид, так что по ней откроется тот же расчёт', 'Copy a link to this experiment: all the settings and the seed, so it opens the same run')}">${L('Ссылка на опыт', 'Link to the run')}</button>
+        <div hidden><button class="btn btn--block" id="share" title="${L('Скопировать ссылку на этот опыт: все настройки и сид, так что по ней откроется тот же расчёт', 'Copy a link to this experiment: all the settings and the seed, so it opens the same run')}">${L('Ссылка на опыт', 'Link to the run')}</button>
         <div class="side__row"><button class="btn" id="saveState" title="${L('Сохранить расчёт в файл .meteolab (все поля модели в этот момент, ~4 МБ): его можно открыть позже и продолжить с того же места', 'Save the run to a .meteolab file (all the model’s fields at this moment, ~4 MB): open it later and go on from the same point')}">${L('Сохранить', 'Save')}</button><button class="btn" id="loadState" title="${L('Открыть сохранённый файл .meteolab и продолжить расчёт с сохранённого момента', 'Open a saved .meteolab file and continue the run from the saved moment')}">${L('Открыть…', 'Open…')}</button></div>
+        </div>
         <span class="select"><select id="rewind" title="${L('Перемотка назад: состояние запоминается каждые 5 модельных минут (последние ~60 МБ). Выбранная минута — и расчёт идёт оттуда заново; более поздние точки забываются', 'Rewind: the state is kept every 5 model minutes (the last ~60 MB). Pick a minute and the run starts again from there; later points are forgotten')}"><option value="">${L('Вернуться к минуте…', 'Go back to minute…')}</option></select></span>
         <input id="stateFile" type="file" accept=".meteolab" hidden>
         <div class="notice" id="stateNote" role="status" hidden><span class="notice__text"></span><button class="notice__close" aria-label="${L('Закрыть', 'Close')}">×</button></div>
@@ -551,7 +551,7 @@ microSelect.addEventListener('change', () => { config.microphysics = microSelect
 // colour while the thumb is held.
 const fillRange = (input: HTMLInputElement) => input.style.setProperty('--p', `${(Number(input.value) - Number(input.min)) / (Number(input.max) - Number(input.min)) * 100}%`)
 const showOutput = (input: HTMLInputElement) => {
-  const out = input.closest('.field')!.querySelector<HTMLOutputElement>('output')!
+  const out = document.querySelector<HTMLOutputElement>(`[data-output="${input.dataset.key}"]`)!
   out.innerHTML = `${Number(input.value).toFixed(Number(input.dataset.digits))}<span class="u">${input.dataset.unit}</span>`
   fillRange(input)
 }
@@ -595,7 +595,6 @@ function showScenario() {
   const p = baseScenario === null ? built : presets[baseScenario], s = config.sounding
   text('scenarioName', p ? p.title : s ? `${L('Зондирование', 'Sounding')}: ${s.name || L('без названия', 'untitled')}` : L('Расчёт из файла', 'Run from a file'))
   text('scenarioText', p ? `${p.hint.replace(/.$/, '')}.` : s ? L(`Температура, влажность и ветер — из реального зондирования (${s.levels.length} уровней до ${(s.levels[s.levels.length - 1].z / 1000).toFixed(1)} км над станцией). Термик, солнце, поверхность и расчёт — ползунками.`, `Temperature, humidity and wind come from a real sounding (${s.levels.length} levels up to ${(s.levels[s.levels.length - 1].z / 1000).toFixed(1)} km above the station). The thermal, the sun, the surface and the computation — by the sliders.`) : L('Настройки взяты из сохранённого файла и ни с одним сценарием не сравниваются.', 'The settings come from a saved file and are compared with no scenario.'))
-  text('scenarioNums', p ? p.nums : s ? environmentNums(config) : '')
   showStory(p?.story ?? null)
   scenarioNote.classList.remove('is-open'); scenarioMore.textContent = L('Подробнее', 'More')
   // «Подробнее» only when the text is cut.
@@ -607,8 +606,7 @@ document.querySelectorAll<HTMLInputElement>('input[data-key]').forEach(input => 
   input.addEventListener('input', () => {
     ;(config[key] as number|string) = Number(input.value)
     showOutput(input)
-    // The simple settings have their own time and speed sliders: the twin follows.
-    document.querySelectorAll<HTMLInputElement>(`input[data-key="${key}"]`).forEach(twin => { if (twin !== input) { twin.value = input.value; showOutput(twin) } })
+    showEnvironment()
   })
   input.addEventListener('change', () => { if (resetKeys.has(key)) { markPreset(null); recreate(); advection.show(config) } else markModified() })
 })
@@ -671,18 +669,7 @@ function syncControls() {
   followCheck.checked = config.followStorm !== false; lightningCheck.checked = config.lightning !== false; domainSelect.value = config.domain ?? 'standard'; showDomainControls()
   advection.show(config); markProfileGroups(); markModified(); showSimple()
 }
-// The simple settings (2.9): the essentials or all the settings, remembered; the knobs change the whole profile.
-const SETTINGS_KEY = 'meteolab-settings'
-const leftSide = document.querySelector<HTMLElement>('.side--left')!
-const settingsMode = (mode: 'simple' | 'advanced') => {
-  leftSide.dataset.settings = mode
-  document.querySelectorAll<HTMLElement>('[data-settings-set]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.settingsSet === mode)))
-}
-settingsMode((() => { try { return localStorage.getItem(SETTINGS_KEY) === 'advanced' ? 'advanced' : 'simple' } catch { return 'simple' } })())
-document.querySelectorAll<HTMLButtonElement>('[data-settings-set]').forEach(b => b.addEventListener('click', () => {
-  const mode = b.dataset.settingsSet as 'simple' | 'advanced'
-  settingsMode(mode); try { localStorage.setItem(SETTINGS_KEY, mode) } catch { /* the choice lasts this visit */ }
-}))
+// «Основные параметры» (2.9): a few knobs, each a change of the whole profile (src/settings/simple.ts).
 const KNOBS = {
   simpleHeat: { show: (v: number) => `${v > 0 ? '+' : v < 0 ? '−' : ''}${decimal(Math.abs(v), 1)} K`, apply: (c: SimConfig, v: number) => withHeat(c, v - (heatOf(c, baseConfig()) ?? 0)) },
   simpleMoisture: { show: (v: number) => `×${decimal(v, 2)}`, apply: (c: SimConfig, v: number) => withMoisture(c, v / moistureOf(c, baseConfig())) },
@@ -694,11 +681,25 @@ type Knob = keyof typeof KNOBS
 const knobInput = (id: Knob) => document.querySelector<HTMLInputElement>(`#${id}`)!
 const showKnob = (id: Knob) => { const input = knobInput(id); document.querySelector(`#${id}Out`)!.textContent = KNOBS[id].show(Number(input.value)); fillRange(input) }
 /** The knobs read from the settings as they are (the heat and the moisture as changes from the scenario). */
+/** The starting environment's numbers (the always-visible summary), once a frame at most while a slider moves. */
+let envFrame = 0
+function showEnvironment() {
+  if (envFrame) return
+  envFrame = requestAnimationFrame(() => {
+    envFrame = 0
+    const grid = createGrid(), env = new Environment(config, grid, environmentProfile(config, grid.height)), p = parcelIndices(env, grid.height), k = stormIndices(env, p)
+    const n = (v: number) => String(Math.round(v)).replace('-', '−'), km = (v: number | null) => v === null ? '—' : `${decimal(v, 2)} ${L('км', 'km')}`
+    document.querySelector('#envSummary')!.innerHTML = ([
+      ['ML CAPE', `${n(p.ml.cape)} ${JKG}`], ['ML CIN', `${n(p.ml.cin)} ${JKG}`], ['LCL', km(p.ml.lcl)], ['LFC', km(p.ml.lfc)],
+      [L('Сдвиг 0–6 км', 'Shear 0–6 km'), `${n(k.shear06)}${MS}`], ['DCAPE', `${n(p.dcape)} ${JKG}`], ['SRH 0–1 км', `${n(k.srh01)} ${L('м²/с²', 'm²/s²')}`], ['SRH 0–3 км', `${n(k.srh03)} ${L('м²/с²', 'm²/s²')}`],
+    ] as const).map(([a, b]) => `<div><dt>${a.replace(' км', L(' км', ' km'))}</dt><dd>${b}</dd></div>`).join('')
+  })
+}
 function showSimple() {
   const base = baseConfig(), heat = heatOf(config, base), turn = turnOf(config), env = environmentOf(config)
   const set = (id: Knob, v: number | null) => { const input = knobInput(id); input.disabled = v === null; input.value = String(v ?? 0); showKnob(id) }
   set('simpleHeat', heat); set('simpleMoisture', moistureOf(config, base)); set('simpleShear', env.shear); set('simpleTurn', turn)
-  text('simpleNums', L(`ML CAPE ${Math.round(env.cape)} Дж/кг · сдвиг 0–6 км ${Math.round(env.shear)} м/с · SRH 0–3 км ${Math.round(env.srh)} м²/с²`, `ML CAPE ${Math.round(env.cape)} J/kg · 0–6 km shear ${Math.round(env.shear)} m/s · SRH 0–3 km ${Math.round(env.srh)} m²/s²`))
+  showEnvironment()
   const note = document.querySelector<HTMLElement>('#simpleNote')!
   note.hidden = heat !== null && turn !== null
   note.textContent = config.profile ? L('Профиль задан формулами Weisman–Klemp: жары и поворота у них нет, влажность и сдвиг меняются.', 'The profile is set by the Weisman–Klemp formulas: they have no heat and no turning; the moisture and the shear change.')
