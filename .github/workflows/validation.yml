@@ -1,0 +1,29 @@
+# The validation report (roadmap A1) for every release tag, and by hand: every case of src/validation/cases.ts on the
+# runner's cores (~2 h of one core, ~40 min on four). The report is the run's summary page and an artifact
+# (validation.md and .json); the job fails if a check is outside its bounds.
+name: Validation report
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+jobs:
+  validate:
+    name: Validation report
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v7
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-node@v7
+        with: { node-version: 24, cache: npm }
+      - run: npm ci
+      - name: npm run validate
+        run: npm run validate -- out=report/validation.md
+      - name: Summary
+        if: always()
+        run: cat report/validation.md >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || echo "### No report" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: validation-report, path: report/ }

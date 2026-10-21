@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { AtmosphereModel, createGrid, DT, Environment, MESO_PERSISTENCE, parcelIndices, SCENARIOS, type SimConfig } from '.'
+import { createGrid, Environment, parcelIndices, SCENARIOS, type SimConfig } from '.'
 import { SUMMER_DAY } from './fixtures'
+import { CASES, passes, SHORT_SCENARIOS as SHORT } from '../validation/cases'
 
 // STORMLAB_MICRO=warm runs the scenarios with Kessler warm rain; STORMLAB_SCENARIO=<index> runs only that scenario of
 // SHORT (the CI workflow runs each in its own job, in parallel). The scenarios without a thermal start from the morning
 // and take hours of heating (diurnal.test.ts checks them).
 const env = (globalThis as { process?: { env: Record<string, string | undefined> } }).process?.env ?? {}
 const micro = env.STORMLAB_MICRO as SimConfig['microphysics'], only = env.STORMLAB_SCENARIO
-const SHORT = SCENARIOS.filter(s => s.values.bubble !== 0)
 const selected = only ? [SHORT[Number(only)]] : SHORT
 const config = (values: Partial<SimConfig>): SimConfig => ({ ...SUMMER_DAY, ...values, ...(micro ? { microphysics: micro } : {}) })
 
@@ -21,28 +21,13 @@ describe('scenarios: realistic environments', () => {
 })
 
 // Slow (~10 min per scenario on a laptop: 40 simulated minutes each): `npm run test:scenarios`, or in the cloud
-// (.github/workflows/slow-tests.yml, all scenarios in parallel).
+// (.github/workflows/slow-tests.yml, all scenarios in parallel). The run and its checks: src/validation/cases.ts.
 const slow = (import.meta as { env?: { MODE?: string } }).env?.MODE === 'slow'
-/** Strongest updraught allowed in the scenarios not meant to be supercells, m/s (cloud run 10.10.2026: 20-50 m/s). */
-const MAX_ORDINARY_W = 55
 
 describe('scenarios: rotation only where a supercell is intended (calibration)', () => {
   for (const s of selected) it.runIf(slow)(`${s.name}: ${s.mesocyclone === undefined ? 'no limiter hits' : s.mesocyclone ? 'a mesocyclone persists' : 'no mesocyclone'}`, () => {
-    const model = new AtmosphereModel(config(s.values))
-    let longest = 0, maxW = 0, maxUH = 0, gust = 0
-    // Strongest wind over the ground at the 100 m level (outflow, microburst gusts).
-    const { layer, zs } = model.grid, near = zs.findIndex(z => z >= 100) * layer, [fu, fv] = model.frame
-    for (let t = 0; t < 40 * 60; t += DT) {
-      model.step(DT); model.time += DT; longest = Math.max(longest, model.rotation.persisted); maxUH = Math.max(maxUH, model.rotation.uh)
-      if (t % 60 === 0) maxW = Math.max(maxW, model.diagnostics().updraft)
-      if (t % 30 === 0) for (let c = 0; c < layer; c++) gust = Math.max(gust, Math.hypot(model.u[near + c] + fu, model.v[near + c] + fv))
-    }
-    console.log(`${s.name}: max w ${maxW.toFixed(1)} m/s, max UH ${maxUH.toFixed(0)}, mesocyclone ${longest} s, wind at 100 m ${gust.toFixed(1)} m/s, rain ${Math.max(...model.precipitation).toFixed(1)} mm, hail ${(Math.max(...model.hailSize) / 10).toFixed(1)} cm / ${Math.max(...model.hailGround).toFixed(1)} mm, clipped ${model.clipped}`)
-    expect(model.clipped).toBe(0)
-    // Release 2.0 calibration: ordinary storms stay below ~55 m/s (the ~1 km model nears parcel theory; observed
-    // storms reach 0.5-0.6 sqrt(2 CAPE)); only the supercell scenarios may go beyond.
-    if (s.mesocyclone !== true) expect(maxW).toBeLessThanOrEqual(MAX_ORDINARY_W)
-    if (s.mesocyclone === true) expect(longest).toBeGreaterThanOrEqual(MESO_PERSISTENCE)
-    if (s.mesocyclone === false) expect(longest).toBeLessThan(MESO_PERSISTENCE)
+    const c = CASES.find(x => x.id === `scenario-${SHORT.indexOf(s)}`)!, r = c.run(), [clipped, w, meso] = r.checks
+    console.log(`${s.name}: max w ${w.value.toFixed(1)} m/s, mesocyclone ${meso.value} s, ${r.note} clipped ${clipped.value}`)
+    expect(r.checks.filter(x => !passes(x)).map(x => `${x.quantity} = ${x.value}`)).toEqual([])
   }, 900_000)
 })
