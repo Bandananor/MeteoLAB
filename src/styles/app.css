@@ -250,3 +250,9 @@ html:not(.layout-phone) .m-only { display: none !important; }
 .topmenu hr { width: 100%; border: 0; border-top: 1px solid var(--line); margin: 4px 0; }
 .topmenu__note { margin: 4px 10px 2px; color: var(--text-3); font-size: var(--fs-label); line-height: 1.35; max-width: 260px; }
 .topbar .topmenu .kbd { display: inline; }
+/* The layers menu over the 3D view (main.ts): the view's toggles in a column. */
+.layers-menu { min-width: 200px; }
+.layers-menu .ov-toggle { width: 100%; justify-content: flex-start; }
+.ov-toggle__count { margin-left: 4px; padding: 0 5px; border-radius: 8px; background: var(--surface-3); font-size: var(--fs-label); }
+.ov-toggle--menu::after { content: "▾"; margin-left: 4px; opacity: .7; }
+.ov-toggle--menu::before { display: none; }
