@@ -307,3 +307,8 @@
 .mda-legend > div { display: grid; grid-template-columns: 18px minmax(0,1fr) auto; gap: 8px; align-items: center; height: 22px; font-size: var(--fs-label); color: var(--c); }
 .mda-legend i { width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--c); } .mda-legend .mda--circulation i { border-style: dashed; }
 .mda-legend .num { font-size: var(--fs-caption); color: var(--text-3); }
+/* The batch series' file editor (src/series/panel.ts): JSON in the side panel, and its check under it. */
+.series-editor { width: 100%; box-sizing: border-box; resize: vertical; min-height: 220px; padding: 8px 10px; font: 12px/1.45 var(--font-mono); background: var(--surface-2); color: var(--text); border: 1px solid var(--line); border-radius: 6px; tab-size: 2; }
+.series-editor:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.series-editor[readonly] { opacity: .7; }
+.psec__hint.is-error { color: var(--danger); }
