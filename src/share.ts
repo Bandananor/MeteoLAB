@@ -160,7 +160,7 @@ export function toCsv<T>(rows: readonly T[], columns: readonly [string, (row: T)
 }
 
 /** Hands a text file to the browser's download (the user's own click starts it). */
-export function download(name: string, text: string, type = 'text/csv') {
+export function download(name: string, text: string | Uint8Array<ArrayBuffer>, type = 'text/csv') {
   const url = URL.createObjectURL(new Blob([text], { type })), a = document.createElement('a')
   a.href = url; a.download = name; a.click()
   setTimeout(() => URL.revokeObjectURL(url), 1000)

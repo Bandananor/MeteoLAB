@@ -1,4 +1,9 @@
+import { execSync } from 'node:child_process'
 import { defineConfig } from 'vite'
+
+// The model's version written into exports (src/version.ts): the release tag and the commits since it, or the commit
+// alone where the tags are not fetched (a shallow CI checkout).
+const version = (() => { try { return execSync('git describe --tags --always --dirty', { encoding: 'utf8' }).trim() } catch { return 'unknown' } })()
 
 // Hosts that cannot send these headers (GitHub Pages) get them from public/coi-serviceworker.js (src/isolation.ts).
 // Cross-origin isolation, so the physics can share memory with its helper threads (SharedArrayBuffer; see
@@ -10,6 +15,7 @@ const PAGES = ['', 'simulator/', 'guide/', 'guide/meteo/', 'guide/start/', 'guid
 export default defineConfig({
   // The site's path: '/' locally, '/MeteoLAB/' on GitHub Pages (BASE_PATH, set by .github/workflows/pages.yml).
   base: process.env.BASE_PATH ?? '/',
+  define: { __MODEL_VERSION__: JSON.stringify(version) },
   server: { headers: isolation },
   preview: { headers: isolation },
   // The physics worker starts the helper workers itself: module workers inside a module worker.
