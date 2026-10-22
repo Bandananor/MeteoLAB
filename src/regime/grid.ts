@@ -23,7 +23,7 @@ const WIND_NODES = [['0', 0], ['05', 500], ['1', 1000], ['3', 3000], ['6', 6000]
 
 /** ML CAPE (J/kg) and the 0-6 km shear (m/s) of a configuration's environment. */
 export function environmentOf(config: SimConfig) {
-  const grid = createGrid(domainGrid(config.domain, config.top, config.domainSize)), env = new Environment(config, grid, environmentProfile(config, grid.height))
+  const grid = createGrid(domainGrid(config.domain, config.top, config.domainSize, config.spacing)), env = new Environment(config, grid, environmentProfile(config, grid.height))
   const p = parcelIndices(env, grid.height), k = stormIndices(env, p)
   return { cape: p.ml.cape, shear: k.shear06, srh: k.srh03 }
 }

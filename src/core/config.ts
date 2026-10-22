@@ -64,6 +64,11 @@ export interface SimConfig {
    * ~16 km tropopause.
    */
   top?: number
+  /**
+   * Horizontal grid spacing, km (absent = the domain's own: 1.2 x 1.125 km), the same in x and y: the domain keeps its
+   * size and gets more columns (roadmap C2, A2: 0.5 km is ~5x the columns, 0.25 km ~22x). The vertical levels stay.
+   */
+  spacing?: number
   latitude: number; turbulence: number; hour: number; solarMax: number; soilMoisture: number; surfaceType: SurfaceType
   /**
    * Optional city in the middle of the domain (fixed to the ground): its radius, km (0 or absent = none). Inside it the

@@ -50,3 +50,20 @@ describe('a domain of the user\'s own size (SimConfig.domainSize)', () => {
     expect(m.diagnostics().updraft).toBeGreaterThan(.3)
   })
 })
+
+describe('a finer horizontal grid (SimConfig.spacing, roadmap C2)', () => {
+  it('keeps the domain and the levels and sets the same spacing in x and y', () => {
+    expect(domainGrid('standard', undefined, undefined, .5)).toMatchObject({ nx: 96, ny: 72, nz: 50, width: 48_000, depth: 36_000 })
+    expect(domainGrid('large', undefined, undefined, .25)).toMatchObject({ nx: 384, ny: 288, width: 96_000 })
+    expect(domainGrid('custom', 22, [36, 27], .6)).toMatchObject({ nx: 60, ny: 45, height: 22_000 })
+    expect(domainGrid('standard', undefined, undefined, undefined)).toEqual(DEFAULT_GRID)
+  })
+
+  it('runs at 0.6 km (80 x 60 columns)', () => {
+    const m = new AtmosphereModel({ ...SUMMER_DAY, spacing: .6 })
+    expect([m.grid.nx, m.grid.ny, m.grid.dx, m.grid.dy]).toEqual([80, 60, 600, 600])
+    for (let k = 0; k < 10; k++) { m.step(DT); m.time += DT }
+    expect(m.u.every(Number.isFinite) && m.w.every(Number.isFinite)).toBe(true)
+    expect(m.diagnostics().updraft).toBeGreaterThan(.3)
+  })
+})
