@@ -282,7 +282,7 @@ export class StormView {
    * Called when the GPU's driver cannot build a shader (a phone's stricter compiler), with its log and the GPU's name:
    * the view would stay black without a word. The level is lowered once first (fewer loops, smaller shaders).
    */
-  onShaderError: ((log: string, gpu: string) => void) | null = null
+  onShaderError: ((log: string, gpu: string, part: string) => void) | null = null
   private shaderRetry: 'none' | 'pending' | 'done' = 'none'
   /** The lightning channels (lightning.ts). */
   private readonly lightning: LightningView; private readonly drawingBuffer = new THREE.Vector2()
@@ -316,11 +316,13 @@ export class StormView {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' })
     this.renderer.debug.onShaderError = (gl, program, vs, fs) => {
       const log = [gl.getShaderInfoLog(fs), gl.getShaderInfoLog(vs), gl.getProgramInfoLog(program)].filter(Boolean).join(' | ').trim() || L('без текста ошибки', 'no error text')
+      // Which part of the view it is: three puts the material's name into the source (some drivers give no log at all).
+      const part = /#define SHADER_NAME (\S+)/.exec(gl.getShaderSource(fs) ?? '')?.[1] ?? '?'
       console.error('MeteoLab shader error:', log)
       const info = gl.getExtension('WEBGL_debug_renderer_info'), gpu = String(info ? gl.getParameter(info.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER))
       if (this.shaderRetry === 'pending') return
       if (this.shaderRetry === 'none' && this.level !== 'low') { this.shaderRetry = 'pending'; setTimeout(() => { this.shaderRetry = 'done'; this.autoCeiling = 0; this.applyLevel('low') }); return }
-      this.onShaderError?.(log, gpu)
+      this.onShaderError?.(log, gpu, part)
     }
     // A phone renders at 1 pixel per CSS pixel: its screen is small and its GPU weak (the clouds are ray-marched).
  this.renderer.outputColorSpace = THREE.SRGBColorSpace; this.renderer.toneMapping = THREE.ACESFilmicToneMapping; this.renderer.toneMappingExposure = EXPOSURE
@@ -382,7 +384,7 @@ export class StormView {
     this.skyTexture = new THREE.DataTexture(new Uint16Array(SKY_COLS * SKY_ROWS * 4), SKY_COLS, SKY_ROWS, THREE.RGBAFormat, THREE.HalfFloatType)
     this.skyTexture.minFilter = this.skyTexture.magFilter = THREE.LinearFilter
     this.air = { uSky: { value: this.skyTexture }, uSkyGain: { value: 1 }, uSkyFloor: { value: new THREE.Color() }, uCityGlow: { value: new THREE.Color() }, uHaze: { value: .1 }, uAirScale: { value: AIR_OUTSIDE } }
-    this.skyMaterial = new THREE.ShaderMaterial({
+    this.skyMaterial = new THREE.ShaderMaterial({ name: 'sky',
       vertexShader: skyVertex, fragmentShader: skyFragment, side: THREE.BackSide, depthWrite: false, depthTest: false,
       uniforms: { uSunDir: this.shared.uSunDir, ...this.air, uSunDisc: { value: new THREE.Color() }, uGroundLight: { value: new THREE.Color() }, uStars: { value: 0 }, uLab: { value: 0 }, uWater: { value: model.config.surfaceType === 'water' ? 1 : 0 } },
     })
@@ -394,7 +396,7 @@ export class StormView {
     this.columnTexture.minFilter = this.columnTexture.magFilter = THREE.LinearFilter; this.columnTexture.wrapS = this.columnTexture.wrapT = THREE.RepeatWrapping; this.columnTexture.needsUpdate = true
     this.light = new LightVolume(nx, ny, nz, this.shared, this.volumeTexture)
     this.flashLight = new FlashVolume(nx, ny, nz, this.shared, this.volumeTexture)
-    this.volumeMaterial = new THREE.ShaderMaterial({
+    this.volumeMaterial = new THREE.ShaderMaterial({ name: 'cloudVolume',
       vertexShader: volumeVertex, fragmentShader: volumeFragment, side: THREE.BackSide, transparent: true, depthWrite: false, depthTest: false, premultipliedAlpha: true,
       uniforms: {
         ...this.shared, uDensity: { value: this.volumeTexture }, uNoise: { value: this.noise }, uColumns: { value: this.columnTexture }, uLight: { value: this.light.texture }, uFlashA: { value: this.flashLight.targets[0].texture }, uFlashB: { value: this.flashLight.targets[1].texture }, uFlashIA: { value: new THREE.Vector4() }, uFlashIB: { value: new THREE.Vector4() }, uFlashOn: { value: 0 }, uSunByHeight: { value: Array.from({ length: SUN_LEVELS }, () => new THREE.Vector3()) }, uAmbientTop: { value: new THREE.Color() }, uAmbientBottom: { value: new THREE.Color() }, uBounceSun: { value: new THREE.Color() },
@@ -406,9 +408,9 @@ export class StormView {
 
     this.fieldTexture = texture3D(this.fieldData, THREE.RedFormat, nx, ny, nz)
     this.fieldUniforms = { ...this.shared, uField: { value: this.fieldTexture }, uColormap: { value: null }, uDiverging: { value: 0 }, uThreshold: { value: .3 }, uDensity: { value: 1 } }
-    this.fieldMaterial = new THREE.ShaderMaterial({ vertexShader: volumeVertex, fragmentShader: fieldVolumeFragment, side: THREE.BackSide, transparent: true, depthWrite: false, depthTest: false, premultipliedAlpha: true, toneMapped: false, uniforms: this.fieldUniforms })
+    this.fieldMaterial = new THREE.ShaderMaterial({ name: 'fieldVolume', vertexShader: volumeVertex, fragmentShader: fieldVolumeFragment, side: THREE.BackSide, transparent: true, depthWrite: false, depthTest: false, premultipliedAlpha: true, toneMapped: false, uniforms: this.fieldUniforms })
     this.fieldMesh = new THREE.Mesh(volumeBox, this.fieldMaterial); this.fieldMesh.renderOrder = 1.5; this.scene.add(this.fieldMesh)
-    this.sliceMaterial = new THREE.ShaderMaterial({ vertexShader: volumeVertex, fragmentShader: sliceFragment, side: THREE.DoubleSide, toneMapped: false, uniforms: this.fieldUniforms })
+    this.sliceMaterial = new THREE.ShaderMaterial({ name: 'fieldSlice', vertexShader: volumeVertex, fragmentShader: sliceFragment, side: THREE.DoubleSide, toneMapped: false, uniforms: this.fieldUniforms })
     const horizontal = new THREE.PlaneGeometry(W, D); horizontal.rotateX(-Math.PI / 2); this.sliceH = new THREE.Mesh(horizontal, this.sliceMaterial); this.scene.add(this.sliceH)
     const vertical = new THREE.PlaneGeometry(W, H); vertical.translate(0, H / 2, 0); this.sliceV = new THREE.Mesh(vertical, this.sliceMaterial); this.scene.add(this.sliceV)
 
@@ -421,6 +423,7 @@ export class StormView {
     const surface = SURFACES.indexOf(model.config.surfaceType)
     this.groundUniforms = { uGround: { value: this.groundState }, uWind: { value: this.windTexture }, uGroundOffset: { value: new THREE.Vector2() }, uGroundSize: { value: new THREE.Vector2(W, D) }, uSurface: { value: surface } }
     Object.assign(this.skyMaterial.uniforms, this.shared, this.groundUniforms, { uNoise: { value: this.noise } })
+    groundMat.name = 'ground'
     groundMat.onBeforeCompile = shader => {
       Object.assign(shader.uniforms, { ...this.shared, ...this.air, ...this.groundUniforms, uNoise: { value: this.noise }, uLight: this.volumeMaterial.uniforms.uLight })
       shader.vertexShader = shader.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vCloudWorld;').replace('#include <project_vertex>', '#include <project_vertex>\nvCloudWorld=(modelMatrix*vec4(transformed,1.0)).xyz;')
@@ -471,7 +474,7 @@ if(abs(uSurface - 2.0) < 0.5){
     this.vectorLines = new THREE.LineSegments(this.vectorGeometry, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: .72 })); this.scene.add(this.vectorLines)
     this.freezingHelper = new THREE.GridHelper(W, 24, 0x9fd3f0, 0x9fd3f0); this.freezingHelper.material.transparent = true; this.freezingHelper.material.opacity = .28; this.scene.add(this.freezingHelper)
     this.precipGeometry = new THREE.BufferGeometry(); this.precipGeometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(PRECIP_PARTICLES * 3), 3)); this.precipGeometry.setAttribute('aMelt', new THREE.BufferAttribute(new Float32Array(PRECIP_PARTICLES).fill(-1), 1))
-    this.precipMaterial = new THREE.ShaderMaterial({ vertexShader: precipVertex, fragmentShader: precipFragment, transparent: true, depthWrite: false, toneMapped: false, uniforms: { uScale: { value: 500 } } })
+    this.precipMaterial = new THREE.ShaderMaterial({ name: 'precipitation', vertexShader: precipVertex, fragmentShader: precipFragment, transparent: true, depthWrite: false, toneMapped: false, uniforms: { uScale: { value: 500 } } })
     this.precipPoints = new THREE.Points(this.precipGeometry, this.precipMaterial); this.precipPoints.frustumCulled = false; this.precipPoints.renderOrder = 2; this.scene.add(this.precipPoints)
     this.mesoMarker = new THREE.Mesh(new THREE.TorusGeometry(2.6, .07, 8, 64), new THREE.MeshBasicMaterial({ color: 0xf0b44c, transparent: true, opacity: .9, depthWrite: false }))
     this.mesoMarker.rotation.x = Math.PI / 2; this.mesoMarker.position.y = 3.5; this.mesoMarker.renderOrder = 3; this.mesoMarker.visible = false; this.scene.add(this.mesoMarker)

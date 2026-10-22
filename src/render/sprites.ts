@@ -34,7 +34,7 @@ export class SpriteView {
   /** `where`: the ground point (m from the domain corner) where a CG struck. */
   constructor(toWorld: (x: number, y: number, z: number) => readonly [number, number, number], where: (flash: Flash) => readonly [number, number], shared: Record<string, THREE.IUniform>, density: THREE.Texture) {
     this.toWorld = toWorld; this.where = where
-    this.material = new THREE.ShaderMaterial({
+    this.material = new THREE.ShaderMaterial({ name: 'sprite',
       vertexShader: spriteVertex, fragmentShader: spriteFragment, side: THREE.DoubleSide, transparent: true, depthWrite: false, depthTest: true, blending: THREE.AdditiveBlending, toneMapped: false,
       uniforms: { ...shared, uDensity: { value: density }, uSprite: { value: new Array(SLOTS).fill(0) } },
     })

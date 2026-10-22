@@ -271,3 +271,7 @@ html:not(.layout-phone) .m-only { display: none !important; }
 .mtable__notes { margin-top: 4px; }
 .diag__scope { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
 .diag__tools { display: flex; justify-content: flex-end; margin-bottom: 4px; }
+/* A part of the view that did not build: a note at the bottom over the view, not a veil over it. */
+.gl-lost--note { inset: auto 12px 12px; background: rgba(8, 12, 16, .88); border-radius: 10px; padding: 14px 16px; }
+.gl-lost--note > div { max-width: 520px; }
+.gl-lost--note .gl-log { max-height: 20vh; }

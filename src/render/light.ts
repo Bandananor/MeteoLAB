@@ -21,7 +21,7 @@ export class LightVolume {
     this.target = new THREE.WebGL3DRenderTarget(nx, ny, nz, { depthBuffer: false, type: THREE.UnsignedByteType, format: THREE.RGBAFormat })
     const t = this.target.texture
     t.minFilter = t.magFilter = THREE.LinearFilter; t.wrapS = t.wrapT = THREE.RepeatWrapping; t.wrapR = THREE.ClampToEdgeWrapping; t.generateMipmaps = false
-    this.material = new THREE.ShaderMaterial({ vertexShader: lightVolumeVertex, fragmentShader: lightVolumeFragment, depthTest: false, depthWrite: false, uniforms: { ...shared, uDensity: { value: density }, uLayer: { value: 0 } } })
+    this.material = new THREE.ShaderMaterial({ name: 'lightVolume', vertexShader: lightVolumeVertex, fragmentShader: lightVolumeFragment, depthTest: false, depthWrite: false, uniforms: { ...shared, uDensity: { value: density }, uLayer: { value: 0 } } })
     this.quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), this.material); this.quad.frustumCulled = false; this.scene.add(this.quad)
   }
 
@@ -62,7 +62,7 @@ export class FlashVolume {
       tex.minFilter = tex.magFilter = THREE.LinearFilter; tex.wrapS = tex.wrapT = THREE.RepeatWrapping; tex.wrapR = THREE.ClampToEdgeWrapping; tex.generateMipmaps = false
       return t
     })
-    this.material = new THREE.ShaderMaterial({
+    this.material = new THREE.ShaderMaterial({ name: 'flashVolume',
       vertexShader: lightVolumeVertex, fragmentShader: flashVolumeFragment, depthTest: false, depthWrite: false,
       uniforms: { ...shared, uDensity: { value: density }, uLayer: { value: 0 }, uPts: { value: Array.from({ length: 64 }, () => new THREE.Vector4()) }, uW: { value: new Array(64).fill(0) }, uCount: { value: 0 } },
     })

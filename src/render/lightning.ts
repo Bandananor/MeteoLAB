@@ -132,7 +132,7 @@ export class LightningView {
   /** `shared`: the cloud volume's box and extinction (view.ts), `density`: its texture, to dim the channel inside the cloud. */
   constructor(model: AtmosphereModel, toWorld: (x: number, y: number, z: number) => readonly [number, number, number], shared: Record<string, THREE.IUniform>, density: THREE.Texture) {
     this.model = model; this.toWorld = toWorld
-    this.material = new THREE.ShaderMaterial({
+    this.material = new THREE.ShaderMaterial({ name: 'lightningChannels',
       vertexShader: lightningVertex, fragmentShader: lightningFragment, side: THREE.DoubleSide, transparent: true, depthWrite: false, depthTest: true, blending: THREE.AdditiveBlending, toneMapped: false,
       uniforms: { ...shared, uDensity: { value: density }, uFlash: { value: Array.from({ length: SLOTS }, () => new THREE.Vector4()) }, uPaths: { value: Array.from({ length: SLOTS }, () => new THREE.Vector4()) }, uRes: { value: new THREE.Vector2(1, 1) }, uPx: { value: 1 } },
     })
