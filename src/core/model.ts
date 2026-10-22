@@ -475,6 +475,15 @@ export class AtmosphereModel implements TaskModel {
   /** Drag on the ground node; off in the free-slip reference cases. */
   surfaceDrag = true
   /**
+   * Buoyancy and pressure in every RK3 stage of the WENO transport (since 22.10.2026, roadmap A4), as CM1 and WRF do:
+   * each stage's w tendency carries the buoyancy and each stage's velocity is made divergence-free. Once a step after
+   * the transport, as before, the step's splitting gave a first-order error in dt: the Straka density current's u max
+   * 30.9 / 32.7 / 33.7 m/s at dt 1 / 0.5 / 0.25 s on 200 m, now 34.6-34.7 at any of them (tests/bench/straka.ts); the
+   * storms' strongest updraughts 2-5 % lower, at about the same cost (two more pressure solves a step).
+   * STORMLAB_STAGES=0 turns it off, for comparisons.
+   */
+  pressureInStages = (globalThis as { process?: { env: Record<string, string | undefined> } }).process?.env?.STORMLAB_STAGES !== '0'
+  /**
    * Relaxation of the wind departure from the environmental wind, s-1: 1e-4 (was a factor .9999 per step, which tied
    * the damping to the step length); 0 in the reference cases.
    */
@@ -527,7 +536,11 @@ export class AtmosphereModel implements TaskModel {
       for (const [field, vt] of falling) this.sediment(field, vt, dt)
       if (this.electrified()) for (const [field, vt] of this.chargeFalls()) this.sediment(field, vt, dt, false)
       const carried = this.carried(), tasks = carried.length * this.slabs()
-      for (const stage of [0, 1, 2] as const) { this.runner.run(`tendency${stage}`, tasks, dt); this.runner.run(`update${stage}`, tasks, dt) }
+      for (const stage of [0, 1, 2] as const) {
+        this.runner.run(`tendency${stage}`, tasks, dt); this.runner.run(`update${stage}`, tasks, dt)
+        // The pressure acts within the stages: each stage's velocity made divergence-free (the last by project() below).
+        if (this.pressureInStages && stage < 2) { const top = (nz - 1) * layer; for (let b = 0; b < layer; b++) { this.w[b] = 0; this.w[b + top] = 0 } this.project(dt, false) }
+      }
       this.runner.run('finish', carried.length, dt)
       for (let k = 0; k < carried.length; k++) if (carried[k].conserve) this.negativeFilled += this.taskNegative[k]
     } else {
@@ -570,6 +583,25 @@ export class AtmosphereModel implements TaskModel {
     if (this.electrified()) this.discharge(dt)
   }
 
+  /** Whether this step's buoyancy goes into the transport's stages (pressureInStages, WENO only) instead of physics(). */
+  private staged() { return this.pressureInStages && (this.config.transport ?? this.transport) === 'weno' }
+
+  /**
+   * Adds g B of the fields as they are now to the w tendency on levels z0-z1 (pressureInStages): the same buoyancy as
+   * physics() gives, against the environment or, inside a zone, the zone's own air.
+   */
+  private stageBuoyancy(tend: Float64Array, z0: number, z1: number) {
+    const { layer, zs } = this.grid, zones = this.zoneGround !== null
+    for (let z = z0; z < z1; z++) {
+      const [thEnv, qEnv] = this.envNow(z), thvEnv = thEnv * (1 + .61 * qEnv), alt = zs[z], inZone = zones && alt < ZONE_DEPTH, shape = inZone ? zoneShape(alt) : 0, exner = this.env.exner[z]
+      for (let i = z * layer, c = 0; c < layer; i++, c++) {
+        const ref = inZone ? (thEnv + this.zoneThetaNow[c] * shape / exner) * (1 + .61 * (qEnv + this.zoneVapourNow[c] * shape)) : thvEnv
+        const loaded = this.cloud[i] + this.ice[i] + this.rain[i] + this.snow[i] + this.graupel[i] + this.hail[i]
+        tend[i] += G * ((this.theta[i] * (1 + .61 * this.q[i]) - ref) / ref - loaded)
+      }
+    }
+  }
+
   /** Does task k of a parallel phase (see threads.ts): transport field k, physics of level k, or mixing of field k. */
   runTask(phase: Phase, k: number, dt: number) {
     const { nz, layer } = this.grid
@@ -589,7 +621,10 @@ export class AtmosphereModel implements TaskModel {
         const slabs = this.slabs(), f = Math.floor(k / slabs), j = k % slabs, c = this.carried()[f]
         const z0 = Math.floor(j * nz / slabs), z1 = Math.floor((j + 1) * nz / slabs), a = c.field, start = this.stageStart[f], tend = this.stageTend[f]
         if (phase === 'tendency0') start.set(a.subarray(z0 * layer, z1 * layer), z0 * layer)
-        if (phase.startsWith('tendency')) this.flux.tendency(a, tend, z0, z1, c.monotone)
+        if (phase.startsWith('tendency')) {
+          this.flux.tendency(a, tend, z0, z1, c.monotone)
+          if (a === this.w && this.staged()) this.stageBuoyancy(tend, z0, z1)
+        }
         else { const fraction = RK3[Number(phase[6])] * dt; for (let i = z0 * layer; i < z1 * layer; i++) a[i] = start[i] + fraction * tend[i] }
         break
       }
@@ -678,7 +713,7 @@ export class AtmosphereModel implements TaskModel {
 
   /** Microphysics, buoyancy, Coriolis, surface fluxes and the sponge at every node of level z (nodes are independent). */
   private physics(z: number, dt: number) {
-    const { nx, ny, zs, height: H, layer } = this.grid, withIce = this.withIce()
+    const { nx, ny, zs, height: H, layer } = this.grid, withIce = this.withIce(), staged = this.staged()
     const cfg = this.config, e = this.env, u = this.u, v = this.v, w = this.w, theta = this.theta, q = this.q, cloud = this.cloud, rain = this.rain, cold = this.cold
     const ice = this.ice, iceNumber = this.iceNumber, snow = this.snow, graupel = this.graupel, hail = this.hail, rhoGround = e.rho[0]
     const electric = withIce && this.electrified(), cI = this.chargeIce, cG = this.chargeGraupel, cR = this.chargeRain, cA = this.chargeAir, cNow = this.chargeNow, before = this.massBefore, after = this.massAfter
@@ -752,7 +787,7 @@ export class AtmosphereModel implements TaskModel {
           // Inside a zone the reference is the zone's own air (each zone its own environment, as the large-scale flow
           // keeps it): its warmer air is not a giant thermal there, but becomes buoyant where it leaves the zone.
           const ref = zones && alt < ZONE_DEPTH ? (thEnv + this.zoneThetaNow[x + row] * zoneShape(alt) / exner) * (1 + .61 * (qEnv + this.zoneVapourNow[x + row] * zoneShape(alt))) : thvEnv
-          const buoy = (theta[i] * (1 + .61 * q[i]) - ref) / ref - cloud[i] - ice[i] - rain[i] - snow[i] - graupel[i] - hail[i]; w[i] += G * buoy * dt
+          const buoy = (theta[i] * (1 + .61 * q[i]) - ref) / ref - cloud[i] - ice[i] - rain[i] - snow[i] - graupel[i] - hail[i]; if (!staged) w[i] += G * buoy * dt
           // Damp and rotate only the departure from the environmental wind, so the imposed shear profile is not eroded.
           const du = (u[i] - ue) * keep, dv = (v[i] - ve) * keep; u[i] = ue + du + f * dv * dt; v[i] = ve + dv - f * du * dt
           // Surface fluxes enter the lowest levels with the shares in surfaceShare, so the column receives exactly H and LE.
@@ -829,20 +864,22 @@ export class AtmosphereModel implements TaskModel {
 
   /** The settings helper threads must follow (threads.ts): the config and the model's switches. */
   settings() {
-    return JSON.stringify({ config: this.config, microphysics: this.microphysics, transport: this.transport, rainFormation: this.rainFormation, windRelaxation: this.windRelaxation, fixedViscosity: this.fixedViscosity, transportSlabs: this.transportSlabs })
+    return JSON.stringify({ config: this.config, microphysics: this.microphysics, transport: this.transport, rainFormation: this.rainFormation, windRelaxation: this.windRelaxation, fixedViscosity: this.fixedViscosity, transportSlabs: this.transportSlabs, pressureInStages: this.pressureInStages })
   }
 
   applySettings(json: string) {
     const s = JSON.parse(json)
     Object.assign(this.config, s.config)
-    this.microphysics = s.microphysics; this.transport = s.transport; this.rainFormation = s.rainFormation; this.windRelaxation = s.windRelaxation; this.fixedViscosity = s.fixedViscosity; this.transportSlabs = s.transportSlabs
+    this.microphysics = s.microphysics; this.transport = s.transport; this.rainFormation = s.rainFormation; this.windRelaxation = s.windRelaxation; this.fixedViscosity = s.fixedViscosity; this.transportSlabs = s.transportSlabs; this.pressureInStages = s.pressureInStages
   }
 
   /** Makes the node velocities exactly free of dual-cell divergence (see PressureSolver); ground and top are rigid walls. */
-  private project(dt: number) {
+  private project(dt: number, limit = true) {
     const u = this.u, v = this.v, w = this.w
     const { nz, ny } = this.grid, run = (phase: Phase, tasks: number) => this.runner.run(phase, tasks, dt)
     run('pressureDivergence', nz - 1); run('pressureForward', nz - 1); run('pressureModes', ny); run('pressureInverse', nz - 1); run('pressureCorrect', nz)
+    // The safety limits act once a step, on the final velocity, not on the stages' (clipped counts per step as before).
+    if (!limit) return
     let clipped = 0
     for (let i = 0; i < this.grid.n; i++) {
       if (u[i] < -U_LIMIT || u[i] > U_LIMIT) { u[i] = clamp(u[i], -U_LIMIT, U_LIMIT); clipped++ }

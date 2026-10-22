@@ -41,11 +41,15 @@ const NEUTRAL: EnvironmentProfile = { theta: () => 300, rh: () => 0, wind: () =>
  * -10.8 / 30.9 / -14.6; 100 m 14.99 / -9.81 / 32.6 / -15.2; 50 m 15.08 / -9.66 / 32.5 / -15.3. It converges, but to a
  * front ~0.45 km (3 %) behind and a u max ~10 % below the reference: an open question (roadmap A4). The step matters
  * too: at 200 m, dt 1 / 0.5 / 0.25 s give u max 30.9 / 32.7 / 33.7 m/s (front 14.85 / 14.88 / 14.89 km).
+ * Since 22.10.2026 the buoyancy and the pressure act in every RK3 stage (model.ts pressureInStages): the u max no longer
+ * depends on dt - 34.6-34.7 m/s at 200 m and dt 1 / 0.5 / 0.25 s, 34.7 at 100 m and at 50 m, w min -16.1 (the
+ * reference -16) - so ~4 % below the reference is left, the grid's; the front is as it was (14.98 at 100 m, 15.08 at
+ * 50 m), still the open question. `inStages` false: the old splitting, for comparison.
  */
-export function straka(dx: number, step?: number) {
+export function straka(dx: number, step?: number, inStages?: boolean) {
   const nx = Math.round(51_200 / dx), nz = Math.round(6_400 / dx) + 1
   const model = new AtmosphereModel(DRY, createGrid({ nx, ny: 1, nz, width: 51_200, depth: dx, height: 6_400 }), NEUTRAL)
-  model.fixedViscosity = 75; model.surfaceDrag = false; model.windRelaxation = 0
+  model.fixedViscosity = 75; model.surfaceDrag = false; model.windRelaxation = 0; if (inStages !== undefined) model.pressureInStages = inStages
   const { zs, layer } = model.grid, cx = 25_600
   for (let z = 0; z < nz; z++) for (let x = 0; x < nx; x++) {
     const l = Math.hypot((x * dx - cx) / 4000, (zs[z] - 3000) / 2000)
@@ -235,10 +239,10 @@ export const CASES: ValidationCase[] = [
         checks: [
           check('front position (θ′ = −1 K at the ground)', 'km', r.front, '15.5 (25 m)', [14.7, 16]),
           check('θ′ min', 'K', r.thetaMin, '−9.8', [-11, -8.5]),
-          check('u max', 'm/s', r.uMax, '36', [30.5, 40]),
+          check('u max', 'm/s', r.uMax, '36', [33.5, 40]),
           check('w min', 'm/s', r.wMin, '−16', [-19, -13.5]),
         ],
-        note: 'Converges with the grid (400 → 50 m) to a front ~3 % behind and a u max ~10 % below the reference: known deviation, roadmap A4.',
+        note: 'Converges with the grid (400 → 50 m) to a front ~3 % behind and a u max ~4 % below the reference (34.7 against 36 m/s at 50 and 100 m; ~10 % below, and first-order in dt, before the pressure acted in every RK3 stage, 22.10.2026): known deviation, roadmap A4.',
       }
     },
   },
