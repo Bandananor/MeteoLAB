@@ -1,8 +1,8 @@
 # MeteoLab StormLab — validation report
 
-Model version **v2.8.0-22-ge2fee7d-dirty**, 2026-10-21. Node v24.16.0, 12th Gen Intel(R) Core(TM) i5-12450H, 10 at once, 42 min.
+Model version **v2.10.0.1-1-g6767aba**, 2026-10-22. Node v24.16.0, 12th Gen Intel(R) Core(TM) i5-12450H, 12 at once, 27 min.
 
-**38 of 38 checks within their bounds**.
+**53 of 53 checks within their bounds**.
 
 Each case runs the model and compares what it gives with the literature or with what the case is meant to show. The bounds hold the model’s current result with a margin, so a change of the physics that moves a result shows here; where the model is known to be off the reference, the bounds say so and the reference lies outside them (see the case’s note and the roadmap, A4 and A7). Made by `npm run validate`; the cases, their references and bounds are in `src/validation/cases.ts`, and the slow tests check the same bounds.
 
@@ -37,7 +37,7 @@ Source: Bryan & Fritsch 2002, Mon. Wea. Rev. 130; numbers as quoted by Duarte et
 
 ## Supercell split (Weisman & Klemp 1982), 96 × 72 km, 60 min
 
-Source: Weisman & Klemp 1982, Mon. Wea. Rev. 110: a split by 40–60 min into a stronger cyclonic right mover and an anticyclonic left mover. Run time 42 min.
+Source: Weisman & Klemp 1982, Mon. Wea. Rev. 110: a split by 40–60 min into a stronger cyclonic right mover and an anticyclonic left mover. Run time 20 min.
 
 | Quantity | Model | Reference | Bounds | |
 |---|---:|---|---|:-:|
@@ -50,7 +50,7 @@ Source: Weisman & Klemp 1982, Mon. Wea. Rev. 110: a split by 40–60 min into a 
 
 ## Scenario «Летний день», 40 min
 
-Source: meant to grow no mesocyclone. Run time 5 min.
+Source: meant to grow no mesocyclone. Run time 6 min.
 
 | Quantity | Model | Reference | Bounds | |
 |---|---:|---|---|:-:|
@@ -62,7 +62,7 @@ UH max 245 m²/s², wind at 100 m 21.1 m/s, rain 7.5 mm, hail 0.0 cm aloft / 0.0
 
 ## Scenario «Многоячейковая гроза», 40 min
 
-Source: no rotation is asked of it. Run time 5 min.
+Source: no rotation is asked of it. Run time 6 min.
 
 | Quantity | Model | Reference | Bounds | |
 |---|---:|---|---|:-:|
@@ -74,7 +74,7 @@ UH max 362 m²/s², wind at 100 m 20.6 m/s, rain 4.1 mm, hail 0.0 cm aloft / 0.0
 
 ## Scenario «Классическая суперячейка», 40 min
 
-Source: meant to grow a supercell. Run time 9 min.
+Source: meant to grow a supercell. Run time 8 min.
 
 | Quantity | Model | Reference | Bounds | |
 |---|---:|---|---|:-:|
@@ -98,7 +98,7 @@ UH max 1101 m²/s², wind at 100 m 20.3 m/s, rain 34.6 mm, hail 1.1 cm aloft / 1
 
 ## Scenario «HSLC», 40 min
 
-Source: meant to grow a supercell. Run time 6 min.
+Source: meant to grow a supercell. Run time 7 min.
 
 | Quantity | Model | Reference | Bounds | |
 |---|---:|---|---|:-:|
@@ -110,7 +110,7 @@ UH max 866 m²/s², wind at 100 m 24.9 m/s, rain 14.3 mm, hail 1.3 cm aloft / 2.
 
 ## Scenario «Микропорыв», 40 min
 
-Source: meant to grow no mesocyclone. Run time 5 min.
+Source: meant to grow no mesocyclone. Run time 6 min.
 
 | Quantity | Model | Reference | Bounds | |
 |---|---:|---|---|:-:|
@@ -122,7 +122,7 @@ UH max 170 m²/s², wind at 100 m 25.8 m/s, rain 3.4 mm, hail 0.0 cm aloft / 0.0
 
 ## Scenario «Тропическая конвекция», 40 min
 
-Source: meant to grow no mesocyclone. Run time 5 min.
+Source: meant to grow no mesocyclone. Run time 6 min.
 
 | Quantity | Model | Reference | Bounds | |
 |---|---:|---|---|:-:|
@@ -131,3 +131,41 @@ Source: meant to grow no mesocyclone. Run time 5 min.
 | longest mesocyclone, s | 0 | < 600 | 0 … 600 | ✓ |
 
 UH max 99 m²/s², wind at 100 m 18.4 m/s, rain 21.4 mm, hail 0.7 cm aloft / 0.1 mm at the ground.
+
+## Situation «Тёплый сектор и холодный фронт», with and without its trigger
+
+Source: the situation’s story (2.6). Run time 17 min.
+
+| Quantity | Model | Reference | Bounds | |
+|---|---:|---|---|:-:|
+| values clipped by the limiters | 0 | 0 | = 0 | ✓ |
+| with the front: max updraught, m/s | 46.83 | storms on the front | ≥ 25 | ✓ |
+| with the front: highest cloud top, km | 13.72 | deep storms | ≥ 10 | ✓ |
+| without the front: max updraught, m/s | 4.37 | no storms (the cap holds) | 0 … 10 | ✓ |
+
+## Situation «Высотная ложбина», with and without its trigger
+
+Source: the situation’s story (2.6). Run time 27 min.
+
+| Quantity | Model | Reference | Bounds | |
+|---|---:|---|---|:-:|
+| values clipped by the limiters | 0 | 0 | = 0 | ✓ |
+| with the trough: max updraught, m/s | 31.66 | storms by 11:30 | ≥ 20 | ✓ |
+| without the trough: max updraught, m/s | 25.74 | storms by 11:30 too | ≥ 15 | ✓ |
+| with the trough: 12:10–12:50 mean updraught, m/s | 10.78 | new cells keep going | ≥ 8 | ✓ |
+| 12:10–12:50 mean updraught, with − without the trough, m/s | 5.68 | the trough makes them last | ≥ 3 | ✓ |
+| with the trough: heaviest rain 12:10–12:50, mm/h | 58.00 | downpours go on | ≥ 10 | ✓ |
+| without the trough: heaviest rain 12:10–12:50, mm/h | 0.78 | the rain has ended by 12:20 | 0 … 5 | ✓ |
+
+Recalibrated 22.10.2026 for 2.7.2’s ice from processes (the trough −4 K instead of −3, the window 12:10–12:50 instead of 12:30–13:00): late weak updraughts keep their cloud water supercooled and get less heat of freezing (tests/bench/glaciation.ts).
+
+## Situation «Тёплый воздух над слоем: гроз не будет», with and without its trigger
+
+Source: the situation’s story (2.6). Run time 16 min.
+
+| Quantity | Model | Reference | Bounds | |
+|---|---:|---|---|:-:|
+| with the warm air aloft: max updraught, m/s | 3.86 | no storms | 0 … 8 | ✓ |
+| with the warm air aloft: highest cloud top, km | 0 | shallow cumulus | 0 … 4 | ✓ |
+| without it: max updraught, m/s | 25.74 | storms | ≥ 20 | ✓ |
+| without it: highest cloud top, km | 10.39 | deep storms | ≥ 8 | ✓ |
