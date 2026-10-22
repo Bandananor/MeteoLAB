@@ -43,13 +43,20 @@ const NEUTRAL: EnvironmentProfile = { theta: () => 300, rh: () => 0, wind: () =>
  * too: at 200 m, dt 1 / 0.5 / 0.25 s give u max 30.9 / 32.7 / 33.7 m/s (front 14.85 / 14.88 / 14.89 km).
  * Since 22.10.2026 the buoyancy and the pressure act in every RK3 stage (model.ts pressureInStages): the u max no longer
  * depends on dt - 34.6-34.7 m/s at 200 m and dt 1 / 0.5 / 0.25 s, 34.7 at 100 m and at 50 m, w min -16.1 (the
- * reference -16) - so ~4 % below the reference is left, the grid's; the front is as it was (14.98 at 100 m, 15.08 at
- * 50 m), still the open question. `inStages` false: the old splitting, for comparison.
+ * reference -16), the same at 25 m. The front converges to ~15.15 km (200 / 100 / 50 / 25 m: 14.78 / 14.98 / 15.05 /
+ * 15.10), 2-3 % behind: a property of the anelastic set, not a numerical error (closed 22.10.2026). The projection is
+ * exact; the front one level up is the same; how rho0 enters decides it - Boussinesq 16.38 / 16.57 / 16.64 / 16.69, the
+ * pressure force grad(p')/rho0 (ERF's) instead of grad(p'/rho0) 14.96 / 15.18 / 15.26 at 200-50 m with u max 33.4.
+ * ERF (arXiv:2412.04395): its anelastic and compressible solutions differ by up to 4 % in the front speed; compressible
+ * codes give 14.7-15.5 km on fine grids. Kept Lipps-Hemler: it holds the compressible p' buoyancy -g p'/(rho0 c^2).
+ * `inStages` false: the old splitting, for comparison. `variant` (experiments,
+ * tests/bench/straka.ts): another base profile, and a hook on the model before the bubble goes in.
  */
-export function straka(dx: number, step?: number, inStages?: boolean) {
+export function straka(dx: number, step?: number, inStages?: boolean, variant: { profile?: EnvironmentProfile; setup?: (model: AtmosphereModel) => void } = {}) {
   const nx = Math.round(51_200 / dx), nz = Math.round(6_400 / dx) + 1
-  const model = new AtmosphereModel(DRY, createGrid({ nx, ny: 1, nz, width: 51_200, depth: dx, height: 6_400 }), NEUTRAL)
+  const model = new AtmosphereModel(DRY, createGrid({ nx, ny: 1, nz, width: 51_200, depth: dx, height: 6_400 }), variant.profile ?? NEUTRAL)
   model.fixedViscosity = 75; model.surfaceDrag = false; model.windRelaxation = 0; if (inStages !== undefined) model.pressureInStages = inStages
+  variant.setup?.(model)
   const { zs, layer } = model.grid, cx = 25_600
   for (let z = 0; z < nz; z++) for (let x = 0; x < nx; x++) {
     const l = Math.hypot((x * dx - cx) / 4000, (zs[z] - 3000) / 2000)
@@ -57,17 +64,22 @@ export function straka(dx: number, step?: number, inStages?: boolean) {
   }
   const dt = step ?? (dx <= 100 ? .5 : 1)
   for (let t = 0; t < 900 / dt; t++) model.step(dt)
-  // Front: the farthest point right of the centre where theta' at the ground falls to -1 K (linear between nodes).
-  let front = 0
-  for (let x = Math.round(cx / dx); x < nx - 1; x++) {
-    const a = model.theta[x] - 300, b = model.theta[x + 1] - 300
-    if (a <= -1 && b > -1) front = (x + (-1 - a) / (b - a)) * dx - cx
+  // Front: the farthest point right of the centre where theta' at a level falls to -1 K (linear between nodes); the
+  // ground's is the case's, the next level's (dx up) for comparison with grids whose lowest scalar is above the ground.
+  const frontAt = (z: number) => {
+    let front = 0
+    for (let x = Math.round(cx / dx); x < nx - 1; x++) {
+      const a = model.theta[x + z * layer] - 300, b = model.theta[x + 1 + z * layer] - 300
+      if (a <= -1 && b > -1) front = (x + (-1 - a) / (b - a)) * dx - cx
+    }
+    return front
   }
+  const front = frontAt(0), front1 = frontAt(1)
   let thetaMin = 0, uMax = 0, wMin = 0, wMax = 0
   for (let i = 0; i < model.grid.n; i++) {
     thetaMin = Math.min(thetaMin, model.theta[i] - 300); uMax = Math.max(uMax, model.u[i]); wMin = Math.min(wMin, model.w[i]); wMax = Math.max(wMax, model.w[i])
   }
-  return { front: front / 1000, thetaMin, uMax, wMin, wMax }
+  return { front: front / 1000, front1: front1 / 1000, thetaMin, uMax, wMin, wMax }
 }
 
 /** Total water of the Bryan & Fritsch (2002) moist case, kg/kg. */
