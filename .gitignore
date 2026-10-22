@@ -34,3 +34,6 @@ AI_MAP.md
 textbook/
 .series
 .validate
+
+# Agent handoff for new chats (local)
+CLAUDE.md
