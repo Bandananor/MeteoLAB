@@ -19,7 +19,7 @@
     <main class="container"><div class="doc">
       <nav class="toc" aria-label="Contents"><span class="toc__title">Contents</span>
         <a href="#model"><span class="num">1</span>How the model works</a><a class="sub" href="#grid">Domain and grid</a><a class="sub" href="#dynamics">Equations</a><a class="sub" href="#numerics">Numerical methods</a>
-        <a href="#clouds"><span class="num">2</span>Clouds and precipitation</a><a href="#surface"><span class="num">3</span>Surface and sun</a><a href="#storm"><span class="num">4</span>How the model recognizes a storm</a><a href="#checks"><span class="num">5</span>Tests</a><a href="#limits"><span class="num">6</span>Limitations</a><a href="#changelog"><span class="num">7</span>Changelog</a>
+        <a href="#clouds"><span class="num">2</span>Clouds and precipitation</a><a href="#surface"><span class="num">3</span>Surface and sun</a><a href="#storm"><span class="num">4</span>How the model recognizes a storm</a><a href="#checks"><span class="num">5</span>Tests</a><a href="#limits"><span class="num">6</span>Limitations</a><a href="#made"><span class="num">7</span>How MeteoLab is made</a><a href="#changelog"><span class="num">8</span>Changelog</a>
         <span class="toc__ver">v2.10.0.1</span></nav>
       <article class="prose">
         <span class="t-eyebrow">About the model · StormLab</span>
@@ -115,7 +115,10 @@ console.log(model.rotation.uh, model.diagnostics().updraft)</code></pre>
           <tr><td>The interface in English</td><td>the scenarios’ keys in links stay Russian names (links work in both languages); the project’s Telegram channel and the README are in Russian</td><td>—</td></tr>
         </tbody></table></div>
 
-        <h2 id="changelog"><span class="num">7</span>Changelog</h2>
+        <h2 id="made"><span class="num">7</span>How MeteoLab is made</h2>
+        <p>The project’s author is Daniil (Bandananor), who sets the tasks and goals, chooses the physics and its simplifications, checks the model against the literature and the tests, decides the releases and writes the paper. The code, the tests and the site’s texts are written mostly with an AI assistant (Claude by Anthropic, through Claude Code) on the author’s tasks. Every change of the physics comes with a measurement and a test, and the model is checked against benchmark cases from the literature (the validation report builds itself). The physics texts are also reviewed by an AI agent in the role of a meteorologist; that is no substitute for a review by a specialist.</p>
+
+        <h2 id="changelog"><span class="num">8</span>Changelog</h2>
         <p>The main points of versions 2.0–2.10.0. The full log with dates and measurements is in the <a href="https://github.com/Bandananor/MeteoLAB#журнал-изменений">README on GitHub</a> (in Russian).</p>
         <p><b>2.10.0.1 (22 Oct 2026):</b> “Upper trough” recalibrated for the ice from processes: a colder trough (−4 K); without it the rain ends by 12:20, with it downpours go on almost to 13:00; all the synoptic situations are in the validation report.</p>
         <p><b>2.10.0 (22 Oct 2026) “The laboratory”:</b> the interface by task (menus, initial conditions, diagnostics as a table); comparing two runs, the ensemble, the CAPE × shear regime map, batch series from a file (in the browser and in Node); the fields as NetCDF; the version, seed and run link in every export, CITATION.cff; a validation report that builds itself (38 of 38 checks within bounds); vertical video with captions.</p>
