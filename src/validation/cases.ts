@@ -102,7 +102,7 @@ function moistNeutral(): EnvironmentProfile {
  * wet theta_e). Both within ~4 % of the reference w; the moist one 12 % stronger than the dry one, as in the reference
  * (13 %). Tried 2026-10-08: latent heat with the moist heat capacity and L(T) changed the moist centre by 0.02 km only.
  */
-export function bryanFritsch(moist: boolean, dx = 100) {
+export function bryanFritsch(moist: boolean, dx = 100, dt = .5) {
   const nx = Math.round(20_000 / dx), nz = Math.round(10_000 / dx) + 1
   const model = new AtmosphereModel(DRY, createGrid({ nx, ny: 1, nz, width: 20_000, depth: dx, height: 10_000 }), moist ? moistNeutral() : NEUTRAL)
   model.fixedViscosity = 0; model.surfaceDrag = false; model.windRelaxation = 0; model.rainFormation = false
@@ -134,7 +134,7 @@ export function bryanFritsch(moist: boolean, dx = 100) {
     return [min, max]
   }
   const [te0min, te0max] = thetaERange()
-  for (let t = 0; t < 2000; t++) model.step(.5)
+  for (let t = 0, n = Math.round(1000 / dt); t < n; t++) model.step(dt)
   // Top: the highest level with buoyancy above 1e-3 (theta' ~0.3 K); centre: the buoyancy-weighted height; max w.
   let top = 0, bz = 0, bs = 0, wMax = 0
   for (let z = 0, i = 0; z < nz; z++) for (let x = 0; x < nx; x++, i++) {
