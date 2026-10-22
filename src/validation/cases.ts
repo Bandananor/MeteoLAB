@@ -42,7 +42,7 @@ const NEUTRAL: EnvironmentProfile = { theta: () => 300, rh: () => 0, wind: () =>
  * front ~0.45 km (3 %) behind and a u max ~10 % below the reference: an open question (roadmap A4). The step matters
  * too: at 200 m, dt 1 / 0.5 / 0.25 s give u max 30.9 / 32.7 / 33.7 m/s (front 14.85 / 14.88 / 14.89 km).
  */
-export function straka(dx: number) {
+export function straka(dx: number, step?: number) {
   const nx = Math.round(51_200 / dx), nz = Math.round(6_400 / dx) + 1
   const model = new AtmosphereModel(DRY, createGrid({ nx, ny: 1, nz, width: 51_200, depth: dx, height: 6_400 }), NEUTRAL)
   model.fixedViscosity = 75; model.surfaceDrag = false; model.windRelaxation = 0
@@ -51,7 +51,7 @@ export function straka(dx: number) {
     const l = Math.hypot((x * dx - cx) / 4000, (zs[z] - 3000) / 2000)
     if (l <= 1) model.theta[x + z * layer] = 300 - 15 * (1 + Math.cos(Math.PI * l)) / 2 / model.env.exner[z]
   }
-  const dt = dx <= 100 ? .5 : 1
+  const dt = step ?? (dx <= 100 ? .5 : 1)
   for (let t = 0; t < 900 / dt; t++) model.step(dt)
   // Front: the farthest point right of the centre where theta' at the ground falls to -1 K (linear between nodes).
   let front = 0
