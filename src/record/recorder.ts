@@ -7,6 +7,7 @@ import { DT } from '../core'
 import { decimal, L } from '../i18n'
 import { avcCodec, type Sample, writeMp4 } from './mp4'
 import { mediaStamp } from '../export/stamp'
+import { type Caption, drawCaptions } from './captions'
 import { bitrate, frameCount, frameStamp, frameTime, ORBIT_SPEED, type RecordCamera, type RecordSettings, screenSize, SIZES, stepsTo } from './plan'
 
 const KEY = 'meteolab-video'
@@ -15,15 +16,16 @@ const KEY_EVERY = 2
 /** Encoded frames waiting in the encoder before the next is drawn (memory on a 4K recording). */
 const QUEUE = 3
 
-interface Choice { seconds: number; fps: number; speed: number; size: string; shape: 'wide' | 'screen'; camera: RecordCamera }
-const DEFAULTS: Choice = { seconds: 10, fps: 30, speed: 60, size: '1080p', shape: 'wide', camera: 'still' }
+interface Choice { seconds: number; fps: number; speed: number; size: string; shape: 'wide' | 'vertical' | 'screen'; camera: RecordCamera; captions: 'off' | 'on' }
+const DEFAULTS: Choice = { seconds: 10, fps: 30, speed: 60, size: '1080p', shape: 'wide', camera: 'still', captions: 'off' }
 const OPTIONS = {
   seconds: [5, 10, 20, 30, 60],
   fps: [30, 60],
   speed: [10, 30, 60, 180, 300],
   size: SIZES.map(s => s[0]),
-  shape: ['wide', 'screen'],
+  shape: ['wide', 'vertical', 'screen'],
   camera: ['still', 'orbit', 'ground'],
+  captions: ['off', 'on'],
 } as const
 
 function load(): Choice {
@@ -50,8 +52,10 @@ export class VideoRecorder {
   private busy = false; private stopping: 'save' | 'cancel' | null = null
   /** The run (main.ts makes a new one on every restart), the run's starting hour, standing on the ground. */
   private readonly sim: () => Atmosphere; private readonly hour: () => number; private readonly standOnGround: () => void
-  constructor(sim: () => Atmosphere, hour: () => number, standOnGround: () => void) {
-    this.sim = sim; this.hour = hour; this.standOnGround = standOnGround
+  /** The captions of the frame being drawn (main.ts: the scenario, the time, what the storm is doing). */
+  private readonly caption: () => Caption
+  constructor(sim: () => Atmosphere, hour: () => number, standOnGround: () => void, caption: () => Caption) {
+    this.sim = sim; this.hour = hour; this.standOnGround = standOnGround; this.caption = caption
     const seg = (name: keyof typeof OPTIONS, label: string, text: (v: string) => string) => `<span class="label">${label}</span><div class="seg seg--block" data-video="${name}">${OPTIONS[name].map(v => `<button type="button" data-value="${v}">${text(String(v))}</button>`).join('')}</div>`
     document.body.insertAdjacentHTML('beforeend', `<dialog class="modal modal--wide video-dialog" id="videoDialog"><form method="dialog" style="display:contents">
       <h2 class="modal__title">${L('Видео', 'Video')}</h2>
@@ -61,8 +65,9 @@ export class VideoRecorder {
         ${seg('speed', L('Время модели за секунду видео', 'Model time per second of video'), v => span(Number(v)))}
         ${seg('fps', L('Кадров в секунду', 'Frames per second'), v => v)}
         ${seg('size', L('Размер', 'Size'), v => v)}
-        ${seg('shape', L('Форма кадра', 'Frame shape'), v => v === 'wide' ? '16:9' : L('как экран', 'as the screen'))}
+        ${seg('shape', L('Форма кадра', 'Frame shape'), v => v === 'wide' ? '16:9' : v === 'vertical' ? L('9:16 — для роликов', '9:16 — for shorts') : L('как экран', 'as the screen'))}
         ${seg('camera', L('Камера', 'Camera'), v => ({ still: L('как сейчас', 'as now'), orbit: L('облёт', 'orbit'), ground: L('с земли', 'from the ground') })[v as RecordCamera])}
+        ${seg('captions', L('Подписи на кадре', 'Captions on the frame'), v => v === 'on' ? L('сценарий, время, что происходит', 'scenario, time, what happens') : L('нет', 'none'))}
       </div>
       <p class="modal__text" id="videoSummary"></p>
       <div class="video-progress" id="videoProgress" hidden><progress id="videoBar" max="1" value="0"></progress><span class="t-caption" id="videoStatus"></span></div>
@@ -90,7 +95,7 @@ export class VideoRecorder {
   /** The settings as chosen: the picture's size from the size and shape. */
   private settings(): RecordSettings {
     const c = this.choice, [, w, h] = SIZES.find(s => s[0] === c.size) ?? SIZES[1], view = this.sim()
-    const [width, height] = c.shape === 'wide' ? [w, h] : screenSize(view.viewWidth, view.viewHeight, w)
+    const [width, height] = c.shape === 'wide' ? [w, h] : c.shape === 'vertical' ? [h, w] : screenSize(view.viewWidth, view.viewHeight, w)
     return { seconds: c.seconds, fps: c.fps, speed: c.speed, width, height, camera: c.camera }
   }
 
@@ -141,7 +146,7 @@ export class VideoRecorder {
     this.busy = true; this.stopping = null; this.show()
     this.$('#videoProgress').hidden = false
     const bar = this.$<HTMLProgressElement>('#videoBar'), status = this.$('#videoStatus')
-    const frames = frameCount(s), began = performance.now()
+    const frames = frameCount(s), began = performance.now(), overlay = document.createElement('canvas')
     let done = 0
     try {
       await sim.startRecording()
@@ -154,7 +159,13 @@ export class VideoRecorder {
         sim.showAt(t)
         if (k && s.camera === 'orbit') sim.turnCamera(ORBIT_SPEED / s.fps)
         // The frame is read in the task it is drawn in (the drawing buffer is not kept).
-        const picture = sim.recordFrame(clock + k * 1000 / s.fps)
+        let picture: CanvasImageSource = sim.recordFrame(clock + k * 1000 / s.fps)
+        // Captions go over a copy of the picture (the view's own canvas may be the WebGL one).
+        if (this.choice.captions === 'on') {
+          if (overlay.width !== s.width || overlay.height !== s.height) { overlay.width = s.width; overlay.height = s.height }
+          const ctx = overlay.getContext('2d')!
+          ctx.drawImage(picture, 0, 0, s.width, s.height); drawCaptions(ctx, s.width, s.height, this.caption()); picture = overlay
+        }
         if (k === 0 && !sim.recordFits()) throw new Error(L(`видеокарта не рисует кадр ${s.width} × ${s.height} — выберите размер меньше`, `the GPU does not draw a ${s.width} × ${s.height} frame — choose a smaller size`))
         const frame = new VideoFrame(picture, { timestamp: frameStamp(k, s.fps), duration: frameStamp(1, s.fps) })
         encoder.encode(frame, { keyFrame: k % (KEY_EVERY * s.fps) === 0 }); frame.close()

@@ -1240,7 +1240,12 @@ document.querySelector('#snapshotButton')!.addEventListener('click', async () =>
   setTimeout(() => URL.revokeObjectURL(a.href), 10_000)
 })
 // A video of the 3D view, frame by frame (src/record/recorder.ts); from the ground — where the menu's «far» puts the observer.
-const recorder = new VideoRecorder(() => sim, () => config.hour, () => { sim.standSuggested(OBSERVER_BACK); showGround() })
+// Its captions (M4): the scenario, the model and local time, what the storm is and its numbers, from the model now.
+const recorder = new VideoRecorder(() => sim, () => config.hour, () => { sim.standSuggested(OBSERVER_BACK); showGround() }, () => {
+  const d = sim.diagnostics(), parts = [d.updraft >= 1 ? L(`поток ${Math.round(d.updraft)} м/с`, `updraught ${Math.round(d.updraft)} m/s`) : '', d.rain >= 1 ? L(`дождь ${Math.round(d.rain)} мм/ч`, `rain ${Math.round(d.rain)} mm/h`) : '',
+    d.hail >= 5 ? L(`град ${decimal(d.hail / 10, 1)} см`, `hail ${decimal(d.hail / 10, 1)} cm`) : '', d.mesocyclone ? `UH ${Math.round(d.updraftHelicity)} ${L('м²/с²', 'm²/s²')}` : '']
+  return { title: document.querySelector('#scenarioName')!.textContent || 'MeteoLab', time: L(`T+${runTime(sim.time)} · ${timeOfDay(config.hour, sim.time)} по местному`, `T+${runTime(sim.time)} · ${timeOfDay(config.hour, sim.time)} local`), event: d.cellType, numbers: parts.filter(Boolean).join(' · ') }
+})
 document.querySelector('#videoButton')!.addEventListener('click', () => recorder.open())
 // The language switch: the same page in the other language, with the run's settings (the address's query and hash).
 document.addEventListener('click', e => {
