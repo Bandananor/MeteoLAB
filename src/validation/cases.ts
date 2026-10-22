@@ -204,6 +204,24 @@ export function scenarioRun(values: Partial<SimConfig>) {
   return { maxW, maxUH, longest, gust, rain: Math.max(...model.precipitation), hailAloft: Math.max(...model.hailSize) / 10, hailGround: Math.max(...model.hailGround), clipped: model.clipped }
 }
 
+/**
+ * A ready situation (2.6) for `minutes`: the strongest updraught and the highest cloud top over the run, and over
+ * [lateFrom, lateTo) min the mean of the minute maxima of the updraught and the heaviest rain at the ground.
+ */
+export function situationRun(values: Partial<SimConfig>, minutes: number, lateFrom = Infinity, lateTo = Infinity) {
+  const model = new AtmosphereModel({ ...SUMMER_DAY, ...values })
+  let maxW = 0, top = 0, late = 0, lateN = 0, lateRain = 0
+  for (let t = DT; t <= minutes * 60; t += DT) {
+    model.step(DT); model.time += DT
+    if (t % 60) continue
+    const d = model.diagnostics(); maxW = Math.max(maxW, d.updraft); top = Math.max(top, d.cloudTop)
+    if (t > lateFrom * 60 && t <= lateTo * 60) { late += d.updraft; lateN++; lateRain = Math.max(lateRain, d.rainRate) }
+  }
+  return { maxW, top, late: lateN ? late / lateN : 0, lateRain, clipped: model.clipped }
+}
+/** The ready situations, each run with and without what drives its story (the slow test runs each in its own cloud job). */
+export const SITUATIONS = ['Тёплый сектор и холодный фронт', 'Высотная ложбина', 'Тёплый воздух над слоем: гроз не будет']
+
 const INF = Infinity
 /** The scenarios the cases run: those with a thermal (the others start in the morning and take hours of heating). */
 export const SHORT_SCENARIOS = SCENARIOS.filter(s => s.values.bubble !== 0)
@@ -272,4 +290,41 @@ export const CASES: ValidationCase[] = [
       }
     },
   })),
+  ...SITUATIONS.map((name, k): ValidationCase => {
+    const values = SCENARIOS.find(x => x.name === name)!.values
+    const run: Record<string, () => CaseResult> = {
+      'Тёплый сектор и холодный фронт': () => {
+        const front = situationRun(values, 120), none = situationRun({ ...values, frontLine: undefined }, 120)
+        return { checks: [
+          check('values clipped by the limiters', '', front.clipped, '0', [0, 0]),
+          check('with the front: max updraught', 'm/s', front.maxW, 'storms on the front', [25, INF]),
+          check('with the front: highest cloud top', 'km', front.top, 'deep storms', [10, INF]),
+          check('without the front: max updraught', 'm/s', none.maxW, 'no storms (the cap holds)', [0, 10]),
+        ] }
+      },
+      'Высотная ложбина': () => {
+        // 12:10-12:50 (from 130 min): when the plain day's rain has ended and the trough's goes on.
+        const trough = situationRun(values, 180, 130, 170), plain = situationRun({ ...values, largeScale: undefined }, 180, 130, 170)
+        return { checks: [
+          check('values clipped by the limiters', '', trough.clipped, '0', [0, 0]),
+          check('with the trough: max updraught', 'm/s', trough.maxW, 'storms by 11:30', [20, INF]),
+          check('without the trough: max updraught', 'm/s', plain.maxW, 'storms by 11:30 too', [15, INF]),
+          check('with the trough: 12:10–12:50 mean updraught', 'm/s', trough.late, 'new cells keep going', [8, INF]),
+          check('12:10–12:50 mean updraught, with − without the trough', 'm/s', trough.late - plain.late, 'the trough makes them last', [3, INF]),
+          check('with the trough: heaviest rain 12:10–12:50', 'mm/h', trough.lateRain, 'downpours go on', [10, INF]),
+          check('without the trough: heaviest rain 12:10–12:50', 'mm/h', plain.lateRain, 'the rain has ended by 12:20', [0, 5]),
+        ], note: 'Recalibrated 22.10.2026 for 2.7.2’s ice from processes (the trough −4 K instead of −3, the window 12:10–12:50 instead of 12:30–13:00): late weak updraughts keep their cloud water supercooled and get less heat of freezing (tests/bench/glaciation.ts).' }
+      },
+      'Тёплый воздух над слоем: гроз не будет': () => {
+        const capped = situationRun(values, 120), plain = situationRun({ ...values, largeScale: undefined }, 120)
+        return { checks: [
+          check('with the warm air aloft: max updraught', 'm/s', capped.maxW, 'no storms', [0, 8]),
+          check('with the warm air aloft: highest cloud top', 'km', capped.top, 'shallow cumulus', [0, 4]),
+          check('without it: max updraught', 'm/s', plain.maxW, 'storms', [20, INF]),
+          check('without it: highest cloud top', 'km', plain.top, 'deep storms', [8, INF]),
+        ] }
+      },
+    }
+    return { id: `situation-${k}`, title: `Situation «${name}», with and without its trigger`, source: 'the situation’s story (2.6)', minutes: k === 1 ? 25 : 18, run: run[name] }
+  }),
 ]
