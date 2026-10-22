@@ -842,6 +842,16 @@ void main(){
 }`
 
 /**
+ * The lightning's vertex shader without the cloud between the channel and the eye: no 3D texture read in the vertex
+ * shader (16 of them in a loop above), which a phone's driver could not build (a tester's Adreno 610, 22.10.2026: the
+ * program failed with no log). The channels are drawn as if in clear air.
+ */
+export const lightningVertexSimple = lightningVertex
+  .replace(`${volumeCommon}\n${cloudSampling}\n`, '')
+  .replace(`${cloudBetween}\n`, '')
+  .replace('vSeen = exp(-cloudBetween(at));', 'vSeen = 1.0;')
+
+/**
  * A white core (HDR: it saturates to white) and a softer glow around it, added to what is behind: a CG's blue-white
  * (the N II and H-alpha lines together look white with blue, as on photos), an IC's neutral white (seen through cloud,
  * whose Mie scattering is grey).
@@ -909,6 +919,11 @@ void main(){
   vSeen = exp(-cloudBetween(p));
   vTint = exp(-length(cameraPosition - p) * vec3(0.004, 0.007, 0.012));
 }`
+
+/** The sprites' vertex shader without the cloud between them and the eye (as lightningVertexSimple). */
+export const spriteVertexSimple = spriteVertex
+  .replace(`${volumeCommon}\n${cloudSampling}\n${cloudBetween}\n`, '')
+  .replace('vSeen = exp(-cloudBetween(p));', 'vSeen = 1.0;')
 
 export const spriteFragment = /* glsl */`
 precision highp float;

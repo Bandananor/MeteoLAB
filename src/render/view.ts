@@ -321,6 +321,9 @@ export class StormView {
       console.error('MeteoLab shader error:', log)
       const info = gl.getExtension('WEBGL_debug_renderer_info'), gpu = String(info ? gl.getParameter(info.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER))
       if (this.shaderRetry === 'pending') return
+      // The lightning and the sprites have simpler shaders to fall back on (no cloud read in the vertex shader).
+      const simpler = part === 'lightningChannels' ? this.lightning : part === 'sprite' ? this.sprites : undefined
+      if (simpler && !simpler.simple) { console.warn(`MeteoLab: ${part} without the cloud between, the full shader failed on`, gpu); simpler.useSimple(); return }
       if (this.shaderRetry === 'none' && this.level !== 'low') { this.shaderRetry = 'pending'; setTimeout(() => { this.shaderRetry = 'done'; this.autoCeiling = 0; this.applyLevel('low') }); return }
       this.onShaderError?.(log, gpu, part)
     }

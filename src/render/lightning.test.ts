@@ -82,3 +82,18 @@ describe('leaders crossing the cloud (lightning.ts)', () => {
     expect(brightness(wide, false, 100).main).toBeGreaterThan(.2)
   })
 })
+
+describe('the lightning shader for GPUs that cannot build the full one', () => {
+  it('reads no texture in the vertex shader and keeps everything else', async () => {
+    const { lightningVertex, lightningVertexSimple, spriteVertex, spriteVertexSimple } = await import('./shaders')
+    expect(lightningVertex).toMatch(/cloudBetween\(at\)/)
+    expect(lightningVertexSimple).not.toMatch(/sampler3D|texture|cloudBetween/)
+    expect(lightningVertexSimple).toContain('vSeen = 1.0;')
+    // The channel itself is built the same way.
+    for (const line of ['vCore = uPx', 'vHalo = uPx', 'gl_Position = vec4(s / hr * c.w, c.z, c.w);', 'vTint = exp(']) expect(lightningVertexSimple).toContain(line)
+    // The sprites likewise.
+    expect(spriteVertex).toMatch(/cloudBetween\(p\)/)
+    expect(spriteVertexSimple).not.toMatch(/sampler3D|texture|cloudBetween/)
+    expect(spriteVertexSimple).toContain('vSeen = 1.0;')
+  })
+})

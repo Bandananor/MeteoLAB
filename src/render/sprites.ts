@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import type { Flash } from '../core'
 import { mulberry32 } from '../core/math'
-import { spriteFragment, spriteVertex } from './shaders'
+import { spriteFragment, spriteVertex, spriteVertexSimple } from './shaders'
 
 // Sprites and halos of the 3D view (2.7.3): when a CG with a transient luminous event (core/tle.ts) is shown, the event
 // lights above where it struck, after its first return stroke. Only in the dark: by day and in twilight the sky hides
@@ -91,6 +91,11 @@ export class SpriteView {
     g.setAttribute('aBase', new THREE.Float32BufferAttribute(base, 3)); g.setAttribute('position', new THREE.Float32BufferAttribute(base, 3)); g.setAttribute('aShape', new THREE.Float32BufferAttribute(shape, 4)); g.setAttribute('aCorner', new THREE.Float32BufferAttribute(corner, 2)); g.setAttribute('aHead', new THREE.Float32BufferAttribute(head, 1))
     g.setIndex(index)
   }
+
+  /** Whether the sprites are drawn without the cloud between (the GPU could not build the full shader). */
+  get simple() { return this.material.vertexShader === spriteVertexSimple }
+  /** Draws the sprites without the cloud between them and the eye (spriteVertexSimple). */
+  useSimple() { this.material.vertexShader = spriteVertexSimple; this.material.needsUpdate = true }
 
   dispose() { this.geometry.dispose(); this.material.dispose() }
 }

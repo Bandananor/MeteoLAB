@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import { type AtmosphereModel, channelShape, type Flash, type TransientEvent } from '../core'
 import { mulberry32 } from '../core/math'
 import { FLASH_POINTS } from './light'
-import { lightningFragment, lightningVertex } from './shaders'
+import { lightningFragment, lightningVertex, lightningVertexSimple } from './shaders'
 
 /** At most this many flashes shown at once; a flash waiting longer than QUEUE_WAIT ms for a place is dropped. */
 const SLOTS = 8, QUEUE_WAIT = 2000
@@ -138,6 +138,11 @@ export class LightningView {
     })
     this.mesh = new THREE.Mesh(this.geometry, this.material); this.mesh.frustumCulled = false; this.mesh.renderOrder = 4; this.mesh.visible = false
   }
+
+  /** Whether the channels are drawn without the cloud between (the GPU could not build the full shader). */
+  get simple() { return this.material.vertexShader === lightningVertexSimple }
+  /** Draws the channels without the cloud between them and the eye (lightningVertexSimple). */
+  useSimple() { this.material.vertexShader = lightningVertexSimple; this.material.needsUpdate = true }
 
   /**
    * Takes the flashes that arrived, lights those shown at `now` (performance.now(), ms) and returns how bright the
