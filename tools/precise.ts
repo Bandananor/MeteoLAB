@@ -1,18 +1,19 @@
 // A precise run ahead of time (roadmap C2): one run on a fine grid (the setting "spacing", km: 0.5 or 0.25) in Node,
 // with the step spread over threads, an estimate of the time and the memory before it starts, the storm's course as
-// CSV, and saved states (.meteolab) every few minutes: the simulator opens them (Run → Open a .meteolab file) with all
-// its instruments, and the run continues from the last one after a pause (Ctrl+C, or a file named "pause" put in the
-// output folder — for a run in the background).
-//   npm run precise -- run.json [threads=N] [out=dir] [every=5] [estimate] [resume]
+// CSV, light frames (frames.mlframes, src/core/frames.ts) every so many model seconds to play the run back, and saved
+// states (.meteolab) every few minutes: the simulator opens them (Run → Open a .meteolab file) with all its instruments,
+// and the run continues from the last one after a pause (Ctrl+C, or a file named "pause" put in the output folder — for
+// a run in the background).
+//   npm run precise -- run.json [threads=N] [out=dir] [every=5] [frames=30] [estimate] [resume]
 // run.json is a series file of one run: {"meteolab_series": 1, "scenario": …, "settings": {"spacing": 0.5, …},
 // "vary": {}, "seeds": 1, "first_seed": …, "minutes": 60}. estimate: only the estimate. resume: from the newest state
-// in the output folder. every: minutes between saved states.
+// in the output folder. every: minutes between saved states; frames: model seconds between frames (0: none).
 import { isMainThread, Worker, workerData } from 'node:worker_threads'
 import { fileURLToPath } from 'node:url'
 import { availableParallelism } from 'node:os'
-import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, rmSync, statSync, truncateSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { AtmosphereModel, applyState, createGrid, domainGrid, DT, readState, saveState, SCENARIOS, type SimConfig } from '../src/core'
+import { AtmosphereModel, applyState, createGrid, domainGrid, DT, encodeFrame, frameIndex, framesHeader, readFramesHeader, readState, saveState, SCENARIOS, type SimConfig } from '../src/core'
 import { AttachedMemory, controlBuffer, serveTasks, SharedMemory, ThreadRunner } from '../src/core/threads'
 import { setRunLink, stampColumns } from '../src/export/stamp'
 import { encodeSettings, toCsv } from '../src/share'
@@ -35,7 +36,7 @@ if (!isMainThread) {
 } else {
   const args = process.argv.slice(2), path = args.find(a => !a.includes('=') && a !== 'estimate' && a !== 'resume')
   const option = (name: string) => args.find(a => a.startsWith(`${name}=`))?.slice(name.length + 1)
-  if (!path) { console.error('usage: npm run precise -- run.json [threads=N] [out=dir] [every=5] [estimate] [resume]'); process.exit(2) }
+  if (!path) { console.error('usage: npm run precise -- run.json [threads=N] [out=dir] [every=5] [frames=30] [estimate] [resume]'); process.exit(2) }
   const text = readFileSync(path, 'utf8'), parsed = parseSeries(text, SCENARIOS.map(s => s.name))
   if ('error' in parsed) { console.error(`${path}: ${parsed.error}`); process.exit(1) }
   const series = parsed.series, runs = expandSeries(series, seriesBase(series))
@@ -72,13 +73,23 @@ if (!isMainThread) {
 
   mkdirSync(out, { recursive: true })
   const stateName = (t: number) => join(out, `state-${(t / 60).toFixed(1).padStart(6, '0')}min.meteolab`), course = join(out, 'course.csv')
+  const framesEvery = Number(option('frames') ?? 30), framesFile = join(out, 'frames.mlframes')
   if (args.includes('resume')) {
     const saved = readdirSync(out).filter(f => /^state-[\d.]+min\.meteolab$/.test(f)).sort().pop()
     if (!saved) { console.error(`${out}: no saved state to resume from`); await stop(1) }
     const buffer = readFileSync(join(out, saved!)), state = readState(buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength))
     applyState(model, state)
     console.log(`resumed from ${saved} (minute ${Math.round(model.time / 60)})`)
+    // What was written after the state (a run stopped without its pause state) goes: the course's rows and the frames.
+    if (existsSync(course)) { const [head, ...rows] = readFileSync(course, 'utf8').trimEnd().split('\n'), at = head.split(',').indexOf('time_min'); writeFileSync(course, [head, ...rows.filter(r => Number(r.split(',')[at]) <= model.time / 60 + 1e-6)].join('\n') + '\n') }
+    if (existsSync(framesFile)) {
+      const fd = openSync(framesFile, 'r'), size = statSync(framesFile).size
+      const read = async (o: number, n: number) => { const b = new Uint8Array(n); readSync(fd, b, 0, n, o); return b }
+      const { start } = readFramesHeader(await read(0, Math.min(size, 65536))), kept = (await frameIndex(read, size, start)).filter(f => f.time <= model.time + .5)
+      closeSync(fd); truncateSync(framesFile, kept.length ? kept[kept.length - 1].offset + kept[kept.length - 1].length : start)
+    }
   }
+  if (framesEvery > 0 && (!existsSync(framesFile) || !args.includes('resume'))) { writeFileSync(framesFile, framesHeader(config, g, framesEvery)); appendFileSync(framesFile, await encodeFrame(model)) }
 
   type Row = { t: number; d: ReturnType<AtmosphereModel['diagnostics']>; uh: number; zeta: number; meso: number }
   const columns: [string, (r: Row) => number | string][] = [
@@ -99,6 +110,7 @@ if (!isMainThread) {
     model.step(DT); model.time += DT
     const t = Math.round(model.time)
     if (t % ROW_EVERY === 0) appendFileSync(course, toCsv([row()], columns).split('\n')[1] + '\n')
+    if (framesEvery > 0 && t % framesEvery === 0) appendFileSync(framesFile, await encodeFrame(model))
     if (t % every === 0 || t >= end) writeFileSync(stateName(model.time), new Uint8Array(saveState(model, config)))
     const now = performance.now()
     if (now - last > 10_000) {
@@ -115,6 +127,6 @@ if (!isMainThread) {
       await stop(130)
     }
   }
-  console.log(`done: ${minutes} min in ${((performance.now() - started) / 60000).toFixed(1)} min; ${course}, states in ${out}`)
+  console.log(`done: ${minutes} min in ${((performance.now() - started) / 60000).toFixed(1)} min; ${course}${framesEvery > 0 ? `, ${framesFile} (${Math.round(statSync(framesFile).size / 2 ** 20)} MB)` : ''}, states in ${out}`)
   await stop(0)
 }
