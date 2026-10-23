@@ -22,6 +22,9 @@ const ROOTED: ReadonlySet<string> = new Set(['cloud', 'rain', 'cold', 'ice', 'sn
 export const RECORD_HEAD = 8
 
 export interface FramesHeader { format: 'meteolab-frames'; version: number; config: unknown; nx: number; ny: number; nz: number; every: number }
+
+/** The settings a frames file was made with, read from its first bytes (to build the model it plays back in). */
+export async function frameSettings(file: Blob) { return readFramesHeader(new Uint8Array(await file.slice(0, Math.min(file.size, 1 << 20)).arrayBuffer())).header }
 export interface FrameEntry { offset: number; length: number; time: number }
 
 type FrameModel = Pick<AtmosphereModel, 'grid' | 'time' | 'rotation' | 'chargeGround' | 'flashCount' | (typeof STATE_FIELDS)[number] | (typeof STATE_COLUMNS)[number]>

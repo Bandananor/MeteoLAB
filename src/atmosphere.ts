@@ -1,6 +1,6 @@
 import type { CameraGrade } from './camera'
 import { lang } from './i18n'
-import { applyState, readState, AtmosphereModel, DT, CellTracker, coldPoolBalance, type SavedState, saveState, type ColdPoolBalance, computeSounding, domainPoint, groundPoint, Station, STATION_MAX, type Environment, insolation, liveSounding, type ModelDiagnostics, parcelIndices, type ParcelIndices, type SimConfig, type Sounding, stormIndices, type StormIndices, sunDirection } from './core'
+import { decodeFrame, type FrameEntry, frameIndex, type FramesHeader, readFramesHeader, applyState, readState, AtmosphereModel, DT, CellTracker, coldPoolBalance, type SavedState, saveState, type ColdPoolBalance, computeSounding, domainPoint, groundPoint, Station, STATION_MAX, type Environment, insolation, liveSounding, type ModelDiagnostics, parcelIndices, type ParcelIndices, type SimConfig, type Sounding, stormIndices, type StormIndices, sunDirection } from './core'
 import { describeConvection } from './describe'
 import { blendWeight } from './record/plan'
 import { isPhone, PHONE_THREADS } from './hud'
@@ -65,6 +65,15 @@ export class Atmosphere implements ViewSettings {
   private held: { time: number; data: Float32Array }[] | null = null
   /** Called once the snapshot in flight has arrived. */
   private arrived: (() => void) | null = null
+  /**
+   * Playing back a precise run's frames (src/core/frames.ts, tools/precise.ts): the worker is left idle and each frame
+   * shown goes into the page's model, which the view and the instruments read as they read the live run. The file is
+   * read a frame at a time (a run's frames are tens to hundreds of MB).
+   */
+  private replay: { header: FramesHeader; frames: FrameEntry[]; file: Blob } | null = null
+  /** The frame shown, its index (-1: none yet). */
+  replayIndex = -1
+  private replayTicket = 0
 
   constructor(canvas: HTMLCanvasElement, config: SimConfig) {
     this.config = config; this.sentConfig = JSON.stringify(config)
@@ -87,7 +96,7 @@ export class Atmosphere implements ViewSettings {
 
   /** Sends the real elapsed time (and any slider change) to the worker; the fields arrive with the next snapshot. */
   advance(realDt: number) {
-    if (this.held) return
+    if (this.held || this.replay) return
     const current = JSON.stringify(this.config)
     if (current !== this.sentConfig) { this.sentConfig = current; Object.assign(this.mirror.config, this.config); this.post({ type: 'config', config: { ...this.config } }) }
     this.waiting += realDt
@@ -156,6 +165,41 @@ export class Atmosphere implements ViewSettings {
     for (const key of SNAPSHOT_FIELDS) { m[key].set(data.subarray(o, o + n)); o += n }
     for (const key of SNAPSHOT_COLUMNS) { m[key].set(data.subarray(o, o + layer)); o += layer }
   }
+  // ---- Playing back a precise run's frames.
+
+  get replaying() { return !!this.replay }
+  /** The frames of the file being played back (their model times). */
+  get replayFrames(): readonly FrameEntry[] { return this.replay?.frames ?? [] }
+  /**
+   * Opens a frames file for playback (this Atmosphere must have been built with its settings: frameSettings first) and
+   * shows its first frame.
+   */
+  async startReplay(file: Blob) {
+    const read = async (o: number, n: number) => new Uint8Array(await file.slice(o, o + n).arrayBuffer())
+    const { header, start } = readFramesHeader(await read(0, Math.min(file.size, 1 << 20))), { nx, ny, nz } = this.mirror.grid
+    if (header.nx !== nx || header.ny !== ny || header.nz !== nz) throw new Error(`frames grid ${header.nx}×${header.ny}×${header.nz}, the model's ${nx}×${ny}×${nz}`)
+    const frames = await frameIndex(read, file.size, start)
+    if (!frames.length) throw new Error('no frames in the file')
+    this.replay = { header, frames, file }; this.replayIndex = -1
+    await this.showFrame(0)
+  }
+  /** Puts frame k into the page's model, with what a snapshot would have brought: the diagnostics, cells, the live sounding. */
+  async showFrame(k: number) {
+    const r = this.replay
+    if (!r) return
+    k = Math.max(0, Math.min(r.frames.length - 1, Math.round(k)))
+    const ticket = ++this.replayTicket, f = r.frames[k], packed = new Uint8Array(await r.file.slice(f.offset, f.offset + f.length).arrayBuffer())
+    // A later call may have shown another frame while this one was read: the newest asked for wins.
+    const state = await decodeFrame(packed, r.header), m = this.mirror
+    if (ticket !== this.replayTicket) return
+    applyState(m, state)
+    this.replayIndex = k; this.latest = m.diagnostics()
+    this.cells.update(m); this.view.setFlanks(this.cells.cells.flatMap(c => c.flanks ? [c.flanks] : []))
+    this.balance = coldPoolBalance(m)
+    if (!(m.time - this.live.time < LIVE_EVERY && m.time >= this.live.time)) { const l = liveSounding(m); this.live = this.derive(l.env, m.time, l.quiet, l.all) }
+    this.view.afterAdvance(0)
+  }
+
   /** The 3D view as a PNG (StormView.snapshot). */
   snapshot() { return this.view.snapshot() }
   /** The picture's quality (StormView.setQuality), the level drawn, and a call when the automatic choice changes it. */
