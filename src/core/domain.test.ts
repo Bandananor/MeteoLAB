@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { AtmosphereModel, createGrid, customGrid, DEFAULT_GRID, domainGrid, DT, LARGE_GRID } from '.'
 import { SUMMER_DAY } from './fixtures'
+import { cleanSettings } from '../share'
 
 /** Fastest of `steps` model steps after two warm-up steps, ms (the fastest is the least disturbed by the machine). */
 function stepTime(model: AtmosphereModel, steps = 6) {
@@ -57,6 +58,9 @@ describe('a finer horizontal grid (SimConfig.spacing, roadmap C2)', () => {
     expect(domainGrid('large', undefined, undefined, .25)).toMatchObject({ nx: 384, ny: 288, width: 96_000 })
     expect(domainGrid('custom', 22, [36, 27], .6)).toMatchObject({ nx: 60, ny: 45, height: 22_000 })
     expect(domainGrid('standard', undefined, undefined, undefined)).toEqual(DEFAULT_GRID)
+    // Not finer than 0.25 km (a link could ask for any number), and it passes through links and saved files.
+    expect(domainGrid('standard', undefined, undefined, .01)).toMatchObject({ nx: 192, ny: 144 })
+    expect(cleanSettings({ spacing: .5 })).toEqual({ spacing: .5 })
   })
 
   it('runs at 0.6 km (80 x 60 columns)', () => {

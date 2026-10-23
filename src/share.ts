@@ -8,7 +8,7 @@ const KINDS: Record<string, 'number' | 'boolean' | 'pair' | 'sounding' | 'zones'
   rhSurface: 'number', rhLow: 'number', rhMid: 'number', rhUpper: 'number',
   wind0: 'number', wind05: 'number', wind1: 'number', wind3: 'number', wind6: 'number', wind10: 'number',
   windDir0: 'number', windDir05: 'number', windDir1: 'number', windDir3: 'number', windDir6: 'number', windDir10: 'number',
-  capHeight: 'number', capStrength: 'number', moistLayer: 'number', nightInversion: 'number', front: 'number', top: 'number',
+  capHeight: 'number', capStrength: 'number', moistLayer: 'number', nightInversion: 'number', front: 'number', top: 'number', spacing: 'number',
   latitude: 'number', turbulence: 'number', hour: 'number', dayOfYear: 'number', solarMax: 'number', soilMoisture: 'number',
   speed: 'number', bubble: 'number', bubbleRadius: 'number', city: 'number',
   surfaceType: ['grass', 'dry', 'water', 'urban'], microphysics: ['warm', 'ice'], transport: ['semi-lagrangian', 'weno'],

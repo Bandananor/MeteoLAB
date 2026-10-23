@@ -14,7 +14,8 @@
     "test:diurnal": "vitest run --mode slow src/core/diurnal.test.ts",
     "bench": "vite build --ssr tests/bench/threads.ts --outDir .bench --emptyOutDir --logLevel warn && node .bench/threads.js",
     "series": "vite build --ssr tools/series.ts --outDir .series --emptyOutDir --logLevel warn && node .series/series.js",
-    "validate": "vite build --ssr tools/validate.ts --outDir .validate --emptyOutDir --logLevel warn && node .validate/validate.js"
+    "validate": "vite build --ssr tools/validate.ts --outDir .validate --emptyOutDir --logLevel warn && node .validate/validate.js",
+    "precise": "vite build --ssr tools/precise.ts --outDir .precise --emptyOutDir --logLevel warn && node .precise/precise.js"
   },
   "devDependencies": {
     "typescript": "~6.0.2",

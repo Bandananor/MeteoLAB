@@ -277,7 +277,7 @@ app.innerHTML = `<div class="app">
           </div>
         </div></div>
       </div>
-      <div class="readout"><span>${L('Сетка', 'Grid')} <b id="gridSize">40 × 32 × 50</b></span><span>Δx / Δy <b>1.2 / 1.1 ${L('км', 'km')}</b></span><span>Δz <b>0.1 → 1 ${L('км', 'km')}</b></span><span>Δt <b>${DT} ${L('с', 's')}</b></span><span>${L('Область', 'Domain')} <b id="frameMotion">—</b></span><span>${L('Инсоляция', 'Insolation')} <b id="sun">—</b></span><span>${L('Солнце', 'Sun')} <b id="sunElevation">—</b></span></div>
+      <div class="readout"><span>${L('Сетка', 'Grid')} <b id="gridSize">40 × 32 × 50</b></span><span>Δx / Δy <b id="gridSpacing">1.2 / 1.1 ${L('км', 'km')}</b></span><span>Δz <b>0.1 → 1 ${L('км', 'km')}</b></span><span>Δt <b>${DT} ${L('с', 's')}</b></span><span>${L('Область', 'Domain')} <b id="frameMotion">—</b></span><span>${L('Инсоляция', 'Insolation')} <b id="sun">—</b></span><span>${L('Солнце', 'Sun')} <b id="sunElevation">—</b></span></div>
     </section>
 
     <aside class="side side--right diagnostics" aria-label="${L('Диагностика', 'Diagnostics')}"><div class="diag">
@@ -684,7 +684,7 @@ let built: { name: string; title: string; hint: string; nums: string; story: Sto
 document.querySelector('#sitBuild')!.addEventListener('click', () => {
   const pick = (id: string) => document.querySelector<HTMLSelectElement>(`#${id}`)!.value
   const b = buildSituation({ mass: pick('sitMass') as keyof typeof AIR_MASSES, trigger: pick('sitTrigger') as keyof typeof TRIGGERS, shear: pick('sitShear') as keyof typeof SHEARS, hour: Number(pick('sitHour')) }, defaults)
-  Object.assign(config, defaults, { speed: config.speed, followStorm: config.followStorm, lightning: config.lightning, domain: config.domain, domainSize: config.domainSize, wind05: undefined, wind1: undefined, windDir05: undefined, windDir1: undefined, profile: undefined, weismanKlemp: undefined, sounding: undefined, bubbleRadius: undefined, front: undefined, edges: undefined, start: undefined, frameMotion: undefined, top: undefined, nightInversion: undefined, zones: undefined, frontLine: undefined, largeScale: undefined, transport: 'weno' }, b.values)
+  Object.assign(config, defaults, { speed: config.speed, followStorm: config.followStorm, lightning: config.lightning, domain: config.domain, domainSize: config.domainSize, wind05: undefined, wind1: undefined, windDir05: undefined, windDir1: undefined, profile: undefined, weismanKlemp: undefined, sounding: undefined, bubbleRadius: undefined, front: undefined, edges: undefined, start: undefined, frameMotion: undefined, top: undefined, spacing: undefined, nightInversion: undefined, zones: undefined, frontLine: undefined, largeScale: undefined, transport: 'weno' }, b.values)
   fillLowWind(config)
   built = { ...b, title: b.name, nums: environmentNums(config) }; baseScenario = null; soundingBase = null
   syncControls(); markPreset(null); showScenario()
@@ -693,7 +693,7 @@ document.querySelector('#sitBuild')!.addEventListener('click', () => {
 document.querySelectorAll<HTMLButtonElement>('[data-preset]').forEach(button => button.addEventListener('click', () => {
   const index = Number(button.dataset.preset)
   built = null
-  Object.assign(config, defaults, { speed: config.speed, followStorm: config.followStorm, lightning: config.lightning, domain: config.domain, domainSize: config.domainSize, wind05: undefined, wind1: undefined, windDir05: undefined, windDir1: undefined, profile: undefined, weismanKlemp: undefined, sounding: undefined, bubbleRadius: undefined, front: undefined, edges: undefined, start: undefined, frameMotion: undefined, top: undefined, nightInversion: undefined, zones: undefined, frontLine: undefined, largeScale: undefined, transport: 'weno' }, presets[index].values)
+  Object.assign(config, defaults, { speed: config.speed, followStorm: config.followStorm, lightning: config.lightning, domain: config.domain, domainSize: config.domainSize, wind05: undefined, wind1: undefined, windDir05: undefined, windDir1: undefined, profile: undefined, weismanKlemp: undefined, sounding: undefined, bubbleRadius: undefined, front: undefined, edges: undefined, start: undefined, frameMotion: undefined, top: undefined, spacing: undefined, nightInversion: undefined, zones: undefined, frontLine: undefined, largeScale: undefined, transport: 'weno' }, presets[index].values)
   fillLowWind(config)
   baseScenario = index
   syncControls()
@@ -844,7 +844,7 @@ function previewSounding() {
 soundingDialog.addEventListener('close', () => {
   if (soundingDialog.returnValue !== 'run' || !loadedSounding) { soundingDialog.returnValue = ''; return }
   soundingDialog.returnValue = ''
-  Object.assign(config, defaults, { speed: config.speed, followStorm: config.followStorm, lightning: config.lightning, domain: config.domain, domainSize: config.domainSize, wind05: undefined, wind1: undefined, windDir05: undefined, windDir1: undefined, profile: undefined, weismanKlemp: undefined, bubbleRadius: undefined, front: undefined, edges: undefined, start: undefined, frameMotion: undefined, top: undefined, nightInversion: undefined, zones: undefined, frontLine: undefined, largeScale: undefined, transport: 'weno' },
+  Object.assign(config, defaults, { speed: config.speed, followStorm: config.followStorm, lightning: config.lightning, domain: config.domain, domainSize: config.domainSize, wind05: undefined, wind1: undefined, windDir05: undefined, windDir1: undefined, profile: undefined, weismanKlemp: undefined, bubbleRadius: undefined, front: undefined, edges: undefined, start: undefined, frameMotion: undefined, top: undefined, spacing: undefined, nightInversion: undefined, zones: undefined, frontLine: undefined, largeScale: undefined, transport: 'weno' },
     { sounding: loadedSounding, bubble: Number(soundingBubble.value), ...(soundingLatitude !== undefined ? { latitude: Math.round(Math.abs(soundingLatitude)) } : {}) })
   fillLowWind(config)
   baseScenario = null; built = null; soundingBase = { sounding: config.sounding, bubble: config.bubble, latitude: config.latitude }
@@ -874,7 +874,7 @@ stateFile.addEventListener('change', async () => {
   if (!file) return
   try {
     const buffer = await file.arrayBuffer(), state = readState(buffer)
-    Object.assign(config, defaults, { wind05: undefined, wind1: undefined, windDir05: undefined, windDir1: undefined, profile: undefined, weismanKlemp: undefined, sounding: undefined, bubbleRadius: undefined, front: undefined, edges: undefined, start: undefined, frameMotion: undefined, top: undefined, nightInversion: undefined, zones: undefined, frontLine: undefined, largeScale: undefined }, cleanSettings(state.header.config))
+    Object.assign(config, defaults, { wind05: undefined, wind1: undefined, windDir05: undefined, windDir1: undefined, profile: undefined, weismanKlemp: undefined, sounding: undefined, bubbleRadius: undefined, front: undefined, edges: undefined, start: undefined, frameMotion: undefined, top: undefined, spacing: undefined, nightInversion: undefined, zones: undefined, frontLine: undefined, largeScale: undefined }, cleanSettings(state.header.config))
     fillLowWind(config); baseScenario = null; built = null; soundingBase = config.sounding ? { sounding: config.sounding } : null; syncControls(); markPreset(null); showScenario()
     // The file's seed: the surface pattern under the domain comes from it and is not in the file.
     recreate(config.seed)
@@ -1148,7 +1148,7 @@ function showSpeed() {
 /** Domain size and grid in the header and footer, and how fast the domain moves with the storm. */
 function showDomain() {
   const { nx, ny, nz, width, depth, height } = sim.model.grid, [fu, fv] = sim.model.frame, speed = Math.hypot(fu, fv)
-  text('domainSize', `${width / 1000} × ${depth / 1000} × ${Math.round(height / 1000)}${KM}`); text('gridSize', `${nx} × ${ny} × ${nz}`)
+  text('domainSize', `${width / 1000} × ${depth / 1000} × ${Math.round(height / 1000)}${KM}`); text('gridSize', `${nx} × ${ny} × ${nz}`); const km = (m: number) => decimal(m / 1000, 2).replace(/[.,]?0+$/, ''); text('gridSpacing', `${km(width / nx)} / ${km(depth / ny)}${KM}`)
   text('frameMotion', speed < .1 ? L('неподвижна', 'fixed') : L(`движется на ${heading(fu, fv)}, ${speed.toFixed(1)} м/с`, `moving ${heading(fu, fv)}, ${speed.toFixed(1)} m/s`))
 }
 // A thermal where the surface is double-clicked, or double-tapped on a touch screen: the taps are matched here, since

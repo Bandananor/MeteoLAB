@@ -44,13 +44,17 @@ export function customGrid([width, depth]: readonly [number, number]): GridOptio
   return { ...DEFAULT_GRID, nx: w * 10 / 12, ny: d * 8 / 9, width: w * 1000, depth: d * 1000 }
 }
 
+/** The finest horizontal spacing a setting may ask for, km (SimConfig.spacing). */
+export const SPACING_MIN = .25
+
 /**
  * Grid options for a domain size setting (with the own size for 'custom') and, optionally, the height of the top (km)
  * and the horizontal spacing (km, the same in x and y; absent = the domain's own 1.2 x 1.125 km).
  */
 export const domainGrid = (domain: 'standard' | 'large' | 'custom' | undefined, top?: number, size?: readonly [number, number], spacing?: number): GridOptions => {
   let base = domain === 'large' ? LARGE_GRID : domain === 'custom' && size ? customGrid(size) : DEFAULT_GRID
-  if (spacing !== undefined && spacing > 0) base = { ...base, nx: Math.max(8, Math.round(base.width / (spacing * 1000))), ny: Math.max(8, Math.round(base.depth / (spacing * 1000))) }
+  // Not finer than SPACING_MIN: a link could otherwise ask for tens of millions of nodes.
+  if (spacing !== undefined && spacing > 0) { const s = Math.max(SPACING_MIN, spacing) * 1000; base = { ...base, nx: Math.max(8, Math.round(base.width / s)), ny: Math.max(8, Math.round(base.depth / s)) } }
   return top === undefined ? base : { ...base, height: top * 1000 }
 }
 
