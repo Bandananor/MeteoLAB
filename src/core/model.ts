@@ -54,6 +54,16 @@ export const EDGE_ZONE = 12_000, EDGE_TIME = 300
 export const FRONT_DEPTH = 1500, FRONT_WIDTH = 1500, FRONT_TIME = 1800, FRONT_END = .6
 /** Condensate below this mixing ratio (kg/kg, 1e-7 g/kg) is set to zero by the WENO positivity fix, conservatively. */
 const TINY_WATER = 1e-10
+/**
+ * The updraught nudging (SimConfig.start 'nudge', AtmosphereModel.nudgeUpdraught): target w (m/s), the ellipsoid's
+ * horizontal and vertical radii and its centre's height (m), the relaxation rate (1/s), full strength until t1 and none
+ * after t2 (s of model time): CM1's defaults (iinit = 12, init3d.F *_wnudge, the forcing in misclibs.F get_wnudge, read
+ * 24.10.2026) for Naylor & Gilmore (2012).
+ */
+/** Where in the step RK3 evaluates each stage's tendency, in steps (the nudging's ramp). */
+const STAGE_TIME = [0, 1 / 3, 1 / 2]
+export const NUDGE = { w: 10, xr: 10_000, zr: 1500, zc: 1500, alpha: .5, t1: 900, t2: 1200 }
+
 /** Safety limits of the horizontal and vertical velocity, m/s (see AtmosphereModel.clipped). */
 export const U_LIMIT = 120, W_LIMIT = 100
 /** Updraught (m/s) of the 2-5 km nodes that count as an updraught core for RotationState.coreZeta. */
@@ -259,6 +269,8 @@ export class AtmosphereModel implements TaskModel {
       for (let z = 0, i = 0; z < nz; z++) for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++, i++) this.theta[i] -= this.frontDeficit(x, y, zs[z])
       // Weak thermals on the warm side, 3 km from the front, between the western zone and the front's end.
       for (let k = 0; k < 5; k++) bubble(W * (.18 + .09 * k), D / 2 - 3000, this.config.bubble)
+    } else if (this.config.start === 'nudge') {
+      // No thermal: the nudging in physics() starts the storm.
     } else if (this.config.profile === 'weisman-klemp') bubble(W * .3, D * .5, this.config.bubble)
     else { bubble(W * .38, D * .45, this.config.bubble); bubble(W * .61, D * .57, .72 * this.config.bubble) }
     // The starting thermals are the setup, not something added during the run.
@@ -271,6 +283,36 @@ export class AtmosphereModel implements TaskModel {
    * larger CAPE than the environment it is meant to probe.
    */
   injectBubble(cx: number, cy: number, strength: number) { intervene(this, { kind: 'thermal', x: cx, y: cy, strength }) }
+
+  /**
+   * Updraught nudging (SimConfig.start 'nudge'; Naylor & Gilmore 2012, as CM1 does it) on level z at model time t: within
+   * an ellipsoid in the domain's middle the target is NUDGE.w (or SimConfig.nudge) times cos² of the normalised distance
+   * from the centre, and where w is below it the tendency alpha gamma (target - w) acts, gamma 1 until NUDGE.t1, then
+   * falling linearly to 0 at NUDGE.t2. With the pressure in the RK3 stages (staged()) it goes into each stage's w tendency
+   * `out`, before the stage's projection, as CM1 adds it before its pressure on every acoustic step: an exponential
+   * relaxation once a step was halved by the projection reopening the gap (the numerics review, 24.10.2026; alpha dt =
+   * 1.5 is well inside RK3's stability). Without stages (out null) it acts on w itself, at most closing the gap.
+   */
+  private nudgeLevel(z: number, t: number, out: Float64Array | null, dt: number) {
+    if (t >= NUDGE.t2) return
+    const { nx, ny, dx, dy, zs, width: W, depth: D, layer } = this.grid, sz = (zs[z] - NUDGE.zc) / NUDGE.zr
+    if (Math.abs(sz) >= 1) return
+    const [ox, oy] = this.config.startOffset ?? [0, 0], cx = W / 2 + ox, cy = D / 2 + oy, w = this.w
+    const rate = NUDGE.alpha * (t < NUDGE.t1 ? 1 : (NUDGE.t2 - t) / (NUDGE.t2 - NUDGE.t1)), top = this.config.nudge ?? NUDGE.w, part = Math.min(1, rate * dt)
+    for (let y = 0; y < ny; y++) {
+      let ddy = y * dy - cy
+      if (ddy > D / 2) ddy -= D; if (ddy < -D / 2) ddy += D
+      for (let x = 0; x < nx; x++) {
+        let ddx = x * dx - cx
+        if (ddx > W / 2) ddx -= W; if (ddx < -W / 2) ddx += W
+        const d = Math.sqrt((ddx / NUDGE.xr) ** 2 + (ddy / NUDGE.xr) ** 2 + sz * sz)
+        if (d >= 1) continue
+        const i = x + nx * y + z * layer, gap = top * Math.cos(Math.PI / 2 * d) ** 2 - w[i]
+        if (gap <= 0) continue
+        if (out) out[i] += rate * gap; else w[i] += part * gap
+      }
+    }
+  }
 
   /** How much colder the maintained front (SimConfig.front) keeps the air at node column (x, y) and height alt, K. */
   frontDeficit(x: number, y: number, alt: number) {
@@ -623,7 +665,11 @@ export class AtmosphereModel implements TaskModel {
         if (phase === 'tendency0') start.set(a.subarray(z0 * layer, z1 * layer), z0 * layer)
         if (phase.startsWith('tendency')) {
           this.flux.tendency(a, tend, z0, z1, c.monotone)
-          if (a === this.w && this.staged()) this.stageBuoyancy(tend, z0, z1)
+          if (a === this.w && this.staged()) {
+            this.stageBuoyancy(tend, z0, z1)
+            // The stage's time: RK3 evaluates its tendencies at t, t + dt/3, t + dt/2.
+            if (this.config.start === 'nudge') for (let z = z0; z < z1; z++) this.nudgeLevel(z, this.time + STAGE_TIME[Number(phase[8])] * dt, tend, dt)
+          }
         }
         else { const fraction = RK3[Number(phase[6])] * dt; for (let i = z0 * layer; i < z1 * layer; i++) a[i] = start[i] + fraction * tend[i] }
         break
@@ -634,7 +680,7 @@ export class AtmosphereModel implements TaskModel {
         if (c.decay !== 1) { const keep = c.decay ** dt; for (let i = 0; i < a.length; i++) a[i] *= keep }
         break
       }
-      case 'physics': this.physics(k, dt); break
+      case 'physics': this.physics(k, dt); if (this.config.start === 'nudge' && !this.staged()) this.nudgeLevel(k, this.time + dt / 2, null, dt); break
       case 'faces': this.flux.faces(this.u, this.v, this.w, k, k + 1); break
       case 'faceDivergence': this.flux.divergence(k, k + 1); break
       case 'faceForward': this.flux.forward(k, k + 1); break

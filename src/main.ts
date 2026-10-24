@@ -353,6 +353,8 @@ app.innerHTML = `<div class="app">
     <div class="sounding-dialog__head"><b id="soundingName"></b><span class="t-caption" id="soundingInfo"></span></div>
     <div class="sounding-dialog__body"><canvas id="soundingChart" class="side-chart"></canvas><dl class="kv" id="soundingNums"></dl></div>
     <ul class="sounding-dialog__notes" id="soundingNotes"></ul>
+    <div class="notice notice--warn" id="soundingCap" hidden><span class="notice__text"></span></div>
+    <div class="field"><span class="field__label">${L('Запуск грозы', 'How the storm starts')}</span><span class="select"><select id="soundingStart"><option value="nudge">${L('Подталкивание потока, как в CM1 (Naylor & Gilmore 2012): 15–20 мин', 'Updraught nudging, as in CM1 (Naylor & Gilmore 2012): 15–20 min')}</option><option value="thermals">${L('Тёплый термик', 'A warm thermal')}</option></select></span></div>
     <label class="field"><span class="field__head"><span class="field__label">${L('Начальный термик (в реальном дне его нет — задайте сами; 0 — без термика)', 'Starting thermal (a real day has none — set it yourself; 0 — no thermal)')}</span><output class="field__value" id="soundingBubbleOut">1.00×</output></span><input class="range" id="soundingBubble" type="range" min="0" max="2.5" step="0.05" value="1"></label>
   </div>
   <div class="modal__actions"><button class="btn btn--quiet" value="cancel">${L('Отмена', 'Cancel')}</button><button class="btn btn--primary" value="run" id="soundingRun" disabled>${L('Запустить с этим зондированием', 'Run with this sounding')}</button></div>
@@ -444,7 +446,7 @@ let soundingBase: Partial<SimConfig> | null = null
   if (!link && index >= 0) { Object.assign(config, defaults, SCENARIOS[index].values); initialPreset = baseScenario = index }
   if (named !== null) { url.searchParams.delete('scenario'); history.replaceState(null, '', url) }
   // A link with a sounding: that is what the run started from.
-  if (config.sounding && baseScenario === null) soundingBase = { sounding: config.sounding }
+  if (config.sounding && baseScenario === null) soundingBase = { sounding: config.sounding, start: config.start }
 }
 fillLowWind(config)
 // Every start, restart and scenario gets a fresh random seed, so no two runs give the same storm. The seed is not shown,
@@ -685,7 +687,7 @@ let built: { name: string; title: string; hint: string; nums: string; story: Sto
 document.querySelector('#sitBuild')!.addEventListener('click', () => {
   const pick = (id: string) => document.querySelector<HTMLSelectElement>(`#${id}`)!.value
   const b = buildSituation({ mass: pick('sitMass') as keyof typeof AIR_MASSES, trigger: pick('sitTrigger') as keyof typeof TRIGGERS, shear: pick('sitShear') as keyof typeof SHEARS, hour: Number(pick('sitHour')) }, defaults)
-  Object.assign(config, defaults, { speed: config.speed, followStorm: config.followStorm, lightning: config.lightning, domain: config.domain, domainSize: config.domainSize, wind05: undefined, wind1: undefined, windDir05: undefined, windDir1: undefined, profile: undefined, weismanKlemp: undefined, sounding: undefined, bubbleRadius: undefined, front: undefined, edges: undefined, start: undefined, frameMotion: undefined, top: undefined, spacing: undefined, nightInversion: undefined, zones: undefined, frontLine: undefined, largeScale: undefined, transport: 'weno' }, b.values)
+  Object.assign(config, defaults, { speed: config.speed, followStorm: config.followStorm, lightning: config.lightning, domain: config.domain, domainSize: config.domainSize, wind05: undefined, wind1: undefined, windDir05: undefined, windDir1: undefined, profile: undefined, weismanKlemp: undefined, sounding: undefined, bubbleRadius: undefined, front: undefined, edges: undefined, start: undefined, nudge: undefined, frameMotion: undefined, top: undefined, spacing: undefined, nightInversion: undefined, zones: undefined, frontLine: undefined, largeScale: undefined, transport: 'weno' }, b.values)
   fillLowWind(config)
   built = { ...b, title: b.name, nums: environmentNums(config) }; baseScenario = null; soundingBase = null
   syncControls(); markPreset(null); showScenario()
@@ -694,7 +696,7 @@ document.querySelector('#sitBuild')!.addEventListener('click', () => {
 document.querySelectorAll<HTMLButtonElement>('[data-preset]').forEach(button => button.addEventListener('click', () => {
   const index = Number(button.dataset.preset)
   built = null
-  Object.assign(config, defaults, { speed: config.speed, followStorm: config.followStorm, lightning: config.lightning, domain: config.domain, domainSize: config.domainSize, wind05: undefined, wind1: undefined, windDir05: undefined, windDir1: undefined, profile: undefined, weismanKlemp: undefined, sounding: undefined, bubbleRadius: undefined, front: undefined, edges: undefined, start: undefined, frameMotion: undefined, top: undefined, spacing: undefined, nightInversion: undefined, zones: undefined, frontLine: undefined, largeScale: undefined, transport: 'weno' }, presets[index].values)
+  Object.assign(config, defaults, { speed: config.speed, followStorm: config.followStorm, lightning: config.lightning, domain: config.domain, domainSize: config.domainSize, wind05: undefined, wind1: undefined, windDir05: undefined, windDir1: undefined, profile: undefined, weismanKlemp: undefined, sounding: undefined, bubbleRadius: undefined, front: undefined, edges: undefined, start: undefined, nudge: undefined, frameMotion: undefined, top: undefined, spacing: undefined, nightInversion: undefined, zones: undefined, frontLine: undefined, largeScale: undefined, transport: 'weno' }, presets[index].values)
   fillLowWind(config)
   baseScenario = index
   syncControls()
@@ -806,6 +808,10 @@ document.querySelector('#loadState')!.addEventListener('click', () => stateFile.
 // defaults (speed, domain and its motion kept), the thermal as chosen here.
 const soundingDialog = document.querySelector<HTMLDialogElement>('#soundingDialog')!, soundingText = document.querySelector<HTMLTextAreaElement>('#soundingText')!
 const soundingFile = document.querySelector<HTMLInputElement>('#soundingFile')!, soundingBubble = document.querySelector<HTMLInputElement>('#soundingBubble')!
+// The nudging starts a storm through a cap; the thermal's strength matters only for the thermal.
+const soundingStart = document.querySelector<HTMLSelectElement>('#soundingStart')!
+const showSoundingStart = () => { soundingBubble.closest<HTMLElement>('.field')!.hidden = soundingStart.value !== 'thermals' }
+soundingStart.addEventListener('change', showSoundingStart); showSoundingStart()
 let loadedSounding: NonNullable<SimConfig['sounding']> | null = null
 document.querySelector('#soundingOpen')!.addEventListener('click', () => { soundingDialog.showModal(); if (loadedSounding) requestAnimationFrame(() => previewSounding()) })
 document.querySelector('#soundingFileButton')!.addEventListener('click', () => soundingFile.click())
@@ -839,16 +845,22 @@ function previewSounding() {
   text('soundingInfo', L(`${s.levels.length} уровней · до ${(top / 1000).toFixed(1)} км над станцией · у земли ${(s.levels[0].p / 100).toFixed(0)} гПа`, `${s.levels.length} levels · up to ${(top / 1000).toFixed(1)} km above the station · ${(s.levels[0].p / 100).toFixed(0)} hPa at the ground`) + (soundingLatitude !== undefined ? ` · ${L('широта', 'latitude')} ${soundingLatitude.toFixed(1)}°` : ''))
   const n = (v: number) => String(Math.round(v)).replace('-', '−'), km = (v: number | null) => v === null ? '—' : `${v.toFixed(1)}${KM}`
   document.querySelector('#soundingNums')!.innerHTML = ([['SB CAPE / CIN', `${n(i.sb.cape)} / ${n(i.sb.cin)} ${JKG}`], ['ML CAPE / CIN', `${n(i.ml.cape)} / ${n(i.ml.cin)} ${JKG}`], ['MU CAPE', `${n(i.mu.cape)} ${JKG}`], ['LCL / LFC', `${km(i.ml.lcl)} / ${km(i.ml.lfc)}`], [L('Сдвиг 0–6 км', 'Shear 0–6 km'), `${Math.round(k.shear06)}${MS}`], [L('SRH 0–1 / 0–3 км', 'SRH 0–1 / 0–3 km'), `${n(k.srh01)} / ${n(k.srh03)} ${L('м²/с²', 'm²/s²')}`], [L('Эфф. слой · SRH · сдвиг', 'Eff. layer · SRH · shear'), k.effective ? `${(k.effective.base / 1000).toFixed(1)}–${(k.effective.top / 1000).toFixed(1)} ${L('км', 'km')} · ${k.effective.srh.toFixed(0)} · ${k.effective.shear.toFixed(0)} ${L('м/с', 'm/s')}` : L('нет', 'none')], ['SCP / STP / SHIP / DCP', `${k.scp.toFixed(1)} / ${k.stp.toFixed(1)} / ${k.ship.toFixed(1)} / ${k.dcp.toFixed(1)}`]] as const).map(([a, b]) => `<dt>${a}</dt><dd>${b}</dd>`).join('')
+  // A cap a warm thermal cannot break on this grid: the mixed-layer parcel's CIN, or a free convection level high up.
+  const cap = document.querySelector<HTMLElement>('#soundingCap')!, lfc = i.ml.lfc ?? Infinity
+  cap.hidden = !(i.ml.cin > CAP_CIN || (i.ml.cape > 100 && lfc > CAP_LFC))
+  cap.querySelector('.notice__text')!.textContent = L(
+    `Крышка: для частицы смешанного слоя CIN ${n(i.ml.cin)} Дж/кг, свободная конвекция с ${km(i.ml.lfc)}. CAPE у земли считается для самых нижних метров; термик перемешивает слой, и тёплый пузырь на сетке 1,2 км такую крышку не пробивает — в природе это делают фронт или граница оттока. Запуск подталкиванием потока её продавливает${i.ml.cin > 120 ? ' (при CIN больше ~120 Дж/кг так в природе без сильного подъёма не бывает — это опыт «что если»)' : ''}.`,
+    `A cap: for the mixed-layer parcel CIN ${n(i.ml.cin)} J/kg, free convection from ${km(i.ml.lfc)}. The surface CAPE is the lowest metres'; a thermal mixes the layer, and a warm bubble on the 1.2 km grid does not break such a cap — in nature a front or an outflow boundary does. The updraught nudging forces it through${i.ml.cin > 120 ? ' (with CIN above ~120 J/kg nature would need strong lifting — this is a what-if experiment)' : ''}.`)
   document.querySelector('#soundingNotes')!.innerHTML = soundingNotes.map(t => `<li>${t.replace(/[<>&]/g, ch => `&#${ch.charCodeAt(0)};`)}</li>`).join('')
   drawSounding('soundingChart', computeSounding(c, env, grid.height))
 }
 soundingDialog.addEventListener('close', () => {
   if (soundingDialog.returnValue !== 'run' || !loadedSounding) { soundingDialog.returnValue = ''; return }
   soundingDialog.returnValue = ''
-  Object.assign(config, defaults, { speed: config.speed, followStorm: config.followStorm, lightning: config.lightning, domain: config.domain, domainSize: config.domainSize, wind05: undefined, wind1: undefined, windDir05: undefined, windDir1: undefined, profile: undefined, weismanKlemp: undefined, bubbleRadius: undefined, front: undefined, edges: undefined, start: undefined, frameMotion: undefined, top: undefined, spacing: undefined, nightInversion: undefined, zones: undefined, frontLine: undefined, largeScale: undefined, transport: 'weno' },
-    { sounding: loadedSounding, bubble: Number(soundingBubble.value), ...(soundingLatitude !== undefined ? { latitude: Math.round(Math.abs(soundingLatitude)) } : {}) })
+  Object.assign(config, defaults, { speed: config.speed, followStorm: config.followStorm, lightning: config.lightning, domain: config.domain, domainSize: config.domainSize, wind05: undefined, wind1: undefined, windDir05: undefined, windDir1: undefined, profile: undefined, weismanKlemp: undefined, bubbleRadius: undefined, front: undefined, edges: undefined, start: undefined, nudge: undefined, frameMotion: undefined, top: undefined, spacing: undefined, nightInversion: undefined, zones: undefined, frontLine: undefined, largeScale: undefined, transport: 'weno' },
+    { sounding: loadedSounding, bubble: Number(soundingBubble.value), ...(soundingStart.value === 'nudge' ? { start: 'nudge' as const } : {}), ...(soundingLatitude !== undefined ? { latitude: Math.round(Math.abs(soundingLatitude)) } : {}) })
   fillLowWind(config)
-  baseScenario = null; built = null; soundingBase = { sounding: config.sounding, bubble: config.bubble, latitude: config.latitude }
+  baseScenario = null; built = null; soundingBase = { sounding: config.sounding, bubble: config.bubble, latitude: config.latitude, start: config.start }
   syncControls(); markPreset(null); showScenario()
   recreate(); running = true; updatePause()
   dispatchEvent(new Event('closesheet'))
@@ -872,8 +884,8 @@ rewindSelect.addEventListener('change', () => {
 })
 /** The settings of a saved run or of a precise run's frames: everything else back to the defaults, the left column shown. */
 function takeSettings(saved: unknown) {
-  Object.assign(config, defaults, { wind05: undefined, wind1: undefined, windDir05: undefined, windDir1: undefined, profile: undefined, weismanKlemp: undefined, sounding: undefined, bubbleRadius: undefined, front: undefined, edges: undefined, start: undefined, frameMotion: undefined, top: undefined, spacing: undefined, nightInversion: undefined, zones: undefined, frontLine: undefined, largeScale: undefined }, cleanSettings(saved))
-  fillLowWind(config); baseScenario = null; built = null; soundingBase = config.sounding ? { sounding: config.sounding } : null; syncControls(); markPreset(null); showScenario()
+  Object.assign(config, defaults, { wind05: undefined, wind1: undefined, windDir05: undefined, windDir1: undefined, profile: undefined, weismanKlemp: undefined, sounding: undefined, bubbleRadius: undefined, front: undefined, edges: undefined, start: undefined, nudge: undefined, frameMotion: undefined, top: undefined, spacing: undefined, nightInversion: undefined, zones: undefined, frontLine: undefined, largeScale: undefined }, cleanSettings(saved))
+  fillLowWind(config); baseScenario = null; built = null; soundingBase = config.sounding ? { sounding: config.sounding, start: config.start } : null; syncControls(); markPreset(null); showScenario()
 }
 stateFile.addEventListener('change', async () => {
   const file = stateFile.files?.[0]; stateFile.value = ''
@@ -1541,6 +1553,9 @@ const speedInput = document.querySelector<HTMLInputElement>('input[data-key="spe
 const hud = new Hud(document.querySelector<HTMLElement>('.viewport')!, document.querySelector<HTMLElement>('.app')!, speed => { speedInput.value = String(speed); speedInput.dispatchEvent(new Event('input')) })
 showQuality()
 showThemeChoice()
+/** A sounding's cap that a warm thermal does not break on this grid (the real soundings, 24.10.2026): the mixed-layer
+ * parcel's CIN, J/kg, or its free convection level, km. Measured: CIN 64 J/kg with the LFC at 2.35 km stopped it. */
+const CAP_CIN = 25, CAP_LFC = 2
 /** The live sounding last handed to the Skew-T screen (a new one every LIVE_EVERY s of model time). */
 let shownLive: Live | null = null
 function frame(now:number){

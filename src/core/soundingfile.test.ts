@@ -165,6 +165,18 @@ describe('sounding files (2.2): the model environment from a sounding', () => {
     expect(model.diagnostics().updraft).toBeGreaterThan(.3)
   })
 
+  it('a capped sounding (OAX: mixed-layer CIN 64 J/kg, LFC 2.35 km): a warm thermal does not start a storm, the updraught nudging does (roadmap E10, CM1 iinit = 12)', () => {
+    const levels = parseSounding(fixture('oax-2014-06-16-19z.sharppy')).levels, minutes = (m: AtmosphereModel, n: number) => { for (let k = 0; k < n * 60 / DT; k++) { m.step(DT); m.time += DT } }
+    const thermal = new AtmosphereModel({ ...SUMMER_DAY, sounding: { name: 'OAX', levels } }), nudged = new AtmosphereModel({ ...SUMMER_DAY, sounding: { name: 'OAX', levels }, start: 'nudge' })
+    // The nudging starts from a still domain (no thermal) and does not push w much past its 10 m/s target while it acts.
+    expect(nudged.diagnostics().updraft).toBeLessThan(.1)
+    minutes(nudged, 5); expect(nudged.diagnostics().updraft).toBeGreaterThan(8); expect(nudged.diagnostics().updraft).toBeLessThan(20)
+    minutes(nudged, 7); minutes(thermal, 12)
+    // Measured 24.10.2026 (tests/bench/soundings.ts): the thermal peaks at ~2 m/s; nudged, a storm of ~60 m/s by 18 min.
+    expect(thermal.diagnostics().updraft).toBeLessThan(5); expect(nudged.diagnostics().updraft).toBeGreaterThan(20)
+    expect(nudged.clipped).toBe(0)
+  })
+
   it('WK from a file: the Weisman-Klemp case written as a CM1 input_sounding gives the environment and the storm of the formulas', () => {
     // tests/fixtures/soundings/weisman-klemp.input_sounding: the model's own WK environment every 250 m to 22 km.
     const wk = { ...SUMMER_DAY, profile: 'weisman-klemp' as const, solarMax: 0, bubble: 1.5 }

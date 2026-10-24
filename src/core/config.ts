@@ -117,9 +117,13 @@ export interface SimConfig {
   /**
    * How convection starts (absent = 'thermals': one or two warm thermals): 'line' — a north-south row of thermals across
    * the whole domain through its middle, each a little stronger or weaker at random (so the line breaks into cells), as
-   * in the idealised squall lines of Rotunno, Klemp and Weisman (1988).
+   * in the idealised squall lines of Rotunno, Klemp and Weisman (1988). 'nudge' — no thermal: the updraught in the
+   * domain's middle is pulled towards `nudge` m/s for the first minutes (NUDGE; Naylor & Gilmore 2012, CM1's updraft
+   * nudging), which starts a storm through a cap a warm thermal cannot break (the real soundings, roadmap E10).
    */
-  start?: 'thermals' | 'line'
+  start?: 'thermals' | 'line' | 'nudge'
+  /** The updraught the nudging aims at, m/s (absent = NUDGE.w), with start 'nudge'. */
+  nudge?: number
   /**
    * A shift of the starting thermals, m east and north: an ensemble member's (src/ensemble/member.ts) — where exactly
    * the first thermal rises is as uncertain as the sounding.
