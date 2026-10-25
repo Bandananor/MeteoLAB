@@ -100,9 +100,9 @@ export function groundPrecipitation(m: Pick<AtmosphereModel, 'grid' | 'env' | 'r
 }
 
 /** What the cell's numbers say its stage is now (before the STAGE_HOLD smoothing). */
-export function cellStage(c: Pick<Cell, 'supercell' | 'leftMover' | 'occluded' | 'peakW' | 'peakUH'> & { age: number; stage?: CellStage }, s: CellStats): CellStage {
+export function cellStage(c: Pick<Cell, 'supercell' | 'leftMover' | 'occluded' | 'peakW' | 'peakUH'> & { age: number; stage?: CellStage }, s: CellStats, mesoZeta = MESO_CORE_ZETA): CellStage {
   // The updraught core itself must rotate (its own columns only, so a left mover splitting off does not cancel it).
-  const weak = s.updraft < .45 * c.peakW, rotating = s.coreZeta >= MESO_CORE_ZETA
+  const weak = s.updraft < .45 * c.peakW, rotating = s.coreZeta >= mesoZeta
   if (c.supercell) {
     if (weak && !rotating) return 'supercell-decay'
     if (s.coldUnder >= OCCLUSION_COLD && s.uh < .7 * c.peakUH) return 'occluding'
@@ -266,7 +266,7 @@ export class CellTracker {
       let sw = 0, swz = 0
       for (const c of cell.columns) { sw += m.coreW[c]; swz += m.coreWZ[c] }
       s.coreZeta = sw > 0 ? swz / sw : 0
-      this.advance(cell, s, time, dt)
+      this.advance(cell, s, time, dt, m.rotation.mesoZeta)
       // The flanks of a rotating storm, along the Bunkers right mover's heading: the tracked motion wanders by tens of
       // degrees while the storm organizes (tests/bench/flanks.ts: the classic supercell's ran north-west for minutes).
       cell.flanks = cell.id && s.uh >= UH_ROTATING ? stormFlanks(m, mesocycloneColumn(m, cell.x, cell.y), ...rightMover, rain, outflow) : null
@@ -286,15 +286,15 @@ export class CellTracker {
     if (span >= 60) { const end = c.trail[c.trail.length - 1]; c.u = (end.x - first.x) / span; c.v = (end.y - first.y) / span }
   }
 
-  private advance(c: Cell, s: CellStats, time: number, dt: number) {
+  private advance(c: Cell, s: CellStats, time: number, dt: number, mesoZeta: number) {
     c.stats = s; c.peakW = Math.max(c.peakW, s.updraft); c.peakUH = Math.max(c.peakUH, s.uh)
-    c.meso = s.coreZeta >= MESO_CORE_ZETA ? c.meso + dt : 0
-    c.antiMeso = s.coreZeta <= -MESO_CORE_ZETA ? c.antiMeso + dt : 0
+    c.meso = s.coreZeta >= mesoZeta ? c.meso + dt : 0
+    c.antiMeso = s.coreZeta <= -mesoZeta ? c.antiMeso + dt : 0
     if (c.meso >= MESO_PERSISTENCE) c.supercell = true
     if (c.antiMeso >= MESO_PERSISTENCE) c.leftMover = true
     // A new mesocyclone that has held as long as the first one had to is the storm's mature stage again.
     if (c.stage === 'cycling' && time - c.since >= MESO_PERSISTENCE) c.occluded = false
-    const candidate = cellStage({ ...c, age: time - c.born }, s)
+    const candidate = cellStage({ ...c, age: time - c.born }, s, mesoZeta)
     if (candidate === c.stage) { c.pending = candidate; return }
     if (candidate !== c.pending) { c.pending = candidate; c.pendingSince = time }
     // The first stage of a new cell, and the step into supercell, need no wait (their own criteria already persist).

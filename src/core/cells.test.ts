@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { AtmosphereModel, CELL_CONFIRM, type CellStats, cellStage, CellTracker, createGrid, OCCLUSION_COLD, UH_MESOCYCLONE } from '.'
+import { AtmosphereModel, CELL_CONFIRM, type CellStats, cellStage, CellTracker, createGrid, domainGrid, MESO_CORE_ZETA, mesoCoreZeta, OCCLUSION_COLD, UH_MESOCYCLONE } from '.'
 import { QUIET } from './fixtures'
 
 const small = () => new AtmosphereModel({ ...QUIET }, createGrid({ nx: 16, ny: 12, nz: 20, width: 19_200, depth: 13_500, height: 15_000, bottomSpacing: 100 }))
@@ -104,5 +104,13 @@ describe('cell stages', () => {
     expect(cellStage({ ...sc, occluded: true }, stats({ updraft: 35, uh: 1200, rainRate: 50, coreZeta: .006 }))).toBe('cycling')
     expect(cellStage(sc, stats({ updraft: 30, uh: 250, coreZeta: .001 }))).toBe('supercell-weak')
     expect(cellStage(sc, stats({ updraft: 12, uh: 50 }))).toBe('supercell-decay')
+  })
+
+  it('the mesocyclone threshold scales with the grid: a resolved vortex is stronger on a finer one (25.10.2026)', () => {
+    expect(mesoCoreZeta(1200)).toBe(MESO_CORE_ZETA); expect(mesoCoreZeta(500)).toBeCloseTo(7.2e-3, 9)
+    expect(new AtmosphereModel({ ...QUIET, spacing: .5 }, createGrid(domainGrid(undefined, undefined, undefined, .5))).rotation.mesoZeta).toBeCloseTo(7.2e-3, 9)
+    const ordinary = { supercell: false, leftMover: false, occluded: false, peakW: 20, peakUH: 300, age: 600 }
+    expect(cellStage(ordinary, stats({ uh: 300, coreZeta: .005 }))).toBe('rotating')
+    expect(cellStage(ordinary, stats({ uh: 300, coreZeta: .005 }), mesoCoreZeta(500))).not.toBe('rotating')
   })
 })

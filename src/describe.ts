@@ -57,7 +57,7 @@ export function describeConvection(d: ModelDiagnostics, s: Sounding, r: Rotation
   if (meso) logic += L(` Восходящий поток вращается циклонически уже ${Math.floor(r.persisted / 60)} мин: горизонтальные вихри от сдвига ветра наклонены потоком и растянуты в мезоциклон.`, ` The updraught has rotated cyclonically for ${Math.floor(r.persisted / 60)} min: the horizontal vortices of the wind shear were tilted by the updraught and stretched into a mesocyclone.`)
   else if (rotating) logic += L(' Восходящий поток наклоняет горизонтальную завихренность сдвига ветра: появляется вращение.', ' The updraught tilts the horizontal vorticity of the wind shear: rotation appears.')
   // By an anticyclonic core's own vorticity, not the UH anywhere: vortex pairs give UH 400-600 in weak shear (model.ts).
-  if (r.coreAnti >= MESO_CORE_ZETA) logic += L(' Есть и антициклонически вращающийся поток — признак расщепления на правую и левую ячейки.', ' There is an anticyclonically rotating updraught too — a sign of a split into right and left movers.')
+  if (r.coreAnti >= (r.mesoZeta ?? MESO_CORE_ZETA)) logic += L(' Есть и антициклонически вращающийся поток — признак расщепления на правую и левую ячейки.', ' There is an anticyclonically rotating updraught too — a sign of a split into right and left movers.')
 
   return {
     cellType: meso ? L('Суперячейка с мезоциклоном', 'Supercell with a mesocyclone') : cellType,

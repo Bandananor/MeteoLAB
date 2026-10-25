@@ -76,6 +76,15 @@ export const CORE_ROTATION_W = 10
  * mean the pair cancels. Cloud experiments: HSLC and Weisman-Klemp hold it 1300-1500 s, all other scenarios <= 360 s.
  */
 export const MESO_CORE_ZETA = 3e-3
+/**
+ * The grid spacing (m) MESO_CORE_ZETA was set on. A resolved vortex's vorticity grows as the grid refines (~1/dx): at
+ * 500 m the core's peak is 2.2x that at 1.2 km (classic supercell 29.6e-3 against 13.7e-3), and a multicell storm held
+ * 3e-3 for 1014 s — a mesocyclone label it does not get at 1.2 km (25.10.2026, tests/bench/meso.ts). The threshold
+ * scales with the grid: mesoCoreZeta(dx).
+ */
+export const MESO_GRID = 1200
+/** The mesocyclone threshold of the core's vorticity (s-1) on a grid of spacing dx (m): never below MESO_CORE_ZETA. */
+export const mesoCoreZeta = (dx: number) => MESO_CORE_ZETA * Math.max(1, MESO_GRID / dx)
 
 export interface RotationState {
   /** Strongest cyclonic / anticyclonic UH 2-5 km (m2/s2), the column of the cyclonic one, and how long (s) a mesocyclone has held (MESO_CORE_ZETA). */
@@ -92,6 +101,8 @@ export interface RotationState {
   uh01: number; uh03: number
   /** Ground column (x + nx y) of the largest UH 0-1 km. */
   low: number
+  /** The mesocyclone threshold of coreZeta on this grid (mesoCoreZeta). */
+  mesoZeta: number
 }
 
 export interface ModelDiagnostics {
@@ -167,7 +178,7 @@ export class AtmosphereModel implements TaskModel {
    * of the largest stones that have fallen there, mm (see hailMaxDiameter): the hail swath.
    */
   readonly hailGround: Float32Array; readonly hailSize: Float32Array
-  readonly rotation: RotationState = { uh: 0, x: 0, y: 0, anticyclonic: 0, persisted: 0, uh01: 0, uh03: 0, low: 0, coreZeta: 0, coreUH: 0, coreAnti: 0 }
+  readonly rotation: RotationState = { uh: 0, x: 0, y: 0, anticyclonic: 0, persisted: 0, uh01: 0, uh03: 0, low: 0, coreZeta: 0, coreUH: 0, coreAnti: 0, mesoZeta: MESO_CORE_ZETA }
   readonly sounding: Sounding
   /** Lowest and highest level of the 2-5 km updraft-helicity layer. */
   readonly uhLevels: readonly [number, number]
@@ -201,6 +212,7 @@ export class AtmosphereModel implements TaskModel {
   /** `profile` replaces the slider environment with an analytic one (idealised test cases). */
   constructor(config: SimConfig, grid: Grid = createGrid(domainGrid(config.domain, config.top, config.domainSize, config.spacing)), profile?: EnvironmentProfile, options: ModelOptions = {}) {
     this.config = config; this.grid = grid; this.memory = options.memory ?? PRIVATE_MEMORY
+    this.rotation.mesoZeta = mesoCoreZeta(grid.dx)
     const shared = (name: string, length = grid.n) => this.memory.f32(name, length)
     this.env = new Environment(config, grid, profile ?? environmentProfile(config, grid.height))
     this.frame = config.followStorm === false ? [0, 0] : config.frameMotion ?? domainMotion(this.env)
@@ -985,7 +997,7 @@ export class AtmosphereModel implements TaskModel {
       coreAnti = Math.max(coreAnti, -swz / sw)
     }
     r.coreZeta = coreZeta; r.coreUH = coreUH; r.coreAnti = coreAnti
-    r.uh = max; r.anticyclonic = -min; r.uh01 = max01; r.uh03 = max03; r.low = low01; r.x = bx; r.y = by; r.persisted = coreZeta >= MESO_CORE_ZETA ? r.persisted + dt : 0
+    r.uh = max; r.anticyclonic = -min; r.uh01 = max01; r.uh03 = max03; r.low = low01; r.x = bx; r.y = by; r.persisted = coreZeta >= r.mesoZeta ? r.persisted + dt : 0
   }
 
   private countCores() {
