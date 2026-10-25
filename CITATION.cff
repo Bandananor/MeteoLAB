@@ -9,8 +9,8 @@ authors:
 repository-code: "https://github.com/Bandananor/MeteoLAB"
 url: "https://bandananor.github.io/MeteoLAB/"
 license: MIT
-version: 2.10.0.1
-date-released: 2026-10-22
+version: 2.10.1
+date-released: 2026-10-25
 keywords:
   - meteorology
   - deep moist convection

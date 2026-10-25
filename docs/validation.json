@@ -1,13 +1,13 @@
 {
-  "version": "v2.10.0.1-9-gcc4f76d-dirty",
-  "date": "2026-10-22",
+  "version": "v2.10.0.1-25-geaaf5fd",
+  "date": "2026-10-25",
   "node": "v24.16.0",
   "cases": [
     {
       "id": "straka",
       "title": "Density current (Straka et al. 1993), 100 m, 900 s",
       "source": "Straka, Wilhelmson, Wicker, Anderson, Droegemeier 1993, Int. J. Numer. Methods Fluids 17; converged 25 m solution",
-      "seconds": 146.303,
+      "seconds": 229.299,
       "checks": [
         {
           "quantity": "front position (θ′ = −1 K at the ground)",
@@ -56,7 +56,7 @@
       "id": "bryan-fritsch",
       "title": "Rising thermal, dry and saturated (Bryan & Fritsch 2002), 100 m, 1000 s",
       "source": "Bryan & Fritsch 2002, Mon. Wea. Rev. 130; numbers as quoted by Duarte et al. 2014 (arXiv:1311.4265)",
-      "seconds": 300.394,
+      "seconds": 350.544,
       "checks": [
         {
           "quantity": "dry: top of the thermal",
@@ -135,7 +135,7 @@
       "id": "weisman-klemp",
       "title": "Supercell split (Weisman & Klemp 1982), 96 × 72 km, 60 min",
       "source": "Weisman & Klemp 1982, Mon. Wea. Rev. 110: a split by 40–60 min into a stronger cyclonic right mover and an anticyclonic left mover",
-      "seconds": 1510.824,
+      "seconds": 1666.455,
       "checks": [
         {
           "quantity": "updraught cores at 4.5 km, 35 min (w > 8 m/s)",
@@ -203,7 +203,7 @@
       "id": "scenario-0",
       "title": "Scenario «Летний день», 40 min",
       "source": "meant to grow no mesocyclone",
-      "seconds": 442.245,
+      "seconds": 515.098,
       "checks": [
         {
           "quantity": "values clipped by the limiters",
@@ -242,7 +242,7 @@
       "id": "scenario-1",
       "title": "Scenario «Многоячейковая гроза», 40 min",
       "source": "no rotation is asked of it",
-      "seconds": 438.738,
+      "seconds": 507.738,
       "checks": [
         {
           "quantity": "values clipped by the limiters",
@@ -281,7 +281,7 @@
       "id": "scenario-2",
       "title": "Scenario «Классическая суперячейка», 40 min",
       "source": "meant to grow a supercell",
-      "seconds": 578.829,
+      "seconds": 667.555,
       "checks": [
         {
           "quantity": "values clipped by the limiters",
@@ -320,7 +320,7 @@
       "id": "scenario-3",
       "title": "Scenario «Суперячейка WK», 40 min",
       "source": "meant to grow a supercell",
-      "seconds": 488.03,
+      "seconds": 597.467,
       "checks": [
         {
           "quantity": "values clipped by the limiters",
@@ -359,7 +359,7 @@
       "id": "scenario-4",
       "title": "Scenario «HSLC», 40 min",
       "source": "meant to grow a supercell",
-      "seconds": 426.873,
+      "seconds": 555.2,
       "checks": [
         {
           "quantity": "values clipped by the limiters",
@@ -398,7 +398,7 @@
       "id": "scenario-5",
       "title": "Scenario «Микропорыв», 40 min",
       "source": "meant to grow no mesocyclone",
-      "seconds": 381.06,
+      "seconds": 509.222,
       "checks": [
         {
           "quantity": "values clipped by the limiters",
@@ -437,7 +437,7 @@
       "id": "scenario-6",
       "title": "Scenario «Тропическая конвекция», 40 min",
       "source": "meant to grow no mesocyclone",
-      "seconds": 375.661,
+      "seconds": 506.08,
       "checks": [
         {
           "quantity": "values clipped by the limiters",
@@ -476,7 +476,7 @@
       "id": "situation-0",
       "title": "Situation «Тёплый сектор и холодный фронт», with and without its trigger",
       "source": "the situation’s story (2.6)",
-      "seconds": 1324.814,
+      "seconds": 1498.029,
       "checks": [
         {
           "quantity": "values clipped by the limiters",
@@ -524,7 +524,7 @@
       "id": "situation-1",
       "title": "Situation «Высотная ложбина», with and without its trigger",
       "source": "the situation’s story (2.6)",
-      "seconds": 1947.805,
+      "seconds": 2108.198,
       "checks": [
         {
           "quantity": "values clipped by the limiters",
@@ -603,7 +603,7 @@
       "id": "situation-2",
       "title": "Situation «Тёплый воздух над слоем: гроз не будет», with and without its trigger",
       "source": "the situation’s story (2.6)",
-      "seconds": 1236.903,
+      "seconds": 1400.309,
       "checks": [
         {
           "quantity": "with the warm air aloft: max updraught",

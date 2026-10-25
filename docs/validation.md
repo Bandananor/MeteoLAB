@@ -1,6 +1,6 @@
 # MeteoLab StormLab — validation report
 
-Model version **v2.10.0.1-9-gcc4f76d-dirty**, 2026-10-22. Node v24.16.0, 12th Gen Intel(R) Core(TM) i5-12450H, 12 at once, 32 min.
+Model version **v2.10.0.1-25-geaaf5fd**, 2026-10-25. Node v24.16.0, 12th Gen Intel(R) Core(TM) i5-12450H, 12 at once, 35 min.
 
 **53 of 53 checks within their bounds**.
 
@@ -8,7 +8,7 @@ Each case runs the model and compares what it gives with the literature or with 
 
 ## Density current (Straka et al. 1993), 100 m, 900 s
 
-Source: Straka, Wilhelmson, Wicker, Anderson, Droegemeier 1993, Int. J. Numer. Methods Fluids 17; converged 25 m solution. Run time 2 min.
+Source: Straka, Wilhelmson, Wicker, Anderson, Droegemeier 1993, Int. J. Numer. Methods Fluids 17; converged 25 m solution. Run time 4 min.
 
 | Quantity | Model | Reference | Bounds | |
 |---|---:|---|---|:-:|
@@ -21,7 +21,7 @@ Converges with the grid (400 → 50 m) to a front ~3 % behind and a u max ~4 % b
 
 ## Rising thermal, dry and saturated (Bryan & Fritsch 2002), 100 m, 1000 s
 
-Source: Bryan & Fritsch 2002, Mon. Wea. Rev. 130; numbers as quoted by Duarte et al. 2014 (arXiv:1311.4265). Run time 5 min.
+Source: Bryan & Fritsch 2002, Mon. Wea. Rev. 130; numbers as quoted by Duarte et al. 2014 (arXiv:1311.4265). Run time 6 min.
 
 | Quantity | Model | Reference | Bounds | |
 |---|---:|---|---|:-:|
@@ -37,7 +37,7 @@ Source: Bryan & Fritsch 2002, Mon. Wea. Rev. 130; numbers as quoted by Duarte et
 
 ## Supercell split (Weisman & Klemp 1982), 96 × 72 km, 60 min
 
-Source: Weisman & Klemp 1982, Mon. Wea. Rev. 110: a split by 40–60 min into a stronger cyclonic right mover and an anticyclonic left mover. Run time 25 min.
+Source: Weisman & Klemp 1982, Mon. Wea. Rev. 110: a split by 40–60 min into a stronger cyclonic right mover and an anticyclonic left mover. Run time 28 min.
 
 | Quantity | Model | Reference | Bounds | |
 |---|---:|---|---|:-:|
@@ -50,7 +50,7 @@ Source: Weisman & Klemp 1982, Mon. Wea. Rev. 110: a split by 40–60 min into a 
 
 ## Scenario «Летний день», 40 min
 
-Source: meant to grow no mesocyclone. Run time 7 min.
+Source: meant to grow no mesocyclone. Run time 9 min.
 
 | Quantity | Model | Reference | Bounds | |
 |---|---:|---|---|:-:|
@@ -62,7 +62,7 @@ UH max 250 m²/s², wind at 100 m 21.4 m/s, rain 8.0 mm, hail 0.0 cm aloft / 0.0
 
 ## Scenario «Многоячейковая гроза», 40 min
 
-Source: no rotation is asked of it. Run time 7 min.
+Source: no rotation is asked of it. Run time 8 min.
 
 | Quantity | Model | Reference | Bounds | |
 |---|---:|---|---|:-:|
@@ -74,7 +74,7 @@ UH max 360 m²/s², wind at 100 m 20.8 m/s, rain 4.1 mm, hail 0.0 cm aloft / 0.0
 
 ## Scenario «Классическая суперячейка», 40 min
 
-Source: meant to grow a supercell. Run time 10 min.
+Source: meant to grow a supercell. Run time 11 min.
 
 | Quantity | Model | Reference | Bounds | |
 |---|---:|---|---|:-:|
@@ -86,7 +86,7 @@ UH max 2222 m²/s², wind at 100 m 33.4 m/s, rain 23.7 mm, hail 1.2 cm aloft / 2
 
 ## Scenario «Суперячейка WK», 40 min
 
-Source: meant to grow a supercell. Run time 8 min.
+Source: meant to grow a supercell. Run time 10 min.
 
 | Quantity | Model | Reference | Bounds | |
 |---|---:|---|---|:-:|
@@ -98,7 +98,7 @@ UH max 1074 m²/s², wind at 100 m 20.7 m/s, rain 35.2 mm, hail 1.1 cm aloft / 1
 
 ## Scenario «HSLC», 40 min
 
-Source: meant to grow a supercell. Run time 7 min.
+Source: meant to grow a supercell. Run time 9 min.
 
 | Quantity | Model | Reference | Bounds | |
 |---|---:|---|---|:-:|
@@ -110,7 +110,7 @@ UH max 819 m²/s², wind at 100 m 25.0 m/s, rain 14.1 mm, hail 1.2 cm aloft / 2.
 
 ## Scenario «Микропорыв», 40 min
 
-Source: meant to grow no mesocyclone. Run time 6 min.
+Source: meant to grow no mesocyclone. Run time 8 min.
 
 | Quantity | Model | Reference | Bounds | |
 |---|---:|---|---|:-:|
@@ -122,7 +122,7 @@ UH max 170 m²/s², wind at 100 m 26.2 m/s, rain 3.3 mm, hail 0.0 cm aloft / 0.0
 
 ## Scenario «Тропическая конвекция», 40 min
 
-Source: meant to grow no mesocyclone. Run time 6 min.
+Source: meant to grow no mesocyclone. Run time 8 min.
 
 | Quantity | Model | Reference | Bounds | |
 |---|---:|---|---|:-:|
@@ -134,7 +134,7 @@ UH max 96 m²/s², wind at 100 m 17.9 m/s, rain 21.6 mm, hail 0.7 cm aloft / 0.1
 
 ## Situation «Тёплый сектор и холодный фронт», with and without its trigger
 
-Source: the situation’s story (2.6). Run time 22 min.
+Source: the situation’s story (2.6). Run time 25 min.
 
 | Quantity | Model | Reference | Bounds | |
 |---|---:|---|---|:-:|
@@ -145,7 +145,7 @@ Source: the situation’s story (2.6). Run time 22 min.
 
 ## Situation «Высотная ложбина», with and without its trigger
 
-Source: the situation’s story (2.6). Run time 32 min.
+Source: the situation’s story (2.6). Run time 35 min.
 
 | Quantity | Model | Reference | Bounds | |
 |---|---:|---|---|:-:|
@@ -161,7 +161,7 @@ Recalibrated 22.10.2026 for 2.7.2’s ice from processes (the trough −4 K inst
 
 ## Situation «Тёплый воздух над слоем: гроз не будет», with and without its trigger
 
-Source: the situation’s story (2.6). Run time 21 min.
+Source: the situation’s story (2.6). Run time 23 min.
 
 | Quantity | Model | Reference | Bounds | |
 |---|---:|---|---|:-:|
