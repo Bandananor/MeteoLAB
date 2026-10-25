@@ -131,6 +131,12 @@ export interface SimConfig {
    */
   single?: boolean
   /**
+   * Cloud shadows on the ground's heating (absent = true; roadmap B10): the sunlight reaching each column is cut by the
+   * condensate along the ray towards the sun (AtmosphereModel.sunNow), so an anvil shades the thermals under it. false:
+   * the sun heats the whole domain as under a clear sky (before 2.11).
+   */
+  shade?: boolean
+  /**
    * A shift of the starting thermals, m east and north: an ensemble member's (src/ensemble/member.ts) — where exactly
    * the first thermal rises is as uncertain as the sounding.
    */

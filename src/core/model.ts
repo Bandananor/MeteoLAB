@@ -18,7 +18,8 @@ import { hailFallSpeed, hailMaxDiameter, hailProcesses, N0H, RHO_H, wetGrowing }
 import { CRYSTAL_MASS, fragmentsPerKg, freezeRain, iceProcesses, saturationAdjustMixed, settleCrystals, snowFallSpeed, snowProcesses, SPLINTERS, splintering } from './ice'
 import { fallSpeed, rainProcesses, saturationAdjust } from './microphysics'
 import { PressureSolver } from './pressure'
-import { dragCoefficient, surfaceFluxes } from './surface'
+import { dragCoefficient, LONGWAVE_LOSS, surfaceFluxes } from './surface'
+import { insolation, sunDirection } from './solar'
 import { computeSounding, type Sounding } from './sounding'
 import { deficitNear, outflowDeficit } from './rkw'
 import { type Memory, type Phase, PRIVATE_MEMORY, type StepRunner, type TaskModel } from './threads'
@@ -62,6 +63,27 @@ const TINY_WATER = 1e-10
  */
 /** Where in the step RK3 evaluates each stage's tendency, in steps (the nudging's ramp). */
 const STAGE_TIME = [0, 1 / 3, 1 / 2]
+/**
+ * Visible mass extinction of the condensate along the sun's ray, m2/kg (roadmap B10): cloud water 150 (3 / (2 rho_w r_e),
+ * r_e 10 um; Chou-Suarez and Slingo give 158-159), ice 80 (r_e ~30 um, Chou-Suarez / Ebert & Curry), snow 10 (Fu's
+ * 6-16 for r_e 250-100 um), rain 3 (Chou 1999), graupel and hail 4 (geometric optics, 400 kg/m3, r_e 1 mm).
+ */
+export const EXTINCTION = { cloud: 150, ice: 80, snow: 10, rain: 3, graupel: 4 }
+/** Asymmetry factor of the cloud's scattering (delta-Eddington scales it, see sunlightThrough). */
+export const ASYMMETRY = .85
+
+/**
+ * The share of the sunlight (direct and diffuse) a non-absorbing cloud lets through: the delta-Eddington two-stream
+ * solution for single-scattering albedo 1 (Joseph, Wiscombe & Weinman 1976; Meador & Weaver 1980, eq. 24), vertical
+ * optical depth tau, the sun's zenith cosine mu. An anvil of tau 10 lets ~60 % through with the sun high, a
+ * cumulonimbus core (tau 200-1000) 1-5 % — WRF's Dudhia (1989) tables give 5-8 % for 1-10 kg/m2 of water.
+ */
+export function sunlightThrough(tau: number, mu: number) {
+  if (tau <= 0) return 1
+  const f = ASYMMETRY * ASYMMETRY, g = ASYMMETRY / (1 + ASYMMETRY), t = (1 - f) * tau
+  const g1 = .75 * (1 - g), g3 = (2 - 3 * g * mu) / 4
+  return clamp(1 - (g1 * t + (g3 - g1 * mu) * (1 - Math.exp(-t / mu))) / (1 + g1 * t))
+}
 export const NUDGE = { w: 10, xr: 10_000, zr: 1500, zc: 1500, alpha: .5, t1: 900, t2: 1200 }
 
 /** Safety limits of the horizontal and vertical velocity, m/s (see AtmosphereModel.clipped). */
@@ -207,6 +229,10 @@ export class AtmosphereModel implements TaskModel {
   readonly zoneGround: ReturnType<typeof zoneMaps>
   private readonly zoneShareNow: Float32Array; private readonly zoneThetaNow: Float32Array; private readonly zoneVapourNow: Float32Array
   /** This step's surface pattern under each column (the ground moves under the domain) and where each column's rain lands. */
+  /** The share of the sunlight reaching each ground column through the clouds this step (1: clear; roadmap B10). */
+  readonly sunNow: Float32Array
+  private readonly opticalDepth: Float64Array
+  private shaded = false
   private readonly patternNow: Float32Array; private readonly groundCell: Int32Array; private readonly groundWeight: Float64Array
 
   /** `profile` replaces the slider environment with an analytic one (idealised test cases). */
@@ -217,6 +243,7 @@ export class AtmosphereModel implements TaskModel {
     this.env = new Environment(config, grid, profile ?? environmentProfile(config, grid.height))
     this.frame = config.followStorm === false ? [0, 0] : config.frameMotion ?? domainMotion(this.env)
     this.uEnv = this.env.u.map(u => u - this.frame[0]); this.vEnv = this.env.v.map(v => v - this.frame[1])
+    this.sunNow = shared('sunNow', grid.layer); this.opticalDepth = new Float64Array(grid.layer); if (!options.attach) this.sunNow.fill(1)
     this.patternNow = shared('patternNow', grid.layer); this.cityNow = shared('cityNow', grid.layer); this.zoneShareNow = shared('zoneShareNow', grid.layer); this.zoneThetaNow = shared('zoneThetaNow', grid.layer); this.zoneVapourNow = shared('zoneVapourNow', grid.layer); this.groundCell = new Int32Array(grid.layer * 4); this.groundWeight = new Float64Array(grid.layer * 4)
     const f = () => new Float32Array(grid.n)
     this.u = shared('u'); this.v = shared('v'); this.w = shared('w'); this.theta = shared('theta'); this.q = shared('q'); this.cloud = shared('cloud'); this.rain = shared('rain'); this.cold = shared('cold')
@@ -460,6 +487,37 @@ export class AtmosphereModel implements TaskModel {
     }
   }
 
+  /**
+   * Cloud shadows (roadmap B10, SimConfig.shade): for each ground column the condensate along the ray towards the sun —
+   * the node the ray crosses at each level — gives the optical depth of that tilted column (EXTINCTION) and the share of
+   * the sunlight let through (sunlightThrough): a tilted independent column, so the shadow falls where the sun puts it —
+   * west of a storm in the morning, east in the evening, longer the lower the sun (a vertical column would put it right
+   * under the cloud, off by up to ~500 W/m2 at its edge with a low sun). Nearest nodes: the edge is a grid length sharp.
+   * Periodic edges wrap the ray as they wrap the storms; relaxed edges do not (beyond them is cloudless environment).
+   */
+  private updateShade() {
+    const cfg = this.config, sun = sunDirection(cfg, this.time)
+    if (cfg.shade === false || sun.y < .02 || insolation(cfg, this.time) <= 0) { if (this.shaded) { this.sunNow.fill(1); this.shaded = false } return }
+    const { nx, ny, nz, dx, dy, zs, hz, layer } = this.grid, rho = this.env.rho, tau = this.opticalDepth.fill(0)
+    const cloud = this.cloud, ice = this.ice, snow = this.snow, rain = this.rain, graupel = this.graupel, hail = this.hail, e = EXTINCTION
+    // Cells the ray moves per metre of height: east by x / y, north by -z / y (sunDirection's z points south).
+    const east = sun.x / sun.y / dx, north = -sun.z / sun.y / dy, edges = this.edges(), openX = edges !== 'periodic', openY = edges === 'relaxed'
+    for (let z = 0; z < nz; z++) {
+      const sx = Math.round(east * zs[z]), sy = Math.round(north * zs[z]), path = rho[z] * hz[z], base = z * layer
+      for (let y = 0; y < ny; y++) {
+        if (openY && (y + sy < 0 || y + sy >= ny)) continue
+        const row = mod(y + sy, ny) * nx + base
+        for (let x = 0; x < nx; x++) {
+          if (openX && (x + sx < 0 || x + sx >= nx)) continue
+          const i = row + mod(x + sx, nx), m = e.cloud * cloud[i] + e.ice * ice[i] + e.snow * snow[i] + e.rain * rain[i] + e.graupel * (graupel[i] + hail[i])
+          if (m > 0) tau[x + nx * y] += m * path
+        }
+      }
+    }
+    for (let c = 0; c < layer; c++) this.sunNow[c] = sunlightThrough(tau[c], sun.y)
+    this.shaded = true
+  }
+
   /** Adds rain (mm) falling out of model column i to the ground columns under it (to `precipitation` or `target`). */
   private deposit(i: number, mm: number, target = this.precipitation) {
     const c = this.groundCell, w = this.groundWeight, k = i * 4
@@ -572,7 +630,7 @@ export class AtmosphereModel implements TaskModel {
 
   step(dt: number) {
     const { nz, hz, layer } = this.grid
-    this.updateGround()
+    this.updateGround(); this.updateShade()
     // Water is transported conservatively (WENO: by the flux form; semi-Lagrangian: by the mass fixer). Only the
     // cold-pool indicator decays. It is a diagnostic only since 2026-10-08: the cold-pool and microburst
     // parameterisations that pushed the air by it (lift on its edge, a push down in its core, a radial push of a
@@ -779,6 +837,9 @@ export class AtmosphereModel implements TaskModel {
     const ice = this.ice, iceNumber = this.iceNumber, snow = this.snow, graupel = this.graupel, hail = this.hail, rhoGround = e.rho[0]
     const electric = withIce && this.electrified(), cI = this.chargeIce, cG = this.chargeGraupel, cR = this.chargeRain, cA = this.chargeAir, cNow = this.chargeNow, before = this.massBefore, after = this.massAfter
     const flux = surfaceFluxes(cfg, this.time), urban = (cfg.city ?? 0) > 0 ? surfaceFluxes(cfg, this.time, 'urban') : flux, f = 2 * OMEGA * Math.sin(cfg.latitude * Math.PI / 180)
+    // Under a cloud the balance is the same with the sunlight times sunNow: the available energy max(0, A T - LW) of the
+    // clear sky's A - LW (the shares of H and LE stay), so a column scales its clear-sky fluxes by it (roadmap B10).
+    const shaded = this.shaded, scale = (absorbed: number, t: number) => absorbed > LONGWAVE_LOSS ? Math.max(0, absorbed * t - LONGWAVE_LOSS) / (absorbed - LONGWAVE_LOSS) : 0
     const spongeStart = Math.max(cfg.tropopause * 1000 + 2500, 14_000), keep = Math.exp(-this.windRelaxation * dt)
     // Distance of each column from the nearest domain edge (the seam between the last and the first node), m.
     const edges = this.edges(), relaxed = edges === 'relaxed' || edges === 'relaxed-x', onlyX = edges === 'relaxed-x', front = cfg.front ?? 0, zones = this.zoneGround !== null, frontTop = cfg.frontLine ? cfg.frontLine.depth * 1000 + FRONT_BLUR : -1, frontPull = 1 - Math.exp(-dt / FRONTAL_TIME), { dx, dy } = this.grid
@@ -855,7 +916,8 @@ export class AtmosphereModel implements TaskModel {
           if (z < this.surfaceShare.length) {
             // The city (if any) blends in its own energy balance under the share of the column it covers.
             const pattern = 1 + this.patternNow[x + row] * .32, per = pattern * this.surfaceShare[z] * dt / rhoZ, c = urban === flux ? 0 : this.cityNow[x + row]
-            theta[i] += (flux.sensible + c * (urban.sensible - flux.sensible)) * per / (CP * exner); q[i] += (flux.latent + c * (urban.latent - flux.latent)) * per / LV
+            const sunlit = shaded ? this.sunNow[x + row] : 1, k = sunlit < 1 ? scale(flux.absorbed, sunlit) : 1, ku = c > 0 && sunlit < 1 ? scale(urban.absorbed, sunlit) : 1
+            theta[i] += (k * flux.sensible + c * (ku * urban.sensible - k * flux.sensible)) * per / (CP * exner); q[i] += (k * flux.latent + c * (ku * urban.latent - k * flux.latent)) * per / LV
           }
           // Below 0.001 K the indicator is noise from the transport tails: zero, so the transport can skip it.
           cold[i] = cold[i] < 1e-3 ? 0 : Math.min(cold[i], 15)

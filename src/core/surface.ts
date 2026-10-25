@@ -20,10 +20,11 @@ export interface SurfaceFluxes {
 
 /**
  * Surface energy balance: absorbed = LONGWAVE_LOSS + storage + H + LE. The evaporative fraction is the wet-surface
- * share (1 - sensible) times the moisture availability, and whatever does not evaporate heats the air.
+ * share (1 - sensible) times the moisture availability, and whatever does not evaporate heats the air. `transmission`:
+ * the share of the sunlight the clouds above let through (AtmosphereModel.sunNow, roadmap B10).
  */
-export function surfaceFluxes(config: SimConfig, time: number, type = config.surfaceType): SurfaceFluxes {
-  const s = SURFACES[type], absorbed = insolation(config, time) * (1 - s.albedo)
+export function surfaceFluxes(config: SimConfig, time: number, type = config.surfaceType, transmission = 1): SurfaceFluxes {
+  const s = SURFACES[type], absorbed = insolation(config, time) * transmission * (1 - s.albedo)
   const available = Math.max(0, absorbed - LONGWAVE_LOSS) * (1 - s.storage)
   const moisture = type === 'water' ? 1 : clamp(s.evap * config.soilMoisture / 45)
   const latent = available * (1 - s.sensible) * moisture
