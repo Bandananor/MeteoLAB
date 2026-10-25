@@ -30,7 +30,7 @@ import { SatellitePanel } from './satellite/panel'
 import { elapsed as runTime, timeOfDay } from './clock'
 import { ZonesPanel } from './zones/panel'
 import { AdvectionEditor, advectionMarkup } from './largescale-ui'
-import { frameSettings, CELL_STAGES, type Expectation, expectations, type Flank, type StormFlanks, AIR_MASSES, buildSituation, SHEARS, type StoryStage, storyStage, TRIGGERS, MESO_PERSISTENCE, TORNADO_DEFAULTS, TORNADO_LEVELS, TORNADO_NOTES, tornadoSigns, type TornadoThresholds, UH_ROTATING, readState, createGrid, describeBalance, DT, Environment, parcelIndices, SCENARIOS, type SimConfig, rotationSummary, SPIN_SUPERCELL, spinProfile, stormIndices, stormMotion, UH_LAYERS, type UhLayer, environmentProfile, parseSounding, soundingProfile, SoundingError, computeSounding, type Sounding } from './core'
+import { frameSettings, CELL_STAGES, type Expectation, expectations, type Flank, type StormFlanks, AIR_MASSES, buildSituation, SHEARS, type StoryStage, storyStage, TRIGGERS, MESO_PERSISTENCE, TORNADO_DEFAULTS, TORNADO_LEVELS, TORNADO_NOTES, tornadoSigns, type TornadoThresholds, UH_ROTATING, readState, createGrid, describeBalance, DT, Environment, liftParcel, parcelIndices, SCENARIOS, type SimConfig, rotationSummary, SPIN_SUPERCELL, spinProfile, stormIndices, stormMotion, UH_LAYERS, type UhLayer, environmentProfile, parseSounding, soundingProfile, SoundingError, computeSounding, type Sounding } from './core'
 import { type FieldMode, fieldInfo } from './render/fields'
 import { type LayerMode, OBSERVER_BACK, OBSERVER_NEAR, type Quality } from './render/view'
 import { cleanSettings, decodeSettings, download, encodeSettings, toCsv } from './share'
@@ -354,6 +354,7 @@ app.innerHTML = `<div class="app">
     <div class="sounding-dialog__body"><canvas id="soundingChart" class="side-chart"></canvas><dl class="kv" id="soundingNums"></dl></div>
     <ul class="sounding-dialog__notes" id="soundingNotes"></ul>
     <div class="notice notice--warn" id="soundingCap" hidden><span class="notice__text"></span></div>
+    <div class="notice notice--warn" id="soundingInversion" hidden><span class="notice__text"></span></div>
     <div class="field"><span class="field__label">${L('Запуск грозы', 'How the storm starts')}</span><span class="select"><select id="soundingStart"><option value="nudge">${L('Подталкивание потока, как в CM1 (Naylor & Gilmore 2012): 15–20 мин', 'Updraught nudging, as in CM1 (Naylor & Gilmore 2012): 15–20 min')}</option><option value="thermals">${L('Тёплый термик', 'A warm thermal')}</option></select></span></div>
     <label class="field"><span class="field__head"><span class="field__label">${L('Начальный термик (в реальном дне его нет — задайте сами; 0 — без термика)', 'Starting thermal (a real day has none — set it yourself; 0 — no thermal)')}</span><output class="field__value" id="soundingBubbleOut">1.00×</output></span><input class="range" id="soundingBubble" type="range" min="0" max="2.5" step="0.05" value="1"></label>
   </div>
@@ -851,6 +852,13 @@ function previewSounding() {
   cap.querySelector('.notice__text')!.textContent = L(
     `Крышка: для частицы смешанного слоя CIN ${n(i.ml.cin)} Дж/кг, свободная конвекция с ${km(i.ml.lfc)}. CAPE у земли считается для самых нижних метров; термик перемешивает слой, и тёплый пузырь на сетке 1,2 км такую крышку не пробивает — в природе это делают фронт или граница оттока. Запуск подталкиванием потока её продавливает${i.ml.cin > 120 ? ' (при CIN больше ~120 Дж/кг так в природе без сильного подъёма не бывает — это опыт «что если»)' : ''}.`,
     `A cap: for the mixed-layer parcel CIN ${n(i.ml.cin)} J/kg, free convection from ${km(i.ml.lfc)}. The surface CAPE is the lowest metres'; a thermal mixes the layer, and a warm bubble on the 1.2 km grid does not break such a cap — in nature a front or an outflow boundary does. The updraught nudging forces it through${i.ml.cin > 120 ? ' (with CIN above ~120 J/kg nature would need strong lifting — this is a what-if experiment)' : ''}.`)
+  // A second inversion inside the cloud: the mixed-layer parcel, free from its LFC, colder than the air again below
+  // INVERSION_TOP. CIN counts only what lies below the LFC (MetPy's convention), so CIN near 0 can hide it.
+  const inv = document.querySelector<HTMLElement>('#soundingInversion')!, low = inCloudInversion(env, grid.height)
+  inv.hidden = !low
+  if (low) inv.querySelector('.notice__text')!.textContent = L(
+    `Вторая инверсия внутри облака: частица смешанного слоя свободна с ${km(i.ml.lfc)}, но на ${km(low.z)} снова холоднее среды на ${low.excess.toFixed(1).replace('.', ',')} K. CIN её не учитывает — он считается только ниже LFC, поэтому может быть почти нулевым. Молодой восходящий поток тормозится в этом слое и вовлекает сухой воздух; тёплый термик обычно гаснет, подталкивание проводит поток только пока действует (15–20 мин).`,
+    `A second inversion inside the cloud: the mixed-layer parcel is free from ${km(i.ml.lfc)}, but at ${km(low.z)} it is colder than the air again, by ${low.excess.toFixed(1)} K. CIN does not count it — it is integrated only below the LFC, so it can be near zero. A young updraught slows in this layer and entrains dry air; a warm thermal usually dies, the nudging carries the updraught only while it acts (15–20 min).`)
   document.querySelector('#soundingNotes')!.innerHTML = soundingNotes.map(t => `<li>${t.replace(/[<>&]/g, ch => `&#${ch.charCodeAt(0)};`)}</li>`).join('')
   drawSounding('soundingChart', computeSounding(c, env, grid.height))
 }
@@ -1555,7 +1563,19 @@ showQuality()
 showThemeChoice()
 /** A sounding's cap that a warm thermal does not break on this grid (the real soundings, 24.10.2026): the mixed-layer
  * parcel's CIN, J/kg, or its free convection level, km. Measured: CIN 64 J/kg with the LFC at 2.35 km stopped it. */
-const CAP_CIN = 25, CAP_LFC = 2
+const CAP_CIN = 25, CAP_LFC = 2, INVERSION_TOP = 3
+/** The coldest point of the mixed-layer parcel against the air between its LFC (+ 100 m) and INVERSION_TOP km, if negative. */
+function inCloudInversion(env: Environment, height: number): { z: number, excess: number } | null {
+  const p = liftParcel(env, height, 'ml')
+  if (p.lfc === null) return null
+  let low: { z: number, excess: number } | null = null
+  for (const q of p.profile) {
+    if (q.z <= p.lfc + .1 || q.z > INVERSION_TOP) continue
+    const excess = (q.tv ?? q.parcel) - (q.envTv ?? q.env)
+    if (excess < 0 && (!low || excess < low.excess)) low = { z: q.z, excess }
+  }
+  return low
+}
 /** The live sounding last handed to the Skew-T screen (a new one every LIVE_EVERY s of model time). */
 let shownLive: Live | null = null
 function frame(now:number){
