@@ -11,6 +11,8 @@ const config = isFile
   ? { ...structuredClone(DEFAULTS), sounding: { ...parseSounding(readFileSync(a, 'utf8')), name: 'x' }, start: 'nudge' }
   : { ...structuredClone(DEFAULTS), ...structuredClone(SCENARIOS[Number(a)].values) }
 if (spacing) config.spacing = spacing
+if (args.includes('single')) config.single = true
+if (!isFile && args.includes('nudge')) config.start = 'nudge'
 if (isFile) fillLowWind(config)
 const m = new AtmosphereModel(config), THRESHOLDS = [3, 4, 5, 6, 8, 10].map(x => x * 1e-3)
 const run = THRESHOLDS.map(() => 0), longest = THRESHOLDS.map(() => 0)
@@ -23,4 +25,4 @@ for (let t = DT; t <= minutes * 60 + 1e-9; t += DT) {
   THRESHOLDS.forEach((th, k) => { run[k] = z >= th ? run[k] + DT : 0; longest[k] = Math.max(longest[k], run[k]) })
 }
 const name = isFile ? a.split(/[\\/]/).pop() : SCENARIOS[Number(a)].name, meant = isFile ? '' : ` meant ${SCENARIOS[Number(a)].mesocyclone ?? '—'}`
-console.log(`${name}${spacing ? ` ${spacing} km` : ''}${meant}: w ${w.toFixed(0)}, UH ${uh.toFixed(0)}, core zeta peak ${(peak * 1e3).toFixed(1)}e-3; longest s above ${THRESHOLDS.map((th, k) => `${th * 1e3}e-3: ${longest[k]}${longest[k] >= MESO_PERSISTENCE ? '*' : ''}`).join(', ')} (* = 600 s); the label on this grid: threshold ${(m.rotation.mesoZeta * 1e3).toFixed(1)}e-3, held ${held} s${held >= MESO_PERSISTENCE ? " - mesocyclone" : ""}`)
+console.log(`${name}${spacing ? ` ${spacing} km` : ''}${config.single ? ' single' : ''}${config.start === 'nudge' ? ' nudge' : ''}${meant}: w ${w.toFixed(0)}, UH ${uh.toFixed(0)}, core zeta peak ${(peak * 1e3).toFixed(1)}e-3; longest s above ${THRESHOLDS.map((th, k) => `${th * 1e3}e-3: ${longest[k]}${longest[k] >= MESO_PERSISTENCE ? '*' : ''}`).join(', ')} (* = 600 s); the label on this grid: threshold ${(m.rotation.mesoZeta * 1e3).toFixed(1)}e-3, held ${held} s${held >= MESO_PERSISTENCE ? " - mesocyclone" : ""}`)

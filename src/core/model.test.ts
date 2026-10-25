@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { AtmosphereModel, createGrid, DEFAULT_GRID } from '.'
+import { AtmosphereModel, createGrid, DEFAULT_GRID, insolation } from '.'
 import { run, SUMMER_DAY as summerDay } from './fixtures'
 
 const fields = ['u', 'v', 'w', 'theta', 'q', 'cloud', 'rain', 'cold', 'pressure'] as const
@@ -67,5 +67,17 @@ describe('AtmosphereModel', () => {
     const g = createGrid(DEFAULT_GRID)
     expect([g.dx, g.dy]).toEqual([1200, 1125])
     expect(g.nz).toBe(50); expect(g.dzs[0]).toBeCloseTo(100, 6); expect(g.zs[g.nz - 1]).toBeCloseTo(18_900, 6)
+  })
+
+  it('the single-storm mode: one thermal in the middle, no sun and no random perturbations (roadmap E10)', () => {
+    const m = new AtmosphereModel({ ...summerDay, single: true }), { nx, ny, layer, zs } = m.grid
+    expect(insolation(m.config, 0)).toBe(0); expect((m as unknown as { surfacePattern: Float32Array }).surfacePattern.every(v => v === 0)).toBe(true)
+    // Far from the thermal every column of a level is alike; the thermal sits in the middle, mirror-symmetric about it.
+    const top = zs.findIndex(z => z > 6000) * layer
+    expect(m.theta[top]).toBe(m.theta[top + nx * (ny - 1)])
+    const warmest = m.theta.subarray(0, layer).reduce((k, v, i, a) => v > a[k] ? i : k, 0)
+    expect(Math.abs(warmest % nx - nx / 2)).toBeLessThanOrEqual(1); expect(Math.abs(Math.floor(warmest / nx) - ny / 2)).toBeLessThanOrEqual(1)
+    // The same settings without it keep the noise.
+    expect((new AtmosphereModel({ ...summerDay }) as unknown as { surfacePattern: Float32Array }).surfacePattern.some(v => v !== 0)).toBe(true)
   })
 })

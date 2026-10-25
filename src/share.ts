@@ -12,7 +12,7 @@ const KINDS: Record<string, 'number' | 'boolean' | 'pair' | 'sounding' | 'zones'
   latitude: 'number', turbulence: 'number', hour: 'number', dayOfYear: 'number', solarMax: 'number', soilMoisture: 'number',
   speed: 'number', bubble: 'number', bubbleRadius: 'number', city: 'number',
   surfaceType: ['grass', 'dry', 'water', 'urban'], microphysics: ['warm', 'ice'], transport: ['semi-lagrangian', 'weno'],
-  profile: ['weisman-klemp'], domain: ['standard', 'large', 'custom'], domainSize: 'pair', edges: ['periodic', 'relaxed', 'relaxed-x'], start: ['thermals', 'line', 'nudge'], nudge: 'number',
+  profile: ['weisman-klemp'], domain: ['standard', 'large', 'custom'], domainSize: 'pair', edges: ['periodic', 'relaxed', 'relaxed-x'], start: ['thermals', 'line', 'nudge'], nudge: 'number', single: 'boolean',
   followStorm: 'boolean', lightning: 'boolean', frameMotion: 'pair', sounding: 'sounding', zones: 'zones', frontLine: 'front', largeScale: 'advection', weismanKlemp: 'wk',
 }
 /** Numbers from a link are kept within this magnitude (a slider never goes near it). */

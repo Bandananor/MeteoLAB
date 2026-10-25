@@ -195,6 +195,8 @@ app.innerHTML = `<div class="app">
           ${slider('city',L('Город в центре, радиус (0 — нет)', 'City in the centre, radius (0 — none)'),0,12,1,0,KM)}`, { count: 6 })}
         ${group(L('Инициирование', 'Initiation'), `
           ${slider('bubble',L('Сила начального термика (0 — без термика)', 'Starting thermal strength (0 — no thermal)'),0,2.5,.05,1,'×',2)}
+          <label class="check" title="${L('Вместо тёплого термика первые 15 минут восходящий поток в середине области тянется к 10 м/с, потом за 5 минут отпускается — как в научной модели CM1 (Naylor & Gilmore 2012). Пробивает крышку, которую термик на сетке 1,2 км не пробивает', 'Instead of a warm thermal the updraught in the domain’s middle is pulled towards 10 m/s for the first 15 minutes and let go over 5 — as in the research model CM1 (Naylor & Gilmore 2012). It breaks a cap a thermal does not break on the 1.2 km grid')}"><input type="checkbox" id="startNudge"> ${L('Запуск подталкиванием потока (CM1)', 'Start by updraught nudging (CM1)')}${RESTART}</label>
+          <label class="check" title="${L('Один запуск в центре области (термик или подталкивание), без солнца и без случайных возмущений воздуха и земли: гроза растёт из своей среды одна, без соседей, возникших случайно, — как в идеализированных опытах CM1 и Weisman–Klemp; для сравнений по сетке и по средам', 'One start in the domain’s middle (a thermal or the nudging), no sun and no random perturbations of the air or the ground: the storm grows alone from its environment, with no neighbours started by chance — as in the idealised experiments of CM1 and Weisman–Klemp; for comparisons across grids and environments')}"><input type="checkbox" id="singleStorm"> ${L('Одиночная гроза', 'Single storm')}${RESTART}</label>
           <p class="t-caption">${L('Тёплые пузыри у земли на старте (+3,2 K и 1,1 м/с в центре, радиус ~4 км, до 2,7 км) — как в идеализированных опытах; ещё термик — двойным щелчком по земле или меню «Эксперименты» → «Воздействие руками».', 'Warm bubbles near the ground at the start (+3.2 K and 1.1 m/s at the centre, a ~4 km radius, up to 2.7 km), as in idealised experiments; more thermals — a double click on the ground or “Experiments” → “Intervene by hand”.')}</p>`, { count: 1 })}
         ${group(L('Динамика: Кориолис и турбулентность', 'Dynamics: Coriolis and turbulence'), `
           ${slider('latitude',L('Широта / Кориолис', 'Latitude / Coriolis'),0,75,1,45,'°')}
@@ -576,6 +578,10 @@ const transportSelect = document.querySelector<HTMLSelectElement>('#transport')!
 transportSelect.addEventListener('change', () => { config.transport = transportSelect.value as SimConfig['transport'] })
 const followCheck = document.querySelector<HTMLInputElement>('#followStorm')!, domainSelect = document.querySelector<HTMLSelectElement>('#domain')!
 followCheck.addEventListener('change', () => { config.followStorm = followCheck.checked; recreate() })
+// How the storm starts (roadmap E10): the nudging for any scenario, and the single-storm mode.
+const nudgeCheck = document.querySelector<HTMLInputElement>('#startNudge')!, singleCheck = document.querySelector<HTMLInputElement>('#singleStorm')!
+nudgeCheck.addEventListener('change', () => { config.start = nudgeCheck.checked ? 'nudge' : undefined; markModified(); recreate() })
+singleCheck.addEventListener('change', () => { config.single = singleCheck.checked || undefined; markModified(); recreate() })
 const lightningCheck = document.querySelector<HTMLInputElement>('#lightning')!
 lightningCheck.addEventListener('change', () => { config.lightning = lightningCheck.checked; recreate() })
 domainSelect.addEventListener('change', () => { config.domain = domainSelect.value as SimConfig['domain']; if (config.domain === 'custom') config.domainSize ??= [48, 36]; showDomainControls(); recreate() })
@@ -622,7 +628,7 @@ const baseConfig = (): SimConfig => { const base: SimConfig = { ...defaults, ...
 // A dot at a left group whose values differ from the scenario. Speed, the domain and its motion are kept when a
 // scenario is chosen: not the scenario's.
 const KEPT = new Set<keyof SimConfig>(['speed', 'followStorm', 'domain', 'domainSize', 'lightning'])
-const SELECTS: [string, keyof SimConfig, string][] = [['#surfaceType', 'surfaceType', 'grass'], ['#transport', 'transport', 'weno'], ['#microphysics', 'microphysics', 'ice']]
+const SELECTS: [string, keyof SimConfig, string][] = [['#surfaceType', 'surfaceType', 'grass'], ['#transport', 'transport', 'weno'], ['#microphysics', 'microphysics', 'ice'], ['#startNudge', 'start', 'thermals'], ['#singleStorm', 'single', 'false']]
 function markModified() {
   const base = baseConfig()
   document.querySelectorAll<HTMLDetailsElement>('.side--left details.group').forEach(d => {
@@ -689,7 +695,7 @@ let built: { name: string; title: string; hint: string; nums: string; story: Sto
 document.querySelector('#sitBuild')!.addEventListener('click', () => {
   const pick = (id: string) => document.querySelector<HTMLSelectElement>(`#${id}`)!.value
   const b = buildSituation({ mass: pick('sitMass') as keyof typeof AIR_MASSES, trigger: pick('sitTrigger') as keyof typeof TRIGGERS, shear: pick('sitShear') as keyof typeof SHEARS, hour: Number(pick('sitHour')) }, defaults)
-  Object.assign(config, defaults, { speed: config.speed, followStorm: config.followStorm, lightning: config.lightning, domain: config.domain, domainSize: config.domainSize, wind05: undefined, wind1: undefined, windDir05: undefined, windDir1: undefined, profile: undefined, weismanKlemp: undefined, sounding: undefined, bubbleRadius: undefined, front: undefined, edges: undefined, start: undefined, nudge: undefined, frameMotion: undefined, top: undefined, spacing: undefined, nightInversion: undefined, zones: undefined, frontLine: undefined, largeScale: undefined, transport: 'weno' }, b.values)
+  Object.assign(config, defaults, { speed: config.speed, followStorm: config.followStorm, lightning: config.lightning, domain: config.domain, domainSize: config.domainSize, wind05: undefined, wind1: undefined, windDir05: undefined, windDir1: undefined, profile: undefined, weismanKlemp: undefined, sounding: undefined, bubbleRadius: undefined, front: undefined, edges: undefined, start: undefined, nudge: undefined, single: undefined, frameMotion: undefined, top: undefined, spacing: undefined, nightInversion: undefined, zones: undefined, frontLine: undefined, largeScale: undefined, transport: 'weno' }, b.values)
   fillLowWind(config)
   built = { ...b, title: b.name, nums: environmentNums(config) }; baseScenario = null; soundingBase = null
   syncControls(); markPreset(null); showScenario()
@@ -698,7 +704,7 @@ document.querySelector('#sitBuild')!.addEventListener('click', () => {
 document.querySelectorAll<HTMLButtonElement>('[data-preset]').forEach(button => button.addEventListener('click', () => {
   const index = Number(button.dataset.preset)
   built = null
-  Object.assign(config, defaults, { speed: config.speed, followStorm: config.followStorm, lightning: config.lightning, domain: config.domain, domainSize: config.domainSize, wind05: undefined, wind1: undefined, windDir05: undefined, windDir1: undefined, profile: undefined, weismanKlemp: undefined, sounding: undefined, bubbleRadius: undefined, front: undefined, edges: undefined, start: undefined, nudge: undefined, frameMotion: undefined, top: undefined, spacing: undefined, nightInversion: undefined, zones: undefined, frontLine: undefined, largeScale: undefined, transport: 'weno' }, presets[index].values)
+  Object.assign(config, defaults, { speed: config.speed, followStorm: config.followStorm, lightning: config.lightning, domain: config.domain, domainSize: config.domainSize, wind05: undefined, wind1: undefined, windDir05: undefined, windDir1: undefined, profile: undefined, weismanKlemp: undefined, sounding: undefined, bubbleRadius: undefined, front: undefined, edges: undefined, start: undefined, nudge: undefined, single: undefined, frameMotion: undefined, top: undefined, spacing: undefined, nightInversion: undefined, zones: undefined, frontLine: undefined, largeScale: undefined, transport: 'weno' }, presets[index].values)
   fillLowWind(config)
   baseScenario = index
   syncControls()
@@ -713,6 +719,7 @@ function syncControls() {
   surfaceSelect.value = config.surfaceType
   transportSelect.value = config.transport ?? 'weno'
   microSelect.value = config.microphysics ?? 'ice'
+  nudgeCheck.checked = config.start === 'nudge'; nudgeCheck.disabled = config.start === 'line'; singleCheck.checked = !!config.single
   followCheck.checked = config.followStorm !== false; lightningCheck.checked = config.lightning !== false; domainSelect.value = config.domain ?? 'standard'; showDomainControls()
   advection.show(config); markProfileGroups(); markModified(); showSimple()
 }
@@ -866,7 +873,7 @@ function previewSounding() {
 soundingDialog.addEventListener('close', () => {
   if (soundingDialog.returnValue !== 'run' || !loadedSounding) { soundingDialog.returnValue = ''; return }
   soundingDialog.returnValue = ''
-  Object.assign(config, defaults, { speed: config.speed, followStorm: config.followStorm, lightning: config.lightning, domain: config.domain, domainSize: config.domainSize, wind05: undefined, wind1: undefined, windDir05: undefined, windDir1: undefined, profile: undefined, weismanKlemp: undefined, bubbleRadius: undefined, front: undefined, edges: undefined, start: undefined, nudge: undefined, frameMotion: undefined, top: undefined, spacing: undefined, nightInversion: undefined, zones: undefined, frontLine: undefined, largeScale: undefined, transport: 'weno' },
+  Object.assign(config, defaults, { speed: config.speed, followStorm: config.followStorm, lightning: config.lightning, domain: config.domain, domainSize: config.domainSize, wind05: undefined, wind1: undefined, windDir05: undefined, windDir1: undefined, profile: undefined, weismanKlemp: undefined, bubbleRadius: undefined, front: undefined, edges: undefined, start: undefined, nudge: undefined, single: undefined, frameMotion: undefined, top: undefined, spacing: undefined, nightInversion: undefined, zones: undefined, frontLine: undefined, largeScale: undefined, transport: 'weno' },
     { sounding: loadedSounding, bubble: Number(soundingBubble.value), ...(soundingStart.value === 'nudge' ? { start: 'nudge' as const } : {}), ...(soundingLatitude !== undefined ? { latitude: Math.round(Math.abs(soundingLatitude)) } : {}) })
   fillLowWind(config)
   baseScenario = null; built = null; soundingBase = { sounding: config.sounding, bubble: config.bubble, latitude: config.latitude, start: config.start }
@@ -893,7 +900,7 @@ rewindSelect.addEventListener('change', () => {
 })
 /** The settings of a saved run or of a precise run's frames: everything else back to the defaults, the left column shown. */
 function takeSettings(saved: unknown) {
-  Object.assign(config, defaults, { wind05: undefined, wind1: undefined, windDir05: undefined, windDir1: undefined, profile: undefined, weismanKlemp: undefined, sounding: undefined, bubbleRadius: undefined, front: undefined, edges: undefined, start: undefined, nudge: undefined, frameMotion: undefined, top: undefined, spacing: undefined, nightInversion: undefined, zones: undefined, frontLine: undefined, largeScale: undefined }, cleanSettings(saved))
+  Object.assign(config, defaults, { wind05: undefined, wind1: undefined, windDir05: undefined, windDir1: undefined, profile: undefined, weismanKlemp: undefined, sounding: undefined, bubbleRadius: undefined, front: undefined, edges: undefined, start: undefined, nudge: undefined, single: undefined, frameMotion: undefined, top: undefined, spacing: undefined, nightInversion: undefined, zones: undefined, frontLine: undefined, largeScale: undefined }, cleanSettings(saved))
   fillLowWind(config); baseScenario = null; built = null; soundingBase = config.sounding ? { sounding: config.sounding, start: config.start } : null; syncControls(); markPreset(null); showScenario()
 }
 stateFile.addEventListener('change', async () => {

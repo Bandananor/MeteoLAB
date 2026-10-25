@@ -252,14 +252,16 @@ export class AtmosphereModel implements TaskModel {
   private initialize() {
     const { nx, ny, nz, zs, width: W, depth: D } = this.grid
     let walk = 0
-    for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++) { walk = walk * .82 + (this.rng() - .5) * .34; this.surfacePattern[x + nx * y] = walk }
+    // The single-storm mode keeps the air and the ground uniform (SimConfig.single).
+    const noise = this.config.single ? 0 : 1
+    for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++) { walk = walk * .82 + (this.rng() - .5) * .34; this.surfacePattern[x + nx * y] = walk * noise }
     // Zero mean: the pattern only redistributes the surface fluxes (a random offset once added ~1 % to H and LE).
     const mean = this.surfacePattern.reduce((a, b) => a + b, 0) / this.surfacePattern.length
     for (let i = 0; i < this.surfacePattern.length; i++) this.surfacePattern[i] -= mean
     for (let z = 0, i = 0; z < nz; z++) for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++, i++) {
       const alt = zs[z], [ue, ve] = this.env.windUV(alt)
       this.u[i] = ue - this.frame[0]; this.v[i] = ve - this.frame[1]; this.w[i] = 0
-      this.theta[i] = this.env.thetaEnv(alt) + (this.rng() - .5) * .018; this.q[i] = this.env.qEnv(alt)
+      this.theta[i] = this.env.thetaEnv(alt) + (this.rng() - .5) * .018 * noise; this.q[i] = this.env.qEnv(alt)
       this.cloud[i] = this.rain[i] = this.cold[i] = this.ice[i] = this.iceNumber[i] = this.snow[i] = this.graupel[i] = this.hail[i] = 0
       this.chargeIce[i] = this.chargeGraupel[i] = this.chargeRain[i] = this.chargeAir[i] = 0
     }
@@ -283,7 +285,8 @@ export class AtmosphereModel implements TaskModel {
       for (let k = 0; k < 5; k++) bubble(W * (.18 + .09 * k), D / 2 - 3000, this.config.bubble)
     } else if (this.config.start === 'nudge') {
       // No thermal: the nudging in physics() starts the storm.
-    } else if (this.config.profile === 'weisman-klemp') bubble(W * .3, D * .5, this.config.bubble)
+    } else if (this.config.single) bubble(W * .5, D * .5, this.config.bubble)
+    else if (this.config.profile === 'weisman-klemp') bubble(W * .3, D * .5, this.config.bubble)
     else { bubble(W * .38, D * .45, this.config.bubble); bubble(W * .61, D * .57, .72 * this.config.bubble) }
     // The starting thermals are the setup, not something added during the run.
     this.added = { heat: 0, vapour: 0, count: 0 }

@@ -125,6 +125,12 @@ export interface SimConfig {
   /** The updraught the nudging aims at, m/s (absent = NUDGE.w), with start 'nudge'. */
   nudge?: number
   /**
+   * Single-storm mode (roadmap E10): one start in the domain's middle (one thermal, or the nudging), no sun and no random
+   * perturbations of the air or the ground, so the storm alone grows from its environment — as the idealised experiments
+   * of CM1 and Weisman-Klemp are run, and as grid (A2) and regime (D1) studies need: no neighbours started by chance.
+   */
+  single?: boolean
+  /**
    * A shift of the starting thermals, m east and north: an ensemble member's (src/ensemble/member.ts) — where exactly
    * the first thermal rises is as uncertain as the sounding.
    */

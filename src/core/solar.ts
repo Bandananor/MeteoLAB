@@ -10,7 +10,8 @@ export function declination(n?: number) { return n === undefined ? 0 : 23.44 * M
 
 /** Solar irradiance on the horizontal surface, W/m2: solarMax (sun in the zenith) times the cosine of the zenith angle. */
 export function insolation(config: SimConfig, time: number) {
-  return config.solarMax * Math.max(0, sunDirection(config, time).y)
+  // The single-storm mode has no sun (SimConfig.single): the storm alone, no thermals of the afternoon around it.
+  return config.single ? 0 : config.solarMax * Math.max(0, sunDirection(config, time).y)
 }
 
 /**
