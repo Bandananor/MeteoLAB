@@ -4,10 +4,14 @@
 // states (.meteolab) every few minutes: the simulator opens them (Run → Open a .meteolab file) with all its instruments,
 // and the run continues from the last one after a pause (Ctrl+C, or a file named "pause" put in the output folder — for
 // a run in the background).
-//   npm run precise -- run.json [threads=N] [out=dir] [every=5] [frames=30] [estimate] [resume]
+//   npm run precise -- run.json [threads=N] [out=dir] [every=5] [frames=30] [estimate] [resume] [live]
+//   npm run precise -- compare <run folder or course.csv> <another> …
 // run.json is a series file of one run: {"meteolab_series": 1, "scenario": …, "settings": {"spacing": 0.5, …},
 // "vary": {}, "seeds": 1, "first_seed": …, "minutes": 60}. estimate: only the estimate. resume: from the newest state
 // in the output folder. every: minutes between saved states; frames: model seconds between frames (0: none).
+// live: the same run on the simulator's own grid (the file's spacing dropped; out defaults to <run>-live), to set the
+// precise run against what the live mode gives. compare: the courses of such runs side by side — each quantity's peak
+// and when, the storm's milestones — as a Markdown table.
 import { isMainThread, Worker, workerData } from 'node:worker_threads'
 import { fileURLToPath } from 'node:url'
 import { availableParallelism } from 'node:os'
@@ -33,16 +37,19 @@ if (!isMainThread) {
   // A helper: a view of the main thread's model over the shared memory, doing the step's tasks it is handed.
   const { config, buffers, control } = workerData as { config: SimConfig; buffers: Record<string, SharedArrayBuffer>; control: SharedArrayBuffer }
   serveTasks(new AtmosphereModel(config, createGrid(gridOf(config)), undefined, { memory: new AttachedMemory(buffers), attach: true }), control)
+} else if (process.argv[2] === 'compare') {
+  compare(process.argv.slice(3))
 } else {
-  const args = process.argv.slice(2), path = args.find(a => !a.includes('=') && a !== 'estimate' && a !== 'resume')
+  const args = process.argv.slice(2), path = args.find(a => !a.includes('=') && !['estimate', 'resume', 'live'].includes(a))
   const option = (name: string) => args.find(a => a.startsWith(`${name}=`))?.slice(name.length + 1)
   if (!path) { console.error('usage: npm run precise -- run.json [threads=N] [out=dir] [every=5] [frames=30] [estimate] [resume]'); process.exit(2) }
   const text = readFileSync(path, 'utf8'), parsed = parseSeries(text, SCENARIOS.map(s => s.name))
   if ('error' in parsed) { console.error(`${path}: ${parsed.error}`); process.exit(1) }
   const series = parsed.series, runs = expandSeries(series, seriesBase(series))
   if (runs.length !== 1) { console.error(`${path}: a precise run is one run ("vary": {}, "seeds": 1), this file makes ${runs.length}`); process.exit(1) }
-  const config = runs[0].config, minutes = series.minutes, every = Number(option('every') ?? 5) * 60
-  const out = option('out') ?? path.replace(/\.json$/i, ''), threads = Math.max(1, Number(option('threads') ?? Math.min(6, availableParallelism() - 1)))
+  const config = runs[0].config, live = args.includes('live'), minutes = series.minutes, every = Number(option('every') ?? 5) * 60
+  if (live) delete config.spacing
+  const out = option('out') ?? path.replace(/\.json$/i, '') + (live ? '-live' : ''), threads = Math.max(1, Number(option('threads') ?? Math.min(6, availableParallelism() - 1)))
   const linkBase = seriesBase({ ...series, settings: {} })
   setRunLink(c => c ? `${SITE}?cfg=${encodeSettings(c, linkBase, series.scenario)}&seed=${c.seed}` : '')
 
@@ -129,4 +136,34 @@ if (!isMainThread) {
   }
   console.log(`done: ${minutes} min in ${((performance.now() - started) / 60000).toFixed(1)} min; ${course}${framesEvery > 0 ? `, ${framesFile} (${Math.round(statSync(framesFile).size / 2 ** 20)} MB)` : ''}, states in ${out}`)
   await stop(0)
+}
+
+/** The courses of precise and live runs side by side (npm run precise -- compare a b …). */
+function compare(paths: string[]) {
+  if (paths.length < 2) { console.error('usage: npm run precise -- compare <run folder or course.csv> <another> …'); process.exit(2) }
+  const runs = paths.map(p => {
+    const file = p.endsWith('.csv') ? p : join(p, 'course.csv'), [head, ...lines] = readFileSync(file, 'utf8').trimEnd().split('\n')
+    const names = head.split(','), rows = lines.map(l => l.split(','))
+    const col = (name: string) => { const k = names.indexOf(name); return rows.map(r => Number(r[k])) }
+    return { name: p, col }
+  })
+  const fmt = (v: number, d = 1) => Number.isFinite(v) ? v.toFixed(d) : '—'
+  const peak = (name: string, d = 1, sign = 1) => (r: typeof runs[0]) => {
+    const v = r.col(name).map(x => sign * x), t = r.col('time_min'), k = v.indexOf(Math.max(...v))
+    return `${fmt(sign * v[k], d)} (${fmt(t[k], 1)} min)`
+  }
+  const first = (name: string, at: number) => (r: typeof runs[0]) => { const v = r.col(name), t = r.col('time_min'), k = v.findIndex(x => x >= at); return k < 0 ? '—' : `${fmt(t[k], 1)} min` }
+  const last = (name: string, d = 1) => (r: typeof runs[0]) => fmt(r.col(name).at(-1)!, d)
+  const lines: [string, (r: typeof runs[0]) => string][] = [
+    ['spacing, km', r => fmt(r.col('spacing_km')[0], 2)],
+    ['updraught peak, m/s', peak('updraft_ms')], ['downdraught peak, m/s', peak('downdraft_ms')],
+    ['UH 2–5 km peak, m²/s²', peak('uh_2_5km_m2s2', 0)], ['core vorticity peak, 1/s', peak('core_zeta_s1', 4)],
+    ['rain rate peak, mm/h', peak('rain_rate_mmh', 0)], ['rain total at the end, mm', last('rain_total_mm')],
+    ['cloud top peak, km', peak('cloud_top_km')], ['gust peak, m/s', peak('gust_ms')], ['hail peak, cm', peak('hail_cm')],
+    ['cold pool peak, K', peak('cold_pool_K')],
+    ['updraught ≥ 10 m/s from', first('updraft_ms', 10)], ['first rain ≥ 1 mm/h', first('rain_rate_mmh', 1)],
+    ['mesocyclone (10 min of core rotation)', first('mesocyclone_s', 600)], ['clipped nodes, sum', r => fmt(r.col('clipped').reduce((a, b) => a + b, 0), 0)],
+  ]
+  console.log(`| | ${runs.map(r => r.name).join(' | ')} |\n|---|${runs.map(() => '---').join('|')}|`)
+  for (const [label, f] of lines) console.log(`| ${label} | ${runs.map(f).join(' | ')} |`)
 }
