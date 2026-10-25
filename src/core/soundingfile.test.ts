@@ -144,21 +144,35 @@ describe('sounding files (2.2): the model environment from a sounding', () => {
     expect(() => soundingProfile(parseSounding(fixture('oun-1999-05-04-00z.txt')), grid.height)).toThrow(/10 км/)
   })
 
-  it('warms a layer that would overturn by itself to neutral, and says where', () => {
+  it('mixes a layer that would overturn by itself, keeping its heat, and says where', () => {
     // A superadiabatic 500 m at 3-3.5 km (the air colder by 3 K than a neutral layer would be).
     const levels = [0, 1000, 2000, 3000, 3500, 4000, 6000, 9000, 12000, 15000].map(z => {
       const t = 25 - 6.5 * z / 1000 - (z === 3500 ? 3 : 0), p = 100000 * Math.exp(-z / 8000)
       return { p, z, t, td: t - 10, u: 5, v: 0 }
     })
     const sp = soundingProfile({ levels }, 16_000), env = new Environment(SUMMER_DAY, grid, sp.profile)
-    expect(sp.notes.some(n => /Неустойчивых уровней .*: 1, .* на 3,5 км/.test(n))).toBe(true)
+    expect(sp.notes.some(n => /Неустойчивых уровней .*: 2, перемешаны .* на 3,5 км/.test(n))).toBe(true)
     let level = 0
     for (let z = 0; z <= 15_000; z += 100) { const thv = env.thetaEnv(z) * (1 + .61 * env.qEnv(z)); expect(thv).toBeGreaterThan(level - 1e-3); level = Math.max(level, thv) }
+    // The level below the cold one gives up heat: it ends colder than it was, not only the cold level warmer.
+    expect(sp.profile.theta(3000)).toBeLessThan((273.15 + 25 - 19.5) * (1e5 / (100000 * Math.exp(-3000 / 8000))) ** .2857 - .5)
+  })
+
+  it('a ground reading far warmer than the air above it is mixed into the lowest layer, not carried up (Samara 8 Aug, 25.10.2026)', () => {
+    // 35 °C at the ground, 25.8 °C 25 m up, a stable layer with a low-level jet above: warming to neutral from the ground
+    // made the lowest 2.3 km up to 9 K warmer and the mixed-layer CIN 0; mixed with its heat kept it stays capped.
+    const rows = [[1005, 46, 35, 17], [1002, 71, 25.8, 17.8], [1000, 88, 25.2, 17.2], [989, 187, 24.7, 17], [968, 378, 23.8, 16.6], [958, 470, 23.4, 16.4], [925, 783, 25.2, 17.2], [900, 1024, 22.4, 14.4], [850, 1520, 19.4, 11.4], [700, 3150, 5.6, 1.4], [500, 5810, -12.3, -15.2], [300, 9540, -35.5, -49.5], [200, 12240, -53.1, -64.1]]
+    const sp = soundingProfile({ levels: rows.map(([p, z, t, td]) => ({ p: p * 100, z: z - 46, t, td, u: 5, v: 0 })) }, 16_000)
+    expect(sp.notes.some(n => /У земли воздух на 8,\d K теплее, чем в 25 м над ней/.test(n))).toBe(true)
+    // Above the mixed bottom (a few hundred metres) the file's own temperature: 1 km up it stays near 22.4 °C.
+    const env = new Environment(SUMMER_DAY, grid, sp.profile)
+    expect(env.temperatureEnv(978)).toBeCloseTo(22.4, 0)
+    expect(parcelIndices(env, grid.height).ml.cin).toBeGreaterThan(100)
   })
 
   it('runs the model in a loaded sounding (config.sounding), the environment built from it in every thread alike', () => {
     const file = parseSounding(fixture('oax-2014-06-16-19z.sharppy')), model = new AtmosphereModel({ ...SUMMER_DAY, sounding: { name: 'OAX', levels: file.levels } })
-    expect(model.env.pressureAt(0)).toBeCloseTo(96500, 6); expect(model.env.temperatureEnv(0)).toBeCloseTo(27.8, 1)
+    expect(model.env.pressureAt(0)).toBeCloseTo(96500, 6); expect(model.env.temperatureEnv(0)).toBeCloseTo(27.5, 1) // 27.8 °C in the file, its 0.3 K superadiabatic lowest layer mixed
     for (let k = 0; k < 20; k++) { model.step(DT); model.time += DT }
     expect(model.clipped).toBe(0); expect(model.theta.every(Number.isFinite)).toBe(true)
     // The thermal has started to rise (one model minute: ~1 m/s).

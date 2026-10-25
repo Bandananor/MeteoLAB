@@ -203,6 +203,44 @@ function finish(r: Read): SoundingFile {
 /** A sounding needs to reach this height to make an environment, m: the storm's top and the tropopause must be in the data. */
 export const MIN_SOUNDING_TOP = 10_000
 
+/** A ground level warmer than the next by more than this (K, virtual potential temperature) within SURFACE_JUMP_DEPTH (m) is reported as suspect. */
+const SURFACE_JUMP = 3, SURFACE_JUMP_DEPTH = 150
+
+/**
+ * Dry convective adjustment that keeps the column's heat: where the virtual potential temperature falls with height,
+ * the layers are mixed to its mean (pool-adjacent-violators: neighbouring blocks merge while the lower is warmer), each
+ * level weighted by the pressure depth it stands for times the Exner function, so the block keeps its (virtual) enthalpy
+ * cp Tv dp, as in Manabe's adjustment. The vapour is not mixed: a deep unstable block keeps its humidity profile (fine
+ * for a bad ground reading or a thin superadiabatic layer, the cases met). Warming the upper levels to neutral instead adds
+ * heat: one surface reading 9 K too warm (a Samara file, 25.10.2026) warmed the lowest 2.3 km by up to 9 K and turned a
+ * capped morning sounding (mixed-layer CIN 174 J/kg) into CIN 0. The vapour stays; theta changes in place.
+ */
+function mixUnstable(theta: number[], qv: number[], p: number[]) {
+  const n = theta.length, moist = qv.map(q => 1 + .61 * q), thv = theta.map((t, k) => t * moist[k])
+  const weight = p.map((pk, k) => (p[Math.max(0, k - 1)] - p[Math.min(n - 1, k + 1)]) / 2 * (pk / 1e5) ** KAPPA)
+  // Blocks of levels [start, end) with their weight and weighted mean.
+  const blocks: { start: number; end: number; w: number; mean: number }[] = []
+  for (let k = 0; k < n; k++) {
+    let b = { start: k, end: k + 1, w: weight[k], mean: thv[k] }
+    while (blocks.length && blocks[blocks.length - 1].mean > b.mean + 1e-9) {
+      const a = blocks.pop()!, w = a.w + b.w
+      b = { start: a.start, end: b.end, w, mean: (a.mean * a.w + b.mean * b.w) / w }
+    }
+    blocks.push(b)
+  }
+  let levels = 0, worst = 0, where = 0
+  for (const b of blocks) {
+    if (b.end - b.start < 2) continue
+    for (let k = b.start; k < b.end; k++) {
+      const change = b.mean / moist[k] - theta[k]
+      if (Math.abs(change) > 1e-9) levels++
+      if (Math.abs(change) > Math.abs(worst)) { worst = change; where = k }
+      theta[k] += change
+    }
+  }
+  return { levels, worst, where }
+}
+
 /** The environment of a sounding and what was done to its data. */
 export interface SoundingProfile { profile: EnvironmentProfile; notes: string[]; top: number }
 
@@ -213,8 +251,8 @@ export interface SoundingProfile { profile: EnvironmentProfile; notes: string[];
  * levels without a dew point get the relative humidity interpolated from their neighbours, above the last one its value.
  * Above the top of the data, up to `height`, the temperature goes on with the lapse rate of the top 2 km (bounded: no
  * steeper than 7 K/km, warming at most 3 K/km, not below -80 °C). Layers where the virtual potential temperature falls
- * with height (the air would overturn by itself) are warmed to neutral, as the slider profiles are (Environment.neutralise),
- * and reported. Throws a SoundingError below MIN_SOUNDING_TOP.
+ * with height (the air would overturn by itself) are mixed as dry convection mixes them, keeping their heat (see
+ * mixUnstable), and reported. Throws a SoundingError below MIN_SOUNDING_TOP.
  */
 export function soundingProfile(file: Pick<SoundingFile, 'levels'>, height: number): SoundingProfile {
   const lv = file.levels, n = lv.length, notes: string[] = [], top = lv[n - 1].z
@@ -234,14 +272,11 @@ export function soundingProfile(file: Pick<SoundingFile, 'levels'>, height: numb
     notes.push(L(`Выше ${(top / 1000).toFixed(1).replace('.', ',')} км данных нет: температура продолжена с градиентом верхних 2 км (${(lapse * 1000).toFixed(1).replace('.', ',')} K/км), ветер и влажность — как на верхнем уровне`, `No data above ${(top / 1000).toFixed(1)} km: the temperature is continued with the lapse rate of the top 2 km (${(lapse * 1000).toFixed(1)} K/km), the wind and humidity as at the top level`))
   }
   const theta = t.map((tk, k) => tk * (1e5 / p[k]) ** KAPPA)
-  // Dry convective adjustment in virtual potential temperature, from the ground up.
-  let level = theta[0] * (1 + .61 * qv[0]), fixed = 0, worst = 0, where = 0
-  for (let k = 1; k < theta.length; k++) {
-    const moist = 1 + .61 * qv[k], thv = theta[k] * moist
-    if (thv < level - 1e-9) { const warm = level / moist - theta[k]; theta[k] += warm; fixed++; if (warm > worst) { worst = warm; where = z[k] } }
-    level = Math.max(level, theta[k] * moist)
-  }
-  if (fixed) notes.push(L(`Неустойчивых уровней (воздух перевернулся бы сам): ${fixed}, прогреты до нейтральных; наибольшая поправка ${worst.toFixed(1).replace('.', ',')} K на ${(where / 1000).toFixed(1).replace('.', ',')} км`, `Superadiabatic levels (the air would overturn by itself): ${fixed}, warmed to neutral; the largest correction ${worst.toFixed(1)} K at ${(where / 1000).toFixed(1)} km`))
+  // A ground level much warmer than the air just above it: likely a heated or misplaced surface observation.
+  const jump = theta[0] * (1 + .61 * qv[0]) - theta[1] * (1 + .61 * qv[1])
+  if (jump > SURFACE_JUMP && z[1] - z[0] < SURFACE_JUMP_DEPTH) notes.push(L(`У земли воздух на ${jump.toFixed(1).replace('.', ',')} K теплее, чем в ${Math.round(z[1] - z[0])} м над ней, — похоже на ошибку приземного наблюдения; этот слой перемешан с воздухом над ним`, `At the ground the air is ${jump.toFixed(1)} K warmer than ${Math.round(z[1] - z[0])} m above it — likely a faulty surface observation; that layer is mixed with the air above it`))
+  const mixed = mixUnstable(theta, qv, p)
+  if (mixed.levels) notes.push(L(`Неустойчивых уровней (воздух перевернулся бы сам): ${mixed.levels}, перемешаны с сохранением тепла; наибольшая поправка ${mixed.worst.toFixed(1).replace('.', ',').replace('-', '−')} K на ${(z[mixed.where] / 1000).toFixed(1).replace('.', ',')} км`, `Superadiabatic levels (the air would overturn by itself): ${mixed.levels}, mixed keeping their heat; the largest correction ${mixed.worst.toFixed(1)} K at ${(z[mixed.where] / 1000).toFixed(1)} km`))
   const at = (f: number[], h: number) => {
     if (h <= z[0]) return f[0]
     if (h >= z[z.length - 1]) return f[f.length - 1]
