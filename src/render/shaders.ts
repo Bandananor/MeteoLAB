@@ -30,6 +30,9 @@ vec3 toTex(vec3 p){
     (uBoxMax.z - p.z) / s.z + 0.5 / uGrid.y,
     (p.y / uHeight * (uGrid.z - 1.0) + 0.5) / uGrid.z);
 }
+// 1 / d for a ray's slab test without dividing by zero: GLSL leaves x / 0 undefined, and where a driver gives NaN
+// instead of infinity the whole ray turns black (a tester's Samsung Xclipse 940, ANGLE on Vulkan, 25.10.2026).
+vec3 rayInverse(vec3 d){ return 1.0 / mix(d, vec3(1e-6), vec3(lessThan(abs(d), vec3(1e-6)))); }
 `
 
 const cloudSampling = /* glsl */`
@@ -53,6 +56,9 @@ uniform sampler3D uLight;
 float sunThrough(float od){ return max(exp(-od), 1.0 / (1.0 + 1.7 * od)); }
 // x: optical depth to the sun (times uExtinction), y: sky visibility (0-1).
 vec2 lightAt(vec3 p){
+#ifdef VIEW_SAFE_LIGHT
+  return vec2(0.0, 1.0);
+#endif
   vec2 l = texture(uLight, toTex(p)).rg;
   return vec2(-LIGHT_OD_SCALE * log(max(1.0 - l.x, 1e-4)) * uExtinction, l.y);
 }
@@ -157,7 +163,7 @@ uniform float uSliceZ;
 varying vec3 vWorld;
 
 vec2 boxHit(vec3 ro, vec3 rd){
-  vec3 inv = 1.0 / rd;
+  vec3 inv = rayInverse(rd);
   vec3 t0 = (uBoxMin - ro) * inv, t1 = (uBoxMax - ro) * inv;
   vec3 tmin = min(t0, t1), tmax = max(t0, t1);
   return vec2(max(max(tmin.x, tmin.y), tmin.z), min(min(tmax.x, tmax.y), tmax.z));
@@ -236,10 +242,14 @@ const float AIR_SKY = 0.3;
 #define AIR_SAMPLES 6
 #endif
 float airLit(vec3 ro, vec3 p){
+#ifdef VIEW_SAFE_AIR
+  return 1.0;
+#endif
   vec3 rd = p - ro;
   float len = length(rd);
+  if(len < 1e-4) return 1.0;
   rd /= len;
-  vec3 inv = 1.0 / rd, t0 = (uBoxMin - ro) * inv, t1 = (uBoxMax - ro) * inv, lo = min(t0, t1), hi = max(t0, t1);
+  vec3 inv = rayInverse(rd), t0 = (uBoxMin - ro) * inv, t1 = (uBoxMax - ro) * inv, lo = min(t0, t1), hi = max(t0, t1);
   float a = max(max(max(lo.x, lo.y), lo.z), 0.0), b = min(min(min(hi.x, hi.y), hi.z), len);
   if(b <= a) return 1.0;
   float lit = 0.0, wsum = 0.0;
@@ -776,8 +786,9 @@ const cloudBetween = /* glsl */`
 float cloudBetween(vec3 p){
   vec3 rd = cameraPosition - p;
   float far = length(rd);
+  if(far < 1e-4) return 0.0;
   rd /= far;
-  vec3 inv = 1.0 / rd, t0 = (uBoxMin - p) * inv, t1 = (uBoxMax - p) * inv, lo = min(t0, t1), hi = max(t0, t1);
+  vec3 inv = rayInverse(rd), t0 = (uBoxMin - p) * inv, t1 = (uBoxMax - p) * inv, lo = min(t0, t1), hi = max(t0, t1);
   float a = max(max(max(lo.x, lo.y), lo.z), 0.0), b = min(min(min(hi.x, hi.y), hi.z), far);
   if(b <= a) return 0.0;
   float ds = (b - a) / 16.0, od = 0.0;

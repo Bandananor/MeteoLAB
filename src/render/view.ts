@@ -235,6 +235,8 @@ export class StormView {
   private readonly groundState: THREE.DataTexture; private readonly windTexture: THREE.DataTexture; private readonly groundUniforms: Record<string, THREE.IUniform>
   private readonly water: Float32Array; private readonly hailCover: Float32Array; private readonly lastPrecip: Float32Array; private readonly lastHail: Float32Array; private groundTime = NaN
   private readonly shared: Record<string, THREE.IUniform>
+  /** Parts turned off by ?view-safe (a debugging aid for phones whose 3D view comes out black). */
+  private readonly safe: { light: boolean; ground: boolean; clouds: boolean }
   private readonly light: LightVolume; private readonly flashLight: FlashVolume; private readonly strikeLight: THREE.PointLight
   /** The strongest updraught of each column, and of each column with those beside it (the tower's), m/s. */
   /** Scratch of the volume's update, per node: the cloud's extinction-weighted mass, the shafts' mass, the ice share, the tower's updraught. */
@@ -397,9 +399,17 @@ export class StormView {
     this.columnData = new Uint8Array(nx * ny * 4)
     this.columnTexture = new THREE.DataTexture(this.columnData, nx, ny, THREE.RGBAFormat)
     this.columnTexture.minFilter = this.columnTexture.magFilter = THREE.LinearFilter; this.columnTexture.wrapS = this.columnTexture.wrapT = THREE.RepeatWrapping; this.columnTexture.needsUpdate = true
+    // Debug switches for a phone whose 3D view is black (?view-safe=light,air,ground,clouds or all; a tester's Samsung
+    // Xclipse 940, 25.10.2026): each turns off one part, so the tester can tell which part fails on the device.
+    const safe = new Set((typeof location === 'undefined' ? '' : new URLSearchParams(location.search).get('view-safe') ?? '').split(',').filter(Boolean))
+    const off = (part: string) => safe.has(part) || safe.has('all'), defines: Record<string, string> = {}
+    if (off('light')) defines.VIEW_SAFE_LIGHT = ''
+    if (off('air')) defines.VIEW_SAFE_AIR = ''
+    this.safe = { light: off('light'), ground: off('ground'), clouds: off('clouds') }
+    if (safe.size) console.warn('MeteoLab view-safe:', [...safe].join(','))
     this.light = new LightVolume(nx, ny, nz, this.shared, this.volumeTexture)
     this.flashLight = new FlashVolume(nx, ny, nz, this.shared, this.volumeTexture)
-    this.volumeMaterial = new THREE.ShaderMaterial({ name: 'cloudVolume',
+    this.volumeMaterial = new THREE.ShaderMaterial({ name: 'cloudVolume', defines,
       vertexShader: volumeVertex, fragmentShader: volumeFragment, side: THREE.BackSide, transparent: true, depthWrite: false, depthTest: false, premultipliedAlpha: true,
       uniforms: {
         ...this.shared, uDensity: { value: this.volumeTexture }, uNoise: { value: this.noise }, uColumns: { value: this.columnTexture }, uLight: { value: this.light.texture }, uFlashA: { value: this.flashLight.targets[0].texture }, uFlashB: { value: this.flashLight.targets[1].texture }, uFlashIA: { value: new THREE.Vector4() }, uFlashIB: { value: new THREE.Vector4() }, uFlashOn: { value: 0 }, uSunByHeight: { value: Array.from({ length: SUN_LEVELS }, () => new THREE.Vector3()) }, uAmbientTop: { value: new THREE.Color() }, uAmbientBottom: { value: new THREE.Color() }, uBounceSun: { value: new THREE.Color() },
@@ -407,7 +417,7 @@ export class StormView {
       },
     })
     const volumeBox = new THREE.BoxGeometry(W, H, D); volumeBox.translate(0, H / 2, 0)
-    this.volumeMesh = new THREE.Mesh(volumeBox, this.volumeMaterial); this.volumeMesh.renderOrder = 1; this.scene.add(this.volumeMesh)
+    this.volumeMesh = new THREE.Mesh(volumeBox, this.volumeMaterial); this.volumeMesh.renderOrder = 1; if (!this.safe.clouds) this.scene.add(this.volumeMesh)
 
     this.fieldTexture = texture3D(this.fieldData, THREE.RedFormat, nx, ny, nz)
     this.fieldUniforms = { ...this.shared, uField: { value: this.fieldTexture }, uColormap: { value: null }, uDiverging: { value: 0 }, uThreshold: { value: .3 }, uDensity: { value: 1 } }
@@ -427,7 +437,8 @@ export class StormView {
     this.groundUniforms = { uGround: { value: this.groundState }, uWind: { value: this.windTexture }, uGroundOffset: { value: new THREE.Vector2() }, uGroundSize: { value: new THREE.Vector2(W, D) }, uSurface: { value: surface } }
     Object.assign(this.skyMaterial.uniforms, this.shared, this.groundUniforms, { uNoise: { value: this.noise } })
     groundMat.name = 'ground'
-    groundMat.onBeforeCompile = shader => {
+    if (!this.safe.ground) groundMat.onBeforeCompile = shader => {
+      shader.fragmentShader = Object.keys(defines).map(k => `#define ${k}\n`).join('') + shader.fragmentShader
       Object.assign(shader.uniforms, { ...this.shared, ...this.air, ...this.groundUniforms, uNoise: { value: this.noise }, uLight: this.volumeMaterial.uniforms.uLight })
       shader.vertexShader = shader.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vCloudWorld;').replace('#include <project_vertex>', '#include <project_vertex>\nvCloudWorld=(modelMatrix*vec4(transformed,1.0)).xyz;')
       shader.fragmentShader = shader.fragmentShader.replace('#include <common>', `#include <common>\n${groundShadowPars}\n${groundSurfacePars}`)
@@ -1161,7 +1172,7 @@ if(abs(uSurface - 2.0) < 0.5){
     this.strikeLight.visible = !!lit.strike
     if (lit.strike) { this.strikeLight.position.set(lit.strike.x, Math.max(.3, lit.strike.y), lit.strike.z); this.strikeLight.intensity = 400 * lit.strike.bright }
     this.updateVolume(); if (field) this.updateFieldTexture(field)
-    this.light.update(this.renderer, m.time, this.shared.uSunDir.value as THREE.Vector3)
+    if (!this.safe.light) this.light.update(this.renderer, m.time, this.shared.uSunDir.value as THREE.Vector3)
     this.volumeMaterial.uniforms.uOpacity.value = field ? .22 : 1
     const slices = !!field && s.layerMode !== 'volume', wholeVolume = s.layerMode === 'volume'
     this.fieldMesh.visible = !!field && s.layerMode !== 'slices'; this.sliceH.visible = this.sliceV.visible = slices
