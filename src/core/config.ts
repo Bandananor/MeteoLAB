@@ -137,6 +137,12 @@ export interface SimConfig {
    */
   shade?: boolean
   /**
+   * The heat budget (roadmap D2; for studies in Node, not in the interface): one tracer per process of theta's change
+   * (AtmosphereModel.budget), carried and mixed as theta is, so theta' anywhere — the cold pool under the RFD — splits
+   * into what each process gave the air on its way there and where the air came from. Costs 8 more transported fields.
+   */
+  budget?: boolean
+  /**
    * A shift of the starting thermals, m east and north: an ensemble member's (src/ensemble/member.ts) — where exactly
    * the first thermal rises is as uncertain as the sounding.
    */

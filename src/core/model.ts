@@ -29,6 +29,14 @@ import { intervene } from './intervene'
 interface Carried { field: Float32Array; monotone: boolean; conserve: boolean; decay: number }
 /** At most this many fields are transported (rain, snow, graupel, hail, u, v, w, theta, vapour, cloud, ice, cold pool, 4 charges). */
 const MAX_CARRIED = 17
+/**
+ * The heat budget's terms (SimConfig.budget, roadmap D2), each theta's change by: rain evaporating; the saturation
+ * adjustment (cloud water and, below -38 °C, ice condensing or evaporating); the crystals (deposition, sublimation, rain
+ * freezing into graupel); snow, graupel and hail (riming, melting, sublimation, freezing of what they collect); the
+ * ground's sensible heat; the rest of the node's physics (sponge, fronts, zones, relaxed edges, large-scale advection).
+ */
+export const BUDGET_TERMS = ['evaporation', 'condensation', 'ice', 'snow', 'graupel', 'hail', 'surface', 'other'] as const
+export type BudgetTerm = typeof BUDGET_TERMS[number]
 /** Flashes the model keeps (the latest). */
 const RECENT_FLASHES = 2000
 /**
@@ -231,6 +239,12 @@ export class AtmosphereModel implements TaskModel {
   /** This step's surface pattern under each column (the ground moves under the domain) and where each column's rain lands. */
   /** The share of the sunlight reaching each ground column through the clouds this step (1: clear; roadmap B10). */
   readonly sunNow: Float32Array
+  /**
+   * The heat budget (SimConfig.budget, roadmap D2), K per term: what each process changed theta by along the air's way
+   * here (carried and mixed as theta), so theta - theta0 = the sum of the terms + where the air came from (theta it
+   * brought from its starting level, the transport's own error). null without the setting.
+   */
+  readonly budget: Record<BudgetTerm, Float32Array> | null
   private readonly opticalDepth: Float64Array
   private shaded = false
   private readonly patternNow: Float32Array; private readonly groundCell: Int32Array; private readonly groundWeight: Float64Array
@@ -251,7 +265,9 @@ export class AtmosphereModel implements TaskModel {
     this.condensate = shared('condensate')
     this.fieldZ = shared('fieldZ')
     this.chargeIce = shared('chargeIce'); this.chargeGraupel = shared('chargeGraupel'); this.chargeRain = shared('chargeRain'); this.chargeAir = shared('chargeAir'); this.chargeFallIce = shared('chargeFallIce'); this.chargeFallGraupel = shared('chargeFallGraupel')
-    this.stageStart = Array.from({ length: MAX_CARRIED }, (_, k) => shared(`start${k}`)); this.stageTend = Array.from({ length: MAX_CARRIED }, (_, k) => this.memory.f64(`tend${k}`, grid.n))
+    this.budget = config.budget ? Object.fromEntries(BUDGET_TERMS.map(t => [t, shared(`budget-${t}`)])) as Record<BudgetTerm, Float32Array> : null
+    const carriedMost = MAX_CARRIED + (this.budget ? BUDGET_TERMS.length : 0)
+    this.stageStart = Array.from({ length: carriedMost }, (_, k) => shared(`start${k}`)); this.stageTend = Array.from({ length: carriedMost }, (_, k) => this.memory.f64(`tend${k}`, grid.n))
     this.taskNegative = this.memory.f64('taskNegative', 32)
     this.flux = new FluxTransport(grid, this.env.rho, this.memory); this.turbulence = new Turbulence(grid, this.env.rho, this.memory)
     this.hailGround = new Float32Array(grid.layer); this.hailSize = new Float32Array(grid.layer)
@@ -669,6 +685,7 @@ export class AtmosphereModel implements TaskModel {
       this.computeBacktrace(dt)
       const carry = (a: Float32Array, decay: number, conserve = false) => { this.advectBacktrace(a); this.commit(a, decay, conserve) }
       carry(this.u, 1); carry(this.v, 1); carry(this.w, 1); carry(this.theta, 1); carry(this.q, 1, true); carry(this.cloud, 1, true); if (withIce) { carry(this.ice, 1, true); carry(this.iceNumber, 1) } carry(this.cold, .9992 ** dt)
+      if (this.budget) for (const t of BUDGET_TERMS) carry(this.budget[t], 1)
       // Charges fall with their carriers and move with the air (not mass-fixed: the fast transport does not conserve them exactly).
       if (this.electrified()) { for (const [field, vt] of this.chargeFalls()) { this.advectFalling(field, dt, vt); this.commit(field, 1) } carry(this.chargeAir, 1) }
     }
@@ -819,6 +836,8 @@ export class AtmosphereModel implements TaskModel {
     // Charges: WENO (no overshoots; signed, so no positivity fix, and no cut of the tails: the charge is kept exactly).
     // The four fields cost ~30 % of a step in a mature storm (single-threaded, 20-30 min of the classic supercell).
     if (this.electrified()) for (const field of [this.chargeIce, this.chargeGraupel, this.chargeRain, this.chargeAir]) c.push({ field, monotone: true, conserve: false, decay: 1 })
+    // The heat budget's terms with theta's own scheme, so their sum stays theta's departure.
+    if (this.budget) for (const t of BUDGET_TERMS) c.push({ field: this.budget[t], monotone: false, conserve: false, decay: 1 })
     return c
   }
 
@@ -827,6 +846,7 @@ export class AtmosphereModel implements TaskModel {
     const scalars = this.fixedViscosity === null ? 3 : 1, e = this.env
     const list: [Float32Array, ArrayLike<number> | null, number][] = [[this.u, this.uEnv, 1], [this.v, this.vEnv, 1], [this.w, null, 1], [this.theta, e.theta, scalars], [this.q, e.q, scalars], [this.cloud, null, scalars]]
     if (this.withIce()) list.push([this.ice, null, scalars], [this.iceNumber, null, scalars])
+    if (this.budget) for (const t of BUDGET_TERMS) list.push([this.budget[t], null, scalars])
     return list
   }
 
@@ -835,6 +855,10 @@ export class AtmosphereModel implements TaskModel {
     const { nx, ny, zs, height: H, layer } = this.grid, withIce = this.withIce(), staged = this.staged()
     const cfg = this.config, e = this.env, u = this.u, v = this.v, w = this.w, theta = this.theta, q = this.q, cloud = this.cloud, rain = this.rain, cold = this.cold
     const ice = this.ice, iceNumber = this.iceNumber, snow = this.snow, graupel = this.graupel, hail = this.hail, rhoGround = e.rho[0]
+    const budget = this.budget, bEvap = budget?.evaporation, bCond = budget?.condensation, bIce = budget?.ice, bSnow = budget?.snow, bGraupel = budget?.graupel, bHail = budget?.hail, bSurface = budget?.surface, bOther = budget?.other
+    // A pull towards a profile (sponge, fronts, zones, relaxed edges) takes the terms' share with theta's departure: the
+    // pulled-in air comes from the environment (the origin), not from the node's processes.
+    const pull = (i: number, keep: number) => { for (const t of BUDGET_TERMS) budget![t][i] *= keep }
     const electric = withIce && this.electrified(), cI = this.chargeIce, cG = this.chargeGraupel, cR = this.chargeRain, cA = this.chargeAir, cNow = this.chargeNow, before = this.massBefore, after = this.massAfter
     const flux = surfaceFluxes(cfg, this.time), urban = (cfg.city ?? 0) > 0 ? surfaceFluxes(cfg, this.time, 'urban') : flux, f = 2 * OMEGA * Math.sin(cfg.latitude * Math.PI / 180)
     // Under a cloud the balance is the same with the sunlight times sunNow: the available energy max(0, A T - LW) of the
@@ -854,28 +878,36 @@ export class AtmosphereModel implements TaskModel {
       for (let y = 0; y < ny; y++) {
         const row = y * nx
         for (let x = 0; x < nx; x++, i++) {
+          // The heat budget: theta at the start, and theta just before each process (its change goes to its term).
+          const start = theta[i]
+          let mark = 0, given = 0, pulled = 0
           if (advecting) { theta[i] += addTheta; q[i] = Math.max(0, q[i] + addQ) }
           if (electric) { before[0] = ice[i] + snow[i]; before[1] = graupel[i] + hail[i]; before[2] = rain[i]; before[3] = cloud[i] }
           // Kessler warm rain, then saturation adjustment (vapour and cloud water in equilibrium after every step).
           // Evaporation of rain and cloud feeds the cold-pool indicator.
           const evap = this.rainFormation ? rainProcesses(q, cloud, rain, i, theta[i] * exner, p, rhoZ, dt) : 0
           // Evaporation takes exactly L/cp per unit mass from the air (no strength multiplier): energy is conserved.
-          if (evap > 0) { const cool = LV / CP / exner * evap; theta[i] -= cool; cold[i] += cool }
+          if (evap > 0) { const cool = LV / CP / exner * evap; mark = theta[i]; theta[i] -= cool; cold[i] += cool; if (budget) { bEvap![i] += theta[i] - mark; given += theta[i] - mark } }
           // Ice: rain freezes (Bigg into graupel, below -38 °C at once), crystals nucleate and grow by deposition (at the
           // droplets' expense in a cloud) or sublimate, snow aggregates, rimes, grows by deposition, sublimates and
           // melts, graupel rimes, collects and melts; melting and sublimation feed the cold-pool indicator like evaporation.
           let cond: number
           if (withIce) {
+            mark = theta[i]
             freezeRain(theta, rain, graupel, i, exner)
             // The crystals first match the ice the transport (or a loaded state without them) left.
             settleCrystals(ice, iceNumber, i)
             cold[i] += iceProcesses(theta, q, ice, snow, iceNumber, i, exner, p, rhoZ, dt)
+            if (budget) { bIce![i] += theta[i] - mark; given += theta[i] - mark; mark = theta[i] }
             const iceBefore = ice[i], cloudBefore = cloud[i]
             cold[i] += snowProcesses(theta, q, cloud, ice, snow, rain, i, exner, p, rhoZ, rhoGround, dt)
+            if (budget) { bSnow![i] += theta[i] - mark; given += theta[i] - mark; mark = theta[i] }
             const rainBefore = rain[i]
             cold[i] += graupelProcesses(theta, q, cloud, ice, snow, rain, graupel, i, exner, p, rhoZ, dt)
+            if (budget) { bGraupel![i] += theta[i] - mark; given += theta[i] - mark; mark = theta[i] }
             const rainFrozen = theta[i] * exner < 273.15 ? Math.max(0, rainBefore - rain[i]) : 0
             cold[i] += hailProcesses(theta, q, cloud, ice, snow, rain, graupel, hail, i, exner, p, rhoZ, dt)
+            if (budget) { bHail![i] += theta[i] - mark; given += theta[i] - mark }
             // Crystals aggregated or collected by snow, graupel and hail go with their mass.
             if (iceBefore > 0) iceNumber[i] *= ice[i] / iceBefore
             // Secondary ice: rime splintering at -3…-8 °C (the droplets the snow, graupel and hail froze on throw off
@@ -888,7 +920,9 @@ export class AtmosphereModel implements TaskModel {
               graupel[i] -= fromG; snow[i] -= fromS; ice[i] += fromG + fromS; iceNumber[i] += (fromG + fromS) / CRYSTAL_MASS
             }
             // Saturation adjustment: water saturation down to -38 °C (supercooled droplets), ice saturation below.
+            mark = theta[i]
             cond = saturationAdjustMixed(theta, q, cloud, ice, i, exner, p, iceNumber)
+            if (budget) { bCond![i] += theta[i] - mark; given += theta[i] - mark }
             settleCrystals(ice, iceNumber, i)
             if (electric) {
               // The charge follows the water the microphysics moved between the carriers, then the rebounding
@@ -903,7 +937,7 @@ export class AtmosphereModel implements TaskModel {
               const induced = inductiveRate(tc, rhoZ, cloud[i], graupel[i], hail[i], this.fieldZ[i], (cNow[1] + separated) * rhoZ, wetG, wetH) * dt / rhoZ
               cI[i] = cNow[0] - separated; cG[i] = cNow[1] + separated + induced; cR[i] = cNow[2]; cA[i] = cNow[3] - induced
             }
-          } else cond = saturationAdjust(theta, q, cloud, i, exner, p)
+          } else { mark = theta[i]; cond = saturationAdjust(theta, q, cloud, i, exner, p); if (budget) { bCond![i] += theta[i] - mark; given += theta[i] - mark } }
           if (cond < 0) cold[i] -= LV / CP / exner * cond * .14
           // B = g [(θv − θv_env) / θv_env − q_c − q_i − q_r − q_s − q_g]: condensate loads the air with its own mass.
           // Inside a zone the reference is the zone's own air (each zone its own environment, as the large-scale flow
@@ -917,18 +951,20 @@ export class AtmosphereModel implements TaskModel {
             // The city (if any) blends in its own energy balance under the share of the column it covers.
             const pattern = 1 + this.patternNow[x + row] * .32, per = pattern * this.surfaceShare[z] * dt / rhoZ, c = urban === flux ? 0 : this.cityNow[x + row]
             const sunlit = shaded ? this.sunNow[x + row] : 1, k = sunlit < 1 ? scale(flux.absorbed, sunlit) : 1, ku = c > 0 && sunlit < 1 ? scale(urban.absorbed, sunlit) : 1
-            theta[i] += (k * flux.sensible + c * (ku * urban.sensible - k * flux.sensible)) * per / (CP * exner); q[i] += (k * flux.latent + c * (ku * urban.latent - k * flux.latent)) * per / LV
+            const heat = (k * flux.sensible + c * (ku * urban.sensible - k * flux.sensible)) * per / (CP * exner)
+            mark = theta[i]; theta[i] += heat; q[i] += (k * flux.latent + c * (ku * urban.latent - k * flux.latent)) * per / LV
+            if (budget) { bSurface![i] += theta[i] - mark; given += theta[i] - mark }
           }
           // Below 0.001 K the indicator is noise from the transport tails: zero, so the transport can skip it.
           cold[i] = cold[i] < 1e-3 ? 0 : Math.min(cold[i], 15)
-          if (alt > spongeStart) { const s = clamp((alt - spongeStart) / (H - spongeStart)) * .06 * dt; w[i] *= 1 - s; u[i] = lerp(u[i], ue, s); v[i] = lerp(v[i], ve, s); theta[i] = lerp(theta[i], thEnv, s) }
+          if (alt > spongeStart) { const s = clamp((alt - spongeStart) / (H - spongeStart)) * .06 * dt; w[i] *= 1 - s; u[i] = lerp(u[i], ue, s); v[i] = lerp(v[i], ve, s); mark = theta[i]; theta[i] = lerp(theta[i], thEnv, s); if (budget) { pulled += theta[i] - mark; pull(i, 1 - s) } }
           // The maintained front: the cold side is pulled to its colder profile (the warm side is left alone).
-          if (front && alt < FRONT_DEPTH) { const d = this.frontDeficit(x, y, alt), s = 1 - Math.exp(-dt / FRONT_TIME * d / front / (1 - alt / FRONT_DEPTH)); theta[i] = lerp(theta[i], thEnv - d, s) }
+          if (front && alt < FRONT_DEPTH) { const d = this.frontDeficit(x, y, alt), s = 1 - Math.exp(-dt / FRONT_TIME * d / front / (1 - alt / FRONT_DEPTH)); mark = theta[i]; theta[i] = lerp(theta[i], thEnv - d, s); if (budget) { pulled += theta[i] - mark; pull(i, 1 - s) } }
           // The moving front: inside its cold air the air is pulled to the colder profile; behind a warm front, back to the
           // warm air (outside both, nothing: the storms' outflow and the front's own density current move freely).
           if (frontTop > alt) {
             const [d, behindWarm] = this.frontalAt(x, y, alt)
-            if (d > .01 || behindWarm) { theta[i] = lerp(theta[i], thEnv - d, frontPull); q[i] = lerp(q[i], qEnv * coldMoisture(d), frontPull) }
+            if (d > .01 || behindWarm) { mark = theta[i]; theta[i] = lerp(theta[i], thEnv - d, frontPull); if (budget) { pulled += theta[i] - mark; pull(i, 1 - frontPull) }; q[i] = lerp(q[i], qEnv * coldMoisture(d), frontPull) }
           }
           // Zones of the environment: inside one, the air near the ground is pulled to the zone's profile, in proportion to
           // the share of the column it covers (outside, nothing: the outflow spreads freely).
@@ -936,7 +972,7 @@ export class AtmosphereModel implements TaskModel {
             const share = this.zoneShareNow[x + row]
             if (share > 0) {
               const s = 1 - Math.exp(-dt / ZONE_TIME * share), shape = zoneShape(alt)
-              theta[i] = lerp(theta[i], thEnv + this.zoneThetaNow[x + row] * shape / exner, s); q[i] = lerp(q[i], Math.max(0, qEnv + this.zoneVapourNow[x + row] * shape), s)
+              mark = theta[i]; theta[i] = lerp(theta[i], thEnv + this.zoneThetaNow[x + row] * shape / exner, s); if (budget) { pulled += theta[i] - mark; pull(i, 1 - s) }; q[i] = lerp(q[i], Math.max(0, qEnv + this.zoneVapourNow[x + row] * shape), s)
             }
           }
           // Relaxed side boundaries: the pull grows as (1 - d / zone)^2 from the inner edge of the zone to the domain edge.
@@ -945,11 +981,13 @@ export class AtmosphereModel implements TaskModel {
             if (d < EDGE_ZONE) {
               const s = 1 - Math.exp(-dt / EDGE_TIME * (1 - d / EDGE_ZONE) ** 2), k = 1 - s
               u[i] = lerp(u[i], ue, s); v[i] = lerp(v[i], ve, s); w[i] *= k; const fd = frontTop > alt ? this.frontalAt(x, y, alt)[0] : 0
-              theta[i] = lerp(theta[i], thEnv - this.frontDeficit(x, y, alt) - fd, s); q[i] = lerp(q[i], qEnv * coldMoisture(fd), s)
+              mark = theta[i]; theta[i] = lerp(theta[i], thEnv - this.frontDeficit(x, y, alt) - fd, s); if (budget) { pulled += theta[i] - mark; pull(i, k) }; q[i] = lerp(q[i], qEnv * coldMoisture(fd), s)
               cloud[i] *= k; rain[i] *= k; ice[i] *= k; iceNumber[i] *= k; snow[i] *= k; graupel[i] *= k; hail[i] *= k; cold[i] *= k
               if (electric) { cI[i] *= k; cG[i] *= k; cR[i] *= k; cA[i] *= k }
             }
           }
+          // The rest of the node's change (what no term or pull above took) goes to "other", so the terms add up to it exactly.
+          if (budget) bOther![i] += theta[i] - start - given - pulled
         }
       }
     }
