@@ -16,7 +16,7 @@ import { coldMoisture, FRONT_BLUR, FRONTAL_TIME, frontalDeficit, frontDistance, 
 import { graupelFallSpeed, graupelProcesses, N0G, N0R, RHO_G, RHO_W } from './graupel'
 import { hailFallSpeed, hailMaxDiameter, hailProcesses, N0H, RHO_H, wetGrowing } from './hail'
 import { CRYSTAL_MASS, fragmentsPerKg, freezeRain, iceProcesses, saturationAdjustMixed, settleCrystals, snowFallSpeed, snowProcesses, SPLINTERS, splintering } from './ice'
-import { fallSpeed, rainProcesses, saturationAdjust } from './microphysics'
+import { fallSpeed, interceptOf, N0_MP, type RainIntercept, rainProcesses, saturationAdjust } from './microphysics'
 import { PressureSolver } from './pressure'
 import { dragCoefficient, LONGWAVE_LOSS, surfaceFluxes } from './surface'
 import { insolation, sunDirection } from './solar'
@@ -621,6 +621,13 @@ export class AtmosphereModel implements TaskModel {
   windRelaxation = 1e-4
   /** Warm rain (Kessler); off for the reversible moist reference case: cloud water only condenses and evaporates. */
   rainFormation = true
+  /**
+   * The rain's size distribution intercept (roadmap D2, B1): 'fixed' — Marshall-Palmer's (the scheme's own); 'diagnosed' —
+   * from the rain water content (rainIntercept, Zhang et al. 2008); a number — that, m^-4 (Dawson et al. 2010 ran 4e5);
+   * in the rain's evaporation, accretion and fall speed (the radar, the freezing and the splinters keep Marshall-Palmer's).
+   * A switch for experiments.
+   */
+  rainIntercept: RainIntercept = 'fixed'
   // Created with the model, so that their shared arrays exist before any helper thread attaches.
   private readonly flux: FluxTransport; private readonly turbulence: Turbulence
   private readonly memory: Memory
@@ -739,8 +746,8 @@ export class AtmosphereModel implements TaskModel {
     const { nz, layer } = this.grid
     switch (phase) {
       case 'fall': {
-        const rho = this.env.rho
-        for (let i = k * layer, end = i + layer; i < end; i++) { this.fallSpeed[i] = fallSpeed(this.rain[i], rho[k], rho[0]); this.snowFall[i] = snowFallSpeed(this.snow[i], rho[k], rho[0]); this.graupelFall[i] = graupelFallSpeed(this.graupel[i], rho[k]); this.hailFall[i] = hailFallSpeed(this.hail[i], rho[k]) }
+        const rho = this.env.rho, intercept = this.rainIntercept
+        for (let i = k * layer, end = i + layer; i < end; i++) { this.fallSpeed[i] = fallSpeed(this.rain[i], rho[k], rho[0], intercept === 'fixed' || !(this.rain[i] > 0) ? N0_MP : interceptOf(intercept, this.rain[i], rho[k])); this.snowFall[i] = snowFallSpeed(this.snow[i], rho[k], rho[0]); this.graupelFall[i] = graupelFallSpeed(this.graupel[i], rho[k]); this.hailFall[i] = hailFallSpeed(this.hail[i], rho[k]) }
         if (this.electrified()) for (let i = k * layer, end = i + layer; i < end; i++) {
           const is = this.ice[i] + this.snow[i], gh = this.graupel[i] + this.hail[i]
           this.chargeFallIce[i] = is > 0 ? this.snow[i] * this.snowFall[i] / is : 0
@@ -855,6 +862,7 @@ export class AtmosphereModel implements TaskModel {
     const { nx, ny, zs, height: H, layer } = this.grid, withIce = this.withIce(), staged = this.staged()
     const cfg = this.config, e = this.env, u = this.u, v = this.v, w = this.w, theta = this.theta, q = this.q, cloud = this.cloud, rain = this.rain, cold = this.cold
     const ice = this.ice, iceNumber = this.iceNumber, snow = this.snow, graupel = this.graupel, hail = this.hail, rhoGround = e.rho[0]
+    const intercept = this.rainIntercept
     const budget = this.budget, bEvap = budget?.evaporation, bCond = budget?.condensation, bIce = budget?.ice, bSnow = budget?.snow, bGraupel = budget?.graupel, bHail = budget?.hail, bSurface = budget?.surface, bOther = budget?.other
     // A pull towards a profile (sponge, fronts, zones, relaxed edges) takes the terms' share with theta's departure: the
     // pulled-in air comes from the environment (the origin), not from the node's processes.
@@ -885,7 +893,7 @@ export class AtmosphereModel implements TaskModel {
           if (electric) { before[0] = ice[i] + snow[i]; before[1] = graupel[i] + hail[i]; before[2] = rain[i]; before[3] = cloud[i] }
           // Kessler warm rain, then saturation adjustment (vapour and cloud water in equilibrium after every step).
           // Evaporation of rain and cloud feeds the cold-pool indicator.
-          const evap = this.rainFormation ? rainProcesses(q, cloud, rain, i, theta[i] * exner, p, rhoZ, dt) : 0
+          const evap = this.rainFormation ? rainProcesses(q, cloud, rain, i, theta[i] * exner, p, rhoZ, dt, intercept) : 0
           // Evaporation takes exactly L/cp per unit mass from the air (no strength multiplier): energy is conserved.
           if (evap > 0) { const cool = LV / CP / exner * evap; mark = theta[i]; theta[i] -= cool; cold[i] += cool; if (budget) { bEvap![i] += theta[i] - mark; given += theta[i] - mark } }
           // Ice: rain freezes (Bigg into graupel, below -38 °C at once), crystals nucleate and grow by deposition (at the
@@ -1025,13 +1033,13 @@ export class AtmosphereModel implements TaskModel {
 
   /** The settings helper threads must follow (threads.ts): the config and the model's switches. */
   settings() {
-    return JSON.stringify({ config: this.config, microphysics: this.microphysics, transport: this.transport, rainFormation: this.rainFormation, windRelaxation: this.windRelaxation, fixedViscosity: this.fixedViscosity, transportSlabs: this.transportSlabs, pressureInStages: this.pressureInStages })
+    return JSON.stringify({ config: this.config, microphysics: this.microphysics, transport: this.transport, rainFormation: this.rainFormation, windRelaxation: this.windRelaxation, fixedViscosity: this.fixedViscosity, transportSlabs: this.transportSlabs, pressureInStages: this.pressureInStages, rainIntercept: this.rainIntercept })
   }
 
   applySettings(json: string) {
     const s = JSON.parse(json)
     Object.assign(this.config, s.config)
-    this.microphysics = s.microphysics; this.transport = s.transport; this.rainFormation = s.rainFormation; this.windRelaxation = s.windRelaxation; this.fixedViscosity = s.fixedViscosity; this.transportSlabs = s.transportSlabs; this.pressureInStages = s.pressureInStages
+    this.microphysics = s.microphysics; this.transport = s.transport; this.rainFormation = s.rainFormation; this.windRelaxation = s.windRelaxation; this.fixedViscosity = s.fixedViscosity; this.transportSlabs = s.transportSlabs; this.pressureInStages = s.pressureInStages; this.rainIntercept = s.rainIntercept
   }
 
   /** Makes the node velocities exactly free of dual-cell divergence (see PressureSolver); ground and top are rigid walls. */

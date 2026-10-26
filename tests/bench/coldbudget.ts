@@ -5,7 +5,10 @@
 // against the undisturbed air at the ground (the mean of the columns at or above the OUTFLOW_WARM percentile of θv: the
 // deficit here is against that mean, ~0.1-0.3 K more than outflowDeficit's against the percentile), plus the
 // vapour's share of θv and the condensate's load (θ q_cond, K: what it takes off the buoyancy).
-//   npx vite build --ssr tests/bench/coldbudget.ts --outDir .bench/coldbudget && node .bench/coldbudget/coldbudget.js <scenario index> [minutes=60] [single] [large] [spacing=km] [out.json]
+//   npx vite build --ssr tests/bench/coldbudget.ts --outDir .bench/coldbudget && node .bench/coldbudget/coldbudget.js <scenario index> [minutes=60] [single] [large] [spacing=km] [diagnosed | n0=m^-4] [out.json]
+// diagnosed: the rain's intercept from its water content (AtmosphereModel.rainIntercept, Zhang et al. 2008) instead of
+// Marshall-Palmer's; n0: a fixed intercept (Dawson et al. 2010 ran 4e5) — the sensitivity of the cold pool to the rain's
+// evaporation.
 // Regions: "rotation" — the ground columns within OUTFLOW_NEAR of the low-level rotation with a deficit >= 1 K (under
 // the RFD and the occlusion); "pool" — every column with a deficit >= 2 K; "coldest" — the coldest column.
 import { writeFileSync } from 'node:fs'
@@ -16,6 +19,10 @@ import { SUMMER_DAY } from '../../src/core/fixtures'
 const args = process.argv.slice(2), s = SCENARIOS[Number(args[0])], minutes = Number(args[1] ?? 60)
 const spacing = args.find(a => a.startsWith('spacing='))?.slice(8), out = args.find(a => a.endsWith('.json'))
 const model = new AtmosphereModel({ ...SUMMER_DAY, ...s.values, budget: true, single: args.includes('single') || undefined, domain: args.includes('large') ? 'large' : s.values.domain, spacing: spacing ? Number(spacing) : undefined })
+const n0 = args.find(a => a.startsWith('n0='))?.slice(3)
+if (args.includes('diagnosed')) model.rainIntercept = 'diagnosed'
+else if (n0) model.rainIntercept = Number(n0)
+let peakW = 0, peakUH = 0, peakRate = 0
 const g = model.grid, { nx, ny, layer, dx, dy } = g, b = model.budget
 // theta0: the environment's at the ground (not each column's at the start: the domain follows the storm, and the
 // starting thermal's warmth carried by the flow is part of where the air came from).
@@ -73,6 +80,8 @@ const rows = []
 const fmt = (r) => r ? `${r.deficit.toFixed(1)} K = ${PARTS.map(p => `${p} ${r[p].toFixed(1)}`).join(', ')} (load ${r.load.toFixed(1)}, ${r.area.toFixed(0)} km2)` : '—'
 for (let step = 1; step * DT <= minutes * 60 + 1e-6; step++) {
   model.step(DT); model.time += DT
+  peakUH = Math.max(peakUH, model.rotation.uh)
+  if (Math.round(model.time) % 60 === 0) { const d = model.diagnostics(); peakW = Math.max(peakW, d.updraft); peakRate = Math.max(peakRate, d.rainRate) }
   const t = Math.round(model.time)
   if (t % 120 || t < 1200) continue
   const cols = split(), low = model.rotation.low, coldest = cols.reduce((k, v, i) => v.deficit > cols[k].deficit ? i : k, 0)
@@ -89,4 +98,8 @@ for (const region of ['rotation', 'pool', 'coldest']) {
   for (const k of Object.keys(have[0])) avg[k] = have.reduce((s, r) => s + r[k], 0) / have.length
   console.log(`mean 30-${minutes} min, ${region}: ${fmt(avg)}`)
 }
-if (out) writeFileSync(out, JSON.stringify({ scenario: s.name, spacing: dx / 1000, rows }))
+const end = model.diagnostics()
+let volume = 0
+for (let c = 0; c < layer; c++) volume += model.precipitation[c] / 1000 * dx * dy
+console.log(`storm: w max ${peakW.toFixed(1)} m/s, UH max ${peakUH.toFixed(0)}, rain rate max ${peakRate.toFixed(0)} mm/h, rain at the end: ${(volume / 1e6).toFixed(2)} Mm3 (point max ${end.rainTotal.toFixed(1)} mm), outflow ${end.outflow.toFixed(1)} K, gust ${end.gust.toFixed(1)} m/s`)
+if (out) writeFileSync(out, JSON.stringify({ scenario: s.name, spacing: dx / 1000, rainIntercept: model.rainIntercept, peakW, peakUH, peakRate, volume: volume / 1e6, rows }))

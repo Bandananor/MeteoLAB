@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { CP, fallSpeed, KAPPA, LV, qsatP, rainProcesses, saturationAdjust } from '.'
+import { CP, fallSpeed, KAPPA, LV, N0_MP, qsatP, type RainIntercept, rainIntercept, rainProcesses, saturationAdjust } from '.'
 
 describe('Kessler warm rain', () => {
   const one = (x: number) => Float32Array.of(x)
@@ -69,5 +69,23 @@ describe('saturation adjustment', () => {
     const c = cell(10, .7 * qsatP(10, p), 0), before = [c.theta[0], c.q[0]]
     expect(saturationAdjust(c.theta, c.q, c.cloud, 0, exner, p)).toBe(0)
     expect([c.theta[0], c.q[0]]).toEqual(before)
+  })
+})
+
+describe("the rain's intercept (roadmap D2)", () => {
+  it('follows Zhang et al. 2008: fewer drops in light rain, more in heavy, Marshall-Palmer at ~1.2 g/m3', () => {
+    const rho = 1, at = (w: number) => rainIntercept(w / 1000, rho)
+    expect(at(.1)).toBeCloseTo(1.6e6, -5); expect(at(1)).toBeCloseTo(7.106e6, -3); expect(at(3)).toBeCloseTo(1.45e7, -5)
+    expect(at(1.2) / N0_MP).toBeGreaterThan(.95); expect(at(1.2) / N0_MP).toBeLessThan(1.05)
+  })
+
+  it("leaves the scheme as it is with Marshall-Palmer's, and evaporates less rain with fewer, larger drops", () => {
+    const evaporate = (intercept: RainIntercept) => {
+      const q = new Float32Array([.005]), cloud = new Float32Array([0]), rain = new Float32Array([.0005])
+      return rainProcesses(q, cloud, rain, 0, 290, 90_000, 1, 3, intercept)
+    }
+    expect(evaporate('fixed')).toBe(evaporate(N0_MP))
+    expect(evaporate(4e5)).toBeLessThan(evaporate('fixed') * .5)
+    expect(fallSpeed(.001, 1, 1, 4e5)).toBeGreaterThan(fallSpeed(.001, 1, 1))
   })
 })
