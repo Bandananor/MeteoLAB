@@ -253,6 +253,7 @@ export class AtmosphereModel implements TaskModel {
   constructor(config: SimConfig, grid: Grid = createGrid(domainGrid(config.domain, config.top, config.domainSize, config.spacing)), profile?: EnvironmentProfile, options: ModelOptions = {}) {
     this.config = config; this.grid = grid; this.memory = options.memory ?? PRIVATE_MEMORY
     this.rotation.mesoZeta = mesoCoreZeta(grid.dx)
+    if (config.rainN0 !== undefined) this.rainIntercept = clamp(config.rainN0, 100, 20_000) * 1000
     const shared = (name: string, length = grid.n) => this.memory.f32(name, length)
     this.env = new Environment(config, grid, profile ?? environmentProfile(config, grid.height))
     this.frame = config.followStorm === false ? [0, 0] : config.frameMotion ?? domainMotion(this.env)

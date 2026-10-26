@@ -25,6 +25,7 @@ export function seriesCsv(knobs: readonly string[], runs: readonly SeriesRun[], 
     ['env_ml_cape_jkg', x => x.run.cape], ['env_shear_0_6km_ms', x => x.run.shear], ['env_srh_0_3km_m2s2', x => x.run.srh], ['regime', x => regimeOf(x.r, x.p)],
     ['max_updraft_ms', x => x.p.updraft], ['max_uh_2_5km_m2s2', x => x.p.uh], ['max_rain_rate_mmh', x => x.p.rain], ['max_rain_total_mm', x => x.p.rainTotal],
     ['max_surface_wind_ms', x => x.p.gust], ['max_hail_mm', x => x.p.hail], ['max_flashes_per_min', x => x.p.flashes], ['mesocyclone_from_s', x => x.p.mesocyclone ?? ''],
+    ['max_outflow_K', x => x.p.outflow], ['max_outflow_rotation_K', x => x.p.outflowLow],
   ])
 }
 

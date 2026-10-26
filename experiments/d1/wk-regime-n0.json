@@ -1,0 +1,14 @@
+{
+  "meteolab_series": 1,
+  "name": "D1: the Weisman-Klemp regime diagram and the rain's intercept",
+  "scenario": "Суперячейка WK",
+  "settings": { "domain": "large" },
+  "vary": {
+    "rainN0": [8000, 1000],
+    "moisture_factor": [0.8, 0.9, 1, 1.1],
+    "shear_0_6km_ms": [0, 10, 20, 30, 40]
+  },
+  "seeds": 3,
+  "first_seed": 2026,
+  "minutes": 60
+}

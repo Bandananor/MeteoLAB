@@ -143,6 +143,11 @@ export interface SimConfig {
    */
   budget?: boolean
   /**
+   * The rain's size distribution intercept, mm^-1 m^-3 as the literature gives it (absent = Marshall-Palmer's 8000; roadmap
+   * D1, D2): an experiment setting for series and links, not in the interface — AtmosphereModel.rainIntercept, 100-20000.
+   */
+  rainN0?: number
+  /**
    * A shift of the starting thermals, m east and north: an ensemble member's (src/ensemble/member.ts) — where exactly
    * the first thermal rises is as uncertain as the sounding.
    */

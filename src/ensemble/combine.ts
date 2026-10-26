@@ -16,12 +16,13 @@ export const MAPS = {
 export type MapKind = keyof typeof MAPS
 
 /** A member's highlights over its run. */
-export interface MemberPeaks { updraft: number; uh: number; rain: number; rainTotal: number; gust: number; hail: number; flashes: number; mesocyclone: number | null }
+export interface MemberPeaks { updraft: number; uh: number; rain: number; rainTotal: number; gust: number; hail: number; flashes: number; mesocyclone: number | null; outflow: number; outflowLow: number }
 
 export function memberPeaks(r: MemberResult): MemberPeaks {
   const max = (k: 'updraft' | 'uh' | 'rain' | 'gust' | 'hail' | 'flashes') => r.samples.reduce((v, s) => Math.max(v, s[k]), 0)
   const meso = r.samples.find(s => s.rotationHeld >= MESO_PERSISTENCE)
-  return { updraft: max('updraft'), uh: max('uh'), rain: max('rain'), rainTotal: r.rainTotal.reduce((v, x) => Math.max(v, x), 0), gust: max('gust'), hail: max('hail'), flashes: max('flashes'), mesocyclone: meso ? meso.t - meso.rotationHeld : null }
+  return { updraft: max('updraft'), uh: max('uh'), rain: max('rain'), rainTotal: r.rainTotal.reduce((v, x) => Math.max(v, x), 0), gust: max('gust'), hail: max('hail'), flashes: max('flashes'), mesocyclone: meso ? meso.t - meso.rotationHeld : null,
+    outflow: r.samples.reduce((v, s) => Math.max(v, s.outflow ?? 0), 0), outflowLow: r.samples.reduce((v, s) => Math.max(v, s.outflowLow ?? 0), 0) }
 }
 
 /** The events counted, each with its test on a member's highlights. */

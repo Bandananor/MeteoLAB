@@ -698,7 +698,7 @@ let built: { name: string; title: string; hint: string; nums: string; story: Sto
 document.querySelector('#sitBuild')!.addEventListener('click', () => {
   const pick = (id: string) => document.querySelector<HTMLSelectElement>(`#${id}`)!.value
   const b = buildSituation({ mass: pick('sitMass') as keyof typeof AIR_MASSES, trigger: pick('sitTrigger') as keyof typeof TRIGGERS, shear: pick('sitShear') as keyof typeof SHEARS, hour: Number(pick('sitHour')) }, defaults)
-  Object.assign(config, defaults, { speed: config.speed, followStorm: config.followStorm, lightning: config.lightning, domain: config.domain, domainSize: config.domainSize, wind05: undefined, wind1: undefined, windDir05: undefined, windDir1: undefined, profile: undefined, weismanKlemp: undefined, sounding: undefined, bubbleRadius: undefined, front: undefined, edges: undefined, start: undefined, nudge: undefined, single: undefined, shade: undefined, frameMotion: undefined, top: undefined, spacing: undefined, nightInversion: undefined, zones: undefined, frontLine: undefined, largeScale: undefined, transport: 'weno' }, b.values)
+  Object.assign(config, defaults, { speed: config.speed, followStorm: config.followStorm, lightning: config.lightning, domain: config.domain, domainSize: config.domainSize, wind05: undefined, wind1: undefined, windDir05: undefined, windDir1: undefined, profile: undefined, weismanKlemp: undefined, sounding: undefined, bubbleRadius: undefined, front: undefined, edges: undefined, start: undefined, nudge: undefined, single: undefined, shade: undefined, rainN0: undefined, frameMotion: undefined, top: undefined, spacing: undefined, nightInversion: undefined, zones: undefined, frontLine: undefined, largeScale: undefined, transport: 'weno' }, b.values)
   fillLowWind(config)
   built = { ...b, title: b.name, nums: environmentNums(config) }; baseScenario = null; soundingBase = null
   syncControls(); markPreset(null); showScenario()
@@ -707,7 +707,7 @@ document.querySelector('#sitBuild')!.addEventListener('click', () => {
 document.querySelectorAll<HTMLButtonElement>('[data-preset]').forEach(button => button.addEventListener('click', () => {
   const index = Number(button.dataset.preset)
   built = null
-  Object.assign(config, defaults, { speed: config.speed, followStorm: config.followStorm, lightning: config.lightning, domain: config.domain, domainSize: config.domainSize, wind05: undefined, wind1: undefined, windDir05: undefined, windDir1: undefined, profile: undefined, weismanKlemp: undefined, sounding: undefined, bubbleRadius: undefined, front: undefined, edges: undefined, start: undefined, nudge: undefined, single: undefined, shade: undefined, frameMotion: undefined, top: undefined, spacing: undefined, nightInversion: undefined, zones: undefined, frontLine: undefined, largeScale: undefined, transport: 'weno' }, presets[index].values)
+  Object.assign(config, defaults, { speed: config.speed, followStorm: config.followStorm, lightning: config.lightning, domain: config.domain, domainSize: config.domainSize, wind05: undefined, wind1: undefined, windDir05: undefined, windDir1: undefined, profile: undefined, weismanKlemp: undefined, sounding: undefined, bubbleRadius: undefined, front: undefined, edges: undefined, start: undefined, nudge: undefined, single: undefined, shade: undefined, rainN0: undefined, frameMotion: undefined, top: undefined, spacing: undefined, nightInversion: undefined, zones: undefined, frontLine: undefined, largeScale: undefined, transport: 'weno' }, presets[index].values)
   fillLowWind(config)
   baseScenario = index
   syncControls()
@@ -876,7 +876,7 @@ function previewSounding() {
 soundingDialog.addEventListener('close', () => {
   if (soundingDialog.returnValue !== 'run' || !loadedSounding) { soundingDialog.returnValue = ''; return }
   soundingDialog.returnValue = ''
-  Object.assign(config, defaults, { speed: config.speed, followStorm: config.followStorm, lightning: config.lightning, domain: config.domain, domainSize: config.domainSize, wind05: undefined, wind1: undefined, windDir05: undefined, windDir1: undefined, profile: undefined, weismanKlemp: undefined, bubbleRadius: undefined, front: undefined, edges: undefined, start: undefined, nudge: undefined, single: undefined, shade: undefined, frameMotion: undefined, top: undefined, spacing: undefined, nightInversion: undefined, zones: undefined, frontLine: undefined, largeScale: undefined, transport: 'weno' },
+  Object.assign(config, defaults, { speed: config.speed, followStorm: config.followStorm, lightning: config.lightning, domain: config.domain, domainSize: config.domainSize, wind05: undefined, wind1: undefined, windDir05: undefined, windDir1: undefined, profile: undefined, weismanKlemp: undefined, bubbleRadius: undefined, front: undefined, edges: undefined, start: undefined, nudge: undefined, single: undefined, shade: undefined, rainN0: undefined, frameMotion: undefined, top: undefined, spacing: undefined, nightInversion: undefined, zones: undefined, frontLine: undefined, largeScale: undefined, transport: 'weno' },
     { sounding: loadedSounding, bubble: Number(soundingBubble.value), ...(soundingStart.value === 'nudge' ? { start: 'nudge' as const } : {}), ...(soundingLatitude !== undefined ? { latitude: Math.round(Math.abs(soundingLatitude)) } : {}) })
   fillLowWind(config)
   baseScenario = null; built = null; soundingBase = { sounding: config.sounding, bubble: config.bubble, latitude: config.latitude, start: config.start }
@@ -903,7 +903,7 @@ rewindSelect.addEventListener('change', () => {
 })
 /** The settings of a saved run or of a precise run's frames: everything else back to the defaults, the left column shown. */
 function takeSettings(saved: unknown) {
-  Object.assign(config, defaults, { wind05: undefined, wind1: undefined, windDir05: undefined, windDir1: undefined, profile: undefined, weismanKlemp: undefined, sounding: undefined, bubbleRadius: undefined, front: undefined, edges: undefined, start: undefined, nudge: undefined, single: undefined, shade: undefined, frameMotion: undefined, top: undefined, spacing: undefined, nightInversion: undefined, zones: undefined, frontLine: undefined, largeScale: undefined }, cleanSettings(saved))
+  Object.assign(config, defaults, { wind05: undefined, wind1: undefined, windDir05: undefined, windDir1: undefined, profile: undefined, weismanKlemp: undefined, sounding: undefined, bubbleRadius: undefined, front: undefined, edges: undefined, start: undefined, nudge: undefined, single: undefined, shade: undefined, rainN0: undefined, frameMotion: undefined, top: undefined, spacing: undefined, nightInversion: undefined, zones: undefined, frontLine: undefined, largeScale: undefined }, cleanSettings(saved))
   fillLowWind(config); baseScenario = null; built = null; soundingBase = config.sounding ? { sounding: config.sounding, start: config.start } : null; syncControls(); markPreset(null); showScenario()
 }
 stateFile.addEventListener('change', async () => {
