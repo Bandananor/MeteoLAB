@@ -38,10 +38,26 @@ export const LARGE_GRID: GridOptions = { ...DEFAULT_GRID, nx: 80, ny: 64, width:
  * in steps of 9 km (8 rows of 1.125 km), within DOMAIN_MIN..DOMAIN_MAX — the same spacing as the standard domain.
  */
 export const DOMAIN_MIN = [24, 18] as const, DOMAIN_MAX = [144, 108] as const, DOMAIN_STEP = [12, 9] as const
+type Limits = readonly [number, number]
+// A size (km) on its steps within the limits; nonsense gives the smallest.
+const fitSize = (v: number, k: 0 | 1, min: Limits, max: Limits, step: Limits) => Math.min(max[k], Math.max(min[k], Math.round((Number.isFinite(v) ? v : min[k]) / step[k]) * step[k]))
 export function customGrid([width, depth]: readonly [number, number]): GridOptions {
-  const fit = (v: number, k: 0 | 1) => Math.min(DOMAIN_MAX[k], Math.max(DOMAIN_MIN[k], Math.round((Number.isFinite(v) ? v : DOMAIN_MIN[k]) / DOMAIN_STEP[k]) * DOMAIN_STEP[k]))
-  const w = fit(width, 0), d = fit(depth, 1)
+  const w = fitSize(width, 0, DOMAIN_MIN, DOMAIN_MAX, DOMAIN_STEP), d = fitSize(depth, 1, DOMAIN_MIN, DOMAIN_MAX, DOMAIN_STEP)
   return { ...DEFAULT_GRID, nx: w * 10 / 12, ny: d * 8 / 9, width: w * 1000, depth: d * 1000 }
+}
+
+/**
+ * The mesoscale mode (SimConfig.domain 'meso'): a domain for systems larger than a single storm — squall lines, MCSs,
+ * bow echoes — at MESO_SPACING km in x and y, the levels unchanged. On 2 km convection is permitted, not resolved: the
+ * cells come out wider and later, and a squall line's inner structure wants ~1 km (Weisman, Skamarock & Klemp 1997;
+ * Bryan, Wyngaard & Fritsch 2003). Width in steps of 24 km and depth in steps of 18 km (12 x 9 columns) within
+ * MESO_MIN..MESO_MAX; absent = MESO_SIZE (96 x 72 columns, 1.35 times the large domain's).
+ */
+export const MESO_SPACING = 2
+export const MESO_MIN = [96, 72] as const, MESO_MAX = [288, 216] as const, MESO_STEP = [24, 18] as const, MESO_SIZE = [192, 144] as const
+export function mesoGrid([width, depth]: readonly [number, number] = MESO_SIZE): GridOptions {
+  const w = fitSize(width, 0, MESO_MIN, MESO_MAX, MESO_STEP), d = fitSize(depth, 1, MESO_MIN, MESO_MAX, MESO_STEP)
+  return { ...DEFAULT_GRID, nx: w / MESO_SPACING, ny: d / MESO_SPACING, width: w * 1000, depth: d * 1000 }
 }
 
 /** The finest horizontal spacing a setting may ask for, km (SimConfig.spacing). */
@@ -49,10 +65,10 @@ export const SPACING_MIN = .25
 
 /**
  * Grid options for a domain size setting (with the own size for 'custom') and, optionally, the height of the top (km)
- * and the horizontal spacing (km, the same in x and y; absent = the domain's own 1.2 x 1.125 km).
+ * and the horizontal spacing (km, the same in x and y; absent = the domain's own: 1.2 x 1.125 km, 2 km in the mesoscale mode).
  */
-export const domainGrid = (domain: 'standard' | 'large' | 'custom' | undefined, top?: number, size?: readonly [number, number], spacing?: number): GridOptions => {
-  let base = domain === 'large' ? LARGE_GRID : domain === 'custom' && size ? customGrid(size) : DEFAULT_GRID
+export const domainGrid = (domain: 'standard' | 'large' | 'custom' | 'meso' | undefined, top?: number, size?: readonly [number, number], spacing?: number): GridOptions => {
+  let base = domain === 'large' ? LARGE_GRID : domain === 'meso' ? mesoGrid(size) : domain === 'custom' && size ? customGrid(size) : DEFAULT_GRID
   // Not finer than SPACING_MIN: a link could otherwise ask for tens of millions of nodes.
   if (spacing !== undefined && spacing > 0) { const s = Math.max(SPACING_MIN, spacing) * 1000; base = { ...base, nx: Math.max(8, Math.round(base.width / s)), ny: Math.max(8, Math.round(base.depth / s)) } }
   return top === undefined ? base : { ...base, height: top * 1000 }

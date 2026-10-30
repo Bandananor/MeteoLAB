@@ -54,9 +54,12 @@ export interface SimConfig {
    * right mover or the mean wind): for a squall line, whose gust front runs well ahead of any single-cell motion.
    */
   frameMotion?: readonly [number, number]
-  /** Domain size (absent = 'standard'): 48 x 36 km, or 96 x 72 km at the same resolution (about 4x slower). */
-  domain?: 'standard' | 'large' | 'custom'
-  /** The domain's own size with domain 'custom': [width, depth], km (see customGrid: steps of 12 and 9 km, 24-144 by 18-108). */
+  /**
+   * Domain size (absent = 'standard'): 48 x 36 km, or 96 x 72 km at the same resolution (about 4x slower), the user's own
+   * size ('custom'), or the mesoscale mode ('meso': up to 288 x 216 km at 2 km spacing, see mesoGrid).
+   */
+  domain?: 'standard' | 'large' | 'custom' | 'meso'
+  /** The domain's own size with domain 'custom' or 'meso': [width, depth], km (customGrid: steps of 12 and 9 km, 24-144 by 18-108; mesoGrid: steps of 24 and 18 km, 96-288 by 72-216). */
   domainSize?: [number, number]
   /**
    * Height of the domain's top, km (absent = 18.9): the same 50 levels stretched from 100 m at the ground. The tropics

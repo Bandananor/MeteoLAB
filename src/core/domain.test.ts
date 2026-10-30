@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { AtmosphereModel, createGrid, customGrid, DEFAULT_GRID, domainGrid, DT, LARGE_GRID } from '.'
+import { AtmosphereModel, createGrid, customGrid, DEFAULT_GRID, mesoGrid, domainGrid, DT, LARGE_GRID } from '.'
 import { SUMMER_DAY } from './fixtures'
 import { cleanSettings } from '../share'
 
@@ -46,6 +46,27 @@ describe('a domain of the user\'s own size (SimConfig.domainSize)', () => {
   it('runs on an odd-sized grid (30 x 24 columns: the pressure and the field solvers take any size)', () => {
     const config = { ...SUMMER_DAY, domain: 'custom' as const, domainSize: [36, 27] as [number, number] }, m = new AtmosphereModel(config)
     expect([m.grid.nx, m.grid.ny]).toEqual([30, 24])
+    for (let k = 0; k < 20; k++) { m.step(DT); m.time += DT }
+    expect(m.u.every(Number.isFinite) && m.w.every(Number.isFinite)).toBe(true)
+    expect(m.diagnostics().updraft).toBeGreaterThan(.3)
+  })
+})
+
+describe('the mesoscale mode (SimConfig.domain \'meso\', 2 km spacing)', () => {
+  it('fits the size to steps of 24 x 18 km within the limits, at 2 km in x and y', () => {
+    expect(domainGrid('meso')).toMatchObject({ nx: 96, ny: 72, nz: 50, width: 192_000, depth: 144_000 })
+    expect(mesoGrid([240, 180])).toMatchObject({ nx: 120, ny: 90, width: 240_000, depth: 180_000 })
+    expect(mesoGrid([200, 150])).toMatchObject({ width: 192_000, depth: 144_000 })
+    expect(mesoGrid([1000, 1])).toMatchObject({ width: 288_000, depth: 72_000 })
+    expect(mesoGrid([NaN, NaN])).toMatchObject({ width: 96_000, depth: 72_000 })
+    // The precise run's spacing still overrides it; the setting passes through links and saved files.
+    expect(domainGrid('meso', undefined, [96, 72], 1)).toMatchObject({ nx: 96, ny: 72 })
+    expect(cleanSettings({ domain: 'meso', domainSize: [240, 180] })).toEqual({ domain: 'meso', domainSize: [240, 180] })
+  })
+
+  it('runs on the smallest mesoscale domain (48 x 36 columns of 2 km)', () => {
+    const m = new AtmosphereModel({ ...SUMMER_DAY, domain: 'meso', domainSize: [96, 72] })
+    expect([m.grid.nx, m.grid.ny, m.grid.dx, m.grid.dy]).toEqual([48, 36, 2000, 2000])
     for (let k = 0; k < 20; k++) { m.step(DT); m.time += DT }
     expect(m.u.every(Number.isFinite) && m.w.every(Number.isFinite)).toBe(true)
     expect(m.diagnostics().updraft).toBeGreaterThan(.3)

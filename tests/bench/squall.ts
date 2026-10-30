@@ -4,8 +4,9 @@
 // updraught, how continuous the line is (share of the rows along y with an updraught >= 5 m/s at ~3 km), where the
 // line is (circular mean x of those updraughts, in the domain and over the ground, and its ground-relative speed), the
 // cold pool (coldest theta' and the share of the domain >= 1 K colder at the ground), gusts, rain.
-//   npx vite build --ssr tests/bench/squall.ts --outDir .bench/squall && node .bench/squall/squall.js <variant> [hours=2] [env]
-import { AtmosphereModel, createGrid, DT, Environment, LARGE_GRID, parcelIndices, skewIndices } from '../../src/core'
+//   npx vite build --ssr tests/bench/squall.ts --outDir .bench/squall && node .bench/squall/squall.js <variant> [hours=2] [env] [meso]
+// meso: the same on the mesoscale mode (SimConfig.domain 'meso', 192 x 144 km at 2 km) instead of the large domain.
+import { AtmosphereModel, createGrid, domainGrid, DT, Environment, parcelIndices, skewIndices } from '../../src/core'
 import { SUMMER_DAY } from '../../src/core/fixtures'
 
 const AIR = { surfaceTemp: 25, rhSurface: 70, rhLow: 65, rhMid: 50, rhUpper: 35, lapseLow: 8, lapseMid: 6.3, lapseUpper: 6.5, tropopause: 12, moistLayer: 1, capStrength: 0, solarMax: 0 }
@@ -18,8 +19,8 @@ export const VARIANTS = [
   { ...AIR, ...shear(-8, 10), surfaceTemp: 26.5 },
 ]
 const [variant, hours = 2] = process.argv.slice(2).map(Number), envOnly = process.argv.includes('env')
-const config = { ...SUMMER_DAY, bubble: 1.2, start: 'line', edges: 'relaxed-x', domain: 'large', frameMotion: [14, 0], ...VARIANTS[variant] }
-const grid = createGrid(LARGE_GRID), env = new Environment(config, grid), idx = parcelIndices(env, grid.height), s = skewIndices(env, grid.height)
+const config = { ...SUMMER_DAY, bubble: 1.2, start: 'line', edges: 'relaxed-x', domain: process.argv.includes('meso') ? 'meso' : 'large', frameMotion: [14, 0], ...VARIANTS[variant] }
+const grid = createGrid(domainGrid(config.domain)), env = new Environment(config, grid), idx = parcelIndices(env, grid.height), s = skewIndices(env, grid.height)
 console.log(`variant ${variant}: SB CAPE ${idx.sb.cape.toFixed(0)} CIN ${idx.sb.cin.toFixed(0)}, ML CAPE ${idx.ml.cape.toFixed(0)}, PW ${s.pw.toFixed(0)} mm, shear 0-6 km ${s.shear06.toFixed(0)} m/s`)
 if (!envOnly) {
   const model = new AtmosphereModel(config, grid), { nx, ny, dx, layer, zs } = grid, l3 = zs.findIndex(z => z >= 3000) * layer, l100 = zs.findIndex(z => z >= 100) * layer
