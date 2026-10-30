@@ -6,6 +6,8 @@
 | `oun-2011-05-22-12z.txt` | Norman, OK, 12Z 22 May 2011 — the morning of the Joplin tornado | University of Wyoming TEXT:LIST | MetPy test data `staticdata/20110522_OUN_12Z.txt` (BSD-3), originally University of Wyoming |
 | `oax-2014-06-16-19z.sharppy` | Omaha/Valley, NE (OAX), 19Z 16 June 2014 — the Pilger tornado day | SHARPpy %RAW% | SHARPpy examples `examples/data/14061619.OAX` (BSD-3) |
 | `smolensk-2024-07-04-12z.html` | Smolensk (26781), 12Z 4 July 2024 — the newer University of Wyoming page (wind SPED in m/s), the whole HTML page as the site sends it | University of Wyoming TEXT:LIST (2025 page) | weather.uwyo.edu/wsgi/sounding, downloaded 12.10.2026 |
+| `oun-2013-05-20-18z.html` | Norman, OK (72357), 18Z 20 May 2013 — the special release ~1.5 h before the Moore tornado, ~20 km from its track; to 31 km (roadmap A5) | University of Wyoming TEXT:LIST (2025 page) | weather.uwyo.edu/wsgi/sounding, downloaded 26.10.2026 |
+| `kushva-2026-06-22-12z.csv` | Kushva, Sverdlovsk oblast, 12Z 22 June 2026 — the tornado outbreak of the Urals, the Kushva supercell (roadmap A5); every 25 hPa to 150 hPa | CSV (pres, hght, temp, dwpt, drct, sknt) | an ERA5 point profile, not a radiosonde (no station at Kushva); supplied by the author, 26.10.2026 |
 | `weisman-klemp.input_sounding` | The Weisman & Klemp (1982, 1984) case of StormLab (16 g/kg, quarter-circle hodograph) every 250 m to 22 km — for the «WK from a file» test; also a sample to load in the simulator | CM1 / WRF input_sounding | Written by StormLab from its own WK environment |
 
 Observations of the national weather services are public; the files are kept byte for byte as published.
