@@ -31,6 +31,18 @@ describe('threaded steps (src/core/threads.ts)', () => {
     expect(same(plain, pooled)).toBe(true)
   })
 
+  it('gives the same model when an attached helper does half of every phase, as the browser\'s and Node\'s helper threads do', () => {
+    const inOrder = run(null, 300)
+    const memory = new SharedMemory()
+    const shared = run(m => {
+      const helper = new AtmosphereModel({ ...SUMMER_DAY, bubble: 1.4 }, createGrid(GRID), undefined, { memory: new AttachedMemory(memory.buffers), attach: true })
+      m.transportSlabs = 10
+      // A helper thread reads the settings when they change and the model time each phase (threads.ts serveTasks).
+      return { run: (phase, tasks, dt) => { helper.applySettings(m.settings()); helper.time = m.time; for (let k = 0; k < tasks; k++) (k % 2 ? helper : m).runTask(phase, k, dt) } }
+    }, 300, memory)
+    expect(same(inOrder, shared)).toBe(true)
+  })
+
   it('lets a helper attach to the same memory: it sees the fields and the switches of the main model', () => {
     const memory = new SharedMemory(), main = new AtmosphereModel({ ...SUMMER_DAY }, createGrid(GRID), undefined, { memory })
     const helper = new AtmosphereModel({ ...SUMMER_DAY }, createGrid(GRID), undefined, { memory: new AttachedMemory(memory.buffers), attach: true })

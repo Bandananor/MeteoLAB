@@ -720,7 +720,6 @@ export class AtmosphereModel implements TaskModel {
     const cfg = this.config, e = this.env, u = this.u, v = this.v, w = this.w
     // Smagorinsky-Lilly subgrid mixing of momentum, heat and water (replaces the old horizontal smoothing of theta and q).
     const turb = this.turbulence
-    turb.anisotropic = this.turbulenceWidth === 'anisotropic'
     const fixed = this.fixedViscosity
     if (fixed === null) this.runner.run('viscosity', nz, dt)
     else { turb.km.fill(fixed); turb.kh.fill(fixed) }
@@ -811,6 +810,9 @@ export class AtmosphereModel implements TaskModel {
       case 'viscosity': {
         // Saturated stability inside clouds (cloud water plus ice): see Turbulence.viscosity.
         const e = this.env, moist = { q: this.q, condensate: this.withIce() ? this.condensate : this.cloud, exner: e.exner }
+        // Set here, in the task, not before the phase: a helper thread runs this task on its own Turbulence (until
+        // 30.10.2026 the helpers' levels kept the cube-root width while the main thread's had the anisotropic one).
+        this.turbulence.anisotropic = this.turbulenceWidth === 'anisotropic'
         this.turbulence.viscosity(this.u, this.v, this.w, this.theta, e.theta, SMAGORINSKY * this.config.turbulence / .55, dt, moist, k, k + 1)
         break
       }
@@ -1052,13 +1054,13 @@ export class AtmosphereModel implements TaskModel {
 
   /** The settings helper threads must follow (threads.ts): the config and the model's switches. */
   settings() {
-    return JSON.stringify({ config: this.config, microphysics: this.microphysics, transport: this.transport, rainFormation: this.rainFormation, windRelaxation: this.windRelaxation, fixedViscosity: this.fixedViscosity, transportSlabs: this.transportSlabs, pressureInStages: this.pressureInStages, rainIntercept: this.rainIntercept })
+    return JSON.stringify({ config: this.config, microphysics: this.microphysics, transport: this.transport, rainFormation: this.rainFormation, windRelaxation: this.windRelaxation, fixedViscosity: this.fixedViscosity, transportSlabs: this.transportSlabs, pressureInStages: this.pressureInStages, rainIntercept: this.rainIntercept, turbulenceWidth: this.turbulenceWidth })
   }
 
   applySettings(json: string) {
     const s = JSON.parse(json)
     Object.assign(this.config, s.config)
-    this.microphysics = s.microphysics; this.transport = s.transport; this.rainFormation = s.rainFormation; this.windRelaxation = s.windRelaxation; this.fixedViscosity = s.fixedViscosity; this.transportSlabs = s.transportSlabs; this.pressureInStages = s.pressureInStages; this.rainIntercept = s.rainIntercept
+    this.microphysics = s.microphysics; this.transport = s.transport; this.rainFormation = s.rainFormation; this.windRelaxation = s.windRelaxation; this.fixedViscosity = s.fixedViscosity; this.transportSlabs = s.transportSlabs; this.pressureInStages = s.pressureInStages; this.rainIntercept = s.rainIntercept; this.turbulenceWidth = s.turbulenceWidth
   }
 
   /** Makes the node velocities exactly free of dual-cell divergence (see PressureSolver); ground and top are rigid walls. */
