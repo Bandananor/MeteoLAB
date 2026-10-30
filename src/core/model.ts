@@ -9,7 +9,7 @@ import { FluxTransport, RK3 } from './advection'
 import { environmentProfile } from './profiles'
 import { SMAGORINSKY, Turbulence } from './turbulence'
 import { chargingRate, inductiveRate, transferCharge } from './charge'
-import { type Flash, Lightning } from './lightning'
+import { type Flash, flashLimit, Lightning } from './lightning'
 import { ZONE_DEPTH, ZONE_TIME, zoneMaps, zoneShape } from './zones'
 import { advected } from './largescale'
 import { coldMoisture, FRONT_BLUR, FRONTAL_TIME, frontalDeficit, frontDistance, WARM_BAND } from './fronts'
@@ -1030,7 +1030,7 @@ export class AtmosphereModel implements TaskModel {
     this.lightning.corona = this.config.surfaceType !== 'water'
     // The cloud of the channel and the conduction: the droplets, crystals and snow (in the scheme the anvil is mostly snow).
     this.lightning.cloud([this.cloud, this.ice, this.snow])
-    for (const flash of this.lightning.discharge([this.chargeIce, this.chargeGraupel, this.chargeRain, this.chargeAir], this.time + dt)) {
+    for (const flash of this.lightning.discharge([this.chargeIce, this.chargeGraupel, this.chargeRain, this.chargeAir], this.time + dt, flashLimit(dt))) {
       if (flash.kind === 'CG') { this.chargeGround += flash.charge; this.flashCount.cg++ } else this.flashCount.ic++
       this.flashes.push(flash)
     }

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { Environment } from './environment'
 import { QUIET } from './fixtures'
 import { createGrid, DEFAULT_GRID } from './grid'
-import { channelShape, Lightning } from './lightning'
+import { channelShape, flashLimit, Lightning } from './lightning'
 import { environmentProfile } from './profiles'
 
 const grid = createGrid(DEFAULT_GRID), air = new Environment(QUIET, grid, environmentProfile(QUIET, grid.height)).rho
@@ -78,6 +78,14 @@ describe('lightning (2.3 step 3)', () => {
     const carriers = storm([[9000, .5], [6500, -.5]]), before = carriers.map(c => c.slice()), lightning = new Lightning(grid, air, 7)
     expect(lightning.discharge(carriers, 0)).toEqual([])
     expect(carriers).toEqual(before)
+  })
+
+  it('discharges at most flashLimit(dt) times a step: 10 per 3 s of model time, whatever the step', () => {
+    expect([flashLimit(3), flashLimit(6), flashLimit(1.5), flashLimit(.75), flashLimit(.1)]).toEqual([10, 20, 5, 3, 1])
+    const strong = () => storm([[10000, 8], [6500, -14], [3500, 4]])
+    const unlimited = new Lightning(grid, air, 7).discharge(strong(), 0, 50).length
+    expect(unlimited).toBeGreaterThan(2)
+    expect(new Lightning(grid, air, 7).discharge(strong(), 0, 2)).toHaveLength(2)
   })
 })
 

@@ -35,8 +35,15 @@ export const MAX_CHANNEL = 3000
  * on average, Rakov & Uman 2003).
  */
 export const STROKES = 4
-/** Most flashes per model step: each re-solves the field; the storm keeps discharging on the next steps if needed. */
-export const MAX_FLASHES = 10
+/**
+ * Most flashes per FLASH_WINDOW seconds of model time: each re-solves the field; the storm keeps discharging on the next
+ * steps if needed. Per model time, not per step (30.10.2026, tests/bench/flashgrid.ts): as 10 a step the flash rate
+ * followed the time step — the classic supercell on 2 km gave IC 4177 at 3 s and 2129 at 6 s, the limit reached in
+ * 57 % of the steps with flashes; on 1.2 km 2313 at 1.5 s against 2069 at 3 s.
+ */
+export const MAX_FLASHES = 10, FLASH_WINDOW = 3
+/** Most flashes in one step of dt seconds: MAX_FLASHES per FLASH_WINDOW, at least one (10 at the live 3 s). */
+export const flashLimit = (dt: number) => Math.max(1, Math.round(MAX_FLASHES * dt / FLASH_WINDOW))
 /**
  * Conductivity of clear air at the ground, S/m, and its e-folding height, m: σ = 2e-14 exp(z / 6 km) (the small ions;
  * Gish 1944, as in Mansell et al. 2005 and Helsdon & Farley 1987). The relaxation time ε0/σ is ~7 minutes at the
@@ -230,15 +237,15 @@ export class Lightning {
   }
 
   /**
-   * Discharges the storm: while the field somewhere exceeds the initiation threshold (and at most MAX_FLASHES times),
-   * one flash there. `carriers` are the charge fields, C/kg (changed in place); returns the flashes.
+   * Discharges the storm: while the field somewhere exceeds the initiation threshold (and at most `limit` times, see
+   * flashLimit), one flash there. `carriers` are the charge fields, C/kg (changed in place); returns the flashes.
    */
-  discharge(carriers: readonly Float32Array[], time: number): Flash[] {
+  discharge(carriers: readonly Float32Array[], time: number, limit = MAX_FLASHES): Flash[] {
     const flashes: Flash[] = [], stamp = ++this.flashId
     this.rng = mulberry32(this.seed ^ Math.imul(Math.round(time * 10), 0x9E3779B1))
-    for (let k = 0; k <= MAX_FLASHES; k++) {
+    for (let k = 0; k <= limit; k++) {
       this.solve(carriers)
-      if (k === MAX_FLASHES) break
+      if (k === limit) break
       const [start, ratio] = this.strongest(stamp)
       if (ratio <= 1) break
       const flash = this.flash(start, carriers, time)
