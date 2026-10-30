@@ -156,7 +156,7 @@ export class Hud {
       <div class="menu__sep"></div>
       <button class="menu__item" role="menuitem" data-tool="#layoutToggle"><span class="menu__glyph">▭</span>${L('Компьютерный вид', 'Computer layout')}</button>
       <a class="menu__item" role="menuitem" href="../guide/" target="_blank" rel="noopener"><span class="menu__glyph">?</span>${L('Как пользоваться', 'How to use it')}</a>
-      <a class="menu__item" role="menuitem" href="https://discord.gg/NmuNXWXUx" target="_blank" rel="noopener"><span class="menu__glyph">◆</span>Discord (EN)</a>
+      <a class="menu__item" role="menuitem" href="https://discord.com/invite/hzdXHWzCMt" target="_blank" rel="noopener"><span class="menu__glyph">◆</span>Discord (EN)</a>
       <a class="menu__item" role="menuitem" href="https://t.me/MeteoLabBnor" target="_blank" rel="noopener"><span class="menu__glyph">✈</span>${L('Канал проекта', 'Project channel')}</a>
       <a class="menu__item" role="menuitem" href="#" data-lang-switch><span class="menu__glyph">⇄</span>${L('English version', 'Русская версия')}</a>
       <div class="menu__sep"></div>
