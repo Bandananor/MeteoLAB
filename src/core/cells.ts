@@ -3,7 +3,7 @@ import { graupelFallSpeed } from './graupel'
 import { hailFallSpeed } from './hail'
 import { snowFallSpeed } from './ice'
 import { fallSpeed } from './microphysics'
-import { type AtmosphereModel, MESO_CORE_ZETA, MESO_PERSISTENCE, UH_ROTATING } from './model'
+import { type AtmosphereModel, MESO_CORE_ZETA, MESO_PERSISTENCE, UH_ROTATING, uhThreshold } from './model'
 import { outflowDeficit } from './rkw'
 import { mesocycloneColumn, type StormFlanks, stormFlanks } from './flanks'
 import { stormMotion } from './kinematics'
@@ -209,7 +209,7 @@ export class CellTracker {
     this.tracks.forEach((_, k) => {
       const hits = [...overlaps[k]]
       if (!hits.length) return
-      const rotating = hits.filter(([r]) => regions[r].uh >= UH_ROTATING)
+      const rotating = hits.filter(([r]) => regions[r].uh >= uhThreshold(UH_ROTATING, m.rotation))
       const [choice] = rotating.length ? rotating.sort((a, b) => regions[b[0]].uh - regions[a[0]].uh)[0] : hits.sort((a, b) => b[1] - a[1] || regions[b[0]].peak - regions[a[0]].peak)[0]
       claims.set(choice, [...(claims.get(choice) ?? []), k])
     })
@@ -269,7 +269,7 @@ export class CellTracker {
       this.advance(cell, s, time, dt, m.rotation.mesoZeta)
       // The flanks of a rotating storm, along the Bunkers right mover's heading: the tracked motion wanders by tens of
       // degrees while the storm organizes (tests/bench/flanks.ts: the classic supercell's ran north-west for minutes).
-      cell.flanks = cell.id && s.uh >= UH_ROTATING ? stormFlanks(m, mesocycloneColumn(m, cell.x, cell.y), ...rightMover, rain, outflow) : null
+      cell.flanks = cell.id && s.uh >= uhThreshold(UH_ROTATING, m.rotation) ? stormFlanks(m, mesocycloneColumn(m, cell.x, cell.y), ...rightMover, rain, outflow) : null
       if (!cell.id && time - cell.born >= CELL_CONFIRM && cell.peakW >= CELL_NUMBER_W && cell.peakTop >= CELL_NUMBER_TOP) cell.id = this.nextId++
     })
   }

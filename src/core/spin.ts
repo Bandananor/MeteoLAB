@@ -2,7 +2,7 @@
 // over the domain at 2-6 km. In a supercell the updraught and the cyclonic vorticity coincide (Clark 1979, Droegemeier
 // et al. 1993: correlations of 0.4 and more on finer grids); an ordinary storm has updraughts and vortices side by side (near 0).
 import { L } from '../i18n'
-import { MESO_PERSISTENCE, UH_MESOCYCLONE, UH_ROTATING, type AtmosphereModel } from './model'
+import { MESO_PERSISTENCE, UH_MESOCYCLONE, UH_ROTATING, uhThreshold, type AtmosphereModel, type RotationState } from './model'
 
 /** Layer of the w-ζ correlation, m. */
 export const SPIN_FROM = 2000, SPIN_TO = 6000
@@ -58,13 +58,13 @@ export function spinProfile(m: Pick<AtmosphereModel, 'grid' | 'w' | 'zeta' | 'ro
 export const UH03_ROTATING = 100, UH01_LOW_MESO = 20
 
 /** At what height the updraught rotates, in words: the mid-level mesocyclone (2-5 km), rotation reaching down, the low one. */
-export function rotationSummary(r: { uh: number; uh01: number; uh03: number; persisted: number }, p: Pick<SpinProfile, 'bottom' | 'top'>) {
+export function rotationSummary(r: Pick<RotationState, 'uh' | 'uh01' | 'uh03' | 'persisted' | 'uhScale'>, p: Pick<SpinProfile, 'bottom' | 'top'>) {
   const parts: string[] = []
   if (r.persisted >= MESO_PERSISTENCE) parts.push(L(`средний мезоциклон 2–5 км держится ${Math.floor(r.persisted / 60)} мин (UH ${r.uh.toFixed(0)})`, `a mid-level mesocyclone at 2–5 km has held for ${Math.floor(r.persisted / 60)} min (UH ${r.uh.toFixed(0)})`))
-  else if (r.uh >= UH_MESOCYCLONE) parts.push(L(`сильное вращение на 2–5 км (UH ${r.uh.toFixed(0)}), мезоциклоном ещё не стало`, `strong rotation at 2–5 km (UH ${r.uh.toFixed(0)}), not a mesocyclone yet`))
-  else if (r.uh >= UH_ROTATING) parts.push(L(`вращение на 2–5 км (UH ${r.uh.toFixed(0)})`, `rotation at 2–5 km (UH ${r.uh.toFixed(0)})`))
-  if (r.uh01 >= UH01_LOW_MESO) parts.push(L(`низкий мезоциклон: поток вращается у самой земли (UH 0–1 км ${r.uh01.toFixed(0)}) — признак опасной по смерчам ячейки; сам смерч сетка ~1 км не разрешает`, `a low-level mesocyclone: the updraught rotates right at the ground (UH 0–1 km ${r.uh01.toFixed(0)}) — the sign of a cell that may produce tornadoes; the ~1 km grid does not resolve the tornado itself`))
-  else if (r.uh03 >= UH03_ROTATING) parts.push(L(`вращение опускается ниже 3 км (UH 0–3 км ${r.uh03.toFixed(0)}), у земли пока слабое`, `the rotation reaches below 3 km (UH 0–3 km ${r.uh03.toFixed(0)}), still weak at the ground`))
+  else if (r.uh >= uhThreshold(UH_MESOCYCLONE, r)) parts.push(L(`сильное вращение на 2–5 км (UH ${r.uh.toFixed(0)}), мезоциклоном ещё не стало`, `strong rotation at 2–5 km (UH ${r.uh.toFixed(0)}), not a mesocyclone yet`))
+  else if (r.uh >= uhThreshold(UH_ROTATING, r)) parts.push(L(`вращение на 2–5 км (UH ${r.uh.toFixed(0)})`, `rotation at 2–5 km (UH ${r.uh.toFixed(0)})`))
+  if (r.uh01 >= uhThreshold(UH01_LOW_MESO, r)) parts.push(L(`низкий мезоциклон: поток вращается у самой земли (UH 0–1 км ${r.uh01.toFixed(0)}) — признак опасной по смерчам ячейки; сам смерч сетка ~1 км не разрешает`, `a low-level mesocyclone: the updraught rotates right at the ground (UH 0–1 km ${r.uh01.toFixed(0)}) — the sign of a cell that may produce tornadoes; the ~1 km grid does not resolve the tornado itself`))
+  else if (r.uh03 >= uhThreshold(UH03_ROTATING, r)) parts.push(L(`вращение опускается ниже 3 км (UH 0–3 км ${r.uh03.toFixed(0)}), у земли пока слабое`, `the rotation reaches below 3 km (UH 0–3 km ${r.uh03.toFixed(0)}), still weak at the ground`))
   if (!parts.length) return L('поток не вращается', 'the updraught does not rotate')
   const text = parts.join('; ')
   return (p.bottom !== null ? `${text}; ${L('ядро вращается', 'the core rotates at')} ${p.bottom.toFixed(1)}–${p.top!.toFixed(1)} ${L('км', 'km')}` : text).replace(/^./, c => c.toUpperCase())

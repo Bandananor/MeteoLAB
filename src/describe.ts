@@ -1,5 +1,5 @@
 import { L } from './i18n'
-import { MESO_CORE_ZETA, MESO_PERSISTENCE, UH_ROTATING, type ModelDiagnostics, type RotationState, type Sounding } from './core'
+import { MESO_CORE_ZETA, MESO_PERSISTENCE, UH_ROTATING, uhThreshold, type ModelDiagnostics, type RotationState, type Sounding } from './core'
 
 /**
  * The rain rate in words, mm/h, by the WMO's showers (slight below 2.5, moderate to 10, heavy to 50, violent from 50).
@@ -53,7 +53,7 @@ export function describeConvection(d: ModelDiagnostics, s: Sounding, r: Rotation
   if (up < 10 && d.rainRate >= 30) logic += L(' Поток ослаб, а ливень в разгаре — стадия распада: вода, которую поток держал в облаке, выпадает разом, и дождь сам тянет воздух вниз. Самый сильный ливень обычной ячейки — через ~10 минут после пика потока.', ' The updraught has weakened while the shower is at its height — the dissipating stage: the water the updraught held in the cloud falls at once, and the rain itself drags the air down. An ordinary cell’s heaviest rain comes ~10 minutes after its updraught peaks.')
   if (d.hail >= 5) logic += L(` Из ядра у земли выпадает град до ${(d.hail / 10).toFixed(1)} см.`, ` Hail up to ${(d.hail / 10).toFixed(1)} cm falls from the core to the ground.`)
 
-  const meso = r.persisted >= MESO_PERSISTENCE, rotating = r.uh >= UH_ROTATING
+  const meso = r.persisted >= MESO_PERSISTENCE, rotating = r.uh >= uhThreshold(UH_ROTATING, r)
   if (meso) logic += L(` Восходящий поток вращается циклонически уже ${Math.floor(r.persisted / 60)} мин: горизонтальные вихри от сдвига ветра наклонены потоком и растянуты в мезоциклон.`, ` The updraught has rotated cyclonically for ${Math.floor(r.persisted / 60)} min: the horizontal vortices of the wind shear were tilted by the updraught and stretched into a mesocyclone.`)
   else if (rotating) logic += L(' Восходящий поток наклоняет горизонтальную завихренность сдвига ветра: появляется вращение.', ' The updraught tilts the horizontal vorticity of the wind shear: rotation appears.')
   // By an anticyclonic core's own vorticity, not the UH anywhere: vortex pairs give UH 400-600 in weak shear (model.ts).

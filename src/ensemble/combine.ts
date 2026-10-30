@@ -3,7 +3,7 @@
  * probability for these settings), the spread of each value (least, median, most), and per ground column the share of
  * members whose swath reached a threshold there — the probability maps.
  */
-import { MESO_PERSISTENCE, UH_ROTATING } from '../core'
+import { MESO_PERSISTENCE, UH_ROTATING, uhScale } from '../core'
 import type { MemberResult } from './member'
 
 /** The maps: what each counts and from what threshold. */
@@ -50,10 +50,10 @@ export function spread(values: readonly number[]) {
   return { min: v[0], median: v.length % 2 ? v[mid] : (v[mid - 1] + v[mid]) / 2, max: v[v.length - 1] }
 }
 
-/** Per ground column, the share of members whose swath of `kind` reached its threshold there. */
+/** Per ground column, the share of members whose swath of `kind` reached its threshold there (UH's scaled to the member's grid, uhScale). */
 export function probabilityMap(results: readonly MemberResult[], kind: MapKind) {
   const { field, threshold } = MAPS[kind], out = new Float32Array(results[0]?.rainTotal.length ?? 0)
-  for (const r of results) { const f = r[field]; for (let c = 0; c < out.length; c++) if (f[c] >= threshold) out[c]++ }
+  for (const r of results) { const f = r[field], at = kind === 'uh' ? threshold * uhScale(r.width / r.nx) : threshold; for (let c = 0; c < out.length; c++) if (f[c] >= at) out[c]++ }
   for (let c = 0; c < out.length; c++) out[c] /= results.length
   return out
 }

@@ -94,6 +94,13 @@ export function sunlightThrough(tau: number, mu: number) {
 }
 export const NUDGE = { w: 10, xr: 10_000, zr: 1500, zc: 1500, alpha: .5, t1: 900, t2: 1200 }
 
+/**
+ * How a run starts (SimConfig.start), absent filled in: the nudging in the mesoscale mode when no front starts the storms
+ * — on 2 km the warm thermals start none (30.10.2026, tests/bench/gridscale.ts, 96 x 72 km: Summer day, Multicell, HSLC
+ * and Cold front at most 8-10 m/s in 40 min, Summer day still 10 in 70; nudged 51, 53 and 26 m/s) —, else the thermals.
+ */
+export const startOf = (c: Pick<SimConfig, 'start' | 'domain' | 'front' | 'frontLine'>) => c.start ?? (c.domain === 'meso' && !c.front && !c.frontLine ? 'nudge' : 'thermals')
+
 /** Safety limits of the horizontal and vertical velocity, m/s (see AtmosphereModel.clipped). */
 export const U_LIMIT = 120, W_LIMIT = 100
 /** Updraught (m/s) of the 2-5 km nodes that count as an updraught core for RotationState.coreZeta. */
@@ -115,6 +122,15 @@ export const MESO_CORE_ZETA = 3e-3
 export const MESO_GRID = 1200
 /** The mesocyclone threshold of the core's vorticity (s-1) on a grid of spacing dx (m): never below MESO_CORE_ZETA. */
 export const mesoCoreZeta = (dx: number) => MESO_CORE_ZETA * Math.max(1, MESO_GRID / dx)
+/**
+ * The UH thresholds' factor on a grid of spacing dx (m): MESO_GRID / dx, both ways, 1 on 1.2 km. UH is w times zeta and
+ * both grow as the grid refines: against 1.2 km it is 2.3 times at 0.5 km (A2, tests/bench/converge.ts) and 0.28-0.51
+ * at 2 km (30.10.2026, tests/bench/gridscale.ts: classic supercell 2296 / 878, WK 1061 / 539, HSLC 2351 / 669). The
+ * core's vorticity falls far less at 2 km (0.22-0.84, the label agreeing on both grids), so mesoCoreZeta keeps its floor.
+ */
+export const uhScale = (dx: number) => MESO_GRID / dx
+/** A UH threshold set on 1.2 km, on the grid a rotation state was measured on. */
+export const uhThreshold = (threshold: number, r: Pick<RotationState, 'uhScale'>) => threshold * (r.uhScale ?? 1)
 
 export interface RotationState {
   /** Strongest cyclonic / anticyclonic UH 2-5 km (m2/s2), the column of the cyclonic one, and how long (s) a mesocyclone has held (MESO_CORE_ZETA). */
@@ -133,6 +149,8 @@ export interface RotationState {
   low: number
   /** The mesocyclone threshold of coreZeta on this grid (mesoCoreZeta). */
   mesoZeta: number
+  /** What the UH thresholds (set on 1.2 km) are multiplied by on this grid (uhScale; absent = 1). */
+  uhScale?: number
 }
 
 export interface ModelDiagnostics {
@@ -252,7 +270,7 @@ export class AtmosphereModel implements TaskModel {
   /** `profile` replaces the slider environment with an analytic one (idealised test cases). */
   constructor(config: SimConfig, grid: Grid = createGrid(domainGrid(config.domain, config.top, config.domainSize, config.spacing)), profile?: EnvironmentProfile, options: ModelOptions = {}) {
     this.config = config; this.grid = grid; this.memory = options.memory ?? PRIVATE_MEMORY
-    this.rotation.mesoZeta = mesoCoreZeta(grid.dx)
+    this.rotation.mesoZeta = mesoCoreZeta(grid.dx); this.rotation.uhScale = uhScale(grid.dx)
     if (config.rainN0 !== undefined) this.rainIntercept = clamp(config.rainN0, 100, 20_000) * 1000
     const shared = (name: string, length = grid.n) => this.memory.f32(name, length)
     this.env = new Environment(config, grid, profile ?? environmentProfile(config, grid.height))
@@ -320,14 +338,14 @@ export class AtmosphereModel implements TaskModel {
     }
     // The Weisman-Klemp case starts from a single thermal, as in the calibration test. An ensemble member's thermals are shifted (startOffset).
     const [sx, sy] = this.config.startOffset ?? [0, 0], bubble = (x: number, y: number, strength: number) => this.injectBubble(x + sx, y + sy, strength)
-    if (this.config.start === 'line') {
+    if (startOf(this.config) === 'line') {
       // Thermals every 6 km along y (periodic: the line has no ends), strength x (0.85-1.15).
       for (let y = 3000; y < D; y += 6000) bubble(W * .5, y, this.config.bubble * (.85 + .3 * this.rng()))
     } else if (this.config.front) {
       for (let z = 0, i = 0; z < nz; z++) for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++, i++) this.theta[i] -= this.frontDeficit(x, y, zs[z])
       // Weak thermals on the warm side, 3 km from the front, between the western zone and the front's end.
       for (let k = 0; k < 5; k++) bubble(W * (.18 + .09 * k), D / 2 - 3000, this.config.bubble)
-    } else if (this.config.start === 'nudge') {
+    } else if (startOf(this.config) === 'nudge') {
       // No thermal: the nudging in physics() starts the storm.
     } else if (this.config.single) bubble(W * .5, D * .5, this.config.bubble)
     else if (this.config.profile === 'weisman-klemp') bubble(W * .3, D * .5, this.config.bubble)
@@ -766,7 +784,7 @@ export class AtmosphereModel implements TaskModel {
           if (a === this.w && this.staged()) {
             this.stageBuoyancy(tend, z0, z1)
             // The stage's time: RK3 evaluates its tendencies at t, t + dt/3, t + dt/2.
-            if (this.config.start === 'nudge') for (let z = z0; z < z1; z++) this.nudgeLevel(z, this.time + STAGE_TIME[Number(phase[8])] * dt, tend, dt)
+            if (startOf(this.config) === 'nudge') for (let z = z0; z < z1; z++) this.nudgeLevel(z, this.time + STAGE_TIME[Number(phase[8])] * dt, tend, dt)
           }
         }
         else { const fraction = RK3[Number(phase[6])] * dt; for (let i = z0 * layer; i < z1 * layer; i++) a[i] = start[i] + fraction * tend[i] }
@@ -778,7 +796,7 @@ export class AtmosphereModel implements TaskModel {
         if (c.decay !== 1) { const keep = c.decay ** dt; for (let i = 0; i < a.length; i++) a[i] *= keep }
         break
       }
-      case 'physics': this.physics(k, dt); if (this.config.start === 'nudge' && !this.staged()) this.nudgeLevel(k, this.time + dt / 2, null, dt); break
+      case 'physics': this.physics(k, dt); if (startOf(this.config) === 'nudge' && !this.staged()) this.nudgeLevel(k, this.time + dt / 2, null, dt); break
       case 'faces': this.flux.faces(this.u, this.v, this.w, k, k + 1); break
       case 'faceDivergence': this.flux.divergence(k, k + 1); break
       case 'faceForward': this.flux.forward(k, k + 1); break

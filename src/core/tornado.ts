@@ -29,6 +29,8 @@ export const TORNADO_DEFAULTS: TornadoThresholds = { uh01: UH01_LOW_MESO, held: 
 export interface TornadoInput {
   /** UH 0-1 km now, m²/s², and how long (s) it has stayed at the threshold. */
   uh01: number; lowHeld: number
+  /** The UH threshold's factor on this grid (RotationState.uhScale: the thresholds are set on 1.2 km); absent = 1. */
+  uhScale?: number
   /** How long (s) the mid-level mesocyclone has held (RotationState.persisted). */
   mesoHeld: number
   stp: number; srh01: number; lcl: number | null
@@ -56,14 +58,14 @@ export const TORNADO_NOTES: Record<TornadoLevel, string> = {
 
 /** The level and every condition with its value. */
 export function tornadoSigns(s: TornadoInput, t: TornadoThresholds = TORNADO_DEFAULTS): { level: TornadoLevel; checks: TornadoCheck[] } {
-  const low = s.uh01 >= t.uh01 && s.lowHeld >= t.held * 60, meso = s.mesoHeld >= MESO_PERSISTENCE
+  const uh01 = t.uh01 * (s.uhScale ?? 1), low = s.uh01 >= uh01 && s.lowHeld >= t.held * 60, meso = s.mesoHeld >= MESO_PERSISTENCE
   const stp = s.stp >= t.stp, srh = s.srh01 >= t.srh01, lcl = s.lcl !== null && s.lcl <= t.lcl, cold = s.cold <= t.cold
   const environment = stp && srh && lcl
   const level: TornadoLevel = low && meso && environment && cold ? 3 : low ? 2 : environment ? 1 : 0
   const f = (v: number, d = 0) => v.toFixed(d).replace('.', ',')
   return {
     level, checks: [
-      { name: L(`Вращение у земли: UH 0–1 км ≥ ${t.uh01} не меньше ${t.held} мин`, `Rotation at the ground: UH 0–1 km ≥ ${t.uh01} for at least ${t.held} min`), ok: low, value: L(`${f(s.uh01)} м²/с², ${f(s.lowHeld / 60, 1)} мин`, `${f(s.uh01)} m²/s², ${f(s.lowHeld / 60, 1)} min`) },
+      { name: L(`Вращение у земли: UH 0–1 км ≥ ${f(uh01)} не меньше ${t.held} мин`, `Rotation at the ground: UH 0–1 km ≥ ${f(uh01)} for at least ${t.held} min`), ok: low, value: L(`${f(s.uh01)} м²/с², ${f(s.lowHeld / 60, 1)} мин`, `${f(s.uh01)} m²/s², ${f(s.lowHeld / 60, 1)} min`) },
       { name: L('Мезоциклон 2–5 км над ним', 'A 2–5 km mesocyclone above it'), ok: meso, value: meso ? `${f(s.mesoHeld / 60)} ${L('мин', 'min')}` : L('нет', 'no') },
       { name: `STP ≥ ${f(t.stp, 1)}`, ok: stp, value: f(s.stp, 1) },
       { name: L(`SRH 0–1 км ≥ ${t.srh01}`, `SRH 0–1 km ≥ ${t.srh01}`), ok: srh, value: `${f(s.srh01)} ${L('м²/с²', 'm²/s²')}` },

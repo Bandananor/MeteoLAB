@@ -12,7 +12,7 @@ import { FlankView } from './flanks'
 import { VortexView } from './vortex'
 import { type GroundPoint, Observer } from './observer'
 import { type CameraGrade, gradeFilter, NEUTRAL_GRADE } from '../camera'
-import { type AtmosphereModel, computeScalarField, groundRepeats, headingVector, heightAt, levelAt, MESO_PERSISTENCE, sunDirection, type StormFlanks, UH_ROTATING, type UhLayer, type VortexLevel, vortexColumn } from '../core'
+import { type AtmosphereModel, computeScalarField, groundRepeats, headingVector, heightAt, levelAt, MESO_PERSISTENCE, sunDirection, type StormFlanks, UH_ROTATING, uhThreshold, type UhLayer, type VortexLevel, vortexColumn } from '../core'
 import { clamp, lerp, mod, mulberry32 } from '../core/math'
 import { qsatP } from '../core/microphysics'
 import { N0G, N0R, RHO_G, RHO_W } from '../core/graupel'
@@ -1185,7 +1185,7 @@ if(abs(uSurface - 2.0) < 0.5){
     this.updateGround(); this.updateFront()
     const r = m.rotation
     // The column where the rotation is deep enough to follow; the ring over the strongest UH where it is not.
-    const rotating = s.showMesocyclone && r.uh >= UH_ROTATING && !this.observer
+    const rotating = s.showMesocyclone && r.uh >= uhThreshold(UH_ROTATING, r) && !this.observer
     if (rotating && m.time !== this.vortexTime) { this.vortexTime = m.time; this.vortexLevels = vortexColumn(m, r.x + m.grid.nx * r.y) }
     this.vortex.update(this.vortexLevels, rotating, r.persisted >= MESO_PERSISTENCE, new THREE.Vector2(this.canvas.width, this.canvas.height))
     this.mesoMarker.visible = rotating && !this.vortex.line.visible

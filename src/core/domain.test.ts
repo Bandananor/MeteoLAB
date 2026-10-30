@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { AtmosphereModel, createGrid, customGrid, DEFAULT_GRID, mesoGrid, domainGrid, DT, LARGE_GRID } from '.'
+import { AtmosphereModel, rotationSummary, startOf, tornadoSigns, uhScale, createGrid, customGrid, DEFAULT_GRID, mesoGrid, domainGrid, DT, LARGE_GRID } from '.'
 import { SUMMER_DAY } from './fixtures'
 import { cleanSettings } from '../share'
 
@@ -62,6 +62,28 @@ describe('the mesoscale mode (SimConfig.domain \'meso\', 2 km spacing)', () => {
     // The precise run's spacing still overrides it; the setting passes through links and saved files.
     expect(domainGrid('meso', undefined, [96, 72], 1)).toMatchObject({ nx: 96, ny: 72 })
     expect(cleanSettings({ domain: 'meso', domainSize: [240, 180] })).toEqual({ domain: 'meso', domainSize: [240, 180] })
+  })
+
+  it('starts by nudging unless a front starts the storms or the thermals are asked for', () => {
+    expect(startOf({ domain: 'meso' })).toBe('nudge')
+    expect(startOf({ domain: 'meso', start: 'thermals' })).toBe('thermals')
+    expect(startOf({ domain: 'meso', start: 'line' })).toBe('line')
+    expect(startOf({ domain: 'meso', front: 3 })).toBe('thermals')
+    expect(startOf({ domain: 'large' })).toBe('thermals')
+    expect(startOf({})).toBe('thermals')
+  })
+
+  it('scales the UH thresholds with the grid, unchanged on 1.2 km', () => {
+    expect(uhScale(1200)).toBe(1); expect(uhScale(2000)).toBeCloseTo(.6); expect(uhScale(500)).toBeCloseTo(2.4)
+    expect(new AtmosphereModel({ ...SUMMER_DAY }).rotation.uhScale).toBe(1)
+    expect(new AtmosphereModel({ ...SUMMER_DAY, domain: 'meso', domainSize: [96, 72] }).rotation.uhScale).toBeCloseTo(.6)
+    // UH 150 on 2 km is rotation (threshold 200 x 0.6 = 120), on 1.2 km it is not; UH 0-1 km 15 a low mesocyclone (12).
+    const r = { uh: 150, uh01: 15, uh03: 0, persisted: 0 }, p = { bottom: null, top: null }
+    expect(rotationSummary(r, p)).toMatch(/^поток не вращается|^the updraught does not rotate/)
+    expect(rotationSummary({ ...r, uhScale: .6 }, p)).toMatch(/UH 150/)
+    expect(rotationSummary({ ...r, uhScale: .6 }, p)).toMatch(/UH 0–1/)
+    const signs = (uhScale?: number) => tornadoSigns({ uh01: 15, uhScale, lowHeld: 600, mesoHeld: 0, stp: 0, srh01: 0, lcl: 2, cold: 0 }).level
+    expect(signs()).toBe(0); expect(signs(.6)).toBe(2)
   })
 
   it('runs on the smallest mesoscale domain (48 x 36 columns of 2 km)', () => {
