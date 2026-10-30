@@ -618,6 +618,14 @@ export class AtmosphereModel implements TaskModel {
    */
   turbulenceWidth: 'cube' | 'anisotropic' = 'anisotropic'
   /**
+   * Experiments of 30.10.2026 (plan 2.11, the vertical eddy viscosity meeting its explicit cap): the vertical filter
+   * width (Turbulence.verticalLength: 'cube' as before, 'dz' as CM1 and WRF on dx >> dz) and the vertical diffusion
+   * ('explicit' as before with its cap, 'implicit' in each column; Turbulence.implicitVertical). Defaults unchanged;
+   * STORMLAB_VLEN=dz and STORMLAB_VMIX=implicit set them for a whole run in Node (npm run validate, the slow tests).
+   */
+  verticalLength: 'cube' | 'dz' = (globalThis as { process?: { env: Record<string, string | undefined> } }).process?.env?.STORMLAB_VLEN === 'dz' ? 'dz' : 'cube'
+  verticalMixing: 'explicit' | 'implicit' = (globalThis as { process?: { env: Record<string, string | undefined> } }).process?.env?.STORMLAB_VMIX === 'implicit' ? 'implicit' : 'explicit'
+  /**
    * Reference cases (Straka et al. 1993, Bryan & Fritsch 2002): a constant eddy viscosity, m2/s, the same for momentum
    * and scalars, instead of Smagorinsky; null = Smagorinsky.
    */
@@ -812,11 +820,11 @@ export class AtmosphereModel implements TaskModel {
         const e = this.env, moist = { q: this.q, condensate: this.withIce() ? this.condensate : this.cloud, exner: e.exner }
         // Set here, in the task, not before the phase: a helper thread runs this task on its own Turbulence (until
         // 30.10.2026 the helpers' levels kept the cube-root width while the main thread's had the anisotropic one).
-        this.turbulence.anisotropic = this.turbulenceWidth === 'anisotropic'
+        this.turbulence.anisotropic = this.turbulenceWidth === 'anisotropic'; this.turbulence.verticalLength = this.verticalLength; this.turbulence.implicitVertical = this.verticalMixing === 'implicit'
         this.turbulence.viscosity(this.u, this.v, this.w, this.theta, e.theta, SMAGORINSKY * this.config.turbulence / .55, dt, moist, k, k + 1)
         break
       }
-      case 'mix': { const [a, base, factor] = this.mixed()[k]; this.turbulence.mix(a, base, factor, dt) }
+      case 'mix': { const [a, base, factor] = this.mixed()[k]; this.turbulence.anisotropic = this.turbulenceWidth === 'anisotropic'; this.turbulence.implicitVertical = this.verticalMixing === 'implicit'; this.turbulence.mix(a, base, factor, dt) }
     }
   }
 
@@ -892,7 +900,9 @@ export class AtmosphereModel implements TaskModel {
     const flux = surfaceFluxes(cfg, this.time), urban = (cfg.city ?? 0) > 0 ? surfaceFluxes(cfg, this.time, 'urban') : flux, f = 2 * OMEGA * Math.sin(cfg.latitude * Math.PI / 180)
     // Under a cloud the balance is the same with the sunlight times sunNow: the available energy max(0, A T - LW) of the
     // clear sky's A - LW (the shares of H and LE stay), so a column scales its clear-sky fluxes by it (roadmap B10).
-    const shaded = this.shaded, scale = (absorbed: number, t: number) => absorbed > LONGWAVE_LOSS ? Math.max(0, absorbed * t - LONGWAVE_LOSS) / (absorbed - LONGWAVE_LOSS) : 0
+    // sunNow is 1 wherever no cloud shades (and with the shade off): read it, not this.shaded, which is the main thread's
+    // alone — a helper thread's levels heated the ground as under a clear sky (25-30.10.2026, src/core/threads.test.ts).
+    const scale = (absorbed: number, t: number) => absorbed > LONGWAVE_LOSS ? Math.max(0, absorbed * t - LONGWAVE_LOSS) / (absorbed - LONGWAVE_LOSS) : 0
     const spongeStart = Math.max(cfg.tropopause * 1000 + 2500, 14_000), keep = Math.exp(-this.windRelaxation * dt)
     // Distance of each column from the nearest domain edge (the seam between the last and the first node), m.
     const edges = this.edges(), relaxed = edges === 'relaxed' || edges === 'relaxed-x', onlyX = edges === 'relaxed-x', front = cfg.front ?? 0, zones = this.zoneGround !== null, frontTop = cfg.frontLine ? cfg.frontLine.depth * 1000 + FRONT_BLUR : -1, frontPull = 1 - Math.exp(-dt / FRONTAL_TIME), { dx, dy } = this.grid
@@ -979,7 +989,7 @@ export class AtmosphereModel implements TaskModel {
           if (z < this.surfaceShare.length) {
             // The city (if any) blends in its own energy balance under the share of the column it covers.
             const pattern = 1 + this.patternNow[x + row] * .32, per = pattern * this.surfaceShare[z] * dt / rhoZ, c = urban === flux ? 0 : this.cityNow[x + row]
-            const sunlit = shaded ? this.sunNow[x + row] : 1, k = sunlit < 1 ? scale(flux.absorbed, sunlit) : 1, ku = c > 0 && sunlit < 1 ? scale(urban.absorbed, sunlit) : 1
+            const sunlit = this.sunNow[x + row], k = sunlit < 1 ? scale(flux.absorbed, sunlit) : 1, ku = c > 0 && sunlit < 1 ? scale(urban.absorbed, sunlit) : 1
             const heat = (k * flux.sensible + c * (ku * urban.sensible - k * flux.sensible)) * per / (CP * exner)
             mark = theta[i]; theta[i] += heat; q[i] += (k * flux.latent + c * (ku * urban.latent - k * flux.latent)) * per / LV
             if (budget) { bSurface![i] += theta[i] - mark; given += theta[i] - mark }
@@ -1054,13 +1064,13 @@ export class AtmosphereModel implements TaskModel {
 
   /** The settings helper threads must follow (threads.ts): the config and the model's switches. */
   settings() {
-    return JSON.stringify({ config: this.config, microphysics: this.microphysics, transport: this.transport, rainFormation: this.rainFormation, windRelaxation: this.windRelaxation, fixedViscosity: this.fixedViscosity, transportSlabs: this.transportSlabs, pressureInStages: this.pressureInStages, rainIntercept: this.rainIntercept, turbulenceWidth: this.turbulenceWidth })
+    return JSON.stringify({ config: this.config, microphysics: this.microphysics, transport: this.transport, rainFormation: this.rainFormation, windRelaxation: this.windRelaxation, fixedViscosity: this.fixedViscosity, transportSlabs: this.transportSlabs, pressureInStages: this.pressureInStages, rainIntercept: this.rainIntercept, turbulenceWidth: this.turbulenceWidth, verticalLength: this.verticalLength, verticalMixing: this.verticalMixing })
   }
 
   applySettings(json: string) {
     const s = JSON.parse(json)
     Object.assign(this.config, s.config)
-    this.microphysics = s.microphysics; this.transport = s.transport; this.rainFormation = s.rainFormation; this.windRelaxation = s.windRelaxation; this.fixedViscosity = s.fixedViscosity; this.transportSlabs = s.transportSlabs; this.pressureInStages = s.pressureInStages; this.rainIntercept = s.rainIntercept; this.turbulenceWidth = s.turbulenceWidth
+    this.microphysics = s.microphysics; this.transport = s.transport; this.rainFormation = s.rainFormation; this.windRelaxation = s.windRelaxation; this.fixedViscosity = s.fixedViscosity; this.transportSlabs = s.transportSlabs; this.pressureInStages = s.pressureInStages; this.rainIntercept = s.rainIntercept; this.turbulenceWidth = s.turbulenceWidth; this.verticalLength = s.verticalLength; this.verticalMixing = s.verticalMixing
   }
 
   /** Makes the node velocities exactly free of dual-cell divergence (see PressureSolver); ground and top are rigid walls. */

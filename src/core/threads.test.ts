@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { AtmosphereModel, AttachedMemory, controlBuffer, createGrid, type GridOptions, SharedMemory, type StepRunner, ThreadRunner } from '.'
+import { AtmosphereModel, AttachedMemory, controlBuffer, createGrid, DT, type GridOptions, SCENARIOS, SharedMemory, type StepRunner, ThreadRunner } from '.'
 import { SUMMER_DAY } from './fixtures'
 
 // A small stretched domain: enough for a cloud, rain and ice in 15 minutes, fast enough for the quick tests.
@@ -41,6 +41,38 @@ describe('threaded steps (src/core/threads.ts)', () => {
       return { run: (phase, tasks, dt) => { helper.applySettings(m.settings()); helper.time = m.time; for (let k = 0; k < tasks; k++) (k % 2 ? helper : m).runTask(phase, k, dt) } }
     }, 300, memory)
     expect(same(inOrder, shared)).toBe(true)
+  })
+
+  it('and on a cloudy storm whose anvil shades the ground: the shade reaches the surface levels of the helpers', () => {
+    // Until 30.10.2026 the shading flag was the main model's alone: the helpers' levels heated the ground as under a clear sky.
+    const cfg = () => ({ ...SUMMER_DAY, ...structuredClone(SCENARIOS[2].values) })
+    const go = (helped: boolean) => {
+      const memory = new SharedMemory(), m = new AtmosphereModel(cfg(), createGrid(GRID), undefined, { memory })
+      m.transportSlabs = 10
+      if (helped) {
+        const helper = new AtmosphereModel(cfg(), createGrid(GRID), undefined, { memory: new AttachedMemory(memory.buffers), attach: true })
+        m.runner = { run: (phase, tasks, dt) => { helper.applySettings(m.settings()); helper.time = m.time; for (let k = 0; k < tasks; k++) (k % 2 ? helper : m).runTask(phase, k, dt) } }
+      }
+      for (let k = 0; k < 360; k++) { m.step(DT); m.time += DT }
+      return m
+    }
+    const plain = go(false)
+    expect(Math.min(...plain.sunNow)).toBeLessThan(.5)
+    expect(same(plain, go(true))).toBe(true)
+  })
+
+  it('keeps it so with the vertical mixing experiments switched on (they reach the helpers in the settings)', () => {
+    const variant = (m: AtmosphereModel) => { m.verticalLength = 'dz'; m.verticalMixing = 'implicit' }
+    const plain = run(m => { variant(m); return m.runner }, 200)
+    const memory = new SharedMemory()
+    const shared = run(m => {
+      variant(m)
+      const helper = new AtmosphereModel({ ...SUMMER_DAY, bubble: 1.4 }, createGrid(GRID), undefined, { memory: new AttachedMemory(memory.buffers), attach: true })
+      return { run: (phase, tasks, dt) => { helper.applySettings(m.settings()); helper.time = m.time; for (let k = 0; k < tasks; k++) (k % 2 ? helper : m).runTask(phase, k, dt) } }
+    }, 200, memory)
+    expect(same(plain, shared)).toBe(true)
+    // And the experiments do change the run.
+    expect(same(plain, run(null, 200))).toBe(false)
   })
 
   it('lets a helper attach to the same memory: it sees the fields and the switches of the main model', () => {
