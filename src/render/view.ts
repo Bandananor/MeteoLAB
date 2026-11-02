@@ -415,7 +415,25 @@ export class StormView {
       // The view draws only when there is something new (a few frames a second at first): the first report after 5 s.
       const [show, first] = reportPanel(() => { this.reportAt = 0 })
       this.showReport = show; if (first) this.reportAt = performance.now() + 5000
-      this.reportParts = () => ({ sky: this.skyDome, ground: this.ground, clouds: this.volumeMesh, materials: [this.volumeMaterial, groundMat], light: this.light.target, safe: [...safe] })
+      const v = (o: { x: number; y: number; z: number } | THREE.Color) => o instanceof THREE.Color ? [o.r, o.g, o.b].map(x => +x.toPrecision(4)).join(' ') : [o.x, o.y, o.z].map(x => +x.toPrecision(4)).join(' ')
+      const nan = (a: ArrayLike<number>) => { let n = 0; for (let i = 0; i < a.length; i++) if (!Number.isFinite(a[i])) n++; return n }
+      const swap = <T,>(get: () => T, put: (x: T) => void, value: T) => () => { const was = get(); put(value); return () => put(was) }
+      this.reportParts = () => ({
+        sky: this.skyDome, ground: this.ground, clouds: this.volumeMesh, materials: [this.volumeMaterial, groundMat], light: this.light.target, safe: [...safe],
+        values: () => {
+          const fog = this.scene.fog as THREE.FogExp2, m = this.model
+          return [
+            `Values: haze ${this.haze}, fog density ${fog.density}, fog colour ${v(fog.color)}, sky gain ${this.skyGain}, air scale ${this.air.uAirScale?.value}, sun dir ${v(this.shared.uSunDir.value as THREE.Vector3)}`,
+            `  sun light ${v(this.sunLight.color)} x${this.sunLight.intensity}, hemi ${v(this.hemiLight.color)} / ${v(this.hemiLight.groundColor)}, ground beyond ${v(this.skyMaterial.uniforms.uGroundLight.value as THREE.Color)}, exposure ${this.renderer.toneMappingExposure}`,
+            `  model t ${m.time} s: non-finite theta ${nan(m.theta)}, q ${nan(m.q)}, u ${nan(m.u)}, w ${nan(m.w)}, cloud ${nan(m.cloud)}; sky table ${nan(this.sky?.sky ?? [])}`,
+          ]
+        },
+        extra: [
+          { label: 'no fog', part: this.ground, set: swap(() => this.scene.fog, f => { this.scene.fog = f }, null) },
+          { label: 'no lights', part: this.ground, set: swap(() => [this.sunLight.visible, this.hemiLight.visible] as const, ([a, b]) => { this.sunLight.visible = a; this.hemiLight.visible = b }, [false, false] as const) },
+          { label: 'haze 0', part: this.skyDome, set: swap(() => this.air.uHaze.value as number, h => { this.air.uHaze.value = h }, 0) },
+        ],
+      })
     }
     this.light = new LightVolume(nx, ny, nz, this.shared, this.volumeTexture)
     this.flashLight = new FlashVolume(nx, ny, nz, this.shared, this.volumeTexture)

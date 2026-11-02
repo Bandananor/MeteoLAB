@@ -14,6 +14,10 @@ export interface ReportParts {
   /** The cloud's and the ground's materials: a switch goes into their defines (each change recompiles them). */
   materials: THREE.Material[]
   light: THREE.WebGL3DRenderTarget; safe: string[]
+  /** The numbers the shaders get (the haze, the fog, the lights...) and the model's fields' NaN, as text lines. */
+  values: () => string[]
+  /** More tries: a part drawn with one thing changed (set returns the undo). */
+  extra: { label: string; part: THREE.Object3D; set: () => () => void }[]
 }
 
 const fmt = (v: number) => Number.isNaN(v) ? 'NaN' : !Number.isFinite(v) ? (v > 0 ? '+Inf' : '-Inf') : Math.abs(v) >= 1e4 || (v !== 0 && Math.abs(v) < 1e-3) ? v.toExponential(2) : v.toFixed(3)
@@ -70,8 +74,9 @@ function lightLines(renderer: THREE.WebGLRenderer, gl: WebGL2RenderingContext, l
 /** One part of the view drawn alone into a float target: how many of its pixels are NaN, infinite, black or fine. */
 function partLine(renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.Camera, part: THREE.Object3D, name: string, float: boolean) {
   const w = 96, h = 64, target = new THREE.WebGLRenderTarget(w, h, { type: float ? THREE.FloatType : THREE.UnsignedByteType })
+  // The lights stay: the part is drawn as on the screen.
   const shown = scene.children.map(c => c.visible)
-  scene.children.forEach(c => { c.visible = c === part })
+  scene.children.forEach(c => { c.visible = c === part || ((c as THREE.Light).isLight === true && c.visible) })
   const color = renderer.getClearColor(new THREE.Color()), alpha = renderer.getClearAlpha()
   renderer.setClearColor(0, 0); renderer.setRenderTarget(target); renderer.clear(); renderer.render(scene, camera)
   const out = float ? new Float32Array(w * h * 4) : new Uint8Array(w * h * 4)
@@ -97,6 +102,7 @@ export function viewReport(renderer: THREE.WebGLRenderer, scene: THREE.Scene, ca
   const float = !!gl.getExtension('EXT_color_buffer_float')
   const lines = [`MeteoLab view report, ${new Date().toISOString()}, ${location.pathname}`, ...deviceLines(gl)]
   if (parts.safe.length) lines.push(`?view-safe: ${parts.safe.join(',')}`)
+  lines.push(...parts.values())
   // A switch ?view-safe already set is in the shaders (a second #define of it would not compile): not tried again.
   const tries: [string, string | null][] = [['as drawn', null], ['no air shading (VIEW_SAFE_AIR)', 'VIEW_SAFE_AIR'], ['constant sun (VIEW_SAFE_LIGHT)', 'VIEW_SAFE_LIGHT']]
   const set = { VIEW_SAFE_AIR: 'air', VIEW_SAFE_LIGHT: 'light' } as const
@@ -113,6 +119,10 @@ export function viewReport(renderer: THREE.WebGLRenderer, scene: THREE.Scene, ca
       if (key) parts.materials.forEach(m => { m.defines = { ...m.defines, [key]: '' } })
       lines.push(`  [${label}] ` + partLine(renderer, scene, camera, parts.ground, 'ground', float))
       lines.push(`  [${label}] ` + (off('clouds') ? 'clouds: off (?view-safe clouds)' : partLine(renderer, scene, camera, parts.clouds, 'clouds', float)))
+    }
+    for (const t of parts.extra) {
+      const undo = t.set()
+      try { lines.push(`  [${t.label}] ` + partLine(renderer, scene, camera, t.part, t.part === parts.sky ? 'sky' : t.part === parts.ground ? 'ground' : 'clouds', float)) } finally { undo() }
     }
   } catch (e) {
     lines.push(`Report failed: ${e instanceof Error ? e.message : String(e)}`)
