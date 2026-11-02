@@ -5,6 +5,7 @@ import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js'
 import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js'
 import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeometry.js'
 import { FlashVolume, LightVolume } from './light'
+import { reportPanel, viewReport } from './report'
 import { noiseTexture } from './noise'
 import { LightningView } from './lightning'
 import { SpriteView } from './sprites'
@@ -237,6 +238,9 @@ export class StormView {
   private readonly shared: Record<string, THREE.IUniform>
   /** Parts turned off by ?view-safe (a debugging aid for phones whose 3D view comes out black). */
   private readonly safe: { light: boolean; ground: boolean; clouds: boolean }
+  /** ?view-report: the panel's setter for the report text, and when to take it (ms; 0 on the next frame when asked). */
+  private showReport?: (text: string) => void; private reportAt = Infinity
+  private readonly reportParts?: () => import('./report').ReportParts
   private readonly light: LightVolume; private readonly flashLight: FlashVolume; private readonly strikeLight: THREE.PointLight
   /** The strongest updraught of each column, and of each column with those beside it (the tower's), m/s. */
   /** Scratch of the volume's update, per node: the cloud's extinction-weighted mass, the shafts' mass, the ice share, the tower's updraught. */
@@ -407,6 +411,12 @@ export class StormView {
     if (off('air')) defines.VIEW_SAFE_AIR = ''
     this.safe = { light: off('light'), ground: off('ground'), clouds: off('clouds') }
     if (safe.size) console.warn('MeteoLab view-safe:', [...safe].join(','))
+    if (typeof location !== 'undefined' && new URLSearchParams(location.search).has('view-report')) {
+      // The view draws only when there is something new (a few frames a second at first): the first report after 5 s.
+      const [show, first] = reportPanel(() => { this.reportAt = 0 })
+      this.showReport = show; if (first) this.reportAt = performance.now() + 5000
+      this.reportParts = () => ({ sky: this.skyDome, ground: this.ground, clouds: this.volumeMesh, materials: [this.volumeMaterial, groundMat], light: this.light.target, safe: [...safe] })
+    }
     this.light = new LightVolume(nx, ny, nz, this.shared, this.volumeTexture)
     this.flashLight = new FlashVolume(nx, ny, nz, this.shared, this.volumeTexture)
     this.volumeMaterial = new THREE.ShaderMaterial({ name: 'cloudVolume', defines,
@@ -1208,5 +1218,6 @@ if(abs(uSurface - 2.0) < 0.5){
     if (s.showVectors && this.frame % 4 === 0) this.updateVectors()
     this.followObserver()
     this.frame++; this.controls.update(); this.renderer.render(this.scene, this.camera)
+    if (now >= this.reportAt && this.showReport && this.reportParts) { this.reportAt = Infinity; this.showReport(viewReport(this.renderer, this.scene, this.camera, this.reportParts())) }
   }
 }
