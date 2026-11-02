@@ -5,9 +5,9 @@ import { download } from '../share'
 import { MONO } from '../theme'
 import { cssGradient, extent, KINDS, lookup, lutIndex, type Palette, type PaletteKind, Palettes, parsePal, type RGB, type Stop, ticks, toPal } from './palettes'
 
-type Product = 'Z' | 'V' | 'SRV' | 'CR' | 'ZDR' | 'RHO' | 'KDP' | 'VIL' | 'ET' | 'MESH'
+type Product = 'Z' | 'V' | 'SRV' | 'CR' | 'ZDR' | 'RHO' | 'KDP' | 'VIL' | 'ET' | 'MESH' | 'VGO'
 /** Products of the whole volume scan (PPI.composite), not of one tilt. */
-const VOLUME: readonly Product[] = ['CR', 'VIL', 'ET', 'MESH']
+const VOLUME: readonly Product[] = ['CR', 'VIL', 'ET', 'MESH', 'VGO']
 /** What the vertical section shows. */
 type XsField = 'Z' | 'V' | 'SRV' | 'ZDR' | 'RHO' | 'KDP'
 type Point = { x: number; y: number }
@@ -41,6 +41,7 @@ const PRODUCTS: Record<Product, { label: string; title: string; kind: PaletteKin
   VIL: { label: L('VIL — водозапас столба', 'VIL — vertically integrated liquid'), title: L('VIL · ВОДОЗАПАС СТОЛБА', 'VIL · VERTICALLY INTEGRATED LIQUID'), kind: 'VIL' },
   ET: { label: L('ET — высота эха', 'ET — echo tops'), title: L('ET · ВЫСОТА ЭХА', 'ET · ECHO TOPS'), kind: 'ET' },
   MESH: { label: L('MESH — ожидаемый размер града', 'MESH — maximum expected size of hail'), title: L('MESH · РАЗМЕР ГРАДА', 'MESH · HAIL SIZE'), kind: 'MESH' },
+  VGO: { label: L('ВГО — верхняя граница облачности (ДМРЛ-С)', 'ВГО — cloud top height (DMRL-C)'), title: L('ВГО · ВЕРХНЯЯ ГРАНИЦА ОБЛАЧНОСТИ', 'ВГО · CLOUD TOP HEIGHT'), kind: 'ET' },
 }
 const XS_FIELDS: Record<XsField, { name: string; short: string; reading: string; kind: PaletteKind }> = {
   Z: { name: L('отражаемость', 'reflectivity'), short: 'Z', reading: L('Отражаемость', 'Reflectivity'), kind: 'Z' }, V: { name: L('скорость вдоль луча', 'velocity along the beam'), short: 'V', reading: L('Скорость', 'Velocity'), kind: 'V' },
@@ -60,6 +61,7 @@ const HELP: Record<Product, string> = {
   KDP: L(`Удельная дифференциальная фаза, °/км: насколько горизонтальная волна отстаёт от вертикальной в дожде. Растёт с количеством воды и почти не замечает града, поэтому по KDP находят сильный ливень внутри ядра града. Здесь — только от дождя. ${DUAL_NOTE}`, `Specific differential phase, °/km: how much the horizontal wave lags the vertical one in rain. It grows with the amount of water and hardly notices hail, so KDP finds heavy rain inside a hail core. Here — from rain only. ${DUAL_NOTE}`),
   VIL: L('Водозапас столба: сколько воды «в каплях» над каждой точкой, кг/м², — по отражаемости всех 14 наклонов (Greene и Clark 1972; эхо сильнее 56 dBZ считается как 56, чтобы град не шёл за воду). Больше 40–50 — мощное ядро, вероятен град; под курсором — и плотность VIL (VIL на высоту эха): от 3,5 г/м³ — вероятен крупный град. В модели и одиночная ячейка доходит до ~40 при плотности ~4,5: ядро крупы отражает сильнее природного (одномоментная микрофизика); у суперячеек — 50–60.', 'Vertically integrated liquid: how much water “as drops” is above each point, kg/m², from the reflectivity of all 14 tilts (Greene and Clark 1972; echo over 56 dBZ counts as 56, so hail is not taken for water). Above 40–50 — a strong core, hail likely; under the cursor also the VIL density (VIL over the echo top): from 3.5 g/m³ large hail is likely. In the model a single cell too reaches ~40 at a density of ~4.5: its graupel core echoes more strongly than in nature (one-moment microphysics); supercells give 50–60.'),
   ET: L('Высота эха: самый высокий луч с эхом от 18 dBZ (как у NWS). Показывает, как высоко поднялся восходящий поток: 12–16 км — мощная гроза; вершина над тропопаузой — сильный поток пробил её (купол над наковальней). Ступенька на ~1 км — от шага наклонов, а вблизи радара даже наклон 19,5° не достаёт до вершины («конус молчания»): там высота — нижняя оценка, под курсором — «≥». Так и на настоящем радаре.', 'Echo tops: the highest beam with at least 18 dBZ echo (as the NWS). Shows how high the updraught has risen: 12–16 km — a strong storm; a top above the tropopause — a strong updraught has punched through it (the dome over the anvil). Steps of ~1 km come from the tilts’ spacing, and near the radar even the 19.5° tilt does not reach the top (the cone of silence): there the height is a lower bound, “≥” under the cursor. So it is on a real radar too.'),
+  VGO: L('Верхняя граница облачности, как её даёт ДМРЛ-С: самый высокий луч объёмного обзора с эхом от −5 dBZ (методические указания Росгидромета 2014). В курсоре — остальные величины столба, по которым российские радары узнают явления: Z1 (0,6–1 км) и Z2 (2–4 км) — для осадков и ливней, Z на уровне нулевой изотермы H2 и на 2,25 км выше неё H3 — для грозы и града, Zmax выше 1 км. Облака без осадков модель радару не показывает: ВГО — это верх осадков и снега в облаке, не всего облака.', 'The cloud top height as the DMRL-C gives it: the highest beam of the volume scan with echo from −5 dBZ (the Roshydromet guidelines of 2014). The cursor shows the other column quantities by which the Russian radars recognise phenomena: Z1 (0.6–1 km) and Z2 (2–4 km) for rain and showers, Z at the 0 °C level H2 and 2.25 km above it H3 for thunder and hail, Zmax above 1 km. The model shows the radar no cloud without precipitation: ВГО is the top of the rain and snow in the cloud, not of the whole cloud.'),
   MESH: L('Ожидаемый наибольший размер града, мм (Witt и др. 1998): по эхо сильнее 40 dBZ выше уровня 0 °C, с полным весом выше −20 °C, где растёт град. От 19 мм — град опасный по меркам NWS, от 50 — крупный. Оценка по отражаемости, как на настоящем радаре; сколько града падает в модели — у станции и на панели («Град у земли»). В модели MESH завышен: ядро крупы отражает сильнее природного (63–69 dBZ и у одиночной ячейки), и «Летний день» показывает до ~50 мм при граде в самой модели до 8 мм; у классической суперячейки 50–65 мм — ближе к природе в такой среде, чем град самой модели (до 16 мм: одномоментная схема не растит крупный).', 'The maximum expected size of hail, mm (Witt et al. 1998): from echo over 40 dBZ above the 0 °C level, with full weight above −20 °C, where hail grows. From 19 mm — severe hail by NWS standards, from 50 — large. An estimate from the reflectivity, as on a real radar; what hail falls in the model is at the station and on the panel («Hail at the ground»). In the model MESH runs high: the graupel core echoes more strongly than in nature (63–69 dBZ even in a single cell), and the «Summer day» shows up to ~50 mm with the model’s own hail up to 8 mm; the classic supercell’s 50–65 mm is closer to nature in such an environment than the model’s own hail (up to 16 mm: the one-moment scheme does not grow large stones).'),
 }
 const NO_ECHO = L('нет эха', 'no echo'), DELETE = L('Удалить', 'Delete')
@@ -466,7 +468,7 @@ export class RadarPanel {
     const ppi = this.ppi
     if (!ppi) return null
     if (this.product === 'V' && this.folding) return this.folded(ppi.velocity, 'map')
-    return { Z: ppi.dbz, V: ppi.velocity, SRV: ppi.velocity, CR: ppi.compositeDbz, ZDR: ppi.zdr, RHO: ppi.rho, KDP: ppi.kdp, VIL: ppi.vil, ET: ppi.echoTop, MESH: ppi.mesh }[this.product]
+    return { Z: ppi.dbz, V: ppi.velocity, SRV: ppi.velocity, CR: ppi.compositeDbz, ZDR: ppi.zdr, RHO: ppi.rho, KDP: ppi.kdp, VIL: ppi.vil, ET: ppi.echoTop, MESH: ppi.mesh, VGO: ppi.vgo }[this.product]
   }
 
   /** The values of the section's field. */
@@ -857,6 +859,7 @@ export class RadarPanel {
       // VIL density (VIL over the echo top): from ~3.5 g/m³ large hail is likely (Amburn & Wolf 1997).
       // Folded: what the wind really is there, to learn to see folding (a real radar would need dealiasing for it).
       ...(this.product === 'V' && this.folding && Math.abs(ppi.velocity[i]) > RADARS[this.radar].nyquist ? [[L('Без складывания', 'Unfolded'), this.describe(ppi.velocity[i], 'V')] as [string, string]] : []),
+      ...(this.product === 'VGO' ? ([['Z1 (0,6–1 км)', ppi.z1[i]], ['Z2 (2–4 км)', ppi.z2[i]], [`Z(H2 = ${(ppi.levelH2 / 1000).toFixed(1)} ${L('км', 'km')})`, ppi.zh2[i]], [`Z(H3 = ${(ppi.levelH3 / 1000).toFixed(1)} ${L('км', 'km')})`, ppi.zh3[i]], [L('Zmax выше 1 км', 'Zmax above 1 km'), ppi.zmax[i]]] as [string, number][]).map(([k, d]) => [L(k, k.replace(',', '.').replace('км', 'km')), d < 5 ? NO_ECHO : `${d.toFixed(0)} dBZ`] as [string, string]) : []),
       ...(this.product === 'VIL' && ppi.vil[i] >= 1 && ppi.echoTop[i] > 0 ? [[L('Плотность VIL', 'VIL density'), `${(ppi.vil[i] / ppi.echoTop[i]).toFixed(1)} ${L('г/м³', 'g/m³')}`] as [string, string]] : []), [name, this.product === 'ET' && ppi.echoTopped[i] ? L(`≥ ${this.describe(values[i], kind)}: верх не виден, выше верхнего наклона`, `≥ ${this.describe(values[i], kind)}: the top is not seen, above the highest tilt`) : this.describe(values[i], kind, 'in')]])
   }
 

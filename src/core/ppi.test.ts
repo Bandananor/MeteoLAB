@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { AtmosphereModel, beamHeight, createGrid, PPI, RADAR_TILTS, RADARS } from '.'
+import { AtmosphereModel, beamHeight, createGrid, PPI, RADAR_TILTS, RADARS, VGO_DBZ } from '.'
 import { QUIET } from './fixtures'
 
 describe('radar PPI', () => {
@@ -134,5 +134,24 @@ describe('radar PPI', () => {
     ppi.setProfile(RADARS.wsr88d); ppi.sample()
     expect(at(34)).toBeGreaterThan(30)
     expect(dx).toBe(1200)
+  })
+
+  it('gives the column quantities of the Russian radars from the DMRL-C volume scan: the cloud top at -5 dBZ, Z1, Z2, Zmax, the echo at H2 and H3', () => {
+    const model = new AtmosphereModel({ ...QUIET }, createGrid({ nx: 40, ny: 8, nz: 30, width: 48_000, depth: 9_600, height: 15_000, bottomSpacing: 100 }))
+    const { layer, nx, nz, zs } = model.grid
+    // Rain below 3 km in the column 15 km east of the centre (row 4), 2 g/kg.
+    const cx = 20 + Math.round(15_000 / model.grid.dx)
+    for (let y = 3; y <= 5; y++) for (let z = 0; z < nz; z++) if (zs[z] < 3000) model.rain[cx + nx * y + z * layer] = 2e-3
+    const ppi = new PPI(model, 96, 19)
+    ppi.setProfile(RADARS.dmrl); ppi.composite()
+    const i = ppi.compositeDbz.indexOf(Math.max(...ppi.compositeDbz)), cr = ppi.compositeDbz[i]
+    expect(cr).toBeGreaterThan(40); expect(Math.abs(ppi.ground(i % 96, Math.floor(i / 96)).x - 39_000)).toBeLessThan(2000)
+    // The layers inside the shaft see it; the cloud top lies near its top, within the tilts' spacing (~1 km at 15 km).
+    expect(ppi.z1[i]).toBeGreaterThan(cr - 3); expect(ppi.z2[i]).toBeGreaterThan(cr - 6); expect(ppi.zmax[i]).toBeGreaterThan(cr - 2); expect(ppi.zmax[i]).toBeLessThanOrEqual(cr)
+    expect(ppi.vgo[i]).toBeGreaterThan(2.3); expect(ppi.vgo[i]).toBeLessThan(4.5)
+    // H3 lies 2.25 km above the 0 °C level, both above the shaft: little or no echo there.
+    expect(ppi.levelH3 - ppi.levelH2).toBe(2250); expect(ppi.zh3[i]).toBeLessThan(VGO_DBZ)
+    // Clear air: no cloud top, the floor elsewhere.
+    expect(ppi.vgo[96 * 2]).toBe(0); expect(ppi.z1[96 * 2]).toBe(-20)
   })
 })

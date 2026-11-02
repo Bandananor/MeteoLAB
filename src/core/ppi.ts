@@ -36,6 +36,12 @@ export const DUAL_MIN_DBZ = 10
  */
 /** The echo top's reflectivity, dBZ (NWS enhanced echo tops), and the reflectivity VIL counts at most, dBZ (hail above it). */
 export const ECHO_TOP_DBZ = 18, VIL_MAX_DBZ = 56
+/**
+ * The Russian radars' column quantities (Roshydromet DMRL-C guidelines 2014, section 5.1; GIMET-2010): the cloud top
+ * H_ВГО at -5 dBZ, the layers Z1 (0.6-1 km) and Z2 (2-4 km), the levels H2 (0 °C) and H3 (2-2.5 km above it, here 2.25)
+ * and Zmax above 1 km.
+ */
+export const VGO_DBZ = -5, Z1_LAYER = [600, 1000] as const, Z2_LAYER = [2000, 4000] as const, H3_ABOVE = 2250, ZMAX_FROM = 1000
 
 /**
  * Nyquist velocities of the folding option, m/s: a pulsed Doppler radar measures the radial velocity only within
@@ -56,6 +62,14 @@ export class PPI {
   readonly echoTopped: Uint8Array
   /** The maximum expected size of hail (MESH, mm) from the volume scan, with composite(). */
   readonly mesh: Float32Array
+  /**
+   * The column quantities of the Russian radars from the volume scan, with composite(): the cloud top H_ВГО (km, the
+   * highest beam with VGO_DBZ; 0: none), the strongest echo in the layers Z1 and Z2 and above ZMAX_FROM, and the echo
+   * at the levels H2 and H3 (dBZ; between two tilts linear in height, DBZ_FLOOR where no beam passes).
+   */
+  readonly vgo: Float32Array; readonly z1: Float32Array; readonly z2: Float32Array; readonly zmax: Float32Array; readonly zh2: Float32Array; readonly zh3: Float32Array
+  /** The levels H2 and H3 of the last composite(), m. */
+  levelH2 = 0; levelH3 = 0
   private readonly gx: Float32Array; private readonly gy: Float32Array; private readonly sinAz: Float32Array; private readonly cosAz: Float32Array
   /** Grid level of the beam per tilt (-1 above the model top), for the current site. */
   private readonly levels = new Map<number, Float32Array>()
@@ -83,7 +97,7 @@ export class PPI {
   constructor(model: AtmosphereModel, w: number, h: number) {
     this.model = model; this.w = w; this.h = h
     const n = w * h, f = () => new Float32Array(n)
-    this.dbz = f(); this.velocity = f(); this.compositeDbz = f(); this.zdr = f(); this.rho = f(); this.kdp = f(); this.vil = f(); this.echoTop = f(); this.echoTopped = new Uint8Array(n); this.mesh = f(); this.gx = f(); this.gy = f(); this.sinAz = f(); this.cosAz = f(); this.range = f()
+    this.dbz = f(); this.velocity = f(); this.compositeDbz = f(); this.zdr = f(); this.rho = f(); this.kdp = f(); this.vil = f(); this.echoTop = f(); this.echoTopped = new Uint8Array(n); this.mesh = f(); this.vgo = f(); this.z1 = f(); this.z2 = f(); this.zmax = f(); this.zh2 = f(); this.zh3 = f(); this.gx = f(); this.gy = f(); this.sinAz = f(); this.cosAz = f(); this.range = f()
     this.nodeDbz = new Float32Array(model.grid.n); this.nodeFall = new Float32Array(model.grid.n)
     this.nodeZdr = new Float32Array(model.grid.n); this.nodeRho = new Float32Array(model.grid.n).fill(1); this.nodeKdp = new Float32Array(model.grid.n)
     this.site = { x: model.grid.width / 2, y: model.grid.depth / 2 }
@@ -203,9 +217,22 @@ export class PPI {
     const out = this.compositeDbz, m = this.model, grid = m.grid, vil = this.vil, top = this.echoTop
     const [ox, oy] = this.shift(), last = new Float32Array(out.length).fill(NaN), lastH = new Float32Array(out.length), lastE = new Float32Array(out.length), mesh = this.mesh
     out.fill(DBZ_FLOOR); vil.fill(0); top.fill(0); this.echoTopped.fill(0); mesh.fill(0)
+    const { vgo, z1, z2, zmax, zh2, zh3 } = this, lastD = new Float32Array(out.length)
+    vgo.fill(0); z1.fill(DBZ_FLOOR); z2.fill(DBZ_FLOOR); zmax.fill(DBZ_FLOOR); zh2.fill(DBZ_FLOOR); zh3.fill(DBZ_FLOOR)
     let h0 = 0, h20 = 0
     while (h0 < grid.height && m.env.temperatureEnv(h0) > 0) h0 += 25
     h20 = h0; while (h20 < grid.height && m.env.temperatureEnv(h20) > -20) h20 += 25
+    const h3 = h0 + H3_ABOVE; this.levelH2 = h0; this.levelH3 = h3
+    // The echo at height H between the previous beam (h1, d1) and this one (h2, d2), and a layer's strongest echo: the
+    // beams inside it and the interpolated echo where the beams cross its bounds.
+    const between = (h1: number, d1: number, h2: number, d2: number, H: number) => d1 + (d2 - d1) * (H - h1) / (h2 - h1)
+    const layer = (into: Float32Array, i: number, h1: number, d1: number, h2: number, d2: number, a: number, b: number) => {
+      let v = into[i]
+      if (h2 >= a && h2 <= b) v = Math.max(v, d2)
+      if (h1 < a && h2 >= a) v = Math.max(v, between(h1, d1, h2, d2, a))
+      if (h1 < b && h2 >= b) v = Math.max(v, between(h1, d1, h2, d2, b))
+      into[i] = v
+    }
     const tilts = this.tilts, highest = tilts[tilts.length - 1], reach = this.profile.range
     for (const tilt of tilts) {
       const gz = this.levelsFor(tilt)
@@ -216,6 +243,15 @@ export class PPI {
         if (d > out[i]) out[i] = d
         if (d >= ECHO_TOP_DBZ) top[i] = Math.max(top[i], h / 1000)
         if (tilt === highest) this.echoTopped[i] = d >= ECHO_TOP_DBZ ? 1 : 0
+        if (d >= VGO_DBZ) vgo[i] = Math.max(vgo[i], h / 1000)
+        if (Number.isNaN(last[i])) { if (h >= ZMAX_FROM) zmax[i] = Math.max(zmax[i], d); if (h >= Z1_LAYER[0] && h <= Z1_LAYER[1]) z1[i] = d; if (h >= Z2_LAYER[0] && h <= Z2_LAYER[1]) z2[i] = d }
+        else if (h > lastH[i]) {
+          const h1 = lastH[i], d1 = lastD[i]
+          layer(z1, i, h1, d1, h, d, Z1_LAYER[0], Z1_LAYER[1]); layer(z2, i, h1, d1, h, d, Z2_LAYER[0], Z2_LAYER[1]); layer(zmax, i, h1, d1, h, d, ZMAX_FROM, Infinity)
+          if (h1 < h0 && h >= h0) zh2[i] = between(h1, d1, h, d, h0)
+          if (h1 < h3 && h >= h3) zh3[i] = between(h1, d1, h, d, h3)
+        }
+        lastD[i] = d
         const zl = d > DBZ_FLOOR ? 10 ** (Math.min(d, VIL_MAX_DBZ) / 10) : 0
         if (!Number.isNaN(last[i]) && h > lastH[i]) vil[i] += 3.44e-6 * ((last[i] + zl) / 2) ** (4 / 7) * (h - lastH[i])
         const e = d > 40 ? 5e-6 * 10 ** (.084 * d) * Math.min(1, (d - 40) / 10) * Math.max(0, Math.min(1, (h - h0) / Math.max(1, h20 - h0))) : 0
