@@ -38,7 +38,11 @@ function deviceLines(gl: WebGL2RenderingContext) {
 }
 
 /** What the driver returns for GLSL the standard leaves undefined, one value per pixel of a float target. */
-const PROBES: [string, string][] = [['1/0', '1.0 / uZero'], ['-1/0', '-1.0 / uZero'], ['0/0', 'uZero / uZero'], ['log(0)', 'log(uZero)'], ['pow(-1,2)', 'pow(-uOne, 2.0)'], ['sqrt(-1)', 'sqrt(-uOne)'], ['normalize(0)', 'normalize(vec3(uZero)).x'], ['clamp(1/0)', 'clamp(1.0 / uZero, 0.0, 1.0)'], ['max(NaN,1)', 'max(uZero / uZero, 1.0)']]
+const PROBES: [string, string][] = [['1/0', '1.0 / uZero'], ['-1/0', '-1.0 / uZero'], ['0/0', 'uZero / uZero'], ['log(0)', 'log(uZero)'], ['pow(-1,2)', 'pow(-uOne, 2.0)'], ['sqrt(-1)', 'sqrt(-uOne)'], ['normalize(0)', 'normalize(vec3(uZero)).x'], ['clamp(1/0)', 'clamp(1.0 / uZero, 0.0, 1.0)'], ['max(NaN,1)', 'max(uZero / uZero, 1.0)'],
+  // exp far below zero (float32's smallest normal is e^-87.3) and the haze's column of the fog (view.ts fogColumn) at a
+  // camera 24 km up, 40 km from the ground seen.
+  ['exp(-20)', 'exp(-20.0 * uOne)'], ['exp(-90)', 'exp(-90.0 * uOne)'], ['exp(-200)', 'exp(-200.0 * uOne)'], ['exp2(-130)', 'exp2(-130.0 * uOne)'], ['exp(-1e4)', 'exp(-1e4 * uOne)'],
+  ['haze column', '1.2 * 40.0 / (-24.0 * uOne) * (exp(-24.0 * uOne / 1.2) - exp(uZero))'], ['transpose', 'transpose(mat3(uOne, 2.0, 0.0, 0.0, uOne, 0.0, 0.0, 0.0, uOne))[0].y']]
 
 /**
  * Screen-space derivatives on an 8 x 8 quad, which three's standard material takes of the normal (geometryRoughness) and
