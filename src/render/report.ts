@@ -40,6 +40,33 @@ function deviceLines(gl: WebGL2RenderingContext) {
 /** What the driver returns for GLSL the standard leaves undefined, one value per pixel of a float target. */
 const PROBES: [string, string][] = [['1/0', '1.0 / uZero'], ['-1/0', '-1.0 / uZero'], ['0/0', 'uZero / uZero'], ['log(0)', 'log(uZero)'], ['pow(-1,2)', 'pow(-uOne, 2.0)'], ['sqrt(-1)', 'sqrt(-uOne)'], ['normalize(0)', 'normalize(vec3(uZero)).x'], ['clamp(1/0)', 'clamp(1.0 / uZero, 0.0, 1.0)'], ['max(NaN,1)', 'max(uZero / uZero, 1.0)']]
 
+/**
+ * Screen-space derivatives on an 8 x 8 quad, which three's standard material takes of the normal (geometryRoughness) and
+ * the sky's ground beyond the domain of its pattern (inside a branch, where GLSL leaves them undefined): per kind the
+ * pixels with NaN or Inf and the range of the rest. Expected: dFdx(x) 1/8 everywhere, of a constant 0.
+ */
+const DERIVATIVES: [string, string][] = [['dFdx(x)', 'dFdx(vUv.x)'], ['dFdy(y)', 'dFdy(vUv.y)'], ['dFdx(const)', 'dFdx(vC.x)'], ['fwidth(xy)', 'length(fwidth(vUv))'], ['dFdx(x) in a branch', 'gl_FragCoord.x < 4.0 ? dFdx(vUv.x * 2.0) : 0.5']]
+function derivativeLines(renderer: THREE.WebGLRenderer) {
+  const n = 8, target = new THREE.WebGLRenderTarget(n, n, { type: THREE.FloatType, depthBuffer: false }), out = new Float32Array(n * n * 4), lines: string[] = []
+  for (const [name, expr] of DERIVATIVES) {
+    const material = new THREE.ShaderMaterial({
+      vertexShader: 'varying vec2 vUv;\nvarying vec3 vC;\nvoid main(){ vUv = uv; vC = vec3(0.0, 0.0, 1.0); gl_Position = vec4(position.xy, 0.0, 1.0); }',
+      fragmentShader: `precision highp float;
+varying vec2 vUv;
+varying vec3 vC;
+void main(){ float v = ${expr}; gl_FragColor = vec4(v, 0.0, 0.0, 1.0); }`,
+    })
+    const scene = new THREE.Scene(), quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), material); quad.frustumCulled = false; scene.add(quad)
+    renderer.setRenderTarget(target); renderer.render(scene, new THREE.Camera()); renderer.readRenderTargetPixels(target, 0, 0, n, n, out)
+    let bad = 0, lo = Infinity, hi = -Infinity
+    for (let k = 0; k < n * n; k++) { const v = out[k * 4]; if (!Number.isFinite(v)) bad++; else { lo = Math.min(lo, v); hi = Math.max(hi, v) } }
+    lines.push(`${name} ${bad ? `${bad} px NaN/Inf, ` : ''}${fmt(lo)}..${fmt(hi)}`)
+    material.dispose(); quad.geometry.dispose()
+  }
+  renderer.setRenderTarget(null); target.dispose()
+  return [`Derivatives (8 x 8 quad): ${lines.join('; ')}`]
+}
+
 function probeLines(renderer: THREE.WebGLRenderer, float: boolean) {
   if (!float) return ['Undefined GLSL: no float render target (EXT_color_buffer_float), not measured']
   const target = new THREE.WebGLRenderTarget(PROBES.length, 1, { type: THREE.FloatType, depthBuffer: false })
@@ -110,7 +137,7 @@ export function viewReport(renderer: THREE.WebGLRenderer, scene: THREE.Scene, ca
   const restore = () => parts.materials.forEach((m, k) => { m.defines = before[k]; m.needsUpdate = true })
   try {
     const off = (part: string) => parts.safe.includes(part) || parts.safe.includes('all')
-    lines.push(...probeLines(renderer, float), ...(off('light') ? ['Light volume: not computed (?view-safe light)'] : lightLines(renderer, gl, parts.light)))
+    lines.push(...probeLines(renderer, float), ...(float ? derivativeLines(renderer) : []), ...(off('light') ? ['Light volume: not computed (?view-safe light)'] : lightLines(renderer, gl, parts.light)))
     lines.push(`Parts drawn alone into a ${float ? 'float' : '8-bit (NaN shows as black)'} target:`)
     lines.push('  ' + partLine(renderer, scene, camera, parts.sky, 'sky', float))
     for (const [label, key] of tries) {

@@ -431,6 +431,8 @@ export class StormView {
         extra: [
           { label: 'no fog', part: this.ground, set: swap(() => this.scene.fog, f => { this.scene.fog = f }, null) },
           { label: 'no lights', part: this.ground, set: swap(() => [this.sunLight.visible, this.hemiLight.visible] as const, ([a, b]) => { this.sunLight.visible = a; this.hemiLight.visible = b }, [false, false] as const) },
+          // The ground in three's own materials: the standard one takes derivatives of the normal, Lambert none.
+          ...([['standard material', new THREE.MeshStandardMaterial({ color: groundMat.color })], ['Lambert material', new THREE.MeshLambertMaterial({ color: groundMat.color })], ['basic material', new THREE.MeshBasicMaterial({ color: groundMat.color })]] as const).map(([label, mat]) => ({ label, part: this.ground, set: swap(() => this.ground.material, x => { this.ground.material = x }, mat as THREE.Material) })),
           { label: 'haze 0', part: this.skyDome, set: swap(() => this.air.uHaze.value as number, h => { this.air.uHaze.value = h }, 0) },
         ],
       })
