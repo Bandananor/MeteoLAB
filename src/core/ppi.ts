@@ -3,6 +3,7 @@ import type { AtmosphereModel } from './model'
 import { dualPol } from './polarimetry'
 import { DBZ_FLOOR, reflectivity, reflectivityFallSpeed } from './radar'
 import { RADARS, type RadarProfile } from './radars'
+import { phenomenon, RD_CRITERIA } from './phenomena'
 
 /** Elevation angles of a NEXRAD volume scan (VCP 12/212), degrees: the WSR-88D profile's. */
 export const RADAR_TILTS = RADARS.wsr88d.tilts
@@ -68,8 +69,12 @@ export class PPI {
    * at the levels H2 and H3 (dBZ; between two tilts linear in height, DBZ_FLOOR where no beam passes).
    */
   readonly vgo: Float32Array; readonly z1: Float32Array; readonly z2: Float32Array; readonly zmax: Float32Array; readonly zh2: Float32Array; readonly zh3: Float32Array
+  /** The echo at H0 + 1.4 km (the hail core's level of RD 52.04.320-91), dBZ, with composite(). */
+  readonly zCore: Float32Array
   /** The levels H2 and H3 of the last composite(), m. */
   levelH2 = 0; levelH3 = 0
+  /** The phenomena map (phenomena.ts codes; 31 beyond the radar's range), with phenomena(). */
+  readonly codes: Uint8Array
   private readonly gx: Float32Array; private readonly gy: Float32Array; private readonly sinAz: Float32Array; private readonly cosAz: Float32Array
   /** Grid level of the beam per tilt (-1 above the model top), for the current site. */
   private readonly levels = new Map<number, Float32Array>()
@@ -97,7 +102,7 @@ export class PPI {
   constructor(model: AtmosphereModel, w: number, h: number) {
     this.model = model; this.w = w; this.h = h
     const n = w * h, f = () => new Float32Array(n)
-    this.dbz = f(); this.velocity = f(); this.compositeDbz = f(); this.zdr = f(); this.rho = f(); this.kdp = f(); this.vil = f(); this.echoTop = f(); this.echoTopped = new Uint8Array(n); this.mesh = f(); this.vgo = f(); this.z1 = f(); this.z2 = f(); this.zmax = f(); this.zh2 = f(); this.zh3 = f(); this.gx = f(); this.gy = f(); this.sinAz = f(); this.cosAz = f(); this.range = f()
+    this.dbz = f(); this.velocity = f(); this.compositeDbz = f(); this.zdr = f(); this.rho = f(); this.kdp = f(); this.vil = f(); this.echoTop = f(); this.echoTopped = new Uint8Array(n); this.mesh = f(); this.vgo = f(); this.z1 = f(); this.z2 = f(); this.zmax = f(); this.zh2 = f(); this.zh3 = f(); this.zCore = f(); this.codes = new Uint8Array(n); this.gx = f(); this.gy = f(); this.sinAz = f(); this.cosAz = f(); this.range = f()
     this.nodeDbz = new Float32Array(model.grid.n); this.nodeFall = new Float32Array(model.grid.n)
     this.nodeZdr = new Float32Array(model.grid.n); this.nodeRho = new Float32Array(model.grid.n).fill(1); this.nodeKdp = new Float32Array(model.grid.n)
     this.site = { x: model.grid.width / 2, y: model.grid.depth / 2 }
@@ -218,11 +223,11 @@ export class PPI {
     const [ox, oy] = this.shift(), last = new Float32Array(out.length).fill(NaN), lastH = new Float32Array(out.length), lastE = new Float32Array(out.length), mesh = this.mesh
     out.fill(DBZ_FLOOR); vil.fill(0); top.fill(0); this.echoTopped.fill(0); mesh.fill(0)
     const { vgo, z1, z2, zmax, zh2, zh3 } = this, lastD = new Float32Array(out.length)
-    vgo.fill(0); z1.fill(DBZ_FLOOR); z2.fill(DBZ_FLOOR); zmax.fill(DBZ_FLOOR); zh2.fill(DBZ_FLOOR); zh3.fill(DBZ_FLOOR)
+    vgo.fill(0); z1.fill(DBZ_FLOOR); z2.fill(DBZ_FLOOR); zmax.fill(DBZ_FLOOR); zh2.fill(DBZ_FLOOR); zh3.fill(DBZ_FLOOR); this.zCore.fill(DBZ_FLOOR)
     let h0 = 0, h20 = 0
     while (h0 < grid.height && m.env.temperatureEnv(h0) > 0) h0 += 25
     h20 = h0; while (h20 < grid.height && m.env.temperatureEnv(h20) > -20) h20 += 25
-    const h3 = h0 + H3_ABOVE; this.levelH2 = h0; this.levelH3 = h3
+    const h3 = h0 + H3_ABOVE, hCore = h0 + RD_CRITERIA.hailCoreAbove; this.levelH2 = h0; this.levelH3 = h3
     // The echo at height H between the previous beam (h1, d1) and this one (h2, d2), and a layer's strongest echo: the
     // beams inside it and the interpolated echo where the beams cross its bounds.
     const between = (h1: number, d1: number, h2: number, d2: number, H: number) => d1 + (d2 - d1) * (H - h1) / (h2 - h1)
@@ -250,6 +255,7 @@ export class PPI {
           layer(z1, i, h1, d1, h, d, Z1_LAYER[0], Z1_LAYER[1]); layer(z2, i, h1, d1, h, d, Z2_LAYER[0], Z2_LAYER[1]); layer(zmax, i, h1, d1, h, d, ZMAX_FROM, Infinity)
           if (h1 < h0 && h >= h0) zh2[i] = between(h1, d1, h, d, h0)
           if (h1 < h3 && h >= h3) zh3[i] = between(h1, d1, h, d, h3)
+          if (h1 < hCore && h >= hCore) this.zCore[i] = between(h1, d1, h, d, hCore)
         }
         lastD[i] = d
         const zl = d > DBZ_FLOOR ? 10 ** (Math.min(d, VIL_MAX_DBZ) / 10) : 0
@@ -260,6 +266,23 @@ export class PPI {
       }
     }
     for (let i = 0; i < mesh.length; i++) mesh[i] = 2.54 * Math.sqrt(mesh[i])
+  }
+
+  /**
+   * The phenomena map from the last composite() (phenomena.ts): the environment's 0 °C and -22 °C levels and its
+   * tropopause (the lowest level from 5 km where the temperature falls less than 2 K over the next 2 km), the cell motion
+   * `motion` (m/s) for the squalls; 31 (no data) beyond the radar's range.
+   */
+  phenomena(motion: number) {
+    const e = this.model.env, top = this.model.grid.height, t = (h: number) => e.temperatureEnv(h)
+    let h22 = 0; while (h22 < top && t(h22) > -22) h22 += 25
+    let trop = 5000; while (trop < top - 2000 && t(trop) - t(trop + 2000) >= 4) trop += 100
+    const levels = { h0: this.levelH2 / 1000, h22: h22 / 1000, tropopause: trop / 1000, motion: motion * 3.6 }
+    for (let i = 0; i < this.codes.length; i++) {
+      if (this.range[i] > this.profile.range) { this.codes[i] = 31; continue }
+      this.codes[i] = phenomenon({ top: this.vgo[i], strongest: this.compositeDbz[i], z1: this.z1[i], z2: this.z2[i], zh3: this.zh3[i], zCore: this.zCore[i], zmax: this.zmax[i], mesh: this.mesh[i] }, levels)
+    }
+    return levels
   }
 
   /**

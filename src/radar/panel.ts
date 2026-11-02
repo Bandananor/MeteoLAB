@@ -1,13 +1,15 @@
 import { L } from '../i18n'
-import { type AtmosphereModel, type Circulation, DBZ_FLOOR, DUAL_MIN_DBZ, MESO_STRENGTH, type MesoStrength, MesocycloneDetector, fold, PPI, RADARS, type RadarId, TDA_LOW_DV, TDA_MAX_DV } from '../core'
+import { type AtmosphereModel, type Circulation, DBZ_FLOOR, DUAL_MIN_DBZ, MESO_STRENGTH, type MesoStrength, MesocycloneDetector, fold, PHENOMENA, type PhenomenaLevels, PPI, RADARS, type RadarId, TDA_LOW_DV, TDA_MAX_DV } from '../core'
 import { help, instrumentPalette, instrumentScreen, press, readings, section } from '../instrument'
 import { download } from '../share'
 import { MONO } from '../theme'
 import { cssGradient, extent, KINDS, lookup, lutIndex, type Palette, type PaletteKind, Palettes, parsePal, type RGB, type Stop, ticks, toPal } from './palettes'
 
-type Product = 'Z' | 'V' | 'SRV' | 'CR' | 'ZDR' | 'RHO' | 'KDP' | 'VIL' | 'ET' | 'MESH' | 'VGO'
+type Product = 'Z' | 'V' | 'SRV' | 'CR' | 'ZDR' | 'RHO' | 'KDP' | 'VIL' | 'ET' | 'MESH' | 'VGO' | 'MAP'
 /** Products of the whole volume scan (PPI.composite), not of one tilt. */
-const VOLUME: readonly Product[] = ['CR', 'VIL', 'ET', 'MESH', 'VGO']
+const VOLUME: readonly Product[] = ['CR', 'VIL', 'ET', 'MESH', 'VGO', 'MAP']
+/** The phenomena map's colours by code (RGBA; no echo transparent). */
+const PHEN_RGBA = new Map(PHENOMENA.map(p => [p.code, p.color === 'transparent' ? [0, 0, 0, 0] : [parseInt(p.color.slice(1, 3), 16), parseInt(p.color.slice(3, 5), 16), parseInt(p.color.slice(5, 7), 16), 255]]))
 /** What the vertical section shows. */
 type XsField = 'Z' | 'V' | 'SRV' | 'ZDR' | 'RHO' | 'KDP'
 type Point = { x: number; y: number }
@@ -41,6 +43,7 @@ const PRODUCTS: Record<Product, { label: string; title: string; kind: PaletteKin
   VIL: { label: L('VIL — водозапас столба', 'VIL — vertically integrated liquid'), title: L('VIL · ВОДОЗАПАС СТОЛБА', 'VIL · VERTICALLY INTEGRATED LIQUID'), kind: 'VIL' },
   ET: { label: L('ET — высота эха', 'ET — echo tops'), title: L('ET · ВЫСОТА ЭХА', 'ET · ECHO TOPS'), kind: 'ET' },
   MESH: { label: L('MESH — ожидаемый размер града', 'MESH — maximum expected size of hail'), title: L('MESH · РАЗМЕР ГРАДА', 'MESH · HAIL SIZE'), kind: 'MESH' },
+  MAP: { label: L('Явления — карта метеоявлений (как у ДМРЛ-С)', 'Phenomena — the phenomena map (as the DMRL-C)'), title: L('КАРТА МЕТЕОЯВЛЕНИЙ', 'PHENOMENA MAP'), kind: 'Z' },
   VGO: { label: L('ВГО — верхняя граница облачности (ДМРЛ-С)', 'ВГО — cloud top height (DMRL-C)'), title: L('ВГО · ВЕРХНЯЯ ГРАНИЦА ОБЛАЧНОСТИ', 'ВГО · CLOUD TOP HEIGHT'), kind: 'ET' },
 }
 const XS_FIELDS: Record<XsField, { name: string; short: string; reading: string; kind: PaletteKind }> = {
@@ -61,6 +64,7 @@ const HELP: Record<Product, string> = {
   KDP: L(`Удельная дифференциальная фаза, °/км: насколько горизонтальная волна отстаёт от вертикальной в дожде. Растёт с количеством воды и почти не замечает града, поэтому по KDP находят сильный ливень внутри ядра града. Здесь — только от дождя. ${DUAL_NOTE}`, `Specific differential phase, °/km: how much the horizontal wave lags the vertical one in rain. It grows with the amount of water and hardly notices hail, so KDP finds heavy rain inside a hail core. Here — from rain only. ${DUAL_NOTE}`),
   VIL: L('Водозапас столба: сколько воды «в каплях» над каждой точкой, кг/м², — по отражаемости всех 14 наклонов (Greene и Clark 1972; эхо сильнее 56 dBZ считается как 56, чтобы град не шёл за воду). Больше 40–50 — мощное ядро, вероятен град; под курсором — и плотность VIL (VIL на высоту эха): от 3,5 г/м³ — вероятен крупный град. В модели и одиночная ячейка доходит до ~40 при плотности ~4,5: ядро крупы отражает сильнее природного (одномоментная микрофизика); у суперячеек — 50–60.', 'Vertically integrated liquid: how much water “as drops” is above each point, kg/m², from the reflectivity of all 14 tilts (Greene and Clark 1972; echo over 56 dBZ counts as 56, so hail is not taken for water). Above 40–50 — a strong core, hail likely; under the cursor also the VIL density (VIL over the echo top): from 3.5 g/m³ large hail is likely. In the model a single cell too reaches ~40 at a density of ~4.5: its graupel core echoes more strongly than in nature (one-moment microphysics); supercells give 50–60.'),
   ET: L('Высота эха: самый высокий луч с эхом от 18 dBZ (как у NWS). Показывает, как высоко поднялся восходящий поток: 12–16 км — мощная гроза; вершина над тропопаузой — сильный поток пробил её (купол над наковальней). Ступенька на ~1 км — от шага наклонов, а вблизи радара даже наклон 19,5° не достаёт до вершины («конус молчания»): там высота — нижняя оценка, под курсором — «≥». Так и на настоящем радаре.', 'Echo tops: the highest beam with at least 18 dBZ echo (as the NWS). Shows how high the updraught has risen: 12–16 km — a strong storm; a top above the tropopause — a strong updraught has punched through it (the dome over the anvil). Steps of ~1 km come from the tilts’ spacing, and near the radar even the 19.5° tilt does not reach the top (the cone of silence): there the height is a lower bound, “≥” under the cursor. So it is on a real radar too.'),
+  MAP: L('Карта метеоявлений, как у ДМРЛ-С: в каждой точке — наибольшее из узнанных явлений, коды и порядок легенды — ГИМЕТ-2010 (методические указания Росгидромета 2014, табл. 4.7.1). Свои пороги ГИМЕТ-2010 не опубликованы, поэтому критерии — из руководства для МРЛ-5 РД 52.04.320-91: осадки по Z1 (18 / 30 / 46 dBZ); гроза по Y = H·lgZ3 при вершине не ниже −22 °C (порог H(−22 °C)·1,2, затем +6 и +14); град — 58 dBZ, или 55 при вершине от 10 км, с ядром от 46 dBZ выше H0 + 1,4 км; шквал — скорость по табл. 2.7 из движения ячеек при вершине от 10 км; смерч — вершина на 3 км выше тропопаузы при 53 dBZ. Выбор проекта (в РД градаций нет): ливень — осадки при Z2 от 18 dBZ и вершине выше нулевой изотермы; град умеренный — от 63 dBZ, сильный — ещё и MESH от 2 см; шквал 15–20 / 20–25 / > 25 м/с и только над ядром от 46 dBZ выше H0 + 1,4 км. Град, шквал и смерч — только при грозе > 90 % (так в указаниях). Код шквала старше града, поэтому над ядром суперячейки град часто скрыт шквалом — смотрите MESH. Модель даёт ядра крупы 63–69 dBZ и слишком холодный отток — град и шквал на карте чаще, чем в природе.', 'The phenomena map as the DMRL-C makes it: at each point the highest of the phenomena recognised, the codes and the legend\'s order those of GIMET-2010 (the Roshydromet guidelines of 2014, table 4.7.1). GIMET-2010\'s own thresholds are not published, so the criteria are those of the MRL-5 guide RD 52.04.320-91: precipitation by Z1 (18 / 30 / 46 dBZ); thunder by Y = H·lgZ3 with the top at least at −22 °C (threshold H(−22 °C)·1.2, then +6 and +14); hail — 58 dBZ, or 55 with a top from 10 km, with a core from 46 dBZ above H0 + 1.4 km; squall — the speed by table 2.7 from the cells\' motion with a top from 10 km; tornado — the top 3 km above the tropopause with 53 dBZ. This project\'s choice (the RD has no grades): shower — precipitation with Z2 from 18 dBZ and the top above the 0 °C level; moderate hail from 63 dBZ, heavy with MESH from 2 cm too; squall 15–20 / 20–25 / > 25 m/s and only over a core from 46 dBZ above H0 + 1.4 km. Hail, squall and tornado only with thunder > 90 % (as the guidelines say). The squall code ranks above hail, so over the core of a supercell the hail is often hidden by the squall — see MESH. The model gives graupel cores of 63–69 dBZ and a too cold outflow — hail and squalls show on the map more often than in nature.'),
   VGO: L('Верхняя граница облачности, как её даёт ДМРЛ-С: самый высокий луч объёмного обзора с эхом от −5 dBZ (методические указания Росгидромета 2014). В курсоре — остальные величины столба, по которым российские радары узнают явления: Z1 (0,6–1 км) и Z2 (2–4 км) — для осадков и ливней, Z на уровне нулевой изотермы H2 и на 2,25 км выше неё H3 — для грозы и града, Zmax выше 1 км. Облака без осадков модель радару не показывает: ВГО — это верх осадков и снега в облаке, не всего облака.', 'The cloud top height as the DMRL-C gives it: the highest beam of the volume scan with echo from −5 dBZ (the Roshydromet guidelines of 2014). The cursor shows the other column quantities by which the Russian radars recognise phenomena: Z1 (0.6–1 km) and Z2 (2–4 km) for rain and showers, Z at the 0 °C level H2 and 2.25 km above it H3 for thunder and hail, Zmax above 1 km. The model shows the radar no cloud without precipitation: ВГО is the top of the rain and snow in the cloud, not of the whole cloud.'),
   MESH: L('Ожидаемый наибольший размер града, мм (Witt и др. 1998): по эхо сильнее 40 dBZ выше уровня 0 °C, с полным весом выше −20 °C, где растёт град. От 19 мм — град опасный по меркам NWS, от 50 — крупный. Оценка по отражаемости, как на настоящем радаре; сколько града падает в модели — у станции и на панели («Град у земли»). В модели MESH завышен: ядро крупы отражает сильнее природного (63–69 dBZ и у одиночной ячейки), и «Летний день» показывает до ~50 мм при граде в самой модели до 8 мм; у классической суперячейки 50–65 мм — ближе к природе в такой среде, чем град самой модели (до 16 мм: одномоментная схема не растит крупный).', 'The maximum expected size of hail, mm (Witt et al. 1998): from echo over 40 dBZ above the 0 °C level, with full weight above −20 °C, where hail grows. From 19 mm — severe hail by NWS standards, from 50 — large. An estimate from the reflectivity, as on a real radar; what hail falls in the model is at the station and on the panel («Hail at the ground»). In the model MESH runs high: the graupel core echoes more strongly than in nature (63–69 dBZ even in a single cell), and the «Summer day» shows up to ~50 mm with the model’s own hail up to 8 mm; the classic supercell’s 50–65 mm is closer to nature in such an environment than the model’s own hail (up to 16 mm: the one-moment scheme does not grow large stones).'),
 }
@@ -118,7 +122,7 @@ export class RadarPanel {
   /** The radar profile (radars.ts): its tilts, bins, ranges and Nyquist velocity. */
   private radar = loadRadar()
   /** Whether the base velocity folds at the radar's Nyquist velocity (V and its section), and the buffers it is folded into. */
-  private folding = false; private foldedMap = new Float32Array(0); private foldedCut = new Float32Array(0)
+  private folding = false; private levels: PhenomenaLevels | null = null; private foldedMap = new Float32Array(0); private foldedCut = new Float32Array(0)
   private detector = new MesocycloneDetector(); private detections: Circulation[] = []; private lastScan = 0; private scanTime = -1; private showMda = true; private showWeak = false
   /** Storm motion for SRV (the Bunkers right mover of the environment), m/s. */
   private motion: readonly [number, number] = [0, 0]
@@ -154,7 +158,7 @@ export class RadarPanel {
         <span class="label">${L('Поле разреза', 'Section field')}</span>${seg('xs', (Object.keys(XS_FIELDS) as XsField[]).map(f => [f, XS_FIELDS[f].short]))}
         <span class="t-caption" id="xsInfo"></span>
         <span class="t-caption">${L('Концы A и B перетаскиваются. Shift + протянуть по карте — новая линия, Shift + щелчок — от радара через точку.', 'The ends A and B can be dragged. Shift + drag on the map — a new line, Shift + click — from the radar through a point.')}</span>`)
-      + section(L('Шкала и палитра', 'Scale and palette'), `<div class="colorbar"><div class="colorbar__bar" id="radarLegend"></div><div class="colorbar__ticks" id="radarTicks"></div></div>
+      + section(L('Шкала и палитра', 'Scale and palette'), `<div class="colorbar" id="radarColorbar"><div class="colorbar__bar" id="radarLegend"></div><div class="colorbar__ticks" id="radarTicks"></div></div><div id="radarPhenomena" hidden><div style="display:grid;grid-template-columns:auto 1fr;gap:2px 8px;font-size:12px">${PHENOMENA.filter(p => p.code).map(p => `<i style="width:14px;height:10px;align-self:center;background:${p.color}"></i><span>${p.code} · ${p.name}</span>`).join('')}</div></div>
         <div class="field"><span class="field__label" id="paletteLabel">${L('Палитра', 'Palette')}</span><span class="select"><select id="paletteSelect"></select></span></div>
         <div class="radar-buttons"><button class="btn btn--xs" id="paletteEdit" title="${L('Редактор палитры: точки «значение → цвет», плавно или ступенями', 'Palette editor: “value → colour” points, smooth or in steps')}">${L('Изменить', 'Edit')}</button><button class="btn btn--xs" id="paletteImport" title="${L('Файл .pal радарных программ (строки Color: / SolidColor:)', 'A .pal file of radar software (Color: / SolidColor: lines)')}">${L('Импорт .pal', 'Import .pal')}</button><button class="btn btn--xs" id="paletteExport">${L('Экспорт .pal', 'Export .pal')}</button><button class="btn btn--xs" id="paletteDelete" hidden>${DELETE}</button></div>
         <input type="file" id="paletteFile" accept=".pal,.txt,text/plain" hidden>
@@ -305,7 +309,7 @@ export class RadarPanel {
     this.lastTime = time; this.lastDraw = now
     ppi.stormMotion = this.product === 'SRV' ? this.motion : null
     ppi.dual = RadarPanel.dual(this.kind()) || (this.xs.on && RadarPanel.dual(this.xsKind()))
-    if (VOLUME.includes(this.product)) { ppi.composite(); this.lastComposite = now } else ppi.sample()
+    if (VOLUME.includes(this.product)) { ppi.composite(); this.lastComposite = now; if (this.product === 'MAP') this.levels = ppi.phenomena(Math.hypot(...this.motion)) } else ppi.sample()
     this.cutSection()
     // New model time (or a new radar site): rescan, at most every MDA_EVERY ms. The detection's prepare() leaves the
     // dual-polarisation nodes as they are (it needs only Z and V).
@@ -415,7 +419,8 @@ export class RadarPanel {
 
   /** The chosen palette of the map's kind: its colour bar, ticks and the palette list. */
   private showPalette() {
-    const kind = this.kind(), k = KINDS[kind], palette = this.palettes.chosen(kind)
+    const kind = this.kind(), k = KINDS[kind], palette = this.palettes.chosen(kind), map = this.product === 'MAP'
+    this.root.querySelector<HTMLElement>('#radarColorbar')!.hidden = map; this.root.querySelector<HTMLElement>('#radarPhenomena')!.hidden = !map
     this.root.querySelector<HTMLElement>('#radarUnits')!.textContent = k.units
     this.root.querySelector<HTMLElement>('#paletteLabel')!.textContent = `${L('Палитра', 'Palette')} · ${k.label}`
     const range = extent(palette)
@@ -468,7 +473,7 @@ export class RadarPanel {
     const ppi = this.ppi
     if (!ppi) return null
     if (this.product === 'V' && this.folding) return this.folded(ppi.velocity, 'map')
-    return { Z: ppi.dbz, V: ppi.velocity, SRV: ppi.velocity, CR: ppi.compositeDbz, ZDR: ppi.zdr, RHO: ppi.rho, KDP: ppi.kdp, VIL: ppi.vil, ET: ppi.echoTop, MESH: ppi.mesh, VGO: ppi.vgo }[this.product]
+    return { Z: ppi.dbz, V: ppi.velocity, SRV: ppi.velocity, CR: ppi.compositeDbz, ZDR: ppi.zdr, RHO: ppi.rho, KDP: ppi.kdp, VIL: ppi.vil, ET: ppi.echoTop, MESH: ppi.mesh, VGO: ppi.vgo, MAP: ppi.compositeDbz }[this.product]
   }
 
   /** The values of the section's field. */
@@ -508,6 +513,11 @@ export class RadarPanel {
   /** The product raster in its palette (no echo: transparent). */
   private paint() {
     if (!this.ppi || !this.image) return
+    if (this.product === 'MAP') {
+      const data = this.image.data, codes = this.ppi.codes
+      for (let i = 0; i < codes.length; i++) data.set(PHEN_RGBA.get(codes[i]) ?? [0, 0, 0, 0], i * 4)
+      this.rasterCtx.putImageData(this.image, 0, 0); return
+    }
     const values = this.values()
     if (!values) return
     this.colour(values, this.kind(), this.image.data, i => i * 4)
@@ -859,7 +869,8 @@ export class RadarPanel {
       // VIL density (VIL over the echo top): from ~3.5 g/m³ large hail is likely (Amburn & Wolf 1997).
       // Folded: what the wind really is there, to learn to see folding (a real radar would need dealiasing for it).
       ...(this.product === 'V' && this.folding && Math.abs(ppi.velocity[i]) > RADARS[this.radar].nyquist ? [[L('Без складывания', 'Unfolded'), this.describe(ppi.velocity[i], 'V')] as [string, string]] : []),
-      ...(this.product === 'VGO' ? ([['Z1 (0,6–1 км)', ppi.z1[i]], ['Z2 (2–4 км)', ppi.z2[i]], [`Z(H2 = ${(ppi.levelH2 / 1000).toFixed(1)} ${L('км', 'km')})`, ppi.zh2[i]], [`Z(H3 = ${(ppi.levelH3 / 1000).toFixed(1)} ${L('км', 'km')})`, ppi.zh3[i]], [L('Zmax выше 1 км', 'Zmax above 1 km'), ppi.zmax[i]]] as [string, number][]).map(([k, d]) => [L(k, k.replace(',', '.').replace('км', 'km')), d < 5 ? NO_ECHO : `${d.toFixed(0)} dBZ`] as [string, string]) : []),
+      ...(this.product === 'MAP' ? [[L('Явление', 'Phenomenon'), PHENOMENA.find(p => p.code === ppi.codes[i])?.name ?? '—'], [L('ВГО', 'Cloud top'), ppi.vgo[i] > 0 ? `${ppi.vgo[i].toFixed(1)} ${L('км', 'km')}` : NO_ECHO], ...(this.levels && ppi.vgo[i] > 0 && ppi.zh3[i] > 18 ? [[`Y = H·lgZ3 (${L('порог', 'threshold')} ${(this.levels.h22 * 1.2).toFixed(1)})`, (ppi.vgo[i] * (ppi.zh3[i] - 18) / 10).toFixed(1)]] : [])] as [string, string][] : []),
+      ...(this.product === 'VGO' || this.product === 'MAP' ? ([['Z1 (0,6–1 км)', ppi.z1[i]], ['Z2 (2–4 км)', ppi.z2[i]], [`Z(H2 = ${(ppi.levelH2 / 1000).toFixed(1)} ${L('км', 'km')})`, ppi.zh2[i]], [`Z(H3 = ${(ppi.levelH3 / 1000).toFixed(1)} ${L('км', 'km')})`, ppi.zh3[i]], [L('Zmax выше 1 км', 'Zmax above 1 km'), ppi.zmax[i]]] as [string, number][]).map(([k, d]) => [L(k, k.replace(',', '.').replace('км', 'km')), d < 5 ? NO_ECHO : `${d.toFixed(0)} dBZ`] as [string, string]) : []),
       ...(this.product === 'VIL' && ppi.vil[i] >= 1 && ppi.echoTop[i] > 0 ? [[L('Плотность VIL', 'VIL density'), `${(ppi.vil[i] / ppi.echoTop[i]).toFixed(1)} ${L('г/м³', 'g/m³')}`] as [string, string]] : []), [name, this.product === 'ET' && ppi.echoTopped[i] ? L(`≥ ${this.describe(values[i], kind)}: верх не виден, выше верхнего наклона`, `≥ ${this.describe(values[i], kind)}: the top is not seen, above the highest tilt`) : this.describe(values[i], kind, 'in')]])
   }
 
