@@ -4,9 +4,15 @@
 // updraught, how continuous the line is (share of the rows along y with an updraught >= 5 m/s at ~3 km), where the
 // line is (circular mean x of those updraughts, in the domain and over the ground, and its ground-relative speed), the
 // cold pool (coldest theta' and the share of the domain >= 1 K colder at the ground), gusts, rain.
-//   npx vite build --ssr tests/bench/squall.ts --outDir .bench/squall && node .bench/squall/squall.js <variant> [hours=2] [env] [meso]
+// The RKW balance too (src/core/rkw.ts coldPoolBalance: C from the cold pool's buoyancy, Δu over 0-2.5 km, C/Δu).
+//   npx vite build --ssr tests/bench/squall.ts --outDir .bench/squall && node .bench/squall/squall.js <variant> [hours=2] [env] [meso] [start=cold-pool|line|line-thermal] [speed=5]
+// start: the cold pool by default on the large domain, the row of thermals on meso (the author's choice, 02.11.2026: over
+// 3 h the cold pool gave the most continuous early line, ~100 % of rows for 30-40 min; on 2 km neither reference start
+// triggers convection, the row does). speed: the domain's eastward motion, m/s, 5 by default: 14 (the first scouting's
+// guess) outran the lines (3-9 m/s over the ground against the easterly inflow), they drifted into the western
+// relaxation zone and died there at 90-100 min.
 // meso: the same on the mesoscale mode (SimConfig.domain 'meso', 192 x 144 km at 2 km) instead of the large domain.
-import { AtmosphereModel, createGrid, domainGrid, DT, Environment, parcelIndices, skewIndices } from '../../src/core'
+import { AtmosphereModel, coldPoolBalance, createGrid, domainGrid, DT, Environment, parcelIndices, skewIndices } from '../../src/core'
 import { SUMMER_DAY } from '../../src/core/fixtures'
 
 const AIR = { surfaceTemp: 25, rhSurface: 70, rhLow: 65, rhMid: 50, rhUpper: 35, lapseLow: 8, lapseMid: 6.3, lapseUpper: 6.5, tropopause: 12, moistLayer: 1, capStrength: 0, solarMax: 0 }
@@ -19,7 +25,8 @@ export const VARIANTS = [
   { ...AIR, ...shear(-8, 10), surfaceTemp: 26.5 },
 ]
 const [variant, hours = 2] = process.argv.slice(2).map(Number), envOnly = process.argv.includes('env')
-const config = { ...SUMMER_DAY, bubble: 1.2, start: 'line', edges: 'relaxed-x', domain: process.argv.includes('meso') ? 'meso' : 'large', frameMotion: [14, 0], ...VARIANTS[variant] }
+const start = process.argv.find(a => a.startsWith('start='))?.slice(6) ?? (process.argv.includes('meso') ? 'line' : 'cold-pool'), speed = Number(process.argv.find(a => a.startsWith('speed='))?.slice(6) ?? 5)
+const config = { ...SUMMER_DAY, bubble: 1.2, start, edges: 'relaxed-x', domain: process.argv.includes('meso') ? 'meso' : 'large', frameMotion: [speed, 0], ...VARIANTS[variant] }
 const grid = createGrid(domainGrid(config.domain)), env = new Environment(config, grid), idx = parcelIndices(env, grid.height), s = skewIndices(env, grid.height)
 console.log(`variant ${variant}: SB CAPE ${idx.sb.cape.toFixed(0)} CIN ${idx.sb.cin.toFixed(0)}, ML CAPE ${idx.ml.cape.toFixed(0)}, PW ${s.pw.toFixed(0)} mm, shear 0-6 km ${s.shear06.toFixed(0)} m/s`)
 if (!envOnly) {
@@ -44,8 +51,8 @@ if (!envOnly) {
     gustMax = Math.max(gustMax, gust)
     // The line over the ground: its position in the domain plus how far the domain has moved.
     const inDomain = rows ? ((Math.atan2(sx, cx) / (2 * Math.PI) * nx + nx) % nx) * dx : NaN, front = inDomain + fu * t, speed = (front - lastFront) / 600; lastFront = front
-    const d = model.diagnostics()
-    console.log(`${(t / 60).toFixed(0)} min: w ${d.updraft.toFixed(1)} (3 km ${wMax.toFixed(1)}), line ${(100 * rows / ny).toFixed(0)} % of rows, line at ${(front / 1000).toFixed(1)} km (in domain ${(inDomain / 1000).toFixed(1)}) moving ${speed.toFixed(1)} m/s, theta' ${thMin.toFixed(1)} K pool ${(100 * pooled / layer).toFixed(0)} %, gust ${gust.toFixed(1)} m/s, rain ${d.rainTotal.toFixed(1)} mm, UH ${model.rotation.uh.toFixed(0)}, meso ${model.rotation.persisted} s, clipped ${model.clipped}, ${((performance.now() - t0) / 1000).toFixed(0)} s`)
+    const d = model.diagnostics(), b = coldPoolBalance(model)
+    console.log(`${(t / 60).toFixed(0)} min: w ${d.updraft.toFixed(1)} (3 km ${wMax.toFixed(1)}), line ${(100 * rows / ny).toFixed(0)} % of rows, line at ${(front / 1000).toFixed(1)} km (in domain ${(inDomain / 1000).toFixed(1)}) moving ${speed.toFixed(1)} m/s, theta' ${thMin.toFixed(1)} K pool ${(100 * pooled / layer).toFixed(0)} %, gust ${gust.toFixed(1)} m/s, rain ${d.rainTotal.toFixed(1)} mm, UH ${model.rotation.uh.toFixed(0)}, meso ${model.rotation.persisted} s, clipped ${model.clipped}, C ${b ? `${b.c.toFixed(1)} (max ${b.cMax.toFixed(1)}, depth ${(b.depth / 1000).toFixed(1)} km) / du ${b.deltaU.toFixed(1)} = ${b.ratio.toFixed(2)}` : '-'}, ${((performance.now() - t0) / 1000).toFixed(0)} s`)
   }
   console.log(`longest rotation ${longest} s, strongest gust ${gustMax.toFixed(1)} m/s`)
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { AtmosphereModel, rotationSummary, startOf, tornadoSigns, uhScale, createGrid, customGrid, DEFAULT_GRID, mesoGrid, domainGrid, DT, LARGE_GRID } from '.'
+import { AtmosphereModel, COLD_POOL, EDGE_ZONE, LINE_THERMAL, qsatP, rotationSummary, startOf, tornadoSigns, uhScale, createGrid, customGrid, DEFAULT_GRID, mesoGrid, domainGrid, DT, LARGE_GRID } from '.'
 import { SUMMER_DAY } from './fixtures'
 import { cleanSettings } from '../share'
 
@@ -112,5 +112,37 @@ describe('a finer horizontal grid (SimConfig.spacing, roadmap C2)', () => {
     for (let k = 0; k < 10; k++) { m.step(DT); m.time += DT }
     expect(m.u.every(Number.isFinite) && m.w.every(Number.isFinite)).toBe(true)
     expect(m.diagnostics().updraft).toBeGreaterThan(.3)
+  })
+})
+
+describe('the reference squall-line starts (start line-thermal and cold-pool)', () => {
+  const GRID = { ...DEFAULT_GRID, nx: 20, ny: 8, nz: 20 }
+  const make = (start: 'line-thermal' | 'cold-pool' | 'thermals') => new AtmosphereModel({ ...SUMMER_DAY, solarMax: 0, start }, createGrid(GRID))
+  const plain = make('thermals'), level = (m: AtmosphereModel, k: number) => m.grid.zs.findIndex(z => z >= k)
+
+  it('the line thermal: ~2 K at 1.5 km in the middle, the same along y but for the ±0.2 K noise, nothing far from it', () => {
+    const m = make('line-thermal'), { nx, ny, layer, dx, width } = m.grid, z = level(m, LINE_THERMAL.zc), mid = Math.round(width / 2 / dx)
+    for (let y = 0; y < ny; y++) {
+      const i = mid + nx * y + layer * z
+      expect(m.theta[i] - m.env.thetaEnv(m.grid.zs[z])).toBeGreaterThan(LINE_THERMAL.amplitude * .8 - LINE_THERMAL.noise)
+      expect(m.theta[i] - m.env.thetaEnv(m.grid.zs[z])).toBeLessThan(LINE_THERMAL.amplitude + LINE_THERMAL.noise + .05)
+      expect(m.theta[nx * y + layer * z]).toBeCloseTo(plain.theta[nx * y + layer * z], 3)
+    }
+    expect(m.q[mid + layer * z]).toBe(plain.q[mid + layer * z])
+  })
+
+  it('the cold pool: -6 K at the ground west of the middle, east of the relaxation zone; none east of it or above 2.5 km; the relative humidity kept', () => {
+    const m = make('cold-pool'), { nx, layer, dx } = m.grid, top = level(m, COLD_POOL.depth), c = Math.ceil(EDGE_ZONE / dx) + 1
+    // Open sides in x by default: periodic ones would give the pool a second front at the seam.
+    expect(m.edges()).toBe('relaxed-x'); expect(make('line-thermal').edges()).toBe('periodic')
+    const dth = (i: number) => m.theta[i] - plain.theta[i]
+    expect(dth(c)).toBeLessThan(-COLD_POOL.deficit * .95 + COLD_POOL.noise); expect(dth(c)).toBeGreaterThan(-COLD_POOL.deficit - COLD_POOL.noise)
+    expect(dth(1)).toBe(0); expect(dth(nx - 2)).toBe(0); expect(dth(c + layer * top)).toBe(0)
+    const p = m.env.p[0], ex = m.env.exner[0], rh = (mm: AtmosphereModel) => mm.q[c] / qsatP(mm.theta[c] * ex - 273.15, p)
+    expect(rh(m)).toBeCloseTo(rh(plain), 6); expect(m.q[c]).toBeLessThan(plain.q[c])
+  })
+
+  it('both pass the links', () => {
+    for (const start of ['line-thermal', 'cold-pool'] as const) expect(cleanSettings({ start }).start).toBe(start)
   })
 })

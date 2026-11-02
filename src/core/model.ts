@@ -16,7 +16,7 @@ import { coldMoisture, FRONT_BLUR, FRONTAL_TIME, frontalDeficit, frontDistance, 
 import { graupelFallSpeed, graupelProcesses, N0G, N0R, RHO_G, RHO_W } from './graupel'
 import { hailFallSpeed, hailMaxDiameter, hailProcesses, N0H, RHO_H, wetGrowing } from './hail'
 import { CRYSTAL_MASS, fragmentsPerKg, freezeRain, iceProcesses, saturationAdjustMixed, settleCrystals, snowFallSpeed, snowProcesses, SPLINTERS, splintering } from './ice'
-import { fallSpeed, interceptOf, N0_MP, type RainIntercept, rainProcesses, saturationAdjust } from './microphysics'
+import { fallSpeed, interceptOf, N0_MP, qsatP, type RainIntercept, rainProcesses, saturationAdjust } from './microphysics'
 import { PressureSolver } from './pressure'
 import { dragCoefficient, LONGWAVE_LOSS, surfaceFluxes } from './surface'
 import { insolation, sunDirection } from './solar'
@@ -100,6 +100,19 @@ export const NUDGE = { w: 10, xr: 10_000, zr: 1500, zc: 1500, alpha: .5, t1: 900
  * and Cold front at most 8-10 m/s in 40 min, Summer day still 10 in 70; nudged 51, 53 and 26 m/s) —, else the thermals.
  */
 export const startOf = (c: Pick<SimConfig, 'start' | 'domain' | 'front' | 'frontLine'>) => c.start ?? (c.domain === 'meso' && !c.front && !c.frontLine ? 'nudge' : 'thermals')
+
+/**
+ * The squall-line starts of the reference studies (start 'line-thermal' and 'cold-pool'), both the same all along y with
+ * white noise of ±noise K, never a row of thermals with gaps (on a 1.2-2 km grid such a row sets the cells itself).
+ * The line thermal: amplitude cos²(πβ/2), β = √(((x - x0) / halfWidth)² + ((z - zc) / halfDepth)²) < 1, vapour kept (CM1
+ * iinit 8; Weisman & Rotunno 2004 used 1.5-2.5 K). The cold pool: -deficit (1 - z / depth) K west of the domain's middle,
+ * relative humidity kept (CM1 iinit 2, after Weisman, Skamarock & Klemp 1997; Bryan & Morrison 2012 add the noise); the
+ * drier air makes it ~-7 K in θv at the ground. It needs open sides in x (the reference runs have them): its edges default
+ * to 'relaxed-x' (periodic ones would give it a second front at the seam), and it starts east of the western relaxation
+ * zone, which would warm the pool's far end back to the environment.
+ */
+export const LINE_THERMAL = { amplitude: 2, halfWidth: 10_000, zc: 1500, halfDepth: 1500, noise: .2 }
+export const COLD_POOL = { deficit: 6, depth: 2500, noise: .2 }
 
 /** Safety limits of the horizontal and vertical velocity, m/s (see AtmosphereModel.clipped). */
 export const U_LIMIT = 120, W_LIMIT = 100
@@ -338,10 +351,12 @@ export class AtmosphereModel implements TaskModel {
     }
     // The Weisman-Klemp case starts from a single thermal, as in the calibration test. An ensemble member's thermals are shifted (startOffset).
     const [sx, sy] = this.config.startOffset ?? [0, 0], bubble = (x: number, y: number, strength: number) => this.injectBubble(x + sx, y + sy, strength)
-    if (startOf(this.config) === 'line') {
+    const start = startOf(this.config)
+    if (start === 'line') {
       // Thermals every 6 km along y (periodic: the line has no ends), strength x (0.85-1.15).
       for (let y = 3000; y < D; y += 6000) bubble(W * .5, y, this.config.bubble * (.85 + .3 * this.rng()))
-    } else if (this.config.front) {
+    } else if (start === 'line-thermal' || start === 'cold-pool') this.startLine(start)
+    else if (this.config.front) {
       for (let z = 0, i = 0; z < nz; z++) for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++, i++) this.theta[i] -= this.frontDeficit(x, y, zs[z])
       // Weak thermals on the warm side, 3 km from the front, between the western zone and the front's end.
       for (let k = 0; k < 5; k++) bubble(W * (.18 + .09 * k), D / 2 - 3000, this.config.bubble)
@@ -352,6 +367,30 @@ export class AtmosphereModel implements TaskModel {
     else { bubble(W * .38, D * .45, this.config.bubble); bubble(W * .61, D * .57, .72 * this.config.bubble) }
     // The starting thermals are the setup, not something added during the run.
     this.added = { heat: 0, vapour: 0, count: 0 }
+  }
+
+  /** The reference squall-line starts (LINE_THERMAL, COLD_POOL) along the domain's middle, shifted by startOffset. */
+  private startLine(kind: 'line-thermal' | 'cold-pool') {
+    const { nx, ny, nz, dx, zs, width: W } = this.grid, x0 = mod(W * .5 + (this.config.startOffset?.[0] ?? 0), W), noise = () => 2 * this.rng() - 1
+    // The pool from the western relaxation zone (if any) to x0 (an offset that puts x0 inside the zone leaves no pool);
+    // the thermal's distance across the periodic sides. The zone holds the environment's air behind the pool, so a warm
+    // current enters its back (~15 m/s, reaching the front in ~40 min on the large domain): the reference runs keep
+    // the pool open to the boundary.
+    const west = this.edges() === 'periodic' ? 0 : EDGE_ZONE, across = (px: number) => mod(px - x0 + W / 2, W) - W / 2
+    for (let z = 0; z < nz; z++) {
+      const p = this.env.p[z], exner = this.env.exner[z]
+      for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++) {
+        const i = x + nx * (y + ny * z), px = x * dx
+        if (kind === 'line-thermal') {
+          const t = LINE_THERMAL, beta = Math.hypot(across(px) / t.halfWidth, (zs[z] - t.zc) / t.halfDepth)
+          if (beta < 1) this.theta[i] += t.amplitude * Math.cos(Math.PI * beta / 2) ** 2 + t.noise * noise()
+        } else if (px >= west && px <= x0 && zs[z] < COLD_POOL.depth) {
+          const before = this.theta[i] * exner - 273.15
+          this.theta[i] += -COLD_POOL.deficit * (1 - zs[z] / COLD_POOL.depth) + COLD_POOL.noise * noise()
+          this.q[i] *= qsatP(this.theta[i] * exner - 273.15, p) / qsatP(before, p)
+        }
+      }
+    }
   }
 
   /**
@@ -844,7 +883,7 @@ export class AtmosphereModel implements TaskModel {
   }
 
   /** The side boundaries (SimConfig.edges): relaxed when a moving front is set and they are not. */
-  edges() { return this.config.edges ?? (this.config.frontLine ? 'relaxed' : 'periodic') }
+  edges() { return this.config.edges ?? (this.config.frontLine ? 'relaxed' : this.config.start === 'cold-pool' ? 'relaxed-x' : 'periodic') }
 
   /**
    * How much colder the moving front (SimConfig.frontLine) keeps the air at node column (x, y) and height alt now, K,

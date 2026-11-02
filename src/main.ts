@@ -734,7 +734,7 @@ function syncControls() {
   surfaceSelect.value = config.surfaceType
   transportSelect.value = config.transport ?? 'weno'
   microSelect.value = config.microphysics ?? 'ice'
-  nudgeCheck.checked = startOf(config) === 'nudge'; nudgeCheck.disabled = config.start === 'line'; singleCheck.checked = !!config.single; shadeCheck.checked = config.shade !== false
+  nudgeCheck.checked = startOf(config) === 'nudge'; nudgeCheck.disabled = config.start === 'line' || config.start === 'line-thermal' || config.start === 'cold-pool'; singleCheck.checked = !!config.single; shadeCheck.checked = config.shade !== false
   followCheck.checked = config.followStorm !== false; lightningCheck.checked = config.lightning !== false; domainSelect.value = config.domain ?? 'standard'; showDomainControls()
   advection.show(config); markProfileGroups(); markModified(); showSimple()
 }
