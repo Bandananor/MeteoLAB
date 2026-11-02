@@ -35,10 +35,11 @@ uniform vec3 fogColor;
 uniform float fogDensity;
 varying float vFogDepth;
 varying vec3 vFogWorld;
+// exp(-y / H) without negating y, the parameters left as given (shaders.ts decay: Xclipse 940 lost the minus).
+float fogDecay(float y, float H){ return exp(y * (-1.0 / H)); }
 float fogColumn(float y0, float y1, float len, float H){
-  y0 = max(y0, 0.0); y1 = max(y1, 0.0);
-  float dy = y1 - y0;
-  return abs(dy) < 1e-3 * H ? len * exp(-y0 / H) : H * len / dy * (exp(-y0 / H) - exp(-y1 / H));
+  float a = max(y0, 0.0), b = max(y1, 0.0), dy = b - a;
+  return abs(dy) < 1e-3 * H ? len * fogDecay(a, H) : H * len / dy * (fogDecay(a, H) - fogDecay(b, H));
 }
 #endif`
 THREE.ShaderChunk.fog_fragment = `#ifdef USE_FOG

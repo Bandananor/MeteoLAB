@@ -206,12 +206,15 @@ vec3 skyAt(vec3 d){
   return texture(uSky, uv).rgb * uSkyGain + uSkyFloor + uCityGlow * exp(-el * 10.0);
 }
 
-// The column of an exponential layer (scale H, km) between heights y0 and y1 along len km.
+// exp(-y / H) written without negating y: a tester's Samsung Xclipse 940 (ANGLE on Vulkan, 02.11.2026) computed
+// exp(-y0 / H) as exp(+y0 / H) for a parameter reassigned by max() — columns of 1e9, then NaN over the ground, the
+// clouds and the ground beyond the domain. The same form wherever a height decays (view.ts fogColumn too).
+float decay(float y, float H){ return exp(y * (-1.0 / H)); }
+// The column of an exponential layer (scale H, km) between heights y0 and y1 along len km (parameters left as given).
 float layerColumn(float y0, float y1, float len, float H){
-  y0 = max(y0, 0.0); y1 = max(y1, 0.0);
-  float dy = y1 - y0;
-  if(abs(dy) < 1e-3 * H) return len * exp(-y0 / H);
-  return H * len / dy * (exp(-y0 / H) - exp(-y1 / H));
+  float a = max(y0, 0.0), b = max(y1, 0.0), dy = b - a;
+  if(abs(dy) < 1e-3 * H) return len * decay(a, H);
+  return H * len / dy * (decay(a, H) - decay(b, H));
 }
 // The view from outside thins the air between the camera and what it sees by uAirScale (0.5): the camera stands far off
 // to see the whole domain (40-60 km), and through the true air a storm that far fades out; the sky itself, and the view
@@ -227,7 +230,7 @@ vec3 airDepth(float y0, float y1, float len){
 vec3 aerial(vec3 ro, vec3 rd, float len, out vec3 T){
   T = exp(-airDepth(ro.y, ro.y + rd.y * len, len));
   float y0 = max(ro.y, 0.0);
-  vec3 whole = rd.y > 0.01 ? AIR_SCALE * (RAYLEIGH * RAYLEIGH_SCALE * exp(-y0 / RAYLEIGH_SCALE) + uHaze / HAZE_ALBEDO * HAZE_SCALE * exp(-y0 / HAZE_SCALE)) / rd.y : vec3(1e4);
+  vec3 whole = rd.y > 0.01 ? AIR_SCALE * (RAYLEIGH * RAYLEIGH_SCALE * decay(y0, RAYLEIGH_SCALE) + uHaze / HAZE_ALBEDO * HAZE_SCALE * decay(y0, HAZE_SCALE)) / rd.y : vec3(1e4);
   return skyAt(vec3(rd.x, max(rd.y, 0.0), rd.z)) * (1.0 - T) / max(1.0 - exp(-whole), 1e-4);
 }
 `
@@ -255,7 +258,7 @@ float airLit(vec3 ro, vec3 p){
   float lit = 0.0, wsum = 0.0;
   for(int k = 0; k < AIR_SAMPLES; k++){
     vec3 q = ro + rd * mix(a, b, (float(k) + 0.5) / float(AIR_SAMPLES));
-    float w = RAYLEIGH.g * exp(-max(q.y, 0.0) / RAYLEIGH_SCALE) + uHaze / HAZE_ALBEDO * exp(-max(q.y, 0.0) / HAZE_SCALE);
+    float w = RAYLEIGH.g * decay(max(q.y, 0.0), RAYLEIGH_SCALE) + uHaze / HAZE_ALBEDO * decay(max(q.y, 0.0), HAZE_SCALE);
     lit += w * sunThrough(lightAt(q).x);
     wsum += w;
   }

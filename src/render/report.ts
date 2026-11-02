@@ -42,7 +42,10 @@ const PROBES: [string, string][] = [['1/0', '1.0 / uZero'], ['-1/0', '-1.0 / uZe
   // exp far below zero (float32's smallest normal is e^-87.3) and the haze's column of the fog (view.ts fogColumn) at a
   // camera 24 km up, 40 km from the ground seen.
   ['exp(-20)', 'exp(-20.0 * uOne)'], ['exp(-90)', 'exp(-90.0 * uOne)'], ['exp(-200)', 'exp(-200.0 * uOne)'], ['exp2(-130)', 'exp2(-130.0 * uOne)'], ['exp(-1e4)', 'exp(-1e4 * uOne)'],
-  ['haze column', '1.2 * 40.0 / (-24.0 * uOne) * (exp(-24.0 * uOne / 1.2) - exp(uZero))'], ['transpose', 'transpose(mat3(uOne, 2.0, 0.0, 0.0, uOne, 0.0, 0.0, 0.0, uOne))[0].y']]
+  ['haze column', '1.2 * 40.0 / (-24.0 * uOne) * (exp(-24.0 * uOne / 1.2) - exp(uZero))'], ['transpose', 'transpose(mat3(uOne, 2.0, 0.0, 0.0, uOne, 0.0, 0.0, 0.0, uOne))[0].y'],
+  // How the minus went missing on the Xclipse 940 (exp(-y0 / H) gave exp(+y0 / H)): each should be e^-20 = 2.06e-9.
+  ['-param', 'negParam(24.0 * uOne)'], ['-param after max', 'negMaxParam(24.0 * uOne)'], ['-local max', 'negLocal(24.0 * uOne)'], ['-max()', 'exp(-max(24.0 * uOne, 0.0) / 1.2)'], ['decay', 'exp(max(24.0 * uOne, 0.0) * (-1.0 / 1.2))']]
+const PROBE_FUNCTIONS = 'float negParam(float y){ return exp(-y / 1.2); }\nfloat negMaxParam(float y){ y = max(y, 0.0); return exp(-y / 1.2); }\nfloat negLocal(float y){ float a = max(y, 0.0); return exp(-a / 1.2); }\n'
 
 /**
  * Screen-space derivatives on an 8 x 8 quad, which three's standard material takes of the normal (geometryRoughness) and
@@ -77,7 +80,7 @@ function probeLines(renderer: THREE.WebGLRenderer, float: boolean) {
   const material = new THREE.ShaderMaterial({
     uniforms: { uZero: { value: 0 }, uOne: { value: 1 } },
     vertexShader: 'void main(){ gl_Position = vec4(position.xy, 0.0, 1.0); }',
-    fragmentShader: `precision highp float;\nuniform float uZero;\nuniform float uOne;\nvoid main(){\n  int i = int(gl_FragCoord.x);\n  float v = 0.0;\n${PROBES.map(([, e], k) => `  if(i == ${k}) v = ${e};`).join('\n')}\n  gl_FragColor = vec4(v, 0.0, 0.0, 1.0);\n}`,
+    fragmentShader: `precision highp float;\nuniform float uZero;\nuniform float uOne;\n${PROBE_FUNCTIONS}void main(){\n  int i = int(gl_FragCoord.x);\n  float v = 0.0;\n${PROBES.map(([, e], k) => `  if(i == ${k}) v = ${e};`).join('\n')}\n  gl_FragColor = vec4(v, 0.0, 0.0, 1.0);\n}`,
   })
   const scene = new THREE.Scene(), quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), material); quad.frustumCulled = false; scene.add(quad)
   const out = new Float32Array(PROBES.length * 4)
