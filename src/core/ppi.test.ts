@@ -122,6 +122,10 @@ describe('radar PPI', () => {
     expect(ppi.tilts).toBe(RADAR_TILTS)
     ppi.setProfile(RADARS.dmrl)
     expect(ppi.tilts).toEqual(RADARS.dmrl.tilts); expect([.3, .7]).toContain(ppi.tilt)
+    // The DMRL-C measures the velocity on its own tilts: none at 1.5° (a reflectivity-only tilt), some at 1.6°.
+    expect(ppi.velocityTilts).not.toContain(1.5)
+    ppi.tilt = 1.5; ppi.layout(); ppi.sample(); expect(ppi.velocity.some(v => !Number.isNaN(v))).toBe(false)
+    ppi.tilt = 1.6; ppi.sample(); expect(ppi.velocity.some(v => !Number.isNaN(v))).toBe(true)
     ppi.setProfile(RADARS.x); ppi.layout(); ppi.sample()
     const at = (km: number) => { const px = Math.round((36 + km) * 1000 / (72_000 / 144) - .5); return ppi.dbz[px + 144 * 9] }
     expect(at(10)).toBeGreaterThan(30); expect(at(25)).toBeGreaterThan(30); expect(at(34)).toBe(-20)

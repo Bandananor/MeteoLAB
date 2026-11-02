@@ -116,7 +116,7 @@ export class MesocycloneDetector {
   scan(ppi: PPI, time: number, motion: readonly [number, number] | null = null) {
     ppi.prepare()
     const all: ShearFeature[] = [], velocities = new Map<number, Float32Array>()
-    const tilts = ppi.tilts
+    const tilts = ppi.velocityTilts
     for (const tilt of tilts) { const v = ppi.polar(tilt, STEP, GATES, BEAMS).velocity; velocities.set(tilt, v); all.push(...features(ppi, tilt, v)) }
     // Stack from the lowest tilt up: each feature joins the nearest stack whose top is one or two tilts below.
     const stacks: ShearFeature[][] = []

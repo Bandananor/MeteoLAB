@@ -32,7 +32,7 @@ export const DUAL_MIN_DBZ = 10
  * (AtmosphereModel.frame), the storm moves across the screen as past a real radar. With `dual` set, `sample` and
  * `section` also give the dual-polarisation products (polarimetry.ts): ZDR (dB), rho_hv and KDP (deg/km), NaN below
  * DUAL_MIN_DBZ. The radar profile (radars.ts) sets the tilts and the ranges: beyond `range` no echo, beyond
- * `velocityRange` no velocity.
+ * `velocityRange` or off its velocity tilts no velocity.
  */
 /** The echo top's reflectivity, dBZ (NWS enhanced echo tops), and the reflectivity VIL counts at most, dBZ (hail above it). */
 export const ECHO_TOP_DBZ = 18, VIL_MAX_DBZ = 56
@@ -119,8 +119,9 @@ export class PPI {
     }
   }
 
-  /** The volume scan's tilts. */
+  /** The volume scan's tilts, and those it measures the velocity at. */
   get tilts() { return this.profile.tilts }
+  get velocityTilts() { return this.profile.velocityTilts ?? this.profile.tilts }
 
   /** Switches the radar: its tilts and ranges (the tilt moves to the nearest of the new ones). Call layout() after changing the bins. */
   setProfile(profile: RadarProfile) {
@@ -173,7 +174,7 @@ export class PPI {
     const m = this.model, gz = this.levelsFor(this.tilt), el = this.tilt * Math.PI / 180, ce = Math.cos(el), se = Math.sin(el)
     // Ground-fixed raster over the moving domain: the model column under a pixel is shifted back by the distance the domain
     // has moved, and the radial wind is over the ground (model wind plus the frame velocity), minus the storm motion for SRV.
-    const [ox, oy] = this.shift(), [fu, fv] = m.frame, [su, sv] = this.stormMotion ?? [0, 0], cu = fu - su, cv = fv - sv, { range, velocityRange } = this.profile
+    const [ox, oy] = this.shift(), [fu, fv] = m.frame, [su, sv] = this.stormMotion ?? [0, 0], cu = fu - su, cv = fv - sv, { range } = this.profile, velocityRange = this.velocityTilts.includes(this.tilt) ? this.profile.velocityRange : -1
     for (let i = 0; i < this.dbz.length; i++) {
       const z = gz[i]
       if (z < 0 || this.range[i] > range) { this.dbz[i] = DBZ_FLOOR; this.velocity[i] = this.zdr[i] = this.rho[i] = this.kdp[i] = NaN; continue }

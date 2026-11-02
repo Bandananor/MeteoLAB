@@ -16,6 +16,11 @@ export interface RadarProfile {
   /** Azimuthal spacing of the radials, degrees (the WSR-88D's super-resolution: 0.5° with a 0.95° beam). */ step: number
   /** Range gate of the reflectivity, m. */ gate: number
   /** Elevation angles of the volume scan, degrees, ascending. */ tilts: readonly number[]
+  /**
+   * Where the radar scans the velocity at other angles or gates than the reflectivity (the DMRL-C's two volume files:
+   * reflectivity on 24 tilts at 500 m, velocity on 22 at 250 m): those tilts (ascending) and that gate, m; absent = the same.
+   */
+  velocityTilts?: readonly number[]; velocityGate?: number
   /** Nyquist velocity of the low tilts, m/s (with dual or staggered PRF where the radar uses it). */ nyquist: number
   /** Range of the reflectivity and of the Doppler velocity, m. */ range: number; velocityRange: number
   /** Time of one volume scan, s. */ volume: number
@@ -34,9 +39,11 @@ export const RADARS: Record<RadarId, RadarProfile> = {
   },
   dmrl: {
     name: L('ДМРЛ-С', 'DMRL-C'), band: 'C', wavelength: 5.33, beam: 1, step: 1, gate: 500,
-    tilts: [.1, .3, .7, 1.1, 1.6, 2.2, 2.9, 3.8, 4.8, 6, 7.5], nyquist: 42, range: 250_000, velocityRange: 125_000, volume: 600,
-    note: L('Росгидромет: C-диапазон, двухполяризационный, цикл 10 мин, Z до 250 км, скорость до 125 км', 'Roshydromet, Russia: C band, dual-polarisation, a 10 min cycle, Z to 250 km, velocity to 125 km'),
-    verified: L('частота и поляризация — брошюра ЛЭМЗ, цикл и дальности — ЦАО; луч 1°, строб 500 м, наклоны (здесь только доплеровские до 7,5°; для Z их 24) и Найквист ±42 м/с (вобуляция) — предварительно, по пересказам методических указаний ЦАО 2014', 'frequency and polarisation — the LEMZ brochure, cycle and ranges — CAO; 1° beam, 500 m gates, the tilts (here only the Doppler ones up to 7.5°; Z uses 24) and the ±42 m/s Nyquist (staggered PRF) — provisional, from retellings of the CAO 2014 guidelines'),
+    tilts: [.1, .3, .7, 1.1, 1.5, 1.9, 2.3, 2.8, 3.4, 4, 5, 6, 7.5, 9, 11.2, 14, 17.5, 22, 28, 35.5, 45.5, 58, 72, 86],
+    velocityTilts: [.1, .3, .7, 1.1, 1.6, 2.2, 2.9, 3.8, 4.8, 6, 7.5, 9, 11.2, 14, 17.5, 22, 28, 35.5, 45.5, 58, 72, 86], velocityGate: 250,
+    nyquist: 66, range: 250_000, velocityRange: 125_000, volume: 600,
+    note: L('Росгидромет: C-диапазон, двухполяризационный, цикл 10 мин; отражаемость — 24 наклона до 250 км (строб 500 м), скорость — 22 наклона до 125 км (строб 250 м)', 'Roshydromet, Russia: C band, dual-polarisation, a 10 min cycle; reflectivity on 24 tilts to 250 km (500 m gates), velocity on 22 tilts to 125 km (250 m gates)'),
+    verified: L('наклоны, стробы, дальности, цикл и скорость до ±66 м/с (две частоты импульсов, периоды 1,0 и 1,2 мс) — «Временные методические указания по использованию информации ДМРЛ-С» (Росгидромет, 2014), раздел 4.5; частота и поляризация — брошюра ЛЭМЗ; ширина луча 1° — по вторичным источникам', 'tilts, gates, ranges, cycle and velocities to ±66 m/s (two pulse periods, 1.0 and 1.2 ms) — the Roshydromet guidelines on the DMRL-C (2014), section 4.5; frequency and polarisation — the LEMZ brochure; the 1° beam — secondary sources'),
   },
   dwd: {
     name: L('Европейский C (DWD)', 'European C (DWD)'), band: 'C', wavelength: 5.3, beam: 1, step: 1, gate: 250,

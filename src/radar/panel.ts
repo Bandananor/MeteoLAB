@@ -145,7 +145,7 @@ export class RadarPanel {
         <span class="t-caption" id="radarNote"></span><dl class="kv" id="radarSpecs"></dl><span class="t-caption" id="radarVerified"></span>`)
       + section(L('Продукт', 'Product'), `<div class="tilts tilts--4">${(Object.keys(PRODUCTS) as Product[]).map(p => `<button data-product="${p}" title="${PRODUCTS[p].label}">${p}</button>`).join('')}</div>
         <div class="stat" style="border:0;padding:0"><span id="radarProductLabel"></span><span class="unit" id="radarUnits">dBZ</span></div>
-        <span class="label" title="${L(`Как у настоящего импульсного радара: скорость вдоль луча измеряется только в пределах ±v_N = λ·PRF/4 (Найквист), быстрее — «заворачивается» в другой знак: красное посреди зелёного. Предел берётся у выбранного радара (WSR-88D ~±28 м/с, европейский C с двойной частотой импульсов ±32, ДМРЛ-С с вобуляцией ±42). Только для V: SRV и MDA считаются по раскрученной скорости, как у NWS`, `As on a real pulsed radar: the velocity along the beam is measured only within ±v_N = λ·PRF/4 (Nyquist), faster wind folds over to the other sign: red amid green. The limit is the chosen radar’s (WSR-88D ~±28 m/s, a European C with dual PRF ±32, DMRL-C with staggered PRF ±42). V only: SRV and the MDA use the unfolded velocity, as the NWS`)}">${L('Складывание скоростей (V)', 'Velocity folding (V)')}</span>${seg('fold', [['0', L('нет', 'none')], ['1', `±${RADARS[this.radar].nyquist}`]])}`)
+        <span class="label" title="${L(`Как у настоящего импульсного радара: скорость вдоль луча измеряется только в пределах ±v_N = λ·PRF/4 (Найквист), быстрее — «заворачивается» в другой знак: красное посреди зелёного. Предел берётся у выбранного радара (WSR-88D ~±28 м/с, европейский C с двойной частотой импульсов ±32, ДМРЛ-С с двумя периодами импульсов ±66). Только для V: SRV и MDA считаются по раскрученной скорости, как у NWS`, `As on a real pulsed radar: the velocity along the beam is measured only within ±v_N = λ·PRF/4 (Nyquist), faster wind folds over to the other sign: red amid green. The limit is the chosen radar’s (WSR-88D ~±28 m/s, a European C with dual PRF ±32, DMRL-C with two pulse periods ±66). V only: SRV and the MDA use the unfolded velocity, as the NWS`)}">${L('Складывание скоростей (V)', 'Velocity folding (V)')}</span>${seg('fold', [['0', L('нет', 'none')], ['1', `±${RADARS[this.radar].nyquist}`]])}`)
       + section(L('Угол наклона', 'Tilt angle'), '<div class="tilts" id="radarTilts"></div>')
       + section(L('Вертикальный разрез', 'Vertical cross-section'), `<label class="check"><input type="checkbox" id="xsShow"> ${L('Показывать разрез под картой', 'Show the section under the map')}</label>
         <div class="radar-buttons"><button class="btn btn--xs" id="xsDraw" title="${L('Два щелчка или касания по карте: начало A, затем конец B', 'Two clicks or taps on the map: the start A, then the end B')}">${L('Провести разрез', 'Draw a section')}</button><button class="btn btn--xs" id="xsRadial" title="${L('Щелчок или касание по карте: разрез от радара через эту точку до края области — как RHI настоящего радара', 'A click or tap on the map: a section from the radar through that point to the domain’s edge — like a real radar’s RHI')}">${L('От радара через точку', 'From the radar through a point')}</button><button class="btn btn--xs" id="xsStrongest" title="${L('Разрез от радара через самое сильное эхо объёмного скана', 'A section from the radar through the volume scan’s strongest echo')}">${L('Через самое сильное эхо', 'Through the strongest echo')}</button></div>
@@ -257,14 +257,13 @@ export class RadarPanel {
     $('#radarSpecs').innerHTML = ([
       [L('Длина волны', 'Wavelength'), `${p.wavelength.toFixed(2).replace(/\.?0+$/, '')} ${L('см', 'cm')}`],
       [L('Луч / радиалы', 'Beam / radials'), `${p.beam}° / ${p.step}°`],
-      [L('Строб', 'Gate'), `${p.gate} ${L('м', 'm')}`],
-      [L('Наклоны', 'Tilts'), `${p.tilts.length}: ${p.tilts[0]}–${p.tilts[p.tilts.length - 1]}°`],
+      [L('Строб', 'Gate'), p.velocityGate ? `Z ${p.gate} / V ${p.velocityGate} ${L('м', 'm')}` : `${p.gate} ${L('м', 'm')}`],
+      [L('Наклоны', 'Tilts'), p.velocityTilts ? `Z ${p.tilts.length} / V ${p.velocityTilts.length}: ${p.tilts[0]}–${p.tilts[p.tilts.length - 1]}°` : `${p.tilts.length}: ${p.tilts[0]}–${p.tilts[p.tilts.length - 1]}°`],
       [L('Найквист', 'Nyquist'), `±${p.nyquist} ${L('м/с', 'm/s')}`],
       [L('Дальность Z / V', 'Range Z / V'), `${km(p.range)} / ${km(p.velocityRange)}`],
       [L('Объём', 'Volume'), p.volume < 60 ? `${p.volume} ${L('с', 's')}` : `${(p.volume / 60).toFixed(1).replace(/\.0$/, '')} ${L('мин', 'min')}`],
     ] as [string, string][]).map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')
     $('#radarVerified').textContent = `${L('Откуда числа', 'Sources')}: ${p.verified}`
-    $('#radarTilts').innerHTML = p.tilts.map(t => `<button data-tilt="${t}">${t.toFixed(1)}°</button>`).join('')
     const fold = this.root.querySelector<HTMLButtonElement>('[data-seg="fold"] button[data-value="1"]')
     if (fold) fold.textContent = `±${p.nyquist}`
   }
@@ -402,7 +401,7 @@ export class RadarPanel {
     this.root.querySelector<HTMLElement>('#radarProduct')!.textContent = PRODUCTS[product].title
     this.root.querySelector<HTMLElement>('#radarProductLabel')!.textContent = PRODUCTS[product].label
     this.showHelp(); this.showPalette(); this.markSection()
-    this.markTilt(); this.lastComposite = 0; this.refresh(true)
+    this.markTilt(); this.applyBins(); this.lastComposite = 0; this.refresh(true)
   }
 
   private showHelp() {
@@ -431,8 +430,14 @@ export class RadarPanel {
     this.paint(); this.paintSection(); this.draw()
   }
 
+  /** The tilts of the chosen product: the velocity's where the radar scans it apart (DMRL-C), the reflectivity's otherwise. */
+  private productTilts() { const p = RADARS[this.radar]; return this.product === 'V' || this.product === 'SRV' ? p.velocityTilts ?? p.tilts : p.tilts }
+
   private markTilt() {
-    const t = this.ppi?.tilt ?? RADARS[this.radar].tilts[0], all = VOLUME.includes(this.product)
+    const tilts = this.productTilts(), box = this.root.querySelector<HTMLElement>('#radarTilts')!, html = tilts.map(t => `<button data-tilt="${t}">${t.toFixed(1)}°</button>`).join('')
+    if (box.innerHTML !== html) box.innerHTML = html
+    if (this.ppi && !tilts.includes(this.ppi.tilt)) { const was = this.ppi.tilt; this.ppi.tilt = tilts.reduce((best, x) => Math.abs(x - was) < Math.abs(best - was) ? x : best) }
+    const t = this.ppi?.tilt ?? tilts[0], all = VOLUME.includes(this.product)
     press(this.root.querySelectorAll<HTMLButtonElement>('[data-tilt]'), b => !all && Number(b.dataset.tilt) === t)
     this.root.querySelector<HTMLElement>('#radarTilt')!.textContent = all ? L('ВСЕ', 'ALL') : `${t.toFixed(1)}°`
   }
@@ -441,7 +446,8 @@ export class RadarPanel {
   private applyBins() {
     if (!this.ppi) return
     const p = RADARS[this.radar]
-    this.ppi.bins = this.grid.beam ? { gate: Math.max(p.gate, PIXEL), beam: p.step } : null; this.ppi.layout(); this.lastComposite = 0
+    const gate = this.product === 'V' || this.product === 'SRV' ? p.velocityGate ?? p.gate : p.gate
+    this.ppi.bins = this.grid.beam ? { gate: Math.max(gate, PIXEL), beam: p.step } : null; this.ppi.layout(); this.lastComposite = 0
   }
 
   private showGrid() {
