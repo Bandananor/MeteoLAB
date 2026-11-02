@@ -434,6 +434,17 @@ export class StormView {
           // The ground in three's own materials: the standard one takes derivatives of the normal, Lambert none.
           ...([['standard material', new THREE.MeshStandardMaterial({ color: groundMat.color })], ['Lambert material', new THREE.MeshLambertMaterial({ color: groundMat.color })], ['basic material', new THREE.MeshBasicMaterial({ color: groundMat.color })]] as const).map(([label, mat]) => ({ label, part: this.ground, set: swap(() => this.ground.material, x => { this.ground.material = x }, mat as THREE.Material) })),
           { label: 'basic material, no fog', part: this.ground, set: () => { const undoMat = swap(() => this.ground.material, x => { this.ground.material = x }, new THREE.MeshBasicMaterial({ color: groundMat.color }) as THREE.Material)(), undoFog = swap(() => this.scene.fog, f => { this.scene.fog = f }, null)(); return () => { undoFog(); undoMat() } } },
+          // The fog's own quantities on the ground (as |value| in the colour), and the fog with its world point from
+          // the model matrix instead of transpose(viewMatrix).
+          ...([['fog: len', 'len'], ['fog: world y', 'vFogWorld.y'], ['fog: camera y', 'cameraPosition.y'], ['fog: haze column', `fogColumn(cameraPosition.y, vFogWorld.y, len, ${HAZE_SCALE})`], ['fog: air column', `fogColumn(cameraPosition.y, vFogWorld.y, len, ${RAYLEIGH_SCALE.toFixed(1)})`], ['fog: density', 'fogDensity'], ['fog without transpose', '']] as const).map(([label, expr]) => {
+            const mat = new THREE.MeshBasicMaterial({ color: groundMat.color })
+            mat.customProgramCacheKey = () => label
+            mat.onBeforeCompile = shader => {
+              if (expr) shader.fragmentShader = shader.fragmentShader.replace('#include <fog_fragment>', `#ifdef USE_FOG\n{ float len = length(vFogWorld - cameraPosition); gl_FragColor = vec4(vec3(abs(${expr})), 1.0); }\n#endif`)
+              else shader.vertexShader = shader.vertexShader.replace('#include <fog_vertex>', '#ifdef USE_FOG\nvFogDepth = -mvPosition.z;\nvFogWorld = (modelMatrix * vec4(transformed, 1.0)).xyz;\n#endif')
+            }
+            return { label, part: this.ground, set: swap(() => this.ground.material, x => { this.ground.material = x }, mat as THREE.Material) }
+          }),
           { label: 'haze 0', part: this.skyDome, set: swap(() => this.air.uHaze.value as number, h => { this.air.uHaze.value = h }, 0) },
         ],
       })
