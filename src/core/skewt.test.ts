@@ -43,4 +43,10 @@ describe('Skew-T data (src/core/skewt.ts)', () => {
     expect(s.pw).toBeGreaterThan(30); expect(s.pw).toBeLessThan(60)
     expect(s.lapse75).toBeGreaterThan(5); expect(s.lapse75).toBeLessThan(9); expect(s.freezing!).toBeGreaterThan(3)
   })
+
+  it('gives the WK sounding Weisman 1993\'s unidirectional shear: westerly 0 at the ground to u6 at `depth`, constant above', () => {
+    const wind = weismanKlemp({ u6: 25, depth: 2500 }).wind
+    expect(wind(0)).toEqual([0, 0]); expect(wind(1250)).toEqual([12.5, 0]); expect(wind(2500)).toEqual([25, 0]); expect(wind(8000)).toEqual([25, 0])
+    expect(weismanKlemp().wind(2000)[1]).toBeCloseTo(8)
+  })
 })

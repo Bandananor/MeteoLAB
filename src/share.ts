@@ -26,7 +26,7 @@ const fits = (kind: (typeof KINDS)[string], v: unknown) => {
   if (kind === 'front') return validFront(v)
   if (kind === 'advection') return validAdvection(v)
   // The Weisman-Klemp numbers (the regime map's): the vapour cap 5-25 g/kg, the hodograph's radius and 6 km wind up to 80 m/s.
-  if (kind === 'wk') return !!v && typeof v === 'object' && Object.entries(v).every(([k, x]) => typeof x === 'number' && (k === 'qvMax' ? x >= .005 && x <= .025 : (k === 'radius' || k === 'u6') && x >= 0 && x <= 80))
+  if (kind === 'wk') return !!v && typeof v === 'object' && Object.entries(v).every(([k, x]) => typeof x === 'number' && (k === 'qvMax' ? x >= .005 && x <= .025 : ((k === 'radius' || k === 'u6') && x >= 0 && x <= 80 || k === 'depth' && x >= 500 && x <= 10_000)))
   return typeof v === 'string' && kind.includes(v)
 }
 
