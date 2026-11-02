@@ -116,14 +116,15 @@ export class MesocycloneDetector {
   scan(ppi: PPI, time: number, motion: readonly [number, number] | null = null) {
     ppi.prepare()
     const all: ShearFeature[] = [], velocities = new Map<number, Float32Array>()
-    for (const tilt of RADAR_TILTS) { const v = ppi.polar(tilt, STEP, GATES, BEAMS).velocity; velocities.set(tilt, v); all.push(...features(ppi, tilt, v)) }
+    const tilts = ppi.tilts
+    for (const tilt of tilts) { const v = ppi.polar(tilt, STEP, GATES, BEAMS).velocity; velocities.set(tilt, v); all.push(...features(ppi, tilt, v)) }
     // Stack from the lowest tilt up: each feature joins the nearest stack whose top is one or two tilts below.
     const stacks: ShearFeature[][] = []
     for (const f of all) {
-      const level = RADAR_TILTS.indexOf(f.tilt as typeof RADAR_TILTS[number])
+      const level = tilts.indexOf(f.tilt)
       let best: ShearFeature[] | null = null, bestD = STACK_DISTANCE
       for (const s of stacks) {
-        const topF = s[s.length - 1], gap = level - RADAR_TILTS.indexOf(topF.tilt as typeof RADAR_TILTS[number]), d = Math.hypot(f.x - topF.x, f.y - topF.y)
+        const topF = s[s.length - 1], gap = level - tilts.indexOf(topF.tilt), d = Math.hypot(f.x - topF.x, f.y - topF.y)
         if (gap >= 1 && gap <= TILT_GAP && d < bestD) { bestD = d; best = s }
       }
       if (best) best.push(f); else stacks.push([f])
@@ -160,8 +161,8 @@ export class MesocycloneDetector {
       const same = previous.find(p => Math.hypot(wrap(p.x - c.x, width), wrap(p.y - c.y, depth)) < TRACK_DISTANCE && !found.some(n => n.id === p.id))
       c.id = same?.id ?? this.nextId++; c.born = same?.born ?? time
       c.hook = hookEcho(ppi, c, motion)
-      const levels = gateToGate(c, velocities)
-      c.tvs = vortexSignature(levels); c.gateDv = Math.max(0, ...levels.map(l => l.dv))
+      const levels = gateToGate(c, velocities, tilts)
+      c.tvs = vortexSignature(levels, tilts); c.gateDv = Math.max(0, ...levels.map(l => l.dv))
     }
     this.detections = found
     return this.detections
@@ -185,9 +186,9 @@ export interface VortexSignature {
 }
 
 /** The largest gate-to-gate ΔV near the circulation's features on each tilt (m/s; tilts without features left out). */
-export function gateToGate(c: Pick<Circulation, 'features'>, velocities: Map<number, Float32Array>) {
+export function gateToGate(c: Pick<Circulation, 'features'>, velocities: Map<number, Float32Array>, tilts: readonly number[] = RADAR_TILTS) {
   const levels: { tilt: number; height: number; dv: number }[] = []
-  for (const tilt of RADAR_TILTS) {
+  for (const tilt of tilts) {
     const v = velocities.get(tilt), here = c.features.filter(f => f.tilt === tilt)
     if (!v || !here.length) continue
     let dv = 0
@@ -204,15 +205,15 @@ export function gateToGate(c: Pick<Circulation, 'features'>, velocities: Map<num
 }
 
 /** The TVS or ETVS of a circulation's gate-to-gate ΔV per tilt (gateToGate), or none. */
-export function vortexSignature(all: { tilt: number; height: number; dv: number }[]): VortexSignature | null {
+export function vortexSignature(all: { tilt: number; height: number; dv: number }[], tilts: readonly number[] = RADAR_TILTS): VortexSignature | null {
   const levels = all.filter(l => l.dv >= TDA_MIN_DV)
   if (!levels.length) return null
   // The contiguous run from the lowest tilt with a vector (one tilt missing allowed, as the stacking).
   const run = [levels[0]]
-  for (const l of levels.slice(1)) { if (RADAR_TILTS.indexOf(l.tilt as typeof RADAR_TILTS[number]) - RADAR_TILTS.indexOf(run[run.length - 1].tilt as typeof RADAR_TILTS[number]) > TILT_GAP) break; run.push(l) }
+  for (const l of levels.slice(1)) { if (tilts.indexOf(l.tilt) - tilts.indexOf(run[run.length - 1].tilt) > TILT_GAP) break; run.push(l) }
   const base = run[0], top = run[run.length - 1], maxDv = Math.max(...run.map(l => l.dv))
   if (maxDv < TDA_MAX_DV || top.height - base.height < TDA_DEPTH) return null
-  const low = base.tilt === RADAR_TILTS[0] || base.height <= TDA_BASE
+  const low = base.tilt === tilts[0] || base.height <= TDA_BASE
   return { kind: low && base.dv >= TDA_LOW_DV ? 'TVS' : 'ETVS', lowDv: base.dv, maxDv, base: base.height, top: top.height }
 }
 
@@ -238,7 +239,7 @@ export function hookEcho(ppi: PPI, d: Pick<Circulation, 'x' | 'y' | 'base'>, mot
   if (d.base > 3000) return null
   const sectors = Array.from({ length: HOOK_SECTORS }, (_, s) => {
     const a = (s + .5) * 2 * Math.PI / HOOK_SECTORS
-    return HOOK_RADII.reduce((sum, r) => sum + ppi.dbzAt(d.x + r * Math.sin(a), d.y + r * Math.cos(a), RADAR_TILTS[0]), 0) / HOOK_RADII.length
+    return HOOK_RADII.reduce((sum, r) => sum + ppi.dbzAt(d.x + r * Math.sin(a), d.y + r * Math.cos(a), ppi.tilts[0]), 0) / HOOK_RADII.length
   })
   const echo = sectors.map(z => z >= HOOK_DBZ)
   if (echo.every(Boolean) || !echo.some(Boolean)) return null

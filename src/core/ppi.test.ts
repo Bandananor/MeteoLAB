@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { AtmosphereModel, beamHeight, createGrid, PPI } from '.'
+import { AtmosphereModel, beamHeight, createGrid, PPI, RADAR_TILTS, RADARS } from '.'
 import { QUIET } from './fixtures'
 
 describe('radar PPI', () => {
@@ -111,5 +111,24 @@ describe('radar PPI', () => {
     // The same line backwards is the same section mirrored.
     const r = ppi.crossSection({ x, y: y + 6000 }, { x, y: y - 6000 }, gates, dz, rows)
     expect(r.dbz[4 * gates + 3]).toBeCloseTo(s.dbz[4 * gates + gates - 4], 4)
+  })
+
+  it('scans with the chosen radar profile: its tilts, and nothing beyond its ranges (the mobile X sees 30 km)', () => {
+    const model = new AtmosphereModel({ ...QUIET }, createGrid({ nx: 60, ny: 8, nz: 20, width: 72_000, depth: 9_600, height: 15_000, bottomSpacing: 100 }))
+    const { layer, nx, nz, zs, dx } = model.grid
+    // Rain below 3 km along the whole row y = 4: 10 km and 25 km (inside the X's range) and 34 km (beyond it) from the centre.
+    for (let x = 0; x < nx; x++) for (let z = 0; z < nz; z++) if (zs[z] < 3000) model.rain[x + nx * 4 + z * layer] = 1e-3
+    const ppi = new PPI(model, 144, 19)
+    expect(ppi.tilts).toBe(RADAR_TILTS)
+    ppi.setProfile(RADARS.dmrl)
+    expect(ppi.tilts).toEqual(RADARS.dmrl.tilts); expect([.3, .7]).toContain(ppi.tilt)
+    ppi.setProfile(RADARS.x); ppi.layout(); ppi.sample()
+    const at = (km: number) => { const px = Math.round((36 + km) * 1000 / (72_000 / 144) - .5); return ppi.dbz[px + 144 * 9] }
+    expect(at(10)).toBeGreaterThan(30); expect(at(25)).toBeGreaterThan(30); expect(at(34)).toBe(-20)
+    ppi.composite()
+    expect(ppi.compositeDbz[Math.round(70_000 / 500) + 144 * 9]).toBe(-20)
+    ppi.setProfile(RADARS.wsr88d); ppi.sample()
+    expect(at(34)).toBeGreaterThan(30)
+    expect(dx).toBe(1200)
   })
 })

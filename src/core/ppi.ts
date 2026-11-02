@@ -2,9 +2,10 @@ import { heightAt, levelAt } from './grid'
 import type { AtmosphereModel } from './model'
 import { dualPol } from './polarimetry'
 import { DBZ_FLOOR, reflectivity, reflectivityFallSpeed } from './radar'
+import { RADARS, type RadarProfile } from './radars'
 
-/** Elevation angles of a NEXRAD volume scan (VCP 12/212), degrees. */
-export const RADAR_TILTS = [.5, .9, 1.3, 1.8, 2.4, 3.1, 4, 5.1, 6.4, 8, 10, 12.5, 15.6, 19.5] as const
+/** Elevation angles of a NEXRAD volume scan (VCP 12/212), degrees: the WSR-88D profile's. */
+export const RADAR_TILTS = RADARS.wsr88d.tilts
 
 /** Effective Earth radius for standard refraction (4/3 of 6371 km), m. */
 const EARTH = 4 / 3 * 6_371_000
@@ -23,14 +24,15 @@ export const DUAL_MIN_DBZ = 10
 /**
  * Plan position indicator over a w x h raster covering the domain (pixel (0, 0) at the north-west corner): reflectivity
  * (dBZ) and Doppler radial velocity (m/s, positive away from the radar) of the beam at one elevation, and the composite
- * reflectivity, the maximum over the whole volume scan (all RADAR_TILTS). The beam's ground track (grid x, y, azimuth)
+ * reflectivity, the maximum over the whole volume scan (all the profile's tilts). The beam's ground track (grid x, y, azimuth)
  * is computed per radar site, its grid level per tilt (cached). `sample` and `composite` first compute reflectivity and
  * the precipitation's fall speed at the model nodes, then interpolate them along the beams. With `stormMotion` the
  * velocity is storm-relative (SRV): the storm's own motion, which masks a mesocyclone's couplet, is subtracted.
  * The raster, the site and every position are fixed to the ground: when the model domain follows the storm
  * (AtmosphereModel.frame), the storm moves across the screen as past a real radar. With `dual` set, `sample` and
  * `section` also give the dual-polarisation products (polarimetry.ts): ZDR (dB), rho_hv and KDP (deg/km), NaN below
- * DUAL_MIN_DBZ.
+ * DUAL_MIN_DBZ. The radar profile (radars.ts) sets the tilts and the ranges: beyond `range` no echo, beyond
+ * `velocityRange` no velocity.
  */
 /** The echo top's reflectivity, dBZ (NWS enhanced echo tops), and the reflectivity VIL counts at most, dBZ (hail above it). */
 export const ECHO_TOP_DBZ = 18, VIL_MAX_DBZ = 56
@@ -63,6 +65,10 @@ export class PPI {
   private readonly nodeZdr: Float32Array; private readonly nodeRho: Float32Array; private readonly nodeKdp: Float32Array
   readonly model: AtmosphereModel
   site = { x: 0, y: 0 }; tilt: number = RADAR_TILTS[0]
+  /** The radar's scan (tilts, ranges); set it with setProfile(). */
+  profile: RadarProfile = RADARS.wsr88d
+  /** Range from the radar of each pixel's sample point, m (layout()). */
+  private readonly range: Float32Array
   /** Storm motion (u, v, m/s) to subtract from the radial velocity (storm-relative velocity), or null (base velocity). */
   stormMotion: readonly [number, number] | null = null
   /** Whether prepare(), sample() and section() also do ZDR, rho_hv and KDP. */
@@ -77,7 +83,7 @@ export class PPI {
   constructor(model: AtmosphereModel, w: number, h: number) {
     this.model = model; this.w = w; this.h = h
     const n = w * h, f = () => new Float32Array(n)
-    this.dbz = f(); this.velocity = f(); this.compositeDbz = f(); this.zdr = f(); this.rho = f(); this.kdp = f(); this.vil = f(); this.echoTop = f(); this.echoTopped = new Uint8Array(n); this.mesh = f(); this.gx = f(); this.gy = f(); this.sinAz = f(); this.cosAz = f()
+    this.dbz = f(); this.velocity = f(); this.compositeDbz = f(); this.zdr = f(); this.rho = f(); this.kdp = f(); this.vil = f(); this.echoTop = f(); this.echoTopped = new Uint8Array(n); this.mesh = f(); this.gx = f(); this.gy = f(); this.sinAz = f(); this.cosAz = f(); this.range = f()
     this.nodeDbz = new Float32Array(model.grid.n); this.nodeFall = new Float32Array(model.grid.n)
     this.nodeZdr = new Float32Array(model.grid.n); this.nodeRho = new Float32Array(model.grid.n).fill(1); this.nodeKdp = new Float32Array(model.grid.n)
     this.site = { x: model.grid.width / 2, y: model.grid.depth / 2 }
@@ -108,9 +114,18 @@ export class PPI {
     this.levels.clear()
     for (let py = 0, i = 0; py < this.h; py++) for (let px = 0; px < this.w; px++, i++) {
       const g = this.samplePoint(px, py), ex = g.x - this.site.x, ny = g.y - this.site.y, range = Math.hypot(ex, ny)
-      this.gx[i] = g.x / dx; this.gy[i] = g.y / dy
+      this.gx[i] = g.x / dx; this.gy[i] = g.y / dy; this.range[i] = range
       this.sinAz[i] = range > 0 ? ex / range : 0; this.cosAz[i] = range > 0 ? ny / range : 0
     }
+  }
+
+  /** The volume scan's tilts. */
+  get tilts() { return this.profile.tilts }
+
+  /** Switches the radar: its tilts and ranges (the tilt moves to the nearest of the new ones). Call layout() after changing the bins. */
+  setProfile(profile: RadarProfile) {
+    this.profile = profile
+    this.tilt = profile.tilts.reduce((best, t) => Math.abs(t - this.tilt) < Math.abs(best - this.tilt) ? t : best)
   }
 
   private levelsFor(tilt: number) {
@@ -158,17 +173,17 @@ export class PPI {
     const m = this.model, gz = this.levelsFor(this.tilt), el = this.tilt * Math.PI / 180, ce = Math.cos(el), se = Math.sin(el)
     // Ground-fixed raster over the moving domain: the model column under a pixel is shifted back by the distance the domain
     // has moved, and the radial wind is over the ground (model wind plus the frame velocity), minus the storm motion for SRV.
-    const [ox, oy] = this.shift(), [fu, fv] = m.frame, [su, sv] = this.stormMotion ?? [0, 0], cu = fu - su, cv = fv - sv
+    const [ox, oy] = this.shift(), [fu, fv] = m.frame, [su, sv] = this.stormMotion ?? [0, 0], cu = fu - su, cv = fv - sv, { range, velocityRange } = this.profile
     for (let i = 0; i < this.dbz.length; i++) {
       const z = gz[i]
-      if (z < 0) { this.dbz[i] = DBZ_FLOOR; this.velocity[i] = this.zdr[i] = this.rho[i] = this.kdp[i] = NaN; continue }
+      if (z < 0 || this.range[i] > range) { this.dbz[i] = DBZ_FLOOR; this.velocity[i] = this.zdr[i] = this.rho[i] = this.kdp[i] = NaN; continue }
       const x = this.gx[i] - ox, y = this.gy[i] - oy, d = m.sample(this.nodeDbz, x, y, z)
       this.dbz[i] = d
       if (this.dual) {
         const echo = d >= DUAL_MIN_DBZ
         this.zdr[i] = echo ? m.sample(this.nodeZdr, x, y, z) : NaN; this.rho[i] = echo ? m.sample(this.nodeRho, x, y, z) : NaN; this.kdp[i] = echo ? m.sample(this.nodeKdp, x, y, z) : NaN
       }
-      if (d < VELOCITY_MIN_DBZ) { this.velocity[i] = NaN; continue }
+      if (d < VELOCITY_MIN_DBZ || this.range[i] > velocityRange) { this.velocity[i] = NaN; continue }
       this.velocity[i] = ((m.sample(m.u, x, y, z) + cu) * this.sinAz[i] + (m.sample(m.v, x, y, z) + cv) * this.cosAz[i]) * ce + (m.sample(m.w, x, y, z) - m.sample(this.nodeFall, x, y, z)) * se
     }
   }
@@ -190,15 +205,16 @@ export class PPI {
     let h0 = 0, h20 = 0
     while (h0 < grid.height && m.env.temperatureEnv(h0) > 0) h0 += 25
     h20 = h0; while (h20 < grid.height && m.env.temperatureEnv(h20) > -20) h20 += 25
-    for (const tilt of RADAR_TILTS) {
+    const tilts = this.tilts, highest = tilts[tilts.length - 1], reach = this.profile.range
+    for (const tilt of tilts) {
       const gz = this.levelsFor(tilt)
       for (let i = 0; i < out.length; i++) {
         const z = gz[i]
-        if (z < 0) continue
+        if (z < 0 || this.range[i] > reach) continue
         const d = m.sample(this.nodeDbz, this.gx[i] - ox, this.gy[i] - oy, z), h = heightAt(grid, z)
         if (d > out[i]) out[i] = d
         if (d >= ECHO_TOP_DBZ) top[i] = Math.max(top[i], h / 1000)
-        if (tilt === RADAR_TILTS[RADAR_TILTS.length - 1]) this.echoTopped[i] = d >= ECHO_TOP_DBZ ? 1 : 0
+        if (tilt === highest) this.echoTopped[i] = d >= ECHO_TOP_DBZ ? 1 : 0
         const zl = d > DBZ_FLOOR ? 10 ** (Math.min(d, VIL_MAX_DBZ) / 10) : 0
         if (!Number.isNaN(last[i]) && h > lastH[i]) vil[i] += 3.44e-6 * ((last[i] + zl) / 2) ** (4 / 7) * (h - lastH[i])
         const e = d > 40 ? 5e-6 * 10 ** (.084 * d) * Math.min(1, (d - 40) / 10) * Math.max(0, Math.min(1, (h - h0) / Math.max(1, h20 - h0))) : 0
@@ -226,8 +242,8 @@ export class PPI {
    * along the ray from the radar to it (azimuth from the site, elevation atan(h / r)): ground-relative wind, minus the fall
    * speed, minus `stormMotion` if set; NaN without echo. With `dual` also ZDR, rho_hv and KDP (NaN below DUAL_MIN_DBZ;
    * empty arrays without it). Also per gate: the range from the radar (m), the beam height of every tilt there (m, in
-   * RADAR_TILTS order) and the heights of the 0 °C and -20 °C isotherms in the column (m, the lowest crossing from warm
-   * to cold; NaN if none). Periodic like the model; above the model top: no echo.
+   * the profile's order) and the heights of the 0 °C and -20 °C isotherms in the column (m, the lowest crossing from warm
+   * to cold; NaN if none). Periodic like the model; above the model top and beyond the profile's ranges: no echo, no velocity.
    */
   crossSection(a: { x: number; y: number }, b: { x: number; y: number }, gates: number, dz: number, rows: number) {
     const m = this.model, grid = m.grid, { dx, dy, nz } = grid, [ox, oy] = this.shift(), e = m.env
@@ -247,16 +263,17 @@ export class PPI {
         below = tc
       }
     }
-    const beams = RADAR_TILTS.map(tilt => Float32Array.from(range, r => beamHeight(r, tilt)))
+    const beams = this.tilts.map(tilt => Float32Array.from(range, r => beamHeight(r, tilt))), reach = this.profile.range, doppler = this.profile.velocityRange
     for (let k = 0; k < rows; k++) {
       const h = (k + .5) * dz
       if (h > grid.height) break
       const z = levelAt(grid, h)
       for (let g = 0; g < gates; g++) {
+        if (range[g] > reach) continue
         const gx = gxs[g], gy = gys[g], i = k * gates + g, d = m.sample(this.nodeDbz, gx, gy, z)
         dbz[i] = d
         if (dual && d >= DUAL_MIN_DBZ) { zdr[i] = m.sample(this.nodeZdr, gx, gy, z); rho[i] = m.sample(this.nodeRho, gx, gy, z); kdp[i] = m.sample(this.nodeKdp, gx, gy, z) }
-        if (d < VELOCITY_MIN_DBZ) continue
+        if (d < VELOCITY_MIN_DBZ || range[g] > doppler) continue
         const el = Math.atan2(h, range[g])
         velocity[i] = ((m.sample(m.u, gx, gy, z) + cu) * sinAz[g] + (m.sample(m.v, gx, gy, z) + cv) * cosAz[g]) * Math.cos(el) + (m.sample(m.w, gx, gy, z) - m.sample(this.nodeFall, gx, gy, z)) * Math.sin(el)
       }
@@ -266,8 +283,8 @@ export class PPI {
 
   /** Reflectivity (dBZ) the beam of `tilt` sees over a ground point, m (call prepare() first; periodic like the model). */
   dbzAt(x: number, y: number, tilt: number) {
-    const m = this.model, grid = m.grid, h = beamHeight(Math.hypot(x - this.site.x, y - this.site.y), tilt)
-    if (h > grid.height) return DBZ_FLOOR
+    const m = this.model, grid = m.grid, r = Math.hypot(x - this.site.x, y - this.site.y), h = beamHeight(r, tilt)
+    if (h > grid.height || r > this.profile.range) return DBZ_FLOOR
     const [ox, oy] = this.shift()
     return m.sample(this.nodeDbz, x / grid.dx - ox, y / grid.dy - oy, levelAt(grid, h))
   }
@@ -276,12 +293,14 @@ export class PPI {
    * Polar scan of one tilt for the detection algorithms (call prepare() first): reflectivity and base radial velocity at
    * `gates` range gates `step` m apart (gate g at range (g + 1) * step) on `beams` azimuths (beam b at b * 360 / beams
    * degrees), beam-major. Beams leave the domain on one side and come back on the other, as the periodic model does (a
-   * storm across the edge is seen whole). Above the model top: no echo; without echo the velocity is NaN.
+   * storm across the edge is seen whole). Above the model top and beyond the profile's range: no echo; without echo or
+   * beyond the velocity range the velocity is NaN.
    */
   polar(tilt: number, step: number, gates: number, beams: number) {
     const m = this.model, grid = m.grid, { dx, dy } = grid, el = tilt * Math.PI / 180, ce = Math.cos(el), se = Math.sin(el), [ox, oy] = this.shift(), [fu, fv] = m.frame
     const dbz = new Float32Array(gates * beams).fill(DBZ_FLOOR), velocity = new Float32Array(gates * beams).fill(NaN)
-    const levels = Float64Array.from({ length: gates }, (_, g) => { const h = beamHeight((g + 1) * step, tilt); return h > grid.height ? -1 : levelAt(grid, h) })
+    const { range, velocityRange } = this.profile
+    const levels = Float64Array.from({ length: gates }, (_, g) => { const h = beamHeight((g + 1) * step, tilt); return h > grid.height || (g + 1) * step > range ? -1 : levelAt(grid, h) })
     for (let b = 0; b < beams; b++) {
       const az = b * 2 * Math.PI / beams, sa = Math.sin(az), ca = Math.cos(az)
       for (let g = 0; g < gates; g++) {
@@ -289,7 +308,7 @@ export class PPI {
         if (z < 0) continue
         const gx = x / dx - ox, gy = y / dy - oy, d = m.sample(this.nodeDbz, gx, gy, z)
         dbz[i] = d
-        if (d >= VELOCITY_MIN_DBZ) velocity[i] = ((m.sample(m.u, gx, gy, z) + fu) * sa + (m.sample(m.v, gx, gy, z) + fv) * ca) * ce + (m.sample(m.w, gx, gy, z) - m.sample(this.nodeFall, gx, gy, z)) * se
+        if (d >= VELOCITY_MIN_DBZ && r <= velocityRange) velocity[i] = ((m.sample(m.u, gx, gy, z) + fu) * sa + (m.sample(m.v, gx, gy, z) + fv) * ca) * ce + (m.sample(m.w, gx, gy, z) - m.sample(this.nodeFall, gx, gy, z)) * se
       }
     }
     return { dbz, velocity }

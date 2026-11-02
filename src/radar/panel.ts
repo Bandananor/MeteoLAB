@@ -1,5 +1,5 @@
 import { L } from '../i18n'
-import { type AtmosphereModel, type Circulation, DBZ_FLOOR, DUAL_MIN_DBZ, MESO_STRENGTH, type MesoStrength, MesocycloneDetector, fold, NYQUIST, PPI, RADAR_TILTS, TDA_LOW_DV, TDA_MAX_DV } from '../core'
+import { type AtmosphereModel, type Circulation, DBZ_FLOOR, DUAL_MIN_DBZ, MESO_STRENGTH, type MesoStrength, MesocycloneDetector, fold, PPI, RADARS, type RadarId, TDA_LOW_DV, TDA_MAX_DV } from '../core'
 import { help, instrumentPalette, instrumentScreen, press, readings, section } from '../instrument'
 import { download } from '../share'
 import { MONO } from '../theme'
@@ -13,8 +13,12 @@ type XsField = 'Z' | 'V' | 'SRV' | 'ZDR' | 'RHO' | 'KDP'
 type Point = { x: number; y: number }
 /** Raster resolution of the scan, m per pixel: half a range gate, so the radial bins' edges fall on pixel edges. */
 const PIXEL = 125
-/** Range gate of the radial bins, m (as NEXRAD's 250 m). */
-const GATE = 250
+/** The chosen radar profile, kept in this browser. */
+const RADAR_STORE = 'meteolab-radar-type'
+function loadRadar(): RadarId {
+  try { const r = localStorage.getItem(RADAR_STORE); if (r && r in RADARS) return r as RadarId } catch { /* default */ }
+  return 'wsr88d'
+}
 /** The vertical section: point and row spacing, m, the highest level shown, the shortest line, m. */
 const XS_STEP = 250, XS_DZ = 250, XS_TOP = 18_000, XS_MIN = 1000
 /** How near (CSS px) a press must be to an end of the line to drag it. */
@@ -63,7 +67,7 @@ const XS_HELP = L('Разрез — вертикальный срез по ли�
 
 /**
  * Range rings, azimuth radials and their labels: steps (0: off), compass points instead of degrees; the data drawn in
- * radial bins (beam width `beam` degrees, 0: smooth pixels).
+ * radial bins of the radar profile (`beam` 1; 0: smooth pixels).
  */
 interface GridSettings { radials: number; rings: number; labels: boolean; compass: boolean; beam: number }
 const XS_STORE = 'meteolab-radar-section'
@@ -76,8 +80,7 @@ function loadSection(): { on: boolean; field: XsField; a: Point | null; b: Point
   } catch { /* default */ }
   return { on: false, field: 'Z', a: null, b: null }
 }
-const GRID_STORE = 'meteolab-radar-grid', GRID_DEFAULT: GridSettings = { radials: 30, rings: 5, labels: true, compass: false, beam: .5 }
-const BEAMS = [.5, 1, 0]
+const GRID_STORE = 'meteolab-radar-grid', GRID_DEFAULT: GridSettings = { radials: 30, rings: 5, labels: true, compass: false, beam: 1 }
 const RADIAL_STEPS = [0, 10, 30, 45], RING_STEPS = [0, 5, 10, 25]
 const POINTS = L('С ССВ СВ ВСВ В ВЮВ ЮВ ЮЮВ Ю ЮЮЗ ЮЗ ЗЮЗ З ЗСЗ СЗ ССЗ', 'N NNE NE ENE E ESE SE SSE S SSW SW WSW W WNW NW NNW').split(' ')
 /** The compass point (of 16) of an azimuth. */
@@ -85,7 +88,7 @@ const point = (azimuth: number) => POINTS[Math.round(((azimuth % 360) + 360) % 3
 function loadGrid(): GridSettings {
   try {
     const g = JSON.parse(localStorage.getItem(GRID_STORE) ?? 'null')
-    if (g && RADIAL_STEPS.includes(g.radials) && RING_STEPS.includes(g.rings)) return { radials: g.radials, rings: g.rings, labels: g.labels !== false, compass: g.compass === true, beam: BEAMS.includes(g.beam) ? g.beam : GRID_DEFAULT.beam }
+    if (g && RADIAL_STEPS.includes(g.radials) && RING_STEPS.includes(g.rings)) return { radials: g.radials, rings: g.rings, labels: g.labels !== false, compass: g.compass === true, beam: g.beam === 0 ? 0 : 1 }
   } catch { /* default */ }
   return { ...GRID_DEFAULT }
 }
@@ -110,8 +113,10 @@ export class RadarPanel {
   private lastTime = -1; private lastDraw = 0; private lastComposite = 0; private hover: Point | null = null
   private product: Product = 'Z'
   /** Mesocyclone detection over the whole volume scan, rerun every MDA_EVERY ms of real time while the screen is open. */
-  /** The Nyquist velocity the base velocity folds at (V and its section; 0: none), and the buffers it is folded into. */
-  private nyquist = 0; private foldedMap = new Float32Array(0); private foldedCut = new Float32Array(0)
+  /** The radar profile (radars.ts): its tilts, bins, ranges and Nyquist velocity. */
+  private radar = loadRadar()
+  /** Whether the base velocity folds at the radar's Nyquist velocity (V and its section), and the buffers it is folded into. */
+  private folding = false; private foldedMap = new Float32Array(0); private foldedCut = new Float32Array(0)
   private detector = new MesocycloneDetector(); private detections: Circulation[] = []; private lastScan = 0; private scanTime = -1; private showMda = true; private showWeak = false
   /** Storm motion for SRV (the Bunkers right mover of the environment), m/s. */
   private motion: readonly [number, number] = [0, 0]
@@ -134,12 +139,14 @@ export class RadarPanel {
   constructor(host: HTMLElement) {
     const strengths = (Object.keys(MESO_STRENGTH) as MesoStrength[]).map((s, i, all) => `<div class="mda--${s}"><i></i><span>${[L('Циркуляция', 'Circulation'), L('Слабый', 'Weak'), L('Умеренный', 'Moderate'), L('Сильный', 'Strong')][i]}</span><span class="num">${i ? `≥ ${MESO_STRENGTH[s].vrot}` : `< ${MESO_STRENGTH[all[1]].vrot}`} ${L('м/с', 'm/s')}</span></div>`).join('')
     const seg = (name: string, options: [string, string][]) => `<div class="seg seg--block seg--instrument" data-seg="${name}">${options.map(([v, t]) => `<button data-value="${v}">${t}</button>`).join('')}</div>`
-    this.root = instrumentScreen(host, 'radar-app', 'METEOLAB DOPPLER · S-BAND',
+    this.root = instrumentScreen(host, 'radar-app', `METEOLAB DOPPLER · <span id="radarName">${RADARS[this.radar].name} · ${RADARS[this.radar].band}</span>`,
       `<span>${L('ПРОДУКТ', 'PRODUCT')} <b id="radarProduct">${PRODUCTS.Z.title}</b></span><span>${L('НАКЛОН', 'TILT')} <b id="radarTilt">0.5°</b></span><span>${L('РАЗРЕЗ', 'SECTION')} <b id="radarCut">${L('нет', 'none')}</b></span><span>T+ <b id="radarTime">00:00</b></span>`,
-      section(L('Продукт', 'Product'), `<div class="tilts tilts--4">${(Object.keys(PRODUCTS) as Product[]).map(p => `<button data-product="${p}" title="${PRODUCTS[p].label}">${p}</button>`).join('')}</div>
+      section(L('Радар', 'Radar'), `<div class="field"><span class="select"><select id="radarType">${(Object.keys(RADARS) as RadarId[]).map(r => `<option value="${r}">${RADARS[r].name} · ${RADARS[r].band}</option>`).join('')}</select></span></div>
+        <span class="t-caption" id="radarNote"></span><dl class="kv" id="radarSpecs"></dl><span class="t-caption" id="radarVerified"></span>`)
+      + section(L('Продукт', 'Product'), `<div class="tilts tilts--4">${(Object.keys(PRODUCTS) as Product[]).map(p => `<button data-product="${p}" title="${PRODUCTS[p].label}">${p}</button>`).join('')}</div>
         <div class="stat" style="border:0;padding:0"><span id="radarProductLabel"></span><span class="unit" id="radarUnits">dBZ</span></div>
-        <span class="label" title="${L(`Как у настоящего импульсного радара: скорость вдоль луча измеряется только в пределах ±v_N = λ·PRF/4 (Найквист), быстрее — «заворачивается» в другой знак: красное посреди зелёного. S-диапазон (λ 10 см, как NEXRAD) — ±${NYQUIST.S} м/с, C-диапазон (λ 5 см, PRF 1000 Гц, как многие европейские) — ±${NYQUIST.C}. Только для V: SRV и MDA считаются по раскрученной скорости, как у NWS`, `As on a real pulsed radar: the velocity along the beam is measured only within ±v_N = λ·PRF/4 (Nyquist), faster wind folds over to the other sign: red amid green. S-band (λ 10 cm, as the NEXRAD) — ±${NYQUIST.S} m/s, C-band (λ 5 cm, PRF 1000 Hz, as many European radars) — ±${NYQUIST.C}. V only: SRV and the MDA use the unfolded velocity, as the NWS`)}">${L('Складывание скоростей (V)', 'Velocity folding (V)')}</span>${seg('fold', [['0', L('нет', 'none')], [String(NYQUIST.S), `S ±${NYQUIST.S}`], [String(NYQUIST.C), `C ±${NYQUIST.C}`]])}`)
-      + section(L('Угол наклона', 'Tilt angle'), `<div class="tilts">${RADAR_TILTS.map(t => `<button data-tilt="${t}">${t.toFixed(1)}°</button>`).join('')}</div>`)
+        <span class="label" title="${L(`Как у настоящего импульсного радара: скорость вдоль луча измеряется только в пределах ±v_N = λ·PRF/4 (Найквист), быстрее — «заворачивается» в другой знак: красное посреди зелёного. Предел берётся у выбранного радара (WSR-88D ~±28 м/с, европейский C с двойной частотой импульсов ±32, ДМРЛ-С с вобуляцией ±42). Только для V: SRV и MDA считаются по раскрученной скорости, как у NWS`, `As on a real pulsed radar: the velocity along the beam is measured only within ±v_N = λ·PRF/4 (Nyquist), faster wind folds over to the other sign: red amid green. The limit is the chosen radar’s (WSR-88D ~±28 m/s, a European C with dual PRF ±32, DMRL-C with staggered PRF ±42). V only: SRV and the MDA use the unfolded velocity, as the NWS`)}">${L('Складывание скоростей (V)', 'Velocity folding (V)')}</span>${seg('fold', [['0', L('нет', 'none')], ['1', `±${RADARS[this.radar].nyquist}`]])}`)
+      + section(L('Угол наклона', 'Tilt angle'), '<div class="tilts" id="radarTilts"></div>')
       + section(L('Вертикальный разрез', 'Vertical cross-section'), `<label class="check"><input type="checkbox" id="xsShow"> ${L('Показывать разрез под картой', 'Show the section under the map')}</label>
         <div class="radar-buttons"><button class="btn btn--xs" id="xsDraw" title="${L('Два щелчка или касания по карте: начало A, затем конец B', 'Two clicks or taps on the map: the start A, then the end B')}">${L('Провести разрез', 'Draw a section')}</button><button class="btn btn--xs" id="xsRadial" title="${L('Щелчок или касание по карте: разрез от радара через эту точку до края области — как RHI настоящего радара', 'A click or tap on the map: a section from the radar through that point to the domain’s edge — like a real radar’s RHI')}">${L('От радара через точку', 'From the radar through a point')}</button><button class="btn btn--xs" id="xsStrongest" title="${L('Разрез от радара через самое сильное эхо объёмного скана', 'A section from the radar through the volume scan’s strongest echo')}">${L('Через самое сильное эхо', 'Through the strongest echo')}</button></div>
         <span class="label">${L('Поле разреза', 'Section field')}</span>${seg('xs', (Object.keys(XS_FIELDS) as XsField[]).map(f => [f, XS_FIELDS[f].short]))}
@@ -150,7 +157,7 @@ export class RadarPanel {
         <div class="radar-buttons"><button class="btn btn--xs" id="paletteEdit" title="${L('Редактор палитры: точки «значение → цвет», плавно или ступенями', 'Palette editor: “value → colour” points, smooth or in steps')}">${L('Изменить', 'Edit')}</button><button class="btn btn--xs" id="paletteImport" title="${L('Файл .pal радарных программ (строки Color: / SolidColor:)', 'A .pal file of radar software (Color: / SolidColor: lines)')}">${L('Импорт .pal', 'Import .pal')}</button><button class="btn btn--xs" id="paletteExport">${L('Экспорт .pal', 'Export .pal')}</button><button class="btn btn--xs" id="paletteDelete" hidden>${DELETE}</button></div>
         <input type="file" id="paletteFile" accept=".pal,.txt,text/plain" hidden>
         <span class="t-caption" id="paletteNote"></span>`)
-      + section(L('Сетка', 'Grid'), `<span class="label" title="${L('Как на экране настоящего радара: данные лежат по лучам и стробам дальности (250 м), поэтому ячейки — секторы, которые расширяются с дальностью', 'As on a real radar’s screen: the data lie along beams and range gates (250 m), so the cells are sectors that widen with range')}">${L('Пиксели данных', 'Data pixels')}</span>${seg('beam', [['0.5', L('лучи 0,5°', '0.5° beams')], ['1', L('лучи 1°', '1° beams')], ['0', L('гладкие', 'smooth')]])}
+      + section(L('Сетка', 'Grid'), `<span class="label" title="${L('Как на экране настоящего радара: данные лежат по лучам и стробам дальности выбранного радара, поэтому ячейки — секторы, которые расширяются с дальностью', 'As on a real radar’s screen: the data lie along the chosen radar’s beams and range gates, so the cells are sectors that widen with range')}">${L('Пиксели данных', 'Data pixels')}</span>${seg('beam', [['1', L('по лучам радара', 'the radar’s beams')], ['0', L('гладкие', 'smooth')]])}
         <span class="label">${L('Радиалы', 'Radials')}</span>${seg('radials', RADIAL_STEPS.map(s => [String(s), s ? `${s}°` : L('нет', 'none')]))}
         <span class="label">${L('Кольца дальности', 'Range rings')}</span>${seg('rings', RING_STEPS.map(s => [String(s), s ? `${s} ${L('км', 'km')}` : L('нет', 'none')]))}
         <label class="check"><input type="checkbox" id="gridLabels"> ${L('Подписи азимутов и дальностей', 'Azimuth and range labels')}</label>
@@ -182,14 +189,15 @@ export class RadarPanel {
     $<HTMLInputElement>('#radarMda').addEventListener('change', e => { this.showMda = (e.target as HTMLInputElement).checked; this.draw() })
     $<HTMLInputElement>('#radarWeak').addEventListener('change', e => { this.showWeak = (e.target as HTMLInputElement).checked; this.listMda(); this.draw() })
     $('.ibar__close').addEventListener('click', () => this.toggle(false))
-    this.root.querySelectorAll<HTMLButtonElement>('[data-tilt]').forEach(b => b.addEventListener('click', () => this.setTilt(Number(b.dataset.tilt))))
+    $('#radarTilts').addEventListener('click', e => { const b = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-tilt]'); if (b) this.setTilt(Number(b.dataset.tilt)) })
+    $<HTMLSelectElement>('#radarType').addEventListener('change', e => this.setRadar((e.target as HTMLSelectElement).value as RadarId))
     this.root.querySelectorAll<HTMLButtonElement>('[data-product]').forEach(b => b.addEventListener('click', () => this.setProduct(b.dataset.product as Product)))
     // The segmented choices: grid steps, degrees or compass points, the section's field.
     this.root.querySelectorAll<HTMLElement>('[data-seg]').forEach(s => s.addEventListener('click', e => {
       const b = (e.target as HTMLElement).closest<HTMLButtonElement>('button[data-value]')
       if (!b) return
       const v = b.dataset.value!
-      if (s.dataset.seg === 'fold') { this.nyquist = Number(v); press(s.querySelectorAll<HTMLButtonElement>('button'), x => x === b); this.refresh(true); return }
+      if (s.dataset.seg === 'fold') { this.folding = v === '1'; press(s.querySelectorAll<HTMLButtonElement>('button'), x => x === b); this.refresh(true); return }
       if (s.dataset.seg === 'xs') { this.xs.field = v as XsField; this.showSection(true); return }
       if (s.dataset.seg === 'beam') { this.grid.beam = Number(v); this.applyBins(); this.saveGrid(); this.refresh(true); return }
       if (s.dataset.seg === 'radials') this.grid.radials = Number(v)
@@ -227,7 +235,38 @@ export class RadarPanel {
     addEventListener('keydown', e => { if (e.key === 'Escape' && this.open && !editor.open) this.toggle(false) })
     addEventListener('resize', () => this.open && this.draw())
     this.showGrid()
+    this.showRadar()
     this.setProduct('Z')
+  }
+
+  /** Switches the radar profile: its tilts, bins, ranges and Nyquist velocity; the detections start afresh. */
+  private setRadar(radar: RadarId) {
+    this.radar = radar
+    try { localStorage.setItem(RADAR_STORE, radar) } catch { /* not kept */ }
+    if (this.ppi) { this.ppi.setProfile(RADARS[radar]); this.applyBins(); this.detector = new MesocycloneDetector(); this.detections = []; this.scanTime = -1; this.listMda() }
+    this.showRadar(); this.markTilt(); this.refresh(true)
+  }
+
+  /** The radar's name, numbers and tilts on the screen. */
+  private showRadar() {
+    const p = RADARS[this.radar], km = (m: number) => `${(m / 1000).toFixed(0)} ${L('км', 'km')}`
+    const $ = (s: string) => this.root.querySelector<HTMLElement>(s)!
+    this.root.querySelector<HTMLSelectElement>('#radarType')!.value = this.radar
+    $('#radarName').textContent = `${p.name} · ${p.band}`
+    $('#radarNote').textContent = p.note
+    $('#radarSpecs').innerHTML = ([
+      [L('Длина волны', 'Wavelength'), `${p.wavelength.toFixed(2).replace(/\.?0+$/, '')} ${L('см', 'cm')}`],
+      [L('Луч / радиалы', 'Beam / radials'), `${p.beam}° / ${p.step}°`],
+      [L('Строб', 'Gate'), `${p.gate} ${L('м', 'm')}`],
+      [L('Наклоны', 'Tilts'), `${p.tilts.length}: ${p.tilts[0]}–${p.tilts[p.tilts.length - 1]}°`],
+      [L('Найквист', 'Nyquist'), `±${p.nyquist} ${L('м/с', 'm/s')}`],
+      [L('Дальность Z / V', 'Range Z / V'), `${km(p.range)} / ${km(p.velocityRange)}`],
+      [L('Объём', 'Volume'), p.volume < 60 ? `${p.volume} ${L('с', 's')}` : `${(p.volume / 60).toFixed(1).replace(/\.0$/, '')} ${L('мин', 'min')}`],
+    ] as [string, string][]).map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')
+    $('#radarVerified').textContent = `${L('Откуда числа', 'Sources')}: ${p.verified}`
+    $('#radarTilts').innerHTML = p.tilts.map(t => `<button data-tilt="${t}">${t.toFixed(1)}°</button>`).join('')
+    const fold = this.root.querySelector<HTMLButtonElement>('[data-seg="fold"] button[data-value="1"]')
+    if (fold) fold.textContent = `±${p.nyquist}`
   }
 
   /** Binds the display to a (new) model, keeping the site and tilt where possible. */
@@ -236,6 +275,7 @@ export class RadarPanel {
     const { width, depth } = model.grid, old = this.ppi
     this.ppi = new PPI(model, Math.round(width / PIXEL), Math.round(depth / PIXEL))
     if (old) { this.ppi.site = old.site; this.ppi.tilt = old.tilt }
+    this.ppi.setProfile(RADARS[this.radar])
     // A section line kept from a larger domain does not fit this one.
     const inside = (p: Point | null) => !!p && p.x >= 0 && p.y >= 0 && p.x <= width && p.y <= depth
     if (!inside(this.xs.a) || !inside(this.xs.b)) { this.xs.a = this.xs.b = null; this.cut = null }
@@ -392,7 +432,7 @@ export class RadarPanel {
   }
 
   private markTilt() {
-    const t = this.ppi?.tilt ?? RADAR_TILTS[0], all = VOLUME.includes(this.product)
+    const t = this.ppi?.tilt ?? RADARS[this.radar].tilts[0], all = VOLUME.includes(this.product)
     press(this.root.querySelectorAll<HTMLButtonElement>('[data-tilt]'), b => !all && Number(b.dataset.tilt) === t)
     this.root.querySelector<HTMLElement>('#radarTilt')!.textContent = all ? L('ВСЕ', 'ALL') : `${t.toFixed(1)}°`
   }
@@ -400,7 +440,8 @@ export class RadarPanel {
   /** The radial bins of the chosen beam width (or smooth pixels) on the scan. */
   private applyBins() {
     if (!this.ppi) return
-    this.ppi.bins = this.grid.beam ? { gate: GATE, beam: this.grid.beam } : null; this.ppi.layout(); this.lastComposite = 0
+    const p = RADARS[this.radar]
+    this.ppi.bins = this.grid.beam ? { gate: Math.max(p.gate, PIXEL), beam: p.step } : null; this.ppi.layout(); this.lastComposite = 0
   }
 
   private showGrid() {
@@ -418,14 +459,14 @@ export class RadarPanel {
   private values(): Float32Array | null {
     const ppi = this.ppi
     if (!ppi) return null
-    if (this.product === 'V' && this.nyquist) return this.folded(ppi.velocity, 'map')
+    if (this.product === 'V' && this.folding) return this.folded(ppi.velocity, 'map')
     return { Z: ppi.dbz, V: ppi.velocity, SRV: ppi.velocity, CR: ppi.compositeDbz, ZDR: ppi.zdr, RHO: ppi.rho, KDP: ppi.kdp, VIL: ppi.vil, ET: ppi.echoTop, MESH: ppi.mesh }[this.product]
   }
 
   /** The values of the section's field. */
   private xsValues(): Float32Array | null {
     const s = this.cut
-    if (s && this.xs.field === 'V' && this.nyquist) return this.folded(s.velocity, 'cut')
+    if (s && this.xs.field === 'V' && this.folding) return this.folded(s.velocity, 'cut')
     return s ? { Z: s.dbz, V: s.velocity, SRV: s.velocity, ZDR: s.zdr, RHO: s.rho, KDP: s.kdp }[this.xs.field] : null
   }
 
@@ -433,7 +474,8 @@ export class RadarPanel {
   private folded(values: Float32Array, into: 'map' | 'cut') {
     let out = into === 'map' ? this.foldedMap : this.foldedCut
     if (out.length !== values.length) { out = new Float32Array(values.length); if (into === 'map') this.foldedMap = out; else this.foldedCut = out }
-    for (let i = 0; i < values.length; i++) out[i] = fold(values[i], this.nyquist)
+    const n = RADARS[this.radar].nyquist
+    for (let i = 0; i < values.length; i++) out[i] = fold(values[i], n)
     return out
   }
 
@@ -808,7 +850,7 @@ export class RadarPanel {
       ...(kind === 'Z' ? [] : [[volume ? L('Сильнейшее эхо', 'Strongest echo') : L('Отражаемость', 'Reflectivity'), (volume ? ppi.compositeDbz : ppi.dbz)[i] < 5 ? NO_ECHO : `${(volume ? ppi.compositeDbz : ppi.dbz)[i].toFixed(0)} dBZ`] as [string, string]]),
       // VIL density (VIL over the echo top): from ~3.5 g/m³ large hail is likely (Amburn & Wolf 1997).
       // Folded: what the wind really is there, to learn to see folding (a real radar would need dealiasing for it).
-      ...(this.product === 'V' && this.nyquist && Math.abs(ppi.velocity[i]) > this.nyquist ? [[L('Без складывания', 'Unfolded'), this.describe(ppi.velocity[i], 'V')] as [string, string]] : []),
+      ...(this.product === 'V' && this.folding && Math.abs(ppi.velocity[i]) > RADARS[this.radar].nyquist ? [[L('Без складывания', 'Unfolded'), this.describe(ppi.velocity[i], 'V')] as [string, string]] : []),
       ...(this.product === 'VIL' && ppi.vil[i] >= 1 && ppi.echoTop[i] > 0 ? [[L('Плотность VIL', 'VIL density'), `${(ppi.vil[i] / ppi.echoTop[i]).toFixed(1)} ${L('г/м³', 'g/m³')}`] as [string, string]] : []), [name, this.product === 'ET' && ppi.echoTopped[i] ? L(`≥ ${this.describe(values[i], kind)}: верх не виден, выше верхнего наклона`, `≥ ${this.describe(values[i], kind)}: the top is not seen, above the highest tilt`) : this.describe(values[i], kind, 'in')]])
   }
 
