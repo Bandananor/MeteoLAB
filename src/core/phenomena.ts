@@ -6,29 +6,30 @@ import { L } from '../i18n'
  * vgo, z1, z2, zh3, zmax). GIMET-2010's own thresholds are not published, so the criteria are those of the guide for the
  * MRL-5 radars, RD 52.04.320-91, section 2.10 (its reflectivities are in lg Za, the old units by radius: dBZ = 10 lg Za +
  * 18), and where it has no grades (showers, hail and squalls 1-3) the grades are this project's choice, marked as such.
- * Notes: .claude/literature/dmrl-phenomena-criteria.md (02.11.2026).
+ * Notes: .claude/literature/dmrl-phenomena-criteria.md (02.11.2026). Colours: the DMRL-C map legend the author sent (03.11.2026;
+ * no echo within range grey, as on that map).
  */
 export const PHENOMENA: readonly { code: number; name: string; color: string }[] = [
-  { code: 0, name: L('нет радиоэха', 'no echo'), color: 'transparent' },
-  { code: 1, name: L('облачность верхнего и среднего яруса', 'upper and middle cloud'), color: '#6f7f99' },
-  { code: 2, name: L('слоистообразная облачность', 'stratiform cloud'), color: '#9aa7b8' },
-  { code: 3, name: L('осадки слабые', 'light precipitation'), color: '#9fe6a0' },
-  { code: 4, name: L('осадки умеренные', 'moderate precipitation'), color: '#4cc25a' },
-  { code: 5, name: L('осадки сильные', 'heavy precipitation'), color: '#1f7f32' },
-  { code: 6, name: L('кучевая облачность', 'cumulus'), color: '#d8d8d8' },
-  { code: 7, name: L('ливень слабый', 'light shower'), color: '#8fd3ff' },
-  { code: 8, name: L('ливень умеренный', 'moderate shower'), color: '#3f9cf0' },
-  { code: 9, name: L('ливень сильный', 'heavy shower'), color: '#1f4fd0' },
-  { code: 10, name: L('гроза, вероятность 30–70 %', 'thunderstorm, 30–70 %'), color: '#ffe66b' },
-  { code: 11, name: L('гроза, вероятность 71–90 %', 'thunderstorm, 71–90 %'), color: '#ffb52e' },
-  { code: 12, name: L('гроза, вероятность > 90 %', 'thunderstorm, > 90 %'), color: '#ff7a1a' },
-  { code: 13, name: L('град слабый', 'light hail'), color: '#ff5c8a' },
-  { code: 14, name: L('град умеренный', 'moderate hail'), color: '#e0207a' },
-  { code: 15, name: L('град сильный', 'heavy hail'), color: '#a0005a' },
-  { code: 16, name: L('шквал слабый', 'light squall'), color: '#c49bff' },
-  { code: 17, name: L('шквал умеренный', 'moderate squall'), color: '#9b5cff' },
-  { code: 18, name: L('шквал сильный', 'heavy squall'), color: '#6a1fd8' },
-  { code: 19, name: L('смерч', 'tornado'), color: '#ff1a1a' },
+  { code: 0, name: L('нет радиоэха', 'no echo'), color: '#dadada' },
+  { code: 1, name: L('облачность верхнего и среднего яруса', 'upper and middle cloud'), color: '#b9c2c7' },
+  { code: 2, name: L('слоистообразная облачность', 'stratiform cloud'), color: '#bcd6fe' },
+  { code: 3, name: L('осадки слабые', 'light precipitation'), color: '#7cfeb2' },
+  { code: 4, name: L('осадки умеренные', 'moderate precipitation'), color: '#4cd38a' },
+  { code: 5, name: L('осадки сильные', 'heavy precipitation'), color: '#4cb64c' },
+  { code: 6, name: L('кучевая облачность', 'cumulus'), color: '#fefea4' },
+  { code: 7, name: L('ливень слабый', 'light shower'), color: '#77abfe' },
+  { code: 8, name: L('ливень умеренный', 'moderate shower'), color: '#4c73fe' },
+  { code: 9, name: L('ливень сильный', 'heavy shower'), color: '#4c4c9d' },
+  { code: 10, name: L('гроза, вероятность 30–70 %', 'thunderstorm, 30–70 %'), color: '#fec2a4' },
+  { code: 11, name: L('гроза, вероятность 71–90 %', 'thunderstorm, 71–90 %'), color: '#fe87a4' },
+  { code: 12, name: L('гроза, вероятность > 90 %', 'thunderstorm, > 90 %'), color: '#fe4c4c' },
+  { code: 13, name: L('град слабый', 'light hail'), color: '#da934c' },
+  { code: 14, name: L('град умеренный', 'moderate hail'), color: '#ab7a4c' },
+  { code: 15, name: L('град сильный', 'heavy hail'), color: '#8e4c4c' },
+  { code: 16, name: L('шквал слабый', 'light squall'), color: '#fec2fe' },
+  { code: 17, name: L('шквал умеренный', 'moderate squall'), color: '#fe87fe' },
+  { code: 18, name: L('шквал сильный', 'heavy squall'), color: '#d74cd7' },
+  { code: 19, name: L('смерч', 'tornado'), color: '#78788e' },
   { code: 31, name: L('нет данных', 'no data'), color: '#2a2f3a' },
 ]
 

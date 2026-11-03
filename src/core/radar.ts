@@ -19,7 +19,7 @@ export interface RadarBand { band: 'S' | 'C' | 'X'; wavelength: number }
  * rain at 10 °C, melting graupel and hail at 0 °C. Solid ice (Mätzler 2006: n 1.786 at 0 °C, eps'' 4.8e-4 / 6.2e-4 / 8.9e-4,
  * k = eps'' / 2n), mixed with air by Maxwell Garnett to the species' density.
  */
-const REFRACTIVE: Record<RadarBand['band'], { rain: Complex; melting: Complex; ice: Complex }> = {
+export const REFRACTIVE: Record<RadarBand['band'], { rain: Complex; melting: Complex; ice: Complex }> = {
   S: { rain: [9.019, .887], melting: [9.075, 1.253], ice: [1.786, 1.3e-4] },
   C: { rain: [8.601, 1.687], melting: [8.328, 2.217], ice: [1.786, 1.7e-4] },
   X: { rain: [7.942, 2.332], melting: [7.351, 2.785], ice: [1.786, 2.5e-4] },
@@ -43,7 +43,15 @@ function mieRatios(radar: RadarBand): Ratios {
   return r
 }
 /** Slope of an exponential distribution with intercept n0 (m^-4) and particle density rhoX holding rhoQ kg/m3, m^-1. */
-const slope = (rhoQ: number, n0: number, rhoX: number) => (Math.PI * rhoX * n0 / rhoQ) ** .25
+export const distributionSlope = (rhoQ: number, n0: number, rhoX: number) => (Math.PI * rhoX * n0 / rhoQ) ** .25
+/**
+ * Slope of the same particles melted into drops of their mass, m^-1: D_w = D (rhoX / rho_w)^(1/3), so the slope grows by
+ * (rho_w / rhoX)^(1/3) and the intercept likewise (meltedIntercept). Melting graupel and hail scatter and attenuate as these
+ * water spheres - the Mie form of the Rayleigh rule above, which gives melting ice the water dielectric and its own mass.
+ */
+export const meltedSlope = (rhoQ: number, n0: number, rhoX: number) => distributionSlope(rhoQ, n0, rhoX) * Math.cbrt(RHO_W / rhoX)
+/** Intercept of the melted distribution, m^-4 (meltedSlope). */
+export const meltedIntercept = (n0: number, rhoX: number) => n0 * Math.cbrt(RHO_W / rhoX)
 
 /** Dielectric factor of ice relative to water. */
 const ICE_DIELECTRIC = .224
@@ -58,16 +66,16 @@ function factor(rhoQ: number, n0: number, rhoX: number) {
 /**
  * Reflectivity factor of rain, snow, graupel and hail separately, mm6/m3 (mixing ratios kg/kg, density rho, temperature
  * tc °C). Rayleigh scattering without `radar`; with it rain, graupel and hail scatter by Mie at its wavelength (melting
- * graupel and hail as water spheres of their size - a rough stand-in for a water-coated sphere; snow stays Rayleigh).
+ * graupel and hail as drops of their mass, meltedSlope - a rough stand-in for a water-coated sphere; snow stays Rayleigh).
  */
 export function speciesZ(rho: number, rain: number, snow: number, graupel: number, tc: number, hail = 0, radar?: RadarBand) {
   const ice = (rhoX: number) => (rhoX / RHO_W) ** 2 * (tc > 0 ? 1 : ICE_DIELECTRIC)
   const z = { rain: factor(rho * rain, N0R, RHO_W), snow: factor(rho * snow, N0S, RHO_S) * ice(RHO_S), graupel: factor(rho * graupel, N0G, RHO_G) * ice(RHO_G), hail: factor(rho * hail, N0H, RHO_H) * ice(RHO_H) }
   if (radar) {
     const r = mieRatios(radar)
-    if (z.rain > 0) z.rain *= r.rain(slope(rho * rain, N0R, RHO_W))
-    if (z.graupel > 0) z.graupel *= (tc > 0 ? r.melting : r.graupel)(slope(rho * graupel, N0G, RHO_G))
-    if (z.hail > 0) z.hail *= (tc > 0 ? r.melting : r.hail)(slope(rho * hail, N0H, RHO_H))
+    if (z.rain > 0) z.rain *= r.rain(distributionSlope(rho * rain, N0R, RHO_W))
+    if (z.graupel > 0) z.graupel *= tc > 0 ? r.melting(meltedSlope(rho * graupel, N0G, RHO_G)) : r.graupel(distributionSlope(rho * graupel, N0G, RHO_G))
+    if (z.hail > 0) z.hail *= tc > 0 ? r.melting(meltedSlope(rho * hail, N0H, RHO_H)) : r.hail(distributionSlope(rho * hail, N0H, RHO_H))
   }
   return z
 }

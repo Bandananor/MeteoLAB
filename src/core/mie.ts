@@ -90,3 +90,24 @@ export function mieRatioTable(m: Complex, wavelength: number) {
     return table[s] * (1 - t) + table[s + 1] * t
   }
 }
+
+/**
+ * Extinction integral of an exponential distribution with a unit intercept, sum sigma_ext(D) exp(-slope D) dD (m³) of
+ * spheres of refractive index m at a wavelength (cm), tabulated against the slope like mieRatioTable: times N0 (m^-4) and
+ * 10 lg e 1000 it is the one-way specific attenuation, dB/km.
+ */
+export function mieExtinctionTable(m: Complex, wavelength: number) {
+  const lambda = wavelength / 100, n = Math.round(MIE_DMAX / MIE_STEP), sigma = new Float64Array(n)
+  for (let j = 0; j < n; j++) { const d = (j + .5) * MIE_STEP; sigma[j] = mie(Math.PI * d / lambda, m).ext * Math.PI * d * d / 4 }
+  const table = new Float64Array(SLOPES), logMin = Math.log(SLOPE_MIN), logStep = Math.log(SLOPE_MAX / SLOPE_MIN) / (SLOPES - 1)
+  for (let s = 0; s < SLOPES; s++) {
+    const slope = Math.exp(logMin + s * logStep)
+    let sum = 0
+    for (let j = 0; j < n; j++) sum += sigma[j] * Math.exp(-slope * (j + .5) * MIE_STEP) * MIE_STEP
+    table[s] = Math.log(Math.max(sum, 1e-300))
+  }
+  return (slope: number) => {
+    const f = Math.min(SLOPES - 1, Math.max(0, (Math.log(slope) - logMin) / logStep)), s = Math.min(SLOPES - 2, Math.floor(f)), t = f - s
+    return Math.exp(table[s] * (1 - t) + table[s + 1] * t)
+  }
+}

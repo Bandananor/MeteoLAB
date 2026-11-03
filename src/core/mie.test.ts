@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { dielectricFactor, mie, porousIce, speciesZ } from '.'
+import { dielectricFactor, mie, porousIce, specificAttenuation, speciesZ } from '.'
 
 describe('Mie scattering of spheres for the radar (mie.ts)', () => {
   it('reproduces the Bohren-Huffman and miepython test cases', () => {
@@ -35,5 +35,15 @@ describe('Mie scattering of spheres for the radar (mie.ts)', () => {
     // Light drizzle-sized rain: the same as Rayleigh at every band.
     const rain = (band: 'S' | 'C' | 'X', wavelength: number) => speciesZ(1, 1e-5, 0, 0, 10, 0, { band, wavelength }).rain / speciesZ(1, 1e-5, 0, 0, 10).rain
     expect(rain('X', 3.2)).toBeCloseTo(1, 1); expect(rain('S', 10)).toBeCloseTo(1, 1)
+  })
+})
+
+describe('attenuation by graupel and hail from the Mie extinction (attenuation.ts)', () => {
+  it('puts melting hail at C band within the observed 1-4 dB/km and dry hail at S near nothing', () => {
+    const a = (band: 'S' | 'C' | 'X', wavelength: number, hail: number, tc: number) => specificAttenuation(1, 0, 0, hail, tc, 20_000, band, wavelength).a
+    // Melting hail at C (Borowska et al. 2011 and others: A_H ~1-4 dB/km in hail cores).
+    expect(a('C', 5.3, .003, 5)).toBeGreaterThan(1); expect(a('C', 5.3, .005, 5)).toBeLessThan(4.5)
+    // Dry hail: negligible at S, a few tenths at C, more at X (scattering by large ice).
+    expect(a('S', 10, .005, -10)).toBeLessThan(.1); expect(a('X', 3.2, .005, -10)).toBeGreaterThan(a('C', 5.3, .005, -10))
   })
 })
