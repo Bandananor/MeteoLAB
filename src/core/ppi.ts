@@ -262,7 +262,9 @@ export class PPI {
 
   /**
    * The volume scan's products over each pixel: the composite reflectivity (the strongest echo), the echo top (the
-   * highest beam with at least ECHO_TOP_DBZ, as the NWS enhanced echo tops) and VIL — the liquid water the reflectivity
+   * highest beam with at least ECHO_TOP_DBZ, as the NWS enhanced echo tops, raised to where the echo falls through that
+   * threshold between it and the next tilt up - Lakshmanan et al. 2013, WAF 28, 481: the beam heights alone make rings of
+   * stair-steps with range; a beam above the model top counts as no echo) and VIL — the liquid water the reflectivity
    * implies, integrated between the tilts' beam heights: 3.44e-6 Z^(4/7) kg/m³ (Greene & Clark 1972), Z (mm⁶/m³) capped at
    * VIL_MAX_DBZ so hail does not count as water. And MESH, the maximum expected size of hail (Witt et al. 1998): the
    * severe hail index SHI = 0.1 ∫ W_T(H) E dH, the hail kinetic energy flux E = 5e-6 10^(0.084 Z) W(Z) (W from 0 at 40 dBZ to
@@ -283,6 +285,8 @@ export class PPI {
     // The echo at height H between the previous beam (h1, d1) and this one (h2, d2), and a layer's strongest echo: the
     // beams inside it and the interpolated echo where the beams cross its bounds.
     const between = (h1: number, d1: number, h2: number, d2: number, H: number) => d1 + (d2 - d1) * (H - h1) / (h2 - h1)
+    // Where the echo falls through `threshold` between a beam at h1 (with it) and the next one up at h2 (without), km.
+    const crossing = (h1: number, d1: number, h2: number, d2: number, threshold: number) => d1 >= threshold && d2 < threshold ? (h1 + (h2 - h1) * (d1 - threshold) / (d1 - d2)) / 1000 : 0
     const layer = (into: Float32Array, i: number, h1: number, d1: number, h2: number, d2: number, a: number, b: number) => {
       let v = into[i]
       if (h2 >= a && h2 <= b) v = Math.max(v, d2)
@@ -295,9 +299,15 @@ export class PPI {
       const gz = this.levelsFor(tilt), path = this.attenuate ? this.pathAttenuation(tilt) : null
       for (let i = 0; i < out.length; i++) {
         const z = gz[i]
-        if (z < 0 || this.range[i] > reach) continue
+        if (this.range[i] > reach) continue
+        if (z < 0) {
+          // Above the model top: no echo, which closes the tops of the beam below it (once: the higher tilts are higher still).
+          if (!Number.isNaN(last[i]) && lastH[i] < Infinity) { const h = beamHeight(this.range[i], tilt); top[i] = Math.max(top[i], crossing(lastH[i], lastD[i], h, DBZ_FLOOR, topDbz)); vgo[i] = Math.max(vgo[i], crossing(lastH[i], lastD[i], h, DBZ_FLOOR, VGO_DBZ)); lastH[i] = Infinity }
+          continue
+        }
         const raw = m.sample(this.nodeDbz, this.gx[i] - ox, this.gy[i] - oy, z), d = path ? Math.max(DBZ_FLOOR, raw - path.pia[this.piaIndex(i, path.gates)]) : raw, h = heightAt(grid, z)
         if (d > out[i]) out[i] = d
+        if (!Number.isNaN(last[i]) && h > lastH[i]) { top[i] = Math.max(top[i], crossing(lastH[i], lastD[i], h, d, topDbz)); vgo[i] = Math.max(vgo[i], crossing(lastH[i], lastD[i], h, d, VGO_DBZ)) }
         if (d >= topDbz) top[i] = Math.max(top[i], h / 1000)
         if (tilt === highest) this.echoTopped[i] = d >= topDbz ? 1 : 0
         if (d >= VGO_DBZ) vgo[i] = Math.max(vgo[i], h / 1000)
