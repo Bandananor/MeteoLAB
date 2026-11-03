@@ -368,7 +368,10 @@ export class PPI {
    * speed, minus `stormMotion` if set; NaN without echo. With `dual` also ZDR, rho_hv and KDP (NaN below DUAL_MIN_DBZ;
    * empty arrays without it). Also per gate: the range from the radar (m), the beam height of every tilt there (m, in
    * the profile's order) and the heights of the 0 °C and -20 °C isotherms in the column (m, the lowest crossing from warm
-   * to cold; NaN if none). Periodic like the model; above the model top and beyond the profile's ranges: no echo, no velocity.
+   * to cold; NaN if none). Periodic like the model; above the model top and beyond the profile's ranges: no echo, no velocity;
+   * only within the volume the radar scans - from the lower edge of its lowest beam to the upper edge of its highest (half
+   * a beam width beyond the tilts; the velocity by its own tilts): no data above it near the radar (the cone of silence)
+   * and below it far away, where no beam reaches.
    */
   crossSection(a: { x: number; y: number }, b: { x: number; y: number }, gates: number, dz: number, rows: number) {
     const m = this.model, grid = m.grid, { dx, dy, nz } = grid, [ox, oy] = this.shift(), e = m.env
@@ -389,16 +392,19 @@ export class PPI {
       }
     }
     const beams = this.tilts.map(tilt => Float32Array.from(range, r => beamHeight(r, tilt))), reach = this.profile.range, doppler = this.profile.velocityRange
+    // The scanned volume over each gate: beam heights of the lowest tilt's lower edge and the highest's upper edge.
+    const half = this.profile.beam / 2, vt = this.velocityTilts, edge = (tilt: number) => Float32Array.from(range, r => beamHeight(r, tilt))
+    const low = edge(this.tilts[0] - half), high = edge(this.tilts[this.tilts.length - 1] + half), lowV = edge(vt[0] - half), highV = edge(vt[vt.length - 1] + half)
     for (let k = 0; k < rows; k++) {
       const h = (k + .5) * dz
       if (h > grid.height) break
       const z = levelAt(grid, h)
       for (let g = 0; g < gates; g++) {
-        if (range[g] > reach) continue
+        if (range[g] > reach || h < low[g] || h > high[g]) continue
         const gx = gxs[g], gy = gys[g], i = k * gates + g, d = m.sample(this.nodeDbz, gx, gy, z)
         dbz[i] = d
         if (dual && d >= DUAL_MIN_DBZ) { zdr[i] = m.sample(this.nodeZdr, gx, gy, z); rho[i] = m.sample(this.nodeRho, gx, gy, z); kdp[i] = m.sample(this.nodeKdp, gx, gy, z) }
-        if (d < VELOCITY_MIN_DBZ || range[g] > doppler) continue
+        if (d < VELOCITY_MIN_DBZ || range[g] > doppler || h < lowV[g] || h > highV[g]) continue
         const el = Math.atan2(h, range[g])
         velocity[i] = ((m.sample(m.u, gx, gy, z) + cu) * sinAz[g] + (m.sample(m.v, gx, gy, z) + cv) * cosAz[g]) * Math.cos(el) + (m.sample(m.w, gx, gy, z) - m.sample(this.nodeFall, gx, gy, z)) * Math.sin(el)
       }

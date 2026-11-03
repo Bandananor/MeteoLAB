@@ -3,6 +3,19 @@ import { AtmosphereModel, beamHeight, createGrid, PPI, RADAR_TILTS, RADARS, VGO_
 import { QUIET } from './fixtures'
 
 describe('radar PPI', () => {
+  it('leaves the section empty where no beam reaches: above the highest tilt near the radar', () => {
+    const model = new AtmosphereModel({ ...QUIET }, createGrid({ nx: 16, ny: 12, nz: 20, width: 19_200, depth: 13_500, height: 15_000, bottomSpacing: 100 }))
+    model.rain.fill(1e-3)
+    const ppi = new PPI(model, 64, 45)
+    ppi.setProfile(RADARS.x); ppi.layout(); ppi.prepare()
+    // From the site 8 km east, 80 rows of 125 m: the X's highest tilt (15° + half a beam) is ~2.2 km up at 8 km.
+    const { dbz, range } = ppi.crossSection(ppi.site, { x: ppi.site.x + 8000, y: ppi.site.y }, 32, 125, 80), last = 31
+    const at = (g: number, h: number) => dbz[Math.floor(h / 125) * 32 + g]
+    expect(range[last]).toBeGreaterThan(7500)
+    expect(at(last, 1000)).toBeGreaterThan(30)
+    expect(at(last, 5000)).toBe(-20)
+  })
+
   it('raises the beam with range and tilt like a real radar (4/3 Earth)', () => {
     // 0.5° at 100 km: ~1.46 km (NEXRAD tables); at 20 km the curvature adds only ~24 m.
     expect(beamHeight(100_000, .5) / 1000).toBeCloseTo(1.46, 1)
