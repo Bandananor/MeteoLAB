@@ -290,7 +290,7 @@ export class PPI {
       if (h1 < b && h2 >= b) v = Math.max(v, between(h1, d1, h2, d2, b))
       into[i] = v
     }
-    const tilts = this.tilts, highest = tilts[tilts.length - 1], reach = this.profile.range
+    const tilts = this.tilts, highest = tilts[tilts.length - 1], reach = this.profile.range, topDbz = this.profile.echoTopDbz ?? ECHO_TOP_DBZ
     for (const tilt of tilts) {
       const gz = this.levelsFor(tilt), path = this.attenuate ? this.pathAttenuation(tilt) : null
       for (let i = 0; i < out.length; i++) {
@@ -298,8 +298,8 @@ export class PPI {
         if (z < 0 || this.range[i] > reach) continue
         const raw = m.sample(this.nodeDbz, this.gx[i] - ox, this.gy[i] - oy, z), d = path ? Math.max(DBZ_FLOOR, raw - path.pia[this.piaIndex(i, path.gates)]) : raw, h = heightAt(grid, z)
         if (d > out[i]) out[i] = d
-        if (d >= ECHO_TOP_DBZ) top[i] = Math.max(top[i], h / 1000)
-        if (tilt === highest) this.echoTopped[i] = d >= ECHO_TOP_DBZ ? 1 : 0
+        if (d >= topDbz) top[i] = Math.max(top[i], h / 1000)
+        if (tilt === highest) this.echoTopped[i] = d >= topDbz ? 1 : 0
         if (d >= VGO_DBZ) vgo[i] = Math.max(vgo[i], h / 1000)
         if (Number.isNaN(last[i])) { if (h >= ZMAX_FROM) zmax[i] = Math.max(zmax[i], d); if (h >= Z1_LAYER[0] && h <= Z1_LAYER[1]) z1[i] = d; if (h >= Z2_LAYER[0] && h <= Z2_LAYER[1]) z2[i] = d }
         else if (h > lastH[i]) {
