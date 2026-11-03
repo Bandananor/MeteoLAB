@@ -2,7 +2,7 @@ import { L } from '../i18n'
 
 /**
  * Radar profiles (roadmap E11, first step: the scan without new physics). Each radar samples the same model fields
- * (reflectivity still Rayleigh at every band, no attenuation yet) with its own scan: the elevation angles of its volume
+ * (reflectivity Rayleigh unless PPI.mie, attenuation with PPI.attenuate) with its own scan: the elevation angles of its volume
  * scan (every volume product - composite, echo top, VIL, MESH - and the mesocyclone detection use them), the range gate and
  * the beam width of its radial bins, its Nyquist velocity (the folding option), and the ranges beyond which it gives no
  * reflectivity or no velocity. Sources: .claude/literature/radar-profiles.md (02.11.2026); `verified` says what was not

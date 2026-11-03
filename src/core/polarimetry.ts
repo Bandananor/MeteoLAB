@@ -1,5 +1,5 @@
 import { N0R, RHO_W } from './graupel'
-import { speciesZ } from './radar'
+import { type RadarBand, speciesZ } from './radar'
 
 // Dual polarisation (S band, 10.7 cm) from the model's precipitation: differential reflectivity ZDR, the co-polar
 // correlation coefficient rho_hv and the specific differential phase KDP. The microphysics is single-moment, so a
@@ -65,8 +65,8 @@ export interface DualPol { /** dB */ zdr: number; /** 0-1 */ rho: number; /** de
  * temperature tc, °C; NaN everywhere without precipitation. Each species adds its horizontal and vertical reflectivity;
  * rho_hv = |sum rho_i sqrt(Zh_i Zv_i)| / sqrt(sum Zh sum Zv); KDP comes from rain alone (ice adds little).
  */
-export function dualPol(rho: number, rain: number, snow: number, graupel: number, tc: number, hail = 0): DualPol {
-  const z = speciesZ(rho, rain, snow, graupel, tc, hail), wet = tc > 0 ? 'wet' : 'dry'
+export function dualPol(rho: number, rain: number, snow: number, graupel: number, tc: number, hail = 0, radar?: RadarBand): DualPol {
+  const z = speciesZ(rho, rain, snow, graupel, tc, hail, radar), wet = tc > 0 ? 'wet' : 'dry'
   let zh = 0, zv = 0, cross = 0
   const add = (h: number, zdr: number, rhoHv: number) => { if (!(h > 0)) return; const v = h / zdr; zh += h; zv += v; cross += rhoHv * Math.sqrt(h * v) }
   if (rain > 0) add(z.rain, rainTable(RAIN.zdr, rho * rain), RAIN_RHO)

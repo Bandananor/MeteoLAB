@@ -99,6 +99,11 @@ export class PPI {
    * the detection and the hook check do not).
    */
   attenuate = false
+  /**
+   * Whether rain, graupel and hail scatter by Mie at the radar's wavelength (radar.ts speciesZ) instead of Rayleigh: large
+   * hail looks weaker at C and X band, melting graupel brighter at S. Every product of the PPI follows.
+   */
+  mie = false
   /** One-way specific and differential attenuation at the nodes, dB/km (prepared with `attenuate`). */
   private nodeAtt = new Float32Array(0); private nodeAttDp = new Float32Array(0)
   /** Radial spacing (m) and azimuthal bins of the path-integrated attenuation. */
@@ -190,8 +195,9 @@ export class PPI {
           continue
         }
         const tc = m.theta[i] * exner - 273.15
-        this.nodeDbz[i] = reflectivity(rho, rain, snow, graupel, tc, hail); this.nodeFall[i] = reflectivityFallSpeed(rho, rhoGround, rain, snow, graupel, tc, hail)
-        if (dual) { const d = dualPol(rho, rain, snow, graupel, tc, hail); this.nodeZdr[i] = d.zdr; this.nodeRho[i] = d.rho; this.nodeKdp[i] = d.kdp }
+        const radar = this.mie ? this.profile : undefined
+        this.nodeDbz[i] = reflectivity(rho, rain, snow, graupel, tc, hail, radar); this.nodeFall[i] = reflectivityFallSpeed(rho, rhoGround, rain, snow, graupel, tc, hail, radar)
+        if (dual) { const d = dualPol(rho, rain, snow, graupel, tc, hail, radar); this.nodeZdr[i] = d.zdr; this.nodeRho[i] = d.rho; this.nodeKdp[i] = d.kdp }
       }
     }
   }

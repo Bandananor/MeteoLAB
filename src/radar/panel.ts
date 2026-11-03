@@ -16,7 +16,7 @@ type Point = { x: number; y: number }
 /** Raster resolution of the scan, m per pixel: half a range gate, so the radial bins' edges fall on pixel edges. */
 const PIXEL = 125
 /** The chosen radar profile, kept in this browser. */
-const RADAR_STORE = 'meteolab-radar-type', ATTENUATION_STORE = 'meteolab-radar-attenuation'
+const RADAR_STORE = 'meteolab-radar-type', ATTENUATION_STORE = 'meteolab-radar-attenuation', MIE_STORE = 'meteolab-radar-mie'
 function loadRadar(): RadarId {
   try { const r = localStorage.getItem(RADAR_STORE); if (r && r in RADARS) return r as RadarId } catch { /* default */ }
   return 'wsr88d'
@@ -123,6 +123,8 @@ export class RadarPanel {
   private radar = loadRadar()
   /** Whether the beam is attenuated by rain and gases (on unless switched off in this browser). */
   private attenuate = (() => { try { return localStorage.getItem(ATTENUATION_STORE) !== '0' } catch { return true } })()
+  /** Whether rain, graupel and hail scatter by Mie at the radar's wavelength (on unless switched off in this browser). */
+  private mie = (() => { try { return localStorage.getItem(MIE_STORE) !== '0' } catch { return true } })()
   /** Whether the base velocity folds at the radar's Nyquist velocity (V and its section), and the buffers it is folded into. */
   private folding = false; private levels: PhenomenaLevels | null = null; private foldedMap = new Float32Array(0); private foldedCut = new Float32Array(0)
   private detector = new MesocycloneDetector(); private detections: Circulation[] = []; private lastScan = 0; private scanTime = -1; private showMda = true; private showWeak = false
@@ -150,7 +152,7 @@ export class RadarPanel {
     this.root = instrumentScreen(host, 'radar-app', `METEOLAB DOPPLER · <span id="radarName">${RADARS[this.radar].name} · ${RADARS[this.radar].band}</span>`,
       `<span>${L('ПРОДУКТ', 'PRODUCT')} <b id="radarProduct">${PRODUCTS.Z.title}</b></span><span>${L('НАКЛОН', 'TILT')} <b id="radarTilt">0.5°</b></span><span>${L('РАЗРЕЗ', 'SECTION')} <b id="radarCut">${L('нет', 'none')}</b></span><span>T+ <b id="radarTime">00:00</b></span>`,
       section(L('Радар', 'Radar'), `<div class="field"><span class="select"><select id="radarType">${(Object.keys(RADARS) as RadarId[]).map(r => `<option value="${r}">${RADARS[r].name} · ${RADARS[r].band}</option>`).join('')}</select></span></div>
-        <label class="check" title="${L('Луч ослабляется дождём (и тающим градом) по дороге туда и обратно: за сильным ядром эхо слабее, ZDR ниже — «тень». На S почти незаметно, на C — несколько дБ, на X — десятки за ливнем. Удельное ослабление — по KDP (A = α·KDP: 0,02 / 0,08 / 0,30 для S / C / X), плюс газы. Продукты ДМРЛ-С и CR, VIL, ET, MESH считаются по ослабленному эху, как у настоящего радара без поправки; разрез и поиск мезоциклонов — без ослабления', 'The beam is attenuated by rain (and melting hail) on the way out and back: behind a strong core the echo is weaker and ZDR lower — a shadow. Barely visible at S, a few dB at C, tens behind a downpour at X. The specific attenuation from KDP (A = α·KDP: 0.02 / 0.08 / 0.30 for S / C / X), plus gases. The DMRL-C products and CR, VIL, ET, MESH use the attenuated echo, as a real radar without correction; the section and the mesocyclone detection do not')}"><input type="checkbox" id="radarAttenuation"> ${L('Ослабление в осадках', 'Attenuation in precipitation')}</label><span class="t-caption" id="radarNote"></span><dl class="kv" id="radarSpecs"></dl><span class="t-caption" id="radarVerified"></span>`)
+        <label class="check" title="${L('Луч ослабляется дождём (и тающим градом) по дороге туда и обратно: за сильным ядром эхо слабее, ZDR ниже — «тень». На S почти незаметно, на C — несколько дБ, на X — десятки за ливнем. Удельное ослабление — по KDP (A = α·KDP: 0,02 / 0,08 / 0,30 для S / C / X), плюс газы. Продукты ДМРЛ-С и CR, VIL, ET, MESH считаются по ослабленному эху, как у настоящего радара без поправки; разрез и поиск мезоциклонов — без ослабления', 'The beam is attenuated by rain (and melting hail) on the way out and back: behind a strong core the echo is weaker and ZDR lower — a shadow. Barely visible at S, a few dB at C, tens behind a downpour at X. The specific attenuation from KDP (A = α·KDP: 0.02 / 0.08 / 0.30 for S / C / X), plus gases. The DMRL-C products and CR, VIL, ET, MESH use the attenuated echo, as a real radar without correction; the section and the mesocyclone detection do not')}"><input type="checkbox" id="radarAttenuation"> ${L('Ослабление в осадках', 'Attenuation in precipitation')}</label><label class="check" title="${L('Дождь, крупа и град рассеивают по теории Ми на длине волны радара, а не по Рэлею: крупный град на C и X выглядит слабее (на C при граде ~3 см — на 5–10 дБ), тающая крупа на S — ярче на 2–3 дБ. Частицы — сферы; тающие крупа и град — как водные сферы того же размера (грубо), снег по Рэлею. Без флажка — рэлеевская отражаемость модели, одинаковая для всех радаров', 'Rain, graupel and hail scatter by Mie theory at the radar\'s wavelength instead of Rayleigh: large hail looks weaker at C and X (5–10 dB at C for ~3 cm hail), melting graupel brighter at S by 2–3 dB. Spheres; melting graupel and hail as water spheres of their size (rough), snow Rayleigh. Unchecked — the model\'s Rayleigh reflectivity, the same at every radar')}"><input type="checkbox" id="radarMie"> ${L('Рассеяние Ми', 'Mie scattering')}</label><span class="t-caption" id="radarNote"></span><dl class="kv" id="radarSpecs"></dl><span class="t-caption" id="radarVerified"></span>`)
       + section(L('Продукт', 'Product'), `<div class="tilts tilts--4">${(Object.keys(PRODUCTS) as Product[]).map(p => `<button data-product="${p}" title="${PRODUCTS[p].label}">${p}</button>`).join('')}</div>
         <div class="stat" style="border:0;padding:0"><span id="radarProductLabel"></span><span class="unit" id="radarUnits">dBZ</span></div>
         <span class="label" title="${L(`Как у настоящего импульсного радара: скорость вдоль луча измеряется только в пределах ±v_N = λ·PRF/4 (Найквист), быстрее — «заворачивается» в другой знак: красное посреди зелёного. Предел берётся у выбранного радара (WSR-88D ~±28 м/с, европейский C с двойной частотой импульсов ±32, ДМРЛ-С с двумя периодами импульсов ±66). Только для V: SRV и MDA считаются по раскрученной скорости, как у NWS`, `As on a real pulsed radar: the velocity along the beam is measured only within ±v_N = λ·PRF/4 (Nyquist), faster wind folds over to the other sign: red amid green. The limit is the chosen radar’s (WSR-88D ~±28 m/s, a European C with dual PRF ±32, DMRL-C with two pulse periods ±66). V only: SRV and the MDA use the unfolded velocity, as the NWS`)}">${L('Складывание скоростей (V)', 'Velocity folding (V)')}</span>${seg('fold', [['0', L('нет', 'none')], ['1', `±${RADARS[this.radar].nyquist}`]])}`)
@@ -199,6 +201,8 @@ export class RadarPanel {
     $('.ibar__close').addEventListener('click', () => this.toggle(false))
     $('#radarTilts').addEventListener('click', e => { const b = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-tilt]'); if (b) this.setTilt(Number(b.dataset.tilt)) })
     $<HTMLInputElement>('#radarAttenuation').checked = this.attenuate
+    $<HTMLInputElement>('#radarMie').checked = this.mie
+    $<HTMLInputElement>('#radarMie').addEventListener('change', e => { this.mie = (e.target as HTMLInputElement).checked; try { localStorage.setItem(MIE_STORE, this.mie ? '1' : '0') } catch { /* not kept */ } if (this.ppi) this.ppi.mie = this.mie; this.lastComposite = 0; this.refresh(true) })
     $<HTMLInputElement>('#radarAttenuation').addEventListener('change', e => { this.attenuate = (e.target as HTMLInputElement).checked; try { localStorage.setItem(ATTENUATION_STORE, this.attenuate ? '1' : '0') } catch { /* not kept */ } if (this.ppi) this.ppi.attenuate = this.attenuate; this.lastComposite = 0; this.refresh(true) })
     $<HTMLSelectElement>('#radarType').addEventListener('change', e => this.setRadar((e.target as HTMLSelectElement).value as RadarId))
     this.root.querySelectorAll<HTMLButtonElement>('[data-product]').forEach(b => b.addEventListener('click', () => this.setProduct(b.dataset.product as Product)))
@@ -284,7 +288,7 @@ export class RadarPanel {
     const { width, depth } = model.grid, old = this.ppi
     this.ppi = new PPI(model, Math.round(width / PIXEL), Math.round(depth / PIXEL))
     if (old) { this.ppi.site = old.site; this.ppi.tilt = old.tilt }
-    this.ppi.setProfile(RADARS[this.radar]); this.ppi.attenuate = this.attenuate
+    this.ppi.setProfile(RADARS[this.radar]); this.ppi.attenuate = this.attenuate; this.ppi.mie = this.mie
     // A section line kept from a larger domain does not fit this one.
     const inside = (p: Point | null) => !!p && p.x >= 0 && p.y >= 0 && p.x <= width && p.y <= depth
     if (!inside(this.xs.a) || !inside(this.xs.b)) { this.xs.a = this.xs.b = null; this.cut = null }
