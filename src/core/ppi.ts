@@ -5,6 +5,7 @@ import { DBZ_FLOOR, reflectivity, reflectivityFallSpeed } from './radar'
 import { RADARS, type RadarProfile } from './radars'
 import { phenomenon, RD_CRITERIA } from './phenomena'
 import { specificAttenuation } from './attenuation'
+import { clutterAt, noiseFloor } from './clutter'
 
 /** Elevation angles of a NEXRAD volume scan (VCP 12/212), degrees: the WSR-88D profile's. */
 export const RADAR_TILTS = RADARS.wsr88d.tilts
@@ -16,6 +17,19 @@ const EARTH = 4 / 3 * 6_371_000
 export function beamHeight(range: number, elevation: number) {
   const s = Math.sin(elevation * Math.PI / 180)
   return Math.sqrt(range * range + EARTH * EARTH + 2 * range * EARTH * s) - EARTH
+}
+
+/**
+ * VAD winds (Browning & Wexler 1968; NEXRAD VWP): slant ranges of the rings tried, longest first (the VAD's 30 km and the
+ * enhanced VWP's 20 and 10 km), the fewest points and the azimuths a ring needs (>= 150° below 2°, >= 75° above - Losey et
+ * al. 2017) and the largest RMS of the fit, m/s (5, the NEXRAD VAD's - from secondary sources).
+ */
+export const VAD = { ranges: [30_000, 20_000, 10_000], points: 25, coverLow: 150, coverHigh: 75, rms: 5 } as const
+
+export interface VadWind {
+  /** Height of the ring, m; slant range, m; tilt, degrees. */ height: number; range: number; tilt: number
+  /** Wind toward the east and the north, m/s (over the ground); RMS of the fit, m/s; points and azimuths covered, degrees. */
+  u: number; v: number; rms: number; points: number; cover: number
 }
 
 /** Echo needed for a Doppler velocity estimate, dBZ: without scatterers the radar measures nothing. */
@@ -104,6 +118,8 @@ export class PPI {
    * hail looks weaker at C and X band, melting graupel brighter at S. Every product of the PPI follows.
    */
   mie = false
+  /** Ground clutter next to the radar and receiver noise (clutter.ts) in sample() and composite(); `filtered`: through the clutter filter. */
+  clutter = false; filtered = false
   /** One-way specific and differential attenuation at the nodes, dB/km (prepared with `attenuate`). */
   private nodeAtt = new Float32Array(0); private nodeAttDp = new Float32Array(0)
   /** Radial spacing (m) and azimuthal bins of the path-integrated attenuation. */
@@ -227,6 +243,55 @@ export class PPI {
     return { pia, dp, gates }
   }
 
+  /**
+   * VAD winds over the radar (call prepare() first): on each velocity tilt the radial velocity around a ring at the
+   * longest slant range of VAD.ranges that stays inside the domain and the Doppler range, where there is echo, fitted by
+   * least squares with V = a0 + a1 sin(az) + b1 cos(az) (Teschke & Lehmann 2017): u = a1 / cos el, v = b1 / cos el; a ring
+   * passes with enough points, azimuths and a small RMS. One wind per height band of 250 m (the lowest RMS), lowest first.
+   * Without clear-air echo (the model has no insects or Bragg scatter) the winds come only where it rains or snows.
+   */
+  vad(): VadWind[] {
+    const m = this.model, grid = m.grid, { dx, dy, width, depth } = grid, [ox, oy] = this.shift(), [fu, fv] = m.frame
+    const room = Math.min(this.site.x, width - this.site.x, this.site.y, depth - this.site.y) - 1000
+    const ring = VAD.ranges.find(r => r <= room && r <= this.profile.velocityRange) ?? Math.min(room, this.profile.velocityRange)
+    if (ring < 5000) return []
+    const found: VadWind[] = []
+    for (const tilt of this.velocityTilts) {
+      const h = beamHeight(ring, tilt), el = tilt * Math.PI / 180, ce = Math.cos(el), se = Math.sin(el)
+      if (h > grid.height) break
+      const z = levelAt(grid, h), az: number[] = [], vr: number[] = []
+      for (let k = 0; k < 360; k++) {
+        const a = (k + .5) * Math.PI / 180, sa = Math.sin(a), ca = Math.cos(a), gx = (this.site.x + ring * ce * sa) / dx - ox, gy = (this.site.y + ring * ce * ca) / dy - oy
+        if (m.sample(this.nodeDbz, gx, gy, z) < VELOCITY_MIN_DBZ) continue
+        az.push(a); vr.push(((m.sample(m.u, gx, gy, z) + fu) * sa + (m.sample(m.v, gx, gy, z) + fv) * ca) * ce + (m.sample(m.w, gx, gy, z) - m.sample(this.nodeFall, gx, gy, z)) * se)
+      }
+      if (az.length < VAD.points) continue
+      // The azimuths covered: 360° less the widest gap between neighbouring points.
+      let gap = 2 * Math.PI - az[az.length - 1] + az[0]
+      for (let k = 1; k < az.length; k++) gap = Math.max(gap, az[k] - az[k - 1])
+      const cover = 360 - gap * 180 / Math.PI
+      if (cover < (tilt < 2 ? VAD.coverLow : VAD.coverHigh)) continue
+      // Least squares for [a0, a1, b1] by the normal equations.
+      const A = [[0, 0, 0], [0, 0, 0], [0, 0, 0]], b = [0, 0, 0]
+      for (let k = 0; k < az.length; k++) { const f = [1, Math.sin(az[k]), Math.cos(az[k])]; for (let i = 0; i < 3; i++) { b[i] += f[i] * vr[k]; for (let j = 0; j < 3; j++) A[i][j] += f[i] * f[j] } }
+      const c = solve3(A, b)
+      if (!c) continue
+      let ss = 0
+      for (let k = 0; k < az.length; k++) { const r = vr[k] - c[0] - c[1] * Math.sin(az[k]) - c[2] * Math.cos(az[k]); ss += r * r }
+      const rms = Math.sqrt(ss / az.length)
+      if (rms > VAD.rms) continue
+      found.push({ height: h, range: ring, tilt, u: c[1] / ce, v: c[2] / ce, rms, points: az.length, cover })
+    }
+    const bands = new Map<number, VadWind>()
+    for (const w of found) { const k = Math.round(w.height / 250), o = bands.get(k); if (!o || w.rms < o.rms) bands.set(k, w) }
+    return [...bands.values()].sort((p, q) => p.height - q.height)
+  }
+
+  /** Ground clutter (clutter.ts) at pixel i's range and azimuth for `tilt`. */
+  private clutterOf(i: number, tilt: number) {
+    return clutterAt(this.range[i], Math.atan2(this.sinAz[i], this.cosAz[i]) * 180 / Math.PI, tilt, this.profile.beam, this.filtered)
+  }
+
   /** Index into pathAttenuation()'s arrays of pixel i (its range and azimuth). */
   private piaIndex(i: number, gates: number) {
     const az = (Math.atan2(this.sinAz[i], this.cosAz[i]) + 2 * Math.PI) % (2 * Math.PI), b = Math.min(PPI.PIA_BEAMS - 1, Math.floor(az / (2 * Math.PI) * PPI.PIA_BEAMS))
@@ -249,14 +314,27 @@ export class PPI {
       const z = gz[i]
       if (z < 0 || this.range[i] > range) { this.dbz[i] = DBZ_FLOOR; this.velocity[i] = this.zdr[i] = this.rho[i] = this.kdp[i] = NaN; continue }
       const x = this.gx[i] - ox, y = this.gy[i] - oy, k = path ? this.piaIndex(i, path.gates) : 0
-      const d = path ? Math.max(DBZ_FLOOR, m.sample(this.nodeDbz, x, y, z) - path.pia[k]) : m.sample(this.nodeDbz, x, y, z)
+      const weather = path ? Math.max(DBZ_FLOOR, m.sample(this.nodeDbz, x, y, z) - path.pia[k]) : m.sample(this.nodeDbz, x, y, z)
+      // Clutter adds its power; its share pulls the velocity to zero and the dual-pol moments to its own.
+      const c = this.clutter ? this.clutterOf(i, this.tilt) : null, pw = weather > DBZ_FLOOR ? 10 ** (weather / 10) : 0, pc = c && c.dbz > -Infinity ? 10 ** (c.dbz / 10) : 0
+      let d = pc > 0 ? Math.max(DBZ_FLOOR, 10 * Math.log10(pw + pc)) : weather
+      const seen = !this.clutter || d >= noiseFloor(this.range[i])
+      if (!seen) d = DBZ_FLOOR
       this.dbz[i] = d
+      const share = pc > 0 ? pc / (pw + pc) : 0
       if (this.dual) {
-        const echo = d >= DUAL_MIN_DBZ
-        this.zdr[i] = echo ? m.sample(this.nodeZdr, x, y, z) - (path ? path.dp[k] : 0) : NaN; this.rho[i] = echo ? m.sample(this.nodeRho, x, y, z) : NaN; this.kdp[i] = echo ? m.sample(this.nodeKdp, x, y, z) : NaN
+        const echo = seen && d >= DUAL_MIN_DBZ
+        if (!echo) this.zdr[i] = this.rho[i] = this.kdp[i] = NaN
+        else {
+          const zw = 10 ** ((pw > 0 ? m.sample(this.nodeZdr, x, y, z) - (path ? path.dp[k] : 0) : 0) / 10)
+          this.zdr[i] = 10 * Math.log10(1 / ((1 - share) / zw + (c ? share / c.zdr : 0)))
+          this.rho[i] = (1 - share) * (pw > 0 ? m.sample(this.nodeRho, x, y, z) : 1) + share * (c ? c.rho : 1)
+          this.kdp[i] = pw > 0 ? m.sample(this.nodeKdp, x, y, z) : 0
+        }
       }
-      if (d < VELOCITY_MIN_DBZ || this.range[i] > velocityRange) { this.velocity[i] = NaN; continue }
-      this.velocity[i] = ((m.sample(m.u, x, y, z) + cu) * this.sinAz[i] + (m.sample(m.v, x, y, z) + cv) * this.cosAz[i]) * ce + (m.sample(m.w, x, y, z) - m.sample(this.nodeFall, x, y, z)) * se
+      if (!seen || d < VELOCITY_MIN_DBZ || this.range[i] > velocityRange) { this.velocity[i] = NaN; continue }
+      const vw = pw > 0 ? ((m.sample(m.u, x, y, z) + cu) * this.sinAz[i] + (m.sample(m.v, x, y, z) + cv) * this.cosAz[i]) * ce + (m.sample(m.w, x, y, z) - m.sample(this.nodeFall, x, y, z)) * se : 0
+      this.velocity[i] = (1 - share) * vw
     }
   }
 
@@ -305,7 +383,9 @@ export class PPI {
           if (!Number.isNaN(last[i]) && lastH[i] < Infinity) { const h = beamHeight(this.range[i], tilt); top[i] = Math.max(top[i], crossing(lastH[i], lastD[i], h, DBZ_FLOOR, topDbz)); vgo[i] = Math.max(vgo[i], crossing(lastH[i], lastD[i], h, DBZ_FLOOR, VGO_DBZ)); lastH[i] = Infinity }
           continue
         }
-        const raw = m.sample(this.nodeDbz, this.gx[i] - ox, this.gy[i] - oy, z), d = path ? Math.max(DBZ_FLOOR, raw - path.pia[this.piaIndex(i, path.gates)]) : raw, h = heightAt(grid, z)
+        const raw = m.sample(this.nodeDbz, this.gx[i] - ox, this.gy[i] - oy, z), h = heightAt(grid, z)
+        let d = path ? Math.max(DBZ_FLOOR, raw - path.pia[this.piaIndex(i, path.gates)]) : raw
+        if (this.clutter) { const c = this.clutterOf(i, tilt); if (c.dbz > -Infinity) d = Math.max(DBZ_FLOOR, 10 * Math.log10((d > DBZ_FLOOR ? 10 ** (d / 10) : 0) + 10 ** (c.dbz / 10))); if (d < noiseFloor(this.range[i])) d = DBZ_FLOOR }
         if (d > out[i]) out[i] = d
         if (!Number.isNaN(last[i]) && h > lastH[i]) { top[i] = Math.max(top[i], crossing(lastH[i], lastD[i], h, d, topDbz)); vgo[i] = Math.max(vgo[i], crossing(lastH[i], lastD[i], h, d, VGO_DBZ)) }
         if (d >= topDbz) top[i] = Math.max(top[i], h / 1000)
@@ -444,4 +524,12 @@ export class PPI {
     }
     return { dbz, velocity }
   }
+}
+
+/** Solves the 3 x 3 system A x = b by Cramer's rule; null if singular. */
+function solve3(A: number[][], b: number[]) {
+  const det = (M: number[][]) => M[0][0] * (M[1][1] * M[2][2] - M[1][2] * M[2][1]) - M[0][1] * (M[1][0] * M[2][2] - M[1][2] * M[2][0]) + M[0][2] * (M[1][0] * M[2][1] - M[1][1] * M[2][0])
+  const d = det(A)
+  if (Math.abs(d) < 1e-9) return null
+  return [0, 1, 2].map(c => det(A.map((row, i) => row.map((v, j) => j === c ? b[i] : v))) / d)
 }

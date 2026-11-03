@@ -1,8 +1,38 @@
 import { describe, expect, it } from 'vitest'
-import { AtmosphereModel, beamHeight, createGrid, PPI, RADAR_TILTS, RADARS, VGO_DBZ } from '.'
+import { AtmosphereModel, beamHeight, clutterAt, createGrid, noiseFloor, PPI, RADAR_TILTS, RADARS, VGO_DBZ } from '.'
 import { QUIET } from './fixtures'
 
 describe('radar PPI', () => {
+  it('retrieves a uniform wind by VAD, and none without echo', () => {
+    const model = new AtmosphereModel({ ...QUIET }, createGrid({ nx: 48, ny: 48, nz: 20, width: 57_600, depth: 57_600, height: 15_000, bottomSpacing: 100 }))
+    const ppi = new PPI(model, 96, 96)
+    ppi.prepare(); expect(ppi.vad()).toEqual([])
+    model.u.fill(10); model.v.fill(-5); model.w.fill(0); model.snow.fill(1e-3)
+    ppi.prepare()
+    const winds = ppi.vad(), [fu, fv] = model.frame
+    expect(winds.length).toBeGreaterThan(3); expect(winds[0].range).toBe(20_000)
+    for (const w of winds) { expect(w.u).toBeCloseTo(10 + fu, 1); expect(w.v).toBeCloseTo(-5 + fv, 1); expect(w.rms).toBeLessThan(.5) }
+  })
+
+  it('shows ground clutter near the radar at the low tilt (zero velocity, low rho_hv), filtered by 50 dB, and noise', () => {
+    expect(clutterAt(5000, 10, .5, .95, false).dbz).toBe(clutterAt(5000, 10, .5, .95, false).dbz)
+    // Over many gates: clutter in the first 20 km at 0.5°, almost none at 10° beyond the sidelobes, none at 0.5° at 80 km.
+    const share = (range: number, tilt: number) => { let n = 0; for (let az = 0; az < 360; az++) if (clutterAt(range, az + .5, tilt, .95, false).dbz > 0) n++; return n / 360 }
+    expect(share(10_000, .5)).toBeGreaterThan(.2); expect(share(10_000, 10)).toBe(0); expect(share(80_000, .5)).toBe(0); expect(share(1000, 10)).toBeGreaterThan(.1)
+    const c = clutterAt(5000, 10.5, .5, .95, false), f = clutterAt(5000, 10.5, .5, .95, true)
+    if (c.dbz > -Infinity) { expect(c.dbz - f.dbz).toBeCloseTo(50, 6); expect(c.rho).toBeLessThan(.86) }
+    // The noise floor rises 6 dB per doubling of range: ~-7.5 dBZ at 50 km (WSR-88D) with the threshold.
+    expect(noiseFloor(50_000)).toBeCloseTo(-41.5 + 34 + 2, 0); expect(noiseFloor(100_000) - noiseFloor(50_000)).toBeCloseTo(6, 0)
+    // In the scan: clear air near the radar gets echo with no velocity bias from weather.
+    const model = new AtmosphereModel({ ...QUIET }, createGrid({ nx: 16, ny: 12, nz: 20, width: 19_200, depth: 13_500, height: 15_000, bottomSpacing: 100 }))
+    const ppi = new PPI(model, 64, 45)
+    ppi.tilt = .5; ppi.layout(); ppi.sample(); expect(Math.max(...ppi.dbz)).toBe(-20)
+    ppi.clutter = true; ppi.sample()
+    const echo = [...ppi.dbz.keys()].filter(i => ppi.dbz[i] > 10)
+    expect(echo.length).toBeGreaterThan(20); expect(Math.max(...echo.map(i => Math.abs(ppi.velocity[i] || 0)))).toBeLessThan(.01)
+    ppi.filtered = true; ppi.sample(); expect([...ppi.dbz].filter(d => d > 10).length).toBeLessThan(echo.length / 5)
+  })
+
   it('leaves the section empty where no beam reaches: above the highest tilt near the radar', () => {
     const model = new AtmosphereModel({ ...QUIET }, createGrid({ nx: 16, ny: 12, nz: 20, width: 19_200, depth: 13_500, height: 15_000, bottomSpacing: 100 }))
     model.rain.fill(1e-3)

@@ -1,5 +1,5 @@
 import { L } from '../i18n'
-import { type AtmosphereModel, type Circulation, DBZ_FLOOR, DUAL_MIN_DBZ, MESO_STRENGTH, type MesoStrength, MesocycloneDetector, fold, PHENOMENA, type PhenomenaLevels, PPI, RADARS, type RadarId, type RadarProduct, TDA_LOW_DV, TDA_MAX_DV } from '../core'
+import { type AtmosphereModel, type Circulation, DBZ_FLOOR, DUAL_MIN_DBZ, MESO_STRENGTH, type MesoStrength, MesocycloneDetector, fold, PHENOMENA, type PhenomenaLevels, PPI, RADARS, type RadarId, type RadarProduct, type VadWind, TDA_LOW_DV, TDA_MAX_DV } from '../core'
 import { help, instrumentPalette, instrumentScreen, press, readings, section } from '../instrument'
 import { download } from '../share'
 import { MONO } from '../theme'
@@ -16,7 +16,7 @@ type Point = { x: number; y: number }
 /** Raster resolution of the scan, m per pixel: half a range gate, so the radial bins' edges fall on pixel edges. */
 const PIXEL = 125
 /** The chosen radar profile, kept in this browser. */
-const RADAR_STORE = 'meteolab-radar-type', ATTENUATION_STORE = 'meteolab-radar-attenuation', MIE_STORE = 'meteolab-radar-mie'
+const RADAR_STORE = 'meteolab-radar-type', ATTENUATION_STORE = 'meteolab-radar-attenuation', MIE_STORE = 'meteolab-radar-mie', CLUTTER_STORE = 'meteolab-radar-clutter', FILTER_STORE = 'meteolab-radar-filter'
 function loadRadar(): RadarId {
   try { const r = localStorage.getItem(RADAR_STORE); if (r && r in RADARS) return r as RadarId } catch { /* default */ }
   return 'wsr88d'
@@ -125,9 +125,14 @@ export class RadarPanel {
   private attenuate = (() => { try { return localStorage.getItem(ATTENUATION_STORE) !== '0' } catch { return true } })()
   /** Whether rain, graupel and hail scatter by Mie at the radar's wavelength (on unless switched off in this browser). */
   private mie = (() => { try { return localStorage.getItem(MIE_STORE) !== '0' } catch { return true } })()
+  /** Ground clutter and noise (on unless switched off), and the clutter filter (off unless switched on). */
+  private clutter = (() => { try { return localStorage.getItem(CLUTTER_STORE) !== '0' } catch { return true } })()
+  private filtered = (() => { try { return localStorage.getItem(FILTER_STORE) === '1' } catch { return false } })()
   /** Whether the base velocity folds at the radar's Nyquist velocity (V and its section), and the buffers it is folded into. */
   private folding = false; private levels: PhenomenaLevels | null = null; private foldedMap = new Float32Array(0); private foldedCut = new Float32Array(0)
   private detector = new MesocycloneDetector(); private detections: Circulation[] = []; private lastScan = 0; private scanTime = -1; private showMda = true; private showWeak = false
+  /** VAD winds of the last volume scan and whether they are drawn. */
+  private vad: VadWind[] = []; private showVad = true
   /** Storm motion for SRV (the Bunkers right mover of the environment), m/s. */
   private motion: readonly [number, number] = [0, 0]
   /** The vertical section: its line and field (kept in this browser), its values and raster, the cursor on it. */
@@ -152,7 +157,7 @@ export class RadarPanel {
     this.root = instrumentScreen(host, 'radar-app', `METEOLAB DOPPLER · <span id="radarName">${RADARS[this.radar].name} · ${RADARS[this.radar].band}</span>`,
       `<span>${L('ПРОДУКТ', 'PRODUCT')} <b id="radarProduct">${PRODUCTS.Z.title}</b></span><span>${L('НАКЛОН', 'TILT')} <b id="radarTilt">0.5°</b></span><span>${L('РАЗРЕЗ', 'SECTION')} <b id="radarCut">${L('нет', 'none')}</b></span><span>T+ <b id="radarTime">00:00</b></span>`,
       section(L('Радар', 'Radar'), `<div class="field"><span class="select"><select id="radarType">${(Object.keys(RADARS) as RadarId[]).map(r => `<option value="${r}">${RADARS[r].name} · ${RADARS[r].band}</option>`).join('')}</select></span></div>
-        <label class="check" title="${L('Луч ослабляется дождём, крупой и градом по дороге туда и обратно: за сильным ядром эхо слабее, ZDR ниже — «тень». На S почти незаметно, на C — несколько дБ, на X — десятки за ливнем. Удельное ослабление — по KDP (A = α·KDP: 0,02 / 0,08 / 0,30 для S / C / X), плюс газы. Продукты ДМРЛ-С и CR, VIL, ET, MESH считаются по ослабленному эху, как у настоящего радара без поправки; разрез и поиск мезоциклонов — без ослабления', 'The beam is attenuated by rain, graupel and hail on the way out and back: behind a strong core the echo is weaker and ZDR lower — a shadow. Barely visible at S, a few dB at C, tens behind a downpour at X. The specific attenuation from KDP (A = α·KDP: 0.02 / 0.08 / 0.30 for S / C / X), plus gases. The DMRL-C products and CR, VIL, ET, MESH use the attenuated echo, as a real radar without correction; the section and the mesocyclone detection do not')}"><input type="checkbox" id="radarAttenuation"> ${L('Ослабление в осадках', 'Attenuation in precipitation')}</label><label class="check" title="${L('Дождь, крупа и град рассеивают по теории Ми на длине волны радара, а не по Рэлею: крупный град на C и X выглядит слабее (на C при граде ~3 см — на 5–10 дБ), тающая крупа на S — ярче на 2–3 дБ. Частицы — сферы; тающие крупа и град — как капли той же массы (грубо), снег по Рэлею. Без флажка — рэлеевская отражаемость модели, одинаковая для всех радаров', 'Rain, graupel and hail scatter by Mie theory at the radar\'s wavelength instead of Rayleigh: large hail looks weaker at C and X (5–10 dB at C for ~3 cm hail), melting graupel brighter at S by 2–3 dB. Spheres; melting graupel and hail as drops of their mass (rough), snow Rayleigh. Unchecked — the model\'s Rayleigh reflectivity, the same at every radar')}"><input type="checkbox" id="radarMie"> ${L('Рассеяние Ми', 'Mie scattering')}</label><span class="t-caption" id="radarNote"></span><dl class="kv" id="radarSpecs"></dl><span class="t-caption" id="radarVerified"></span>`)
+        <label class="check" title="${L('Луч ослабляется дождём, крупой и градом по дороге туда и обратно: за сильным ядром эхо слабее, ZDR ниже — «тень». На S почти незаметно, на C — несколько дБ, на X — десятки за ливнем. Удельное ослабление — по KDP (A = α·KDP: 0,02 / 0,08 / 0,30 для S / C / X), плюс газы. Продукты ДМРЛ-С и CR, VIL, ET, MESH считаются по ослабленному эху, как у настоящего радара без поправки; разрез и поиск мезоциклонов — без ослабления', 'The beam is attenuated by rain, graupel and hail on the way out and back: behind a strong core the echo is weaker and ZDR lower — a shadow. Barely visible at S, a few dB at C, tens behind a downpour at X. The specific attenuation from KDP (A = α·KDP: 0.02 / 0.08 / 0.30 for S / C / X), plus gases. The DMRL-C products and CR, VIL, ET, MESH use the attenuated echo, as a real radar without correction; the section and the mesocyclone detection do not')}"><input type="checkbox" id="radarAttenuation"> ${L('Ослабление в осадках', 'Attenuation in precipitation')}</label><label class="check" title="${L('Дождь, крупа и град рассеивают по теории Ми на длине волны радара, а не по Рэлею: крупный град на C и X выглядит слабее (на C при граде ~3 см — на 5–10 дБ), тающая крупа на S — ярче на 2–3 дБ. Частицы — сферы; тающие крупа и град — как капли той же массы (грубо), снег по Рэлею. Без флажка — рэлеевская отражаемость модели, одинаковая для всех радаров', 'Rain, graupel and hail scatter by Mie theory at the radar\'s wavelength instead of Rayleigh: large hail looks weaker at C and X (5–10 dB at C for ~3 cm hail), melting graupel brighter at S by 2–3 dB. Spheres; melting graupel and hail as drops of their mass (rough), snow Rayleigh. Unchecked — the model\'s Rayleigh reflectivity, the same at every radar')}"><input type="checkbox" id="radarMie"> ${L('Рассеяние Ми', 'Mie scattering')}</label><label class="check" title="${L('Отражения от земли (местники) у радара: цели на земле выше нижнего края луча — на низком наклоне в первые 20–40 км, на высоких только у самого радара. Скорость около нуля, ρhv 0,5–0,85, шумный ZDR, Z в среднем 25 dBZ, местами до 65. И шум приёмника: слабое эхо далеко не видно — порог растёт на 6 дБ при удвоении дальности (у WSR-88D около −7,5 dBZ на 50 км)', 'Ground clutter near the radar: targets on the ground above the lower edge of the beam — at the low tilt within the first 20–40 km, at the high ones only next to the radar. Velocity near zero, ρhv 0.5–0.85, noisy ZDR, Z 25 dBZ on average, up to 65 in places. And receiver noise: weak echo far away is not seen — the threshold rises 6 dB per doubling of range (about −7.5 dBZ at 50 km for the WSR-88D)')}"><input type="checkbox" id="radarClutter"> ${L('Местники и шум', 'Clutter and noise')}</label><label class="check" title="${L('Фильтр местников, как у настоящих радаров (CMD/GMAP у WSR-88D, у ДМРЛ-С подавление не меньше 50 дБ): от местников остаётся слабый след', 'The clutter filter, as on real radars (CMD/GMAP on the WSR-88D, at least 50 dB on the DMRL-C): a faint trace of the clutter stays')}"><input type="checkbox" id="radarFilter"> ${L('Фильтр местников', 'Clutter filter')}</label><span class="t-caption" id="radarNote"></span><dl class="kv" id="radarSpecs"></dl><span class="t-caption" id="radarVerified"></span>`)
       + section(L('Продукт', 'Product'), `<div class="tilts tilts--4">${(Object.keys(PRODUCTS) as Product[]).map(p => `<button data-product="${p}" title="${PRODUCTS[p].label}">${p}</button>`).join('')}</div>
         <div class="stat" style="border:0;padding:0"><span id="radarProductLabel"></span><span class="unit" id="radarUnits">dBZ</span></div>
         <span class="label" title="${L(`Как у настоящего импульсного радара: скорость вдоль луча измеряется только в пределах ±v_N = λ·PRF/4 (Найквист), быстрее — «заворачивается» в другой знак: красное посреди зелёного. Предел берётся у выбранного радара (WSR-88D ~±28 м/с, европейский C с двойной частотой импульсов ±32, ДМРЛ-С с двумя периодами импульсов ±66). Только для V: SRV и MDA считаются по раскрученной скорости, как у NWS`, `As on a real pulsed radar: the velocity along the beam is measured only within ±v_N = λ·PRF/4 (Nyquist), faster wind folds over to the other sign: red amid green. The limit is the chosen radar’s (WSR-88D ~±28 m/s, a European C with dual PRF ±32, DMRL-C with two pulse periods ±66). V only: SRV and the MDA use the unfolded velocity, as the NWS`)}">${L('Складывание скоростей (V)', 'Velocity folding (V)')}</span>${seg('fold', [['0', L('нет', 'none')], ['1', `±${RADARS[this.radar].nyquist}`]])}`)
@@ -176,6 +181,8 @@ export class RadarPanel {
         <label class="check" title="${L('Вращение слабее порога мезоциклона (Vrot < 12,5 м/с): на сетке ~1 км их много в любой сильной грозе', 'Rotation weaker than the mesocyclone threshold (Vrot < 12.5 m/s): on the ~1 km grid there are many in any strong storm')}"><input type="checkbox" id="radarWeak"> ${L('И слабые циркуляции', 'Weak circulations too')}</label>
         <div class="mda-list" id="radarMdaList"></div>
         <div class="mda-legend"><span class="label">${L('Метки силы · Vrot', 'Strength marks · Vrot')}</span>${strengths}</div>`)
+      + section(L('Ветер (VAD)', 'Wind (VAD)'), `<label class="check" title="${L('Ветер над радаром по радиальной скорости, как VAD у настоящих радаров (у ДМРЛ-С — вертикальный профиль ветра и наноска векторов): на каждом наклоне скорость по кольцу 30, 20 или 10 км вписывается синусоидой по азимуту. Стрелки от радара — куда дует ветер на высоте кольца. Нужно эхо по кольцу: у модели нет эха ясного неба, поэтому ветер есть только там, где осадки', 'The wind over the radar from the radial velocity, as the VAD of real radars (the DMRL-C\'s wind profile and vectors): on each tilt the velocity around a 30, 20 or 10 km ring is fitted by a sine of the azimuth. The arrows from the radar point where the wind blows at the ring\'s height. It needs echo around the ring: the model has no clear-air echo, so there is wind only where it rains')}"><input type="checkbox" id="radarVad" checked> ${L('Стрелки от радара', 'Arrows from the radar')}</label>
+        <div class="mda-list" id="radarVadList"></div>`)
       + section(L('Курсор', 'Cursor'), '<dl class="kv" id="radarReadout"></dl>')
       + help('', 'radarHelp'))
     this.root.insertAdjacentHTML('beforeend', `<dialog class="modal modal--wide pal-editor" id="paletteEditor"><form method="dialog" style="display:contents">
@@ -197,11 +204,15 @@ export class RadarPanel {
     $('#xsRadial').addEventListener('click', () => this.pick(this.picking === 'radial' ? null : 'radial'))
     $('#xsStrongest').addEventListener('click', () => this.aimAtStrongest())
     $<HTMLInputElement>('#radarMda').addEventListener('change', e => { this.showMda = (e.target as HTMLInputElement).checked; this.draw() })
+    $<HTMLInputElement>('#radarVad').addEventListener('change', e => { this.showVad = (e.target as HTMLInputElement).checked; this.draw() })
     $<HTMLInputElement>('#radarWeak').addEventListener('change', e => { this.showWeak = (e.target as HTMLInputElement).checked; this.listMda(); this.draw() })
     $('.ibar__close').addEventListener('click', () => this.toggle(false))
     $('#radarTilts').addEventListener('click', e => { const b = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-tilt]'); if (b) this.setTilt(Number(b.dataset.tilt)) })
     $<HTMLInputElement>('#radarAttenuation').checked = this.attenuate
     $<HTMLInputElement>('#radarMie').checked = this.mie
+    $<HTMLInputElement>('#radarClutter').checked = this.clutter; $<HTMLInputElement>('#radarFilter').checked = this.filtered
+    $<HTMLInputElement>('#radarClutter').addEventListener('change', e => { this.clutter = (e.target as HTMLInputElement).checked; try { localStorage.setItem(CLUTTER_STORE, this.clutter ? '1' : '0') } catch { /* not kept */ } if (this.ppi) this.ppi.clutter = this.clutter; this.lastComposite = 0; this.refresh(true) })
+    $<HTMLInputElement>('#radarFilter').addEventListener('change', e => { this.filtered = (e.target as HTMLInputElement).checked; try { localStorage.setItem(FILTER_STORE, this.filtered ? '1' : '0') } catch { /* not kept */ } if (this.ppi) this.ppi.filtered = this.filtered; this.lastComposite = 0; this.refresh(true) })
     $<HTMLInputElement>('#radarMie').addEventListener('change', e => { this.mie = (e.target as HTMLInputElement).checked; try { localStorage.setItem(MIE_STORE, this.mie ? '1' : '0') } catch { /* not kept */ } if (this.ppi) this.ppi.mie = this.mie; this.lastComposite = 0; this.refresh(true) })
     $<HTMLInputElement>('#radarAttenuation').addEventListener('change', e => { this.attenuate = (e.target as HTMLInputElement).checked; try { localStorage.setItem(ATTENUATION_STORE, this.attenuate ? '1' : '0') } catch { /* not kept */ } if (this.ppi) this.ppi.attenuate = this.attenuate; this.lastComposite = 0; this.refresh(true) })
     $<HTMLSelectElement>('#radarType').addEventListener('change', e => this.setRadar((e.target as HTMLSelectElement).value as RadarId))
@@ -257,7 +268,7 @@ export class RadarPanel {
   private setRadar(radar: RadarId) {
     this.radar = radar
     try { localStorage.setItem(RADAR_STORE, radar) } catch { /* not kept */ }
-    if (this.ppi) { this.ppi.setProfile(RADARS[radar]); this.applyBins(); this.detector = new MesocycloneDetector(); this.detections = []; this.scanTime = -1; this.listMda() }
+    if (this.ppi) { this.ppi.setProfile(RADARS[radar]); this.applyBins(); this.detector = new MesocycloneDetector(); this.detections = []; this.vad = []; this.scanTime = -1; this.listMda() }
     this.showRadar(); this.markTilt(); this.refresh(true)
   }
 
@@ -291,13 +302,13 @@ export class RadarPanel {
     const { width, depth } = model.grid, old = this.ppi
     this.ppi = new PPI(model, Math.round(width / PIXEL), Math.round(depth / PIXEL))
     if (old) { this.ppi.site = old.site; this.ppi.tilt = old.tilt }
-    this.ppi.setProfile(RADARS[this.radar]); this.ppi.attenuate = this.attenuate; this.ppi.mie = this.mie
+    this.ppi.setProfile(RADARS[this.radar]); this.ppi.attenuate = this.attenuate; this.ppi.mie = this.mie; this.ppi.clutter = this.clutter; this.ppi.filtered = this.filtered
     // A section line kept from a larger domain does not fit this one.
     const inside = (p: Point | null) => !!p && p.x >= 0 && p.y >= 0 && p.x <= width && p.y <= depth
     if (!inside(this.xs.a) || !inside(this.xs.b)) { this.xs.a = this.xs.b = null; this.cut = null }
     this.applyBins()
     this.raster.width = this.ppi.w; this.raster.height = this.ppi.h; this.image = this.rasterCtx.createImageData(this.ppi.w, this.ppi.h)
-    this.lastTime = -1; this.lastComposite = 0; this.scanTime = -1; this.detector = new MesocycloneDetector(); this.detections = []; this.markTilt(); this.markSection()
+    this.lastTime = -1; this.lastComposite = 0; this.scanTime = -1; this.detector = new MesocycloneDetector(); this.detections = []; this.vad = []; this.markTilt(); this.markSection()
   }
 
   toggle(open = !this.open) {
@@ -324,7 +335,7 @@ export class RadarPanel {
     this.cutSection()
     // New model time (or a new radar site): rescan, at most every MDA_EVERY ms. The detection's prepare() leaves the
     // dual-polarisation nodes as they are (it needs only Z and V).
-    if (this.scanTime < 0 || (time !== this.scanTime && now - this.lastScan >= MDA_EVERY)) { ppi.dual = false; this.detections = this.detector.scan(ppi, time, this.motion); this.lastScan = now; this.scanTime = time; this.listMda() }
+    if (this.scanTime < 0 || (time !== this.scanTime && now - this.lastScan >= MDA_EVERY)) { ppi.dual = false; this.detections = this.detector.scan(ppi, time, this.motion); this.vad = ppi.vad(); this.lastScan = now; this.scanTime = time; this.listMda(); this.listVad() }
     this.paint(); this.draw()
     const s = Math.floor(time); this.root.querySelector<HTMLElement>('#radarTime')!.textContent = `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`
   }
@@ -647,6 +658,16 @@ export class RadarPanel {
    * The detections in the side panel, with a check against the model itself: the strongest updraft helicity (2-5 km)
    * within 5 km, which the radar cannot see but the model knows.
    */
+  /** The VAD winds as a table: height, direction the wind comes from and speed. */
+  private listVad() {
+    const out = this.root.querySelector<HTMLElement>('#radarVadList')!
+    if (!this.vad.length) { out.innerHTML = `<span class="t-caption">${L('нет: по кольцу мало эха', 'none: too little echo around the ring')}</span>`; return }
+    out.innerHTML = `<span class="t-caption">${L('кольцо', 'ring')} ${(this.vad[0].range / 1000).toFixed(0)} ${L('км', 'km')}</span>` + this.vad.map(w => {
+      const from = (Math.atan2(-w.u, -w.v) * 180 / Math.PI + 360) % 360
+      return `<div><b>${(w.height / 1000).toFixed(1)} ${L('км', 'km')}</b> ${from.toFixed(0).padStart(3, '0')}° · ${Math.hypot(w.u, w.v).toFixed(0)} ${L('м/с', 'm/s')} <span class="t-caption">RMS ${w.rms.toFixed(1)}</span></div>`
+    }).join('')
+  }
+
   private listMda() {
     const ppi = this.ppi!, m = ppi.model, { nx, ny, dx, dy, width, depth } = m.grid, [ox, oy] = m.frameOffset(), out = this.root.querySelector<HTMLElement>('#radarMdaList')!
     const shown = this.shown(), hidden = this.detections.length - shown.length
@@ -757,6 +778,17 @@ export class RadarPanel {
     ctx.fillStyle = '#e8f0f2'; ctx.beginPath(); ctx.arc(sx, sy, 3.5, 0, Math.PI * 2); ctx.fill()
     ctx.font = `11px ${MONO}`
     if (!this.grid.labels) ctx.fillText('N ▲', box.x + box.w - 34, box.y + 16)
+    // VAD winds: an arrow from the radar per height, 500 m on the map per m/s, coloured from low (warm) to high (cool).
+    if (this.showVad && this.ppi) {
+      const site = this.ppi.site, top = Math.max(1, ...this.vad.map(w => w.height))
+      for (const w of this.vad) {
+        const [ex, ey] = this.toScreen({ x: site.x + w.u * 500, y: site.y + w.v * 500 }), a = Math.atan2(ey - sy, ex - sx)
+        ctx.strokeStyle = ctx.fillStyle = `hsl(${(30 + 200 * w.height / top).toFixed(0)} 90% 60%)`; ctx.lineWidth = 2
+        ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(ex, ey); ctx.stroke()
+        ctx.beginPath(); ctx.moveTo(ex, ey); ctx.lineTo(ex - 8 * Math.cos(a - .4), ey - 8 * Math.sin(a - .4)); ctx.lineTo(ex - 8 * Math.cos(a + .4), ey - 8 * Math.sin(a + .4)); ctx.closePath(); ctx.fill()
+        ctx.fillText(`${(w.height / 1000).toFixed(1)}`, ex + 4, ey - 4)
+      }
+    }
     // MDA detections: a circle of the circulation's diameter (at least 3 km, to stay visible), coloured by strength.
     if (this.showMda) for (const d of this.shown()) {
       const [cx, cy] = this.toScreen(d), r = Math.max(1.5, d.diameter / 2000) * kmPx, color = pal.meso[d.strength]
