@@ -31,8 +31,9 @@
 //   takes in the shallow old pool far behind), and its depth; du is the 0-2.5 km wind difference.
 //   out=DIR: every 30 min DIR/bow-MMM.bin - a JSON header line and Float32 fields nx x ny: the column's strongest
 //   reflectivity, the ground θ', and u (system-relative), v and w at 2.5 km (plot with experiments/bow/maps.py).
-//   npx vite build --ssr tests/bench/bow.ts --outDir .bench/bow && node .bench/bow/bow.js [us=25] [depth=2.5] [hours=4] [threads=3] [speed=22.5] [qv=15] [coriolis] [large] [bubbles=N spacing=12 strength=2] [out=DIR]
-// large: the large domain at 1.2 km (144 x 108 km) instead of the mesoscale one.
+//   npx vite build --ssr tests/bench/bow.ts --outDir .bench/bow && node .bench/bow/bow.js [us=25] [depth=2.5] [hours=4] [threads=3] [speed=22.5] [qv=15] [coriolis] [large] [bubbles=N spacing=12 strength=2] [out=DIR] [dx=KM]
+// large: the large domain at 1.2 km (144 x 108 km) instead of the mesoscale one. dx=KM: the horizontal spacing (SimConfig.spacing,
+// the domain kept; Weisman's check: 1 km changes nothing essential).
 import { isMainThread, Worker, workerData } from 'node:worker_threads'
 import { fileURLToPath } from 'node:url'
 import { mkdirSync, writeFileSync } from 'node:fs'
@@ -53,7 +54,7 @@ if (!isMainThread) {
   const bubbles = option('bubbles', 0), spacing = option('spacing', 12) * 1000, strength = option('strength', 2), large = args.includes('large')
   const config = {
     ...SUMMER_DAY, profile: 'weisman-klemp', weismanKlemp: { qvMax: option('qv', 15) / 1000, u6: us, depth }, solarMax: 0, latitude: args.includes('coriolis') ? 40 : 0,
-    bubble: 0, start: 'thermals', edges: 'relaxed-x', frameMotion: [speed, 0],
+    ...(option('dx', 0) ? { spacing: option('dx', 0) } : {}), bubble: 0, start: 'thermals', edges: 'relaxed-x', frameMotion: [speed, 0],
     ...(large ? { domain: 'custom', domainSize: [144, 108] } : { domain: 'meso', domainSize: [168, 162] }),
   }
   const memory = new SharedMemory(), model = new AtmosphereModel(structuredClone(config), gridOf(config), undefined, { memory })
