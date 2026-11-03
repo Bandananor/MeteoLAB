@@ -320,7 +320,7 @@ export class RadarPanel {
     this.lastTime = time; this.lastDraw = now
     ppi.stormMotion = this.product === 'SRV' ? this.motion : null
     ppi.dual = RadarPanel.dual(this.kind()) || (this.xs.on && RadarPanel.dual(this.xsKind()))
-    if (VOLUME.includes(this.product)) { ppi.composite(); this.lastComposite = now; if (this.product === 'MAP') this.levels = ppi.phenomena(Math.hypot(...this.motion)) } else ppi.sample()
+    if (VOLUME.includes(this.product)) { ppi.composite(); this.lastComposite = now; if (this.product === 'MAP') this.levels = ppi.phenomena(Math.hypot(...this.motion), this.detections.flatMap(d => d.hook ? [d.hook] : [])) } else ppi.sample()
     this.cutSection()
     // New model time (or a new radar site): rescan, at most every MDA_EVERY ms. The detection's prepare() leaves the
     // dual-polarisation nodes as they are (it needs only Z and V).

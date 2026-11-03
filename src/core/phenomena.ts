@@ -43,12 +43,14 @@ const lgZa = (dbz: number) => (dbz - 18) / 10
  * 1.0-1.5 (here 1.2); <= 70 % above Y_cr, 70-90 % above Y_cr + 6, > 90 % above Y_cr + 14. Hail (p. 74): >= 58 dBZ anywhere
  * in the cloud, or >= 55 dBZ with the top at 10 km or higher, with a core of >= 46 dBZ above H0 + 1.4 km. Squall (tables
  * 2.6-2.7): for tops of >= 10 km and a cell motion of >= 10 km/h the squall speed from the motion (table 2.7, H 10 km, lg Z3
- * 1.2-2.7: 10 / 30 / 50 / 70 / 90 / 105 km/h -> 15 / 18 / 21 / 24 / 28 / 30 m/s). Tornado (p. 71): the top >= 3 km above
- * the tropopause with 53-58 dBZ.
+ * 1.2-2.7: 10 / 30 / 50 / 70 / 90 / 105 km/h -> 15 / 18 / 21 / 24 / 28 / 30 m/s). Tornado (p. 71): a hook echo (up to 16
+ * km), the top >= 3 km above the tropopause with 53-58 dBZ - the hook is the mesocyclone detection's (mda.ts hookEcho),
+ * and the map marks within half the RD's hook size of it (without the hook the top and the echo alone marked a strong
+ * storm's whole anvil).
  */
 export const RD_CRITERIA = {
   rain: [18, 30, 46], lgZ3min: 1.2, thunderSteps: [0, 6, 14], hailAnywhere: 58, hailHigh: 55, hailHighTop: 10, hailCore: 46, hailCoreAbove: 1400,
-  squallTop: 10, squallZ3: 30, squallMotion: [10, 30, 50, 70, 90, 105], squallSpeed: [15, 18, 21, 24, 28, 30], tornadoAbove: 3, tornadoDbz: 53,
+  squallTop: 10, squallZ3: 30, squallMotion: [10, 30, 50, 70, 90, 105], squallSpeed: [15, 18, 21, 24, 28, 30], tornadoAbove: 3, tornadoDbz: 53, tornadoHook: 16,
 } as const
 /**
  * This project's grades where the RD has none: showers - precipitation with a convective column (Z2 >= 18 dBZ and the
@@ -71,6 +73,7 @@ export interface ColumnEcho {
   /** Cloud top (km, 0: none), the strongest echo (dBZ), the layers Z1 and Z2, the levels H3 and H0 + 1.4 km, Zmax above 1 km. */
   top: number; strongest: number; z1: number; z2: number; zh3: number; zCore: number; zmax: number
   /** MESH, mm. */ mesh: number
+  /** Whether the column is within reach of a hook echo (RD_CRITERIA.tornadoHook / 2 km of one). */ hook?: boolean
 }
 export interface PhenomenaLevels {
   /** Heights of the 0 °C and -22 °C levels and of the tropopause, km; the cell motion, km/h. */
@@ -102,6 +105,6 @@ export function phenomenon(c: ColumnEcho, lv: PhenomenaLevels) {
     const v = squallSpeed(lv.motion)
     if (v >= OWN.squall[0]) code = Math.max(code, v > OWN.squall[2] ? 18 : v > OWN.squall[1] ? 17 : 16)
   }
-  if (c.top >= lv.tropopause + RD_CRITERIA.tornadoAbove && c.strongest >= RD_CRITERIA.tornadoDbz) code = 19
+  if (c.hook && c.top >= lv.tropopause + RD_CRITERIA.tornadoAbove && c.strongest >= RD_CRITERIA.tornadoDbz) code = 19
   return code
 }

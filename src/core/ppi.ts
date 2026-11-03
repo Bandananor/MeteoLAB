@@ -333,16 +333,19 @@ export class PPI {
   /**
    * The phenomena map from the last composite() (phenomena.ts): the environment's 0 °C and -22 °C levels and its
    * tropopause (the lowest level from 5 km where the temperature falls less than 2 K over the next 2 km), the cell motion
-   * `motion` (m/s) for the squalls; 31 (no data) beyond the radar's range.
+   * `motion` (m/s) for the squalls, the hook echoes the mesocyclone detection found (ground positions, m) for the
+   * tornado; 31 (no data) beyond the radar's range.
    */
-  phenomena(motion: number) {
+  phenomena(motion: number, hooks: readonly { x: number; y: number }[] = []) {
+    const reach = RD_CRITERIA.tornadoHook * 1000 / 2
     const e = this.model.env, top = this.model.grid.height, t = (h: number) => e.temperatureEnv(h)
     let h22 = 0; while (h22 < top && t(h22) > -22) h22 += 25
     let trop = 5000; while (trop < top - 2000 && t(trop) - t(trop + 2000) >= 4) trop += 100
     const levels = { h0: this.levelH2 / 1000, h22: h22 / 1000, tropopause: trop / 1000, motion: motion * 3.6 }
     for (let i = 0; i < this.codes.length; i++) {
       if (this.range[i] > this.profile.range) { this.codes[i] = 31; continue }
-      this.codes[i] = phenomenon({ top: this.vgo[i], strongest: this.compositeDbz[i], z1: this.z1[i], z2: this.z2[i], zh3: this.zh3[i], zCore: this.zCore[i], zmax: this.zmax[i], mesh: this.mesh[i] }, levels)
+      const g = hooks.length ? this.samplePoint(i % this.w, Math.floor(i / this.w)) : null, hook = !!g && hooks.some(k => Math.hypot(g.x - k.x, g.y - k.y) <= reach)
+      this.codes[i] = phenomenon({ top: this.vgo[i], strongest: this.compositeDbz[i], z1: this.z1[i], z2: this.z2[i], zh3: this.zh3[i], zCore: this.zCore[i], zmax: this.zmax[i], mesh: this.mesh[i], hook }, levels)
     }
     return levels
   }

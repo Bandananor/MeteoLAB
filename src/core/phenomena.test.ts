@@ -48,8 +48,10 @@ describe('the phenomena map of the Russian radars (phenomena.ts)', () => {
     expect(phenomenon(storm, { ...lv, motion: 20 })).toBe(16)
     expect(phenomenon(storm, { ...lv, motion: 60 })).toBe(17)
     expect(phenomenon(storm, { ...lv, motion: 100 })).toBe(18)
-    expect(phenomenon({ ...storm, top: 15.5 }, lv)).toBe(19)
-    expect(phenomenon({ ...storm, top: 15.5, strongest: 50 }, lv)).toBe(12)
+    expect(phenomenon({ ...storm, top: 15.5, hook: true }, lv)).toBe(19)
+    expect(phenomenon({ ...storm, top: 15.5, strongest: 50, hook: true }, lv)).toBe(12)
+    // Not without a hook echo, however high the top.
+    expect(phenomenon({ ...storm, top: 15.5 }, lv)).toBe(12)
     // Not without thunder > 90 %: lg Z3 1.5 (33 dBZ) at 11 km gives Y 16.5, 71-90 %.
     expect(phenomenon({ ...storm, zh3: 33 }, { ...lv, motion: 100 })).toBe(11)
     // Nor away from a convective core (>= 46 dBZ above H0 + 1.4 km).
