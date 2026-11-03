@@ -154,4 +154,26 @@ describe('radar PPI', () => {
     // Clear air: no cloud top, the floor elsewhere.
     expect(ppi.vgo[96 * 2]).toBe(0); expect(ppi.z1[96 * 2]).toBe(-20)
   })
+
+  it('attenuates the beam behind heavy rain: little at S, more at C, most at X (two-way, from the KDP)', () => {
+    const model = new AtmosphereModel({ ...QUIET }, createGrid({ nx: 60, ny: 8, nz: 20, width: 72_000, depth: 9_600, height: 15_000, bottomSpacing: 100 }))
+    const { layer, nx, nz, zs, dx } = model.grid
+    // Two rain shafts east of the radar (centre), 6 km wide, 2 g/kg below 3 km: 6-12 km and 24-30 km out.
+    for (let x = 0; x < nx; x++) {
+      const r = x * dx - 36_000
+      if ((r >= 6000 && r <= 12_000) || (r >= 24_000 && r <= 30_000)) for (let y = 0; y < 8; y++) for (let z = 0; z < nz; z++) if (zs[z] < 3000) model.rain[x + nx * y + z * layer] = 2e-3
+    }
+    const ppi = new PPI(model, 144, 19), far = Math.round((36_000 + 27_000) / 500 - .5) + 144 * 9, near = Math.round((36_000 + 9_000) / 500 - .5) + 144 * 9
+    const loss = (radar: typeof RADARS.wsr88d) => {
+      ppi.setProfile({ ...radar, tilts: [.5], range: 100_000 }); ppi.tilt = .5; ppi.layout(); ppi.dual = true
+      ppi.attenuate = false; ppi.sample(); const raw = ppi.dbz[far], rawZdr = ppi.zdr[far]
+      ppi.attenuate = true; ppi.sample()
+      return { z: raw - ppi.dbz[far], zdr: rawZdr - ppi.zdr[far], near: ppi.dbz[near] }
+    }
+    const s = loss(RADARS.wsr88d), c = loss(RADARS.dwd), x = loss(RADARS.x)
+    expect(s.z).toBeGreaterThan(0); expect(s.z).toBeLessThan(1.5)
+    expect(c.z).toBeGreaterThan(2 * s.z); expect(x.z).toBeGreaterThan(2.5 * c.z); expect(x.z).toBeGreaterThan(5)
+    // Measured 03.11.2026: S 0.95, C 4.8, X 28.5 dB (X ~1.6 dB/km one-way at ~50 mm/h), ZDR C 1.1, X 3.7 dB.
+    expect(x.zdr).toBeGreaterThan(c.zdr); expect(c.zdr).toBeGreaterThan(0)
+  })
 })

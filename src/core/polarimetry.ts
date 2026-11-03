@@ -55,6 +55,9 @@ const RAIN_RHO = .997
 /** KDP of rain: (180 / lambda) 1e-3 C W (1 - r_m), deg/km, with lambda = 0.107 m, C = 3.75, W in g/m3 (Bringi and Chandrasekar 2001). */
 const KDP_FACTOR = 180 / .107 * 1e-3 * 3.75
 
+/** KDP of rain, deg/km at 10.7 cm, of a mixing ratio q (kg/kg) in air of density rho (Bringi and Chandrasekar 2001; scales as 1 / lambda). */
+export const rainKdp = (rho: number, q: number) => q > 0 ? KDP_FACTOR * rho * q * 1000 * (1 - rainTable(RAIN.axis, rho * q)) : 0
+
 export interface DualPol { /** dB */ zdr: number; /** 0-1 */ rho: number; /** deg/km */ kdp: number }
 
 /**
@@ -69,6 +72,6 @@ export function dualPol(rho: number, rain: number, snow: number, graupel: number
   if (rain > 0) add(z.rain, rainTable(RAIN.zdr, rho * rain), RAIN_RHO)
   add(z.snow, ICE.snow[wet][0], ICE.snow[wet][1]); add(z.graupel, ICE.graupel[wet][0], ICE.graupel[wet][1]); add(z.hail, ICE.hail[wet][0], ICE.hail[wet][1])
   if (!(zh > 0)) return { zdr: NaN, rho: NaN, kdp: NaN }
-  const kdp = rain > 0 ? KDP_FACTOR * rho * rain * 1000 * (1 - rainTable(RAIN.axis, rho * rain)) : 0
+  const kdp = rainKdp(rho, rain)
   return { zdr: 10 * Math.log10(zh / zv), rho: cross / Math.sqrt(zh * zv), kdp }
 }

@@ -4,6 +4,7 @@ import { dualPol } from './polarimetry'
 import { DBZ_FLOOR, reflectivity, reflectivityFallSpeed } from './radar'
 import { RADARS, type RadarProfile } from './radars'
 import { phenomenon, RD_CRITERIA } from './phenomena'
+import { specificAttenuation } from './attenuation'
 
 /** Elevation angles of a NEXRAD volume scan (VCP 12/212), degrees: the WSR-88D profile's. */
 export const RADAR_TILTS = RADARS.wsr88d.tilts
@@ -93,6 +94,16 @@ export class PPI {
   /** Whether prepare(), sample() and section() also do ZDR, rho_hv and KDP. */
   dual = false
   /**
+   * Whether the beam is attenuated by precipitation and gases (attenuation.ts) on the way out and back: sample() and
+   * composite() lower Z (and ZDR) by the two-way path-integrated attenuation from the radar along each beam (the section,
+   * the detection and the hook check do not).
+   */
+  attenuate = false
+  /** One-way specific and differential attenuation at the nodes, dB/km (prepared with `attenuate`). */
+  private nodeAtt = new Float32Array(0); private nodeAttDp = new Float32Array(0)
+  /** Radial spacing (m) and azimuthal bins of the path-integrated attenuation. */
+  private static readonly PIA_STEP = 500; private static readonly PIA_BEAMS = 360
+  /**
    * Radial bins like real radar data (null: every pixel sampled at its own centre): `gate` m along the beam and `beam`
    * degrees across it. Every pixel of a bin shows the bin's value, sampled at the bin's centre, so the scan looks as on a
    * radar display — sectors that widen with range. Call layout() after changing it.
@@ -166,11 +177,13 @@ export class PPI {
 
   /** Reflectivity and fall speed of the precipitation at every model node, from the current fields (sample and composite call it). */
   prepare() {
-    const m = this.model, e = m.env, { nz, layer } = m.grid, rhoGround = e.rho[0], dual = this.dual
+    const m = this.model, e = m.env, { nz, layer, zs } = m.grid, rhoGround = e.rho[0], dual = this.dual, att = this.attenuate, { band, wavelength } = this.profile
+    if (att && this.nodeAtt.length !== m.grid.n) { this.nodeAtt = new Float32Array(m.grid.n); this.nodeAttDp = new Float32Array(m.grid.n) }
     for (let z = 0, i = 0; z < nz; z++) {
       const rho = e.rho[z], exner = e.exner[z]
       for (let end = i + layer; i < end; i++) {
         const rain = m.rain[i], snow = m.snow[i], graupel = m.graupel[i], hail = m.hail[i]
+        if (att) { const a = specificAttenuation(rho, rain, graupel, hail, rain > 0 || graupel > 0 || hail > 0 ? m.theta[i] * exner - 273.15 : -1, zs[z], band, wavelength); this.nodeAtt[i] = a.a; this.nodeAttDp[i] = a.dp }
         if (rain <= 0 && snow <= 0 && graupel <= 0 && hail <= 0) {
           this.nodeDbz[i] = DBZ_FLOOR; this.nodeFall[i] = 0
           if (dual) { this.nodeZdr[i] = 0; this.nodeRho[i] = 1; this.nodeKdp[i] = 0 }
@@ -184,6 +197,37 @@ export class PPI {
   }
 
   /**
+   * Two-way path-integrated attenuation (dB) of `tilt` on PIA_BEAMS azimuths every PIA_STEP m from the site out to the
+   * farthest pixel within the radar's range (call prepare() with `attenuate` first): the specific attenuation sampled at
+   * the beam's centre, summed out and back; beyond the model top it stays. Beam-major, `pia` for Z and `dp` for ZDR.
+   */
+  private pathAttenuation(tilt: number) {
+    const m = this.model, grid = m.grid, { dx, dy } = grid, [ox, oy] = this.shift(), step = PPI.PIA_STEP, beams = PPI.PIA_BEAMS
+    let far = 0; for (let i = 0; i < this.range.length; i++) far = Math.max(far, this.range[i])
+    const gates = Math.ceil(Math.min(far, this.profile.range) / step) + 1, pia = new Float32Array(beams * gates), dp = new Float32Array(beams * gates)
+    const levels = Float64Array.from({ length: gates }, (_, g) => { const h = beamHeight((g + .5) * step, tilt); return h > grid.height ? -1 : levelAt(grid, h) })
+    for (let b = 0; b < beams; b++) {
+      const az = (b + .5) * 2 * Math.PI / beams, sa = Math.sin(az), ca = Math.cos(az)
+      let sum = 0, sumDp = 0
+      for (let g = 0; g < gates; g++) {
+        const z = levels[g], r = (g + .5) * step
+        if (z >= 0) {
+          const gx = (this.site.x + r * sa) / dx - ox, gy = (this.site.y + r * ca) / dy - oy
+          sum += 2 * m.sample(this.nodeAtt, gx, gy, z) * step / 1000; sumDp += 2 * m.sample(this.nodeAttDp, gx, gy, z) * step / 1000
+        }
+        pia[b * gates + g] = sum; dp[b * gates + g] = sumDp
+      }
+    }
+    return { pia, dp, gates }
+  }
+
+  /** Index into pathAttenuation()'s arrays of pixel i (its range and azimuth). */
+  private piaIndex(i: number, gates: number) {
+    const az = (Math.atan2(this.sinAz[i], this.cosAz[i]) + 2 * Math.PI) % (2 * Math.PI), b = Math.min(PPI.PIA_BEAMS - 1, Math.floor(az / (2 * Math.PI) * PPI.PIA_BEAMS))
+    return b * gates + Math.min(gates - 1, Math.floor(this.range[i] / PPI.PIA_STEP))
+  }
+
+  /**
    * Reflectivity and radial velocity of the current tilt: (u sin az + v cos az) cos el + (w - V_t) sin el, with V_t the
    * reflectivity-weighted fall speed (minus the storm motion's radial part for SRV); no velocity (NaN) where the echo is
    * below VELOCITY_MIN_DBZ.
@@ -194,14 +238,16 @@ export class PPI {
     // Ground-fixed raster over the moving domain: the model column under a pixel is shifted back by the distance the domain
     // has moved, and the radial wind is over the ground (model wind plus the frame velocity), minus the storm motion for SRV.
     const [ox, oy] = this.shift(), [fu, fv] = m.frame, [su, sv] = this.stormMotion ?? [0, 0], cu = fu - su, cv = fv - sv, { range } = this.profile, velocityRange = this.velocityTilts.includes(this.tilt) ? this.profile.velocityRange : -1
+    const path = this.attenuate ? this.pathAttenuation(this.tilt) : null
     for (let i = 0; i < this.dbz.length; i++) {
       const z = gz[i]
       if (z < 0 || this.range[i] > range) { this.dbz[i] = DBZ_FLOOR; this.velocity[i] = this.zdr[i] = this.rho[i] = this.kdp[i] = NaN; continue }
-      const x = this.gx[i] - ox, y = this.gy[i] - oy, d = m.sample(this.nodeDbz, x, y, z)
+      const x = this.gx[i] - ox, y = this.gy[i] - oy, k = path ? this.piaIndex(i, path.gates) : 0
+      const d = path ? Math.max(DBZ_FLOOR, m.sample(this.nodeDbz, x, y, z) - path.pia[k]) : m.sample(this.nodeDbz, x, y, z)
       this.dbz[i] = d
       if (this.dual) {
         const echo = d >= DUAL_MIN_DBZ
-        this.zdr[i] = echo ? m.sample(this.nodeZdr, x, y, z) : NaN; this.rho[i] = echo ? m.sample(this.nodeRho, x, y, z) : NaN; this.kdp[i] = echo ? m.sample(this.nodeKdp, x, y, z) : NaN
+        this.zdr[i] = echo ? m.sample(this.nodeZdr, x, y, z) - (path ? path.dp[k] : 0) : NaN; this.rho[i] = echo ? m.sample(this.nodeRho, x, y, z) : NaN; this.kdp[i] = echo ? m.sample(this.nodeKdp, x, y, z) : NaN
       }
       if (d < VELOCITY_MIN_DBZ || this.range[i] > velocityRange) { this.velocity[i] = NaN; continue }
       this.velocity[i] = ((m.sample(m.u, x, y, z) + cu) * this.sinAz[i] + (m.sample(m.v, x, y, z) + cv) * this.cosAz[i]) * ce + (m.sample(m.w, x, y, z) - m.sample(this.nodeFall, x, y, z)) * se
@@ -240,11 +286,11 @@ export class PPI {
     }
     const tilts = this.tilts, highest = tilts[tilts.length - 1], reach = this.profile.range
     for (const tilt of tilts) {
-      const gz = this.levelsFor(tilt)
+      const gz = this.levelsFor(tilt), path = this.attenuate ? this.pathAttenuation(tilt) : null
       for (let i = 0; i < out.length; i++) {
         const z = gz[i]
         if (z < 0 || this.range[i] > reach) continue
-        const d = m.sample(this.nodeDbz, this.gx[i] - ox, this.gy[i] - oy, z), h = heightAt(grid, z)
+        const raw = m.sample(this.nodeDbz, this.gx[i] - ox, this.gy[i] - oy, z), d = path ? Math.max(DBZ_FLOOR, raw - path.pia[this.piaIndex(i, path.gates)]) : raw, h = heightAt(grid, z)
         if (d > out[i]) out[i] = d
         if (d >= ECHO_TOP_DBZ) top[i] = Math.max(top[i], h / 1000)
         if (tilt === highest) this.echoTopped[i] = d >= ECHO_TOP_DBZ ? 1 : 0
