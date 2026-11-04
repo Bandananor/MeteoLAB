@@ -1,7 +1,6 @@
 # Журнал изменений MeteoLab
 
-Подробный журнал по дням — в [README](README.md#журнал-изменений), полная история первых версий —
-в [PROJECT_HISTORY.md](PROJECT_HISTORY.md), план дальше — в [roadmap.markdown](roadmap.markdown), план 2.0 — в [roadmap-2.0.markdown](roadmap-2.0.markdown).
+Подробный журнал по дням — в [README](README.md#журнал-изменений).
 
 ## 2.10.3 — 03.11.2026 «Радары»
 

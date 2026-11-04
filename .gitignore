@@ -38,3 +38,8 @@ textbook/
 
 # Agent handoff for new chats (local)
 CLAUDE.md
+
+# Working plans, research runs and the code index (local)
+roadmap*.markdown
+experiments/
+tools/symbols.mjs
