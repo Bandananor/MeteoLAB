@@ -3,6 +3,21 @@ import { AtmosphereModel, beamHeight, clutterAt, createGrid, noiseFloor, PPI, RA
 import { QUIET } from './fixtures'
 
 describe('radar PPI', () => {
+  it('draws the section from the radar bins: cells along the beams, thicker with range, gaps between tilts', () => {
+    const model = new AtmosphereModel({ ...QUIET }, createGrid({ nx: 32, ny: 12, nz: 20, width: 38_400, depth: 13_500, height: 15_000, bottomSpacing: 100 }))
+    model.rain.fill(1e-3)
+    const ppi = new PPI(model, 64, 45)
+    ppi.setProfile(RADARS.x); ppi.bins = { gate: 75, beam: 1 }; ppi.layout(); ppi.prepare()
+    const gates = 160, dz = 25, rows = 200
+    const { dbz } = ppi.crossSection(ppi.site, { x: ppi.site.x + 16_000, y: ppi.site.y }, gates, dz, rows)
+    // The 8° beam (the fourth from the top of the X's scan) over the rows of a gate: the run of rows with echo around it.
+    const run = (km: number) => { const g = Math.floor(km / 16 * gates), k0 = Math.round(beamHeight(km * 1000, 8) / dz); let n = 1; for (let k = k0 + 1; k < rows && dbz[k * gates + g] > 0; k++) n++; for (let k = k0 - 1; k >= 0 && dbz[k * gates + g] > 0; k--) n++; return n }
+    expect(run(14)).toBeGreaterThan(run(5) * 1.8)
+    // Between the 10° and 12° beams at 14 km (2.47 and 2.98 km, half thickness 120 m): no data.
+    const between = Math.floor(((beamHeight(14_000, 10) + beamHeight(14_000, 12)) / 2) / dz) * gates + Math.floor(14 / 16 * gates)
+    expect(dbz[between]).toBe(-20)
+  })
+
   it('retrieves a uniform wind by VAD, and none without echo', () => {
     const model = new AtmosphereModel({ ...QUIET }, createGrid({ nx: 48, ny: 48, nz: 20, width: 57_600, depth: 57_600, height: 15_000, bottomSpacing: 100 }))
     const ppi = new PPI(model, 96, 96)

@@ -22,7 +22,7 @@ function loadRadar(): RadarId {
   return 'wsr88d'
 }
 /** The vertical section: point and row spacing, m, the highest level shown, the shortest line, m. */
-const XS_STEP = 250, XS_DZ = 250, XS_TOP = 18_000, XS_MIN = 1000
+const XS_STEP = 125, XS_DZ = 125, XS_TOP = 18_000, XS_MIN = 1000
 /** How near (CSS px) a press must be to an end of the line to drag it. */
 const HANDLE = 16
 /** The isotherms on the section: 0 °C (melting) and -20 °C. */
