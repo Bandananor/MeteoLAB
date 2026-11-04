@@ -451,10 +451,7 @@ export class PPI {
    * to cold; NaN if none). Periodic like the model; above the model top and beyond the profile's ranges: no echo, no velocity;
    * only within the volume the radar scans - from the lower edge of its lowest beam to the upper edge of its highest (half
    * a beam width beyond the tilts; the velocity by its own tilts): no data above it near the radar (the cone of silence)
-   * and below it far away, where no beam reaches. With `bins` the section is made of the radar's own samples, as in
-   * GR2Analyst: each radial bin on the line (the gate and the degree of azimuth the map uses) gives one cell per tilt, the
-   * beam's value over the beam's thickness at that range, so the cells follow the beams, grow with range and leave gaps
-   * between tilts farther apart than the beam is wide; a cell thinner than a row still fills one.
+   * and below it far away, where no beam reaches.
    */
   crossSection(a: { x: number; y: number }, b: { x: number; y: number }, gates: number, dz: number, rows: number) {
     const m = this.model, grid = m.grid, { dx, dy, nz } = grid, [ox, oy] = this.shift(), e = m.env
@@ -478,40 +475,6 @@ export class PPI {
     // The scanned volume over each gate: beam heights of the lowest tilt's lower edge and the highest's upper edge.
     const half = this.profile.beam / 2, vt = this.velocityTilts, edge = (tilt: number) => Float32Array.from(range, r => beamHeight(r, tilt))
     const low = edge(this.tilts[0] - half), high = edge(this.tilts[this.tilts.length - 1] + half), lowV = edge(vt[0] - half), highV = edge(vt[vt.length - 1] + half)
-    if (this.bins) {
-      const { gate, beam: step } = this.bins, near = new Float32Array(gates * rows), nearV = new Float32Array(gates * rows)
-      // A value of `tilt` over the rows its beam fills at gate g, the nearest beam winning where beams overlap.
-      const fill = (g: number, r: number, tilt: number, closest: Float32Array, write: (i: number) => void) => {
-        const h = beamHeight(r, tilt), thick = Math.max(beamHeight(r, tilt + half) - h, dz / 2)
-        for (let k = Math.max(0, Math.floor((h - thick) / dz)); k < rows && (k + .5) * dz <= h + thick + dz / 2; k++) {
-          const i = k * gates + g, d = Math.abs((k + .5) * dz - h)
-          if (closest[i] === 0 || d < closest[i]) { closest[i] = Math.max(d, 1e-3); write(i) }
-        }
-      }
-      for (let g = 0; g < gates; g++) {
-        if (range[g] > reach) continue
-        const t = (g + .5) / gates, ex = a.x + (b.x - a.x) * t - this.site.x, ny = a.y + (b.y - a.y) * t - this.site.y
-        const r = (Math.floor(range[g] / gate) + .5) * gate, az = (Math.floor(((Math.atan2(ex, ny) * 180 / Math.PI + 360) % 360) / step) + .5) * step * Math.PI / 180
-        const sa = Math.sin(az), ca = Math.cos(az), gx = (this.site.x + r * sa) / dx - ox, gy = (this.site.y + r * ca) / dy - oy
-        for (const tilt of this.tilts) {
-          const h = beamHeight(r, tilt)
-          if (h > grid.height) break
-          const z = levelAt(grid, h), d = m.sample(this.nodeDbz, gx, gy, z), echo = dual && d >= DUAL_MIN_DBZ
-          const dr = echo ? m.sample(this.nodeZdr, gx, gy, z) : NaN, rh = echo ? m.sample(this.nodeRho, gx, gy, z) : NaN, kd = echo ? m.sample(this.nodeKdp, gx, gy, z) : NaN
-          fill(g, r, tilt, near, i => { dbz[i] = d; if (dual) { zdr[i] = dr; rho[i] = rh; kdp[i] = kd } })
-        }
-        if (r > doppler) continue
-        for (const tilt of vt) {
-          const h = beamHeight(r, tilt), el = tilt * Math.PI / 180
-          if (h > grid.height) break
-          const z = levelAt(grid, h)
-          if (m.sample(this.nodeDbz, gx, gy, z) < VELOCITY_MIN_DBZ) continue
-          const v = ((m.sample(m.u, gx, gy, z) + cu) * sa + (m.sample(m.v, gx, gy, z) + cv) * ca) * Math.cos(el) + (m.sample(m.w, gx, gy, z) - m.sample(this.nodeFall, gx, gy, z)) * Math.sin(el)
-          fill(g, r, tilt, nearV, i => { velocity[i] = v })
-        }
-      }
-      return { dbz, velocity, zdr, rho, kdp, range, beams, iso0, iso20 }
-    }
     for (let k = 0; k < rows; k++) {
       const h = (k + .5) * dz
       if (h > grid.height) break
