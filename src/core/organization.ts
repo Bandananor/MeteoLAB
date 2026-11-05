@@ -237,7 +237,7 @@ export interface TrackedEcho extends EchoObject {
 
 /** Follows the classified objects through a run: how long each stays what it is, how it moves, whether it counts as held. */
 export class EchoTracker {
-  private last: { x: number; y: number; kind: EchoKind; since: number; time: number; motion: readonly [number, number] | null }[] = []
+  private last: { x: number; y: number; kind: EchoKind; since: number; bowSince: number; time: number; motion: readonly [number, number] | null }[] = []
 
   update(m: AtmosphereModel): TrackedEcho[] {
     const { nx, ny, dx, dy, width, depth } = m.grid, time = m.time, [fu, fv] = m.frame, [ox, oy] = m.frameOffset()
@@ -249,9 +249,9 @@ export class EchoTracker {
       for (const p of this.last) { const d = Math.hypot(wrap(gx - p.x, W), wrap(gy - p.y, D)); if (d < nearest) { nearest = d; best = p } }
       const dt = best ? time - best.time : 0
       const motion = best && dt > 0 ? smooth(best.motion, [wrap(gx - best.x, W) * 1000 / dt, wrap(gy - best.y, D) * 1000 / dt]) : null
-      const since = best && same(best.kind, o.kind) ? best.since : time, minutes = (time - since) / 60
-      next.push({ x: gx, y: gy, kind: o.kind, since, time, motion })
-      const held = o.kind === 'bow' ? minutes >= ORG.bowHold : o.kind === 'line' ? minutes >= ORG.mcsHours * 60 : true
+      const since = best && same(best.kind, o.kind) ? best.since : time, minutes = (time - since) / 60, bowSince = best && best.kind === 'bow' && o.kind === 'bow' ? best.bowSince : time
+      next.push({ x: gx, y: gy, kind: o.kind, since, bowSince, time, motion })
+      const held = o.kind === 'bow' ? (time - bowSince) / 60 >= ORG.bowHold : o.kind === 'line' ? minutes >= ORG.mcsHours * 60 : true
       const lineLike = o.kind === 'line' || o.kind === 'bow'
       const speed = motion ? motion[0] * o.normal[0] + motion[1] * o.normal[1] : 0
       return { ...o, minutes, motion, held, dynamics: lineLike ? lineDynamics(m, o, speed) : null }

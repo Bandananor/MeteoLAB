@@ -54,8 +54,9 @@ export const SCENARIOS: Scenario[] = [
     values: { bubbleRadius: NARROW, ...SUMMER_AIR, ...LIGHT_WIND } },
   { name: 'Многоячейковая гроза', title: L('Многоячейковая гроза', 'Multicell storm'),
     summary: L('Наклонённое облако, новые ячейки на оттоке', 'A tilted cloud, new cells on the outflow'),
-    hint: L('Западный ветер усиливается с высотой (сдвиг 0–6 км ~13 м/с): облако наклоняется, дождь выпадает в стороне от потока, по оттоку растут новые ячейки — многоячейковая гроза', 'A westerly wind strengthening with height (0–6 km shear ~13 m/s): the cloud tilts, the rain falls beside the updraught, new cells grow along the outflow — a multicell storm'),
-    values: { bubbleRadius: NARROW, ...SUMMER_AIR, rhSurface: 57, rhLow: 55, rhMid: 50, wind0: 3, wind3: 10, wind6: 16, wind10: 22, windDir0: 250, windDir3: 265, windDir6: 270, windDir10: 270 } },
+    hint: L('Западный ветер усиливается с высотой (сдвиг 0–6 км ~11 м/с): облако наклоняется, дождь выпадает в стороне от потока, по оттоку растут новые ячейки — многоячейковая гроза', 'A westerly wind strengthening with height (0–6 km shear ~11 m/s): the cloud tilts, the rain falls beside the updraught, new cells grow along the outflow — a multicell storm'),
+    // 05.11.2026: 57 / 55 % gave one cell, gone by 60 min on any domain up to 144 x 108 km; 65 / 60 % new cells to 90 min (tests/bench/organize.ts). Shear down by 2 m/s so that the moister air stays below the effective shear of supercells.
+    values: { bubbleRadius: NARROW, ...SUMMER_AIR, rhSurface: 65, rhLow: 60, rhMid: 50, wind0: 3, wind3: 8, wind6: 14, wind10: 20, windDir0: 250, windDir3: 265, windDir6: 270, windDir10: 270 } },
   { name: 'Классическая суперячейка', title: L('Классическая суперячейка', 'Classic supercell'), mesocyclone: true,
     summary: L('Мезоциклон около часа, град, порывы до 30 м/с', 'A mesocyclone for about an hour, hail, gusts up to 30 m/s'),
     hint: L('Суперячейка Великих равнин на обычном профиле (ползунки действуют): влажный тёплый слой у земли (точка росы ~19 °C), крутые градиенты выше, CAPE ~3,5 кДж/кг, сильный сдвиг 0–6 км (~28 м/с) и ветер, поворачивающий с высотой у земли (SRH 0–1 км ~190 м²/с²). Мезоциклон появляется к 20-й минуте и держится около часа, поток до ~55 м/с, у земли — шквал до 30 м/с, град, ливень. Без инверсии: с ней (1,5 K) сухой отток подрезал грозу к 35-й минуте', 'A Great Plains supercell on an ordinary profile (the sliders work): a warm moist layer at the ground (dew point ~19 °C), steep lapse rates above, CAPE ~3.5 kJ/kg, strong 0–6 km shear (~28 m/s) and a wind veering with height near the ground (SRH 0–1 km ~190 m²/s²). The mesocyclone appears by minute 20 and holds for about an hour, the updraught reaches ~55 m/s, at the ground — a squall up to 30 m/s, hail, a downpour. No inversion: with one (1.5 K) a dry outflow undercut the storm by minute 35'),
@@ -107,7 +108,10 @@ export const SCENARIOS: Scenario[] = [
     // nearly stands in it: the storms grow along it in view.
     values: { bubble: 0, surfaceTemp: 26, rhSurface: 75, rhLow: 70, rhMid: 50, moistLayer: 1.2, capStrength: .7, lapseMid: 5.8, lapseUpper: 6.2,
       wind0: 4, windDir0: 180, wind3: 12, windDir3: 220, wind6: 18, windDir6: 240, wind10: 24, windDir10: 250,
-      frontLine: { kind: 'cold', contrast: 9, depth: 2.5, slope: 80, speed: 9, heading: 90, start: -12 } } },
+      frontLine: { kind: 'cold', contrast: 9, depth: 2.5, slope: 80, speed: 9, heading: 90, start: -12 },
+      // 05.11.2026: on the standard 36 km of depth the line of 75 km and more has no room; 72 x 108 km holds 90-95 km from 45 min
+      // (tests/bench/organize.ts), as 144 x 108 km does, at half its cost.
+      domain: 'custom', domainSize: [72, 108] } },
   // Weisman (1993): 2 km gives a line of separate cells, 1 km the bow (03.11.2026, tests/bench/bow.ts); he finds 1 and 2 km
   // alike. So the live run is a preview and the scenario asks for the precise run. bubble 0: the scenario tests skip it.
   { name: 'Bow echo', title: 'Bow echo',

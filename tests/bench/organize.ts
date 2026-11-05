@@ -1,6 +1,6 @@
 // @ts-nocheck
 // The organisation classifier (src/core/organization.ts) on a real run: every `every` model minutes what EchoTracker sees.
-//   npx vite build --ssr tests/bench/organize.ts --outDir .bench/organize && node .bench/organize/organize.js [scenario=name] [minutes=240] [every=30] [threads=6] [dx=KM]
+//   npx vite build --ssr tests/bench/organize.ts --outDir .bench/organize && node .bench/organize/organize.js [scenario=name] [minutes=240] [every=30] [threads=6] [dx=KM] [size=WxD] [edges=relaxed] [set=key:value,key:value]
 //   or on the dumps of tests/bench/bow.ts: node .bench/organize/organize.js dumps=DIR (their dBZ is the column's strongest)
 import { isMainThread, Worker, workerData } from 'node:worker_threads'
 import { fileURLToPath } from 'node:url'
@@ -25,7 +25,7 @@ if (!isMainThread) {
   process.exit(0)
 } else {
   const s = SCENARIOS.find(x => x.name === option('scenario', 'Bow echo')), dx = Number(option('dx', 0)), threads = Number(option('threads', 6)), minutes = Number(option('minutes', 240)), every = Number(option('every', 30))
-  const config = { ...SUMMER_DAY, ...s.values, ...(dx ? { spacing: dx } : {}) }, memory = new SharedMemory(), model = new AtmosphereModel(structuredClone(config), gridOf(config), undefined, { memory })
+  const size = option('size', ''), config = { ...SUMMER_DAY, ...s.values, ...(dx ? { spacing: dx } : {}), ...(size ? { domain: 'custom', domainSize: size.split('x').map(Number) } : {}), ...(option('edges', '') ? { edges: option('edges', '') } : {}), ...Object.fromEntries(option('set', '').split(',').filter(Boolean).map(p => { const [k, v] = p.split(':'); return [k, Number(v)] })) }, memory = new SharedMemory(), model = new AtmosphereModel(structuredClone(config), gridOf(config), undefined, { memory })
   const control = controlBuffer(), helpers = []
   for (let k = 0; k < threads - 1; k++) helpers.push(new Worker(fileURLToPath(import.meta.url), { workerData: { config: structuredClone(config), buffers: memory.buffers, control } }))
   if (threads > 1) { model.transportSlabs = 10; model.runner = new ThreadRunner(model, control, threads - 1) }
@@ -34,7 +34,7 @@ if (!isMainThread) {
     model.step(DT); model.time += DT
     if (t % 300) continue
     const o = tracker.update(model)
-    if (t % (every * 60) === 0) { const e = lowEcho(model); let top = -99, a = 0, b = 0; for (const d of e) { if (d > top) top = d; if (d >= 40) a++; if (d >= 20) b++ } console.log(`${t / 60} min (low max ${top.toFixed(0)} dBZ, ${a} nodes >= 40, ${b} >= 20, w max ${Math.max(...model.w).toFixed(0)}): ${o.slice(0, 4).map(line).join(' | ') || 'no echo'}`) }
+    if (t % (every * 60) === 0) { const e = lowEcho(model); let top = -99, a = 0, b = 0; for (const d of e) { if (d > top) top = d; if (d >= 40) a++; if (d >= 20) b++ } console.log(`${t / 60} min (low max ${top.toFixed(0)} dBZ, ${a} nodes >= 40, ${b} >= 20, w max ${model.w.reduce((a, b) => Math.max(a, b), 0).toFixed(0)}): ${o.slice(0, 4).map(line).join(' | ') || 'no echo'}`) }
   }
   process.exit(0)
 }
