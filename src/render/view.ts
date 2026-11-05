@@ -25,6 +25,16 @@ import { colormapTexture, type FieldMode, fieldInfo } from './fields'
 import { fieldVolumeFragment, groundShadowPars, groundSurfacePars, precipFragment, precipVertex, skyFragment, skyVertex, sliceFragment, volumeFragment, volumeVertex } from './shaders'
 import { adaptation, ADAPT_MAX, computeSky, HAZE_ALBEDO, HAZE_SCALE, hazeExtinction, luminance, RAYLEIGH, RAYLEIGH_SCALE, SKY_COLS, SKY_ROWS, type SkyState, SUN_LEVELS } from './sky'
 
+/**
+ * Beyond this distance from the domain's centre, km, the air between the camera and what it sees stops thickening: the
+ * standard view's own distance. Farther off the camera stands only to see a wide domain whole, and a true 150 km of
+ * air would hide it. The view from outside is thinned by AIR_REACH / distance on top of AIR_OUTSIDE.
+ */
+const AIR_REACH = 60
+/** How far the camera's start and its orbit grow with the domain: 2.5 × the standard view, for the 120 km and wider. */
+const CAMERA_SCALE_MAX = 2.5
+/** A ground grid of 3 km turns into a mesh of lines on a domain wider than this, km: 12 km there. */
+const GRID_WIDE = 100
 // The fog of three's own materials (the lines): the aerial perspective of the clouds' (shaders.ts aerial, with its AIR_SCALE) —
 // exponential layers of air and haze over flat ground, per channel — toward the horizon's colour (fogColor, set every
 // frame for the direction looked in); fogDensity is the haze's extinction at the ground, 1/km.
@@ -46,7 +56,7 @@ THREE.ShaderChunk.fog_fragment = `#ifdef USE_FOG
 {
   float len = length(vFogWorld - cameraPosition);
   vec3 od = vec3(${RAYLEIGH.join(', ')}) * fogColumn(cameraPosition.y, vFogWorld.y, len, ${RAYLEIGH_SCALE.toFixed(1)}) + fogDensity / ${HAZE_ALBEDO} * fogColumn(cameraPosition.y, vFogWorld.y, len, ${HAZE_SCALE});
-  vec3 T = exp(-0.5 * od);
+  vec3 T = exp(-0.5 * min(1.0, ${AIR_REACH.toFixed(1)} / max(length(cameraPosition), 1.0)) * od);
   gl_FragColor.rgb = gl_FragColor.rgb * T + fogColor * (1.0 - T);
 }
 #endif`
@@ -308,8 +318,8 @@ export class StormView {
   constructor(canvas: HTMLCanvasElement, model: AtmosphereModel, settings: ViewSettings) {
     this.canvas = canvas; this.model = model; this.settings = settings; this.rng = mulberry32(model.config.seed)
     const { nx, ny, n, width, depth, height } = model.grid, W = width / 1000, D = depth / 1000, H = height / 1000
-    // Camera distance and fog grow with the domain (1 for the standard 48 km).
-    const scale = Math.max(1, W / 48)
+    // The far plane grows with the domain (1 for the standard 48 km), the camera's distance up to CAMERA_SCALE_MAX.
+    const scale = Math.max(1, W / 48), reach = Math.min(scale, CAMERA_SCALE_MAX)
     if (model.grid.uniform) this.texLevels = null
     else {
       // 300 m texture levels: finer than the model aloft, coarser than it next to the ground.
@@ -337,9 +347,9 @@ export class StormView {
     // A phone renders at 1 pixel per CSS pixel: its screen is small and its GPU weak (the clouds are ray-marched).
  this.renderer.outputColorSpace = THREE.SRGBColorSpace; this.renderer.toneMapping = THREE.ACESFilmicToneMapping; this.renderer.toneMappingExposure = EXPOSURE
     this.scene = new THREE.Scene(); this.scene.fog = new THREE.FogExp2(0x9fb4c4, .1)
-    this.camera = new THREE.PerspectiveCamera(42, 1, .1, 180 * scale); this.camera.position.set(38 * scale, 24 * scale, 39 * scale)
+    this.camera = new THREE.PerspectiveCamera(42, 1, .1, 180 * scale); this.camera.position.set(38 * reach, 24 * reach, 39 * reach)
     if (typeof location !== 'undefined' && new URLSearchParams(location.search).has('view-debug')) { (globalThis as { __stormView?: StormView }).__stormView = this; Object.assign(this, { debugQuality: true }) }
-    this.controls = new OrbitControls(this.camera, canvas); this.controls.target.set(0, 6, 0); this.controls.enableDamping = true; this.controls.dampingFactor = .07; this.controls.maxPolarAngle = Math.PI * .495; this.controls.minDistance = 15; this.controls.maxDistance = this.orbitMax = 100 * scale
+    this.controls = new OrbitControls(this.camera, canvas); this.controls.target.set(0, 6, 0); this.controls.enableDamping = true; this.controls.dampingFactor = .07; this.controls.maxPolarAngle = Math.PI * .495; this.controls.minDistance = 15; this.controls.maxDistance = this.orbitMax = 100 * reach
     // While the camera turns the view is drawn coarser (MOVING_PIXELS); full detail 0.4 s after release (the damping's
     // tail). Not by the controls' change event: from the ground the camera moves with the domain every frame.
     this.controls.addEventListener('start', () => { this.turning = true })
@@ -381,7 +391,7 @@ export class StormView {
       const material = new LineMaterial({ color: model.config.frontLine.kind === 'cold' ? 0x4f8fe0 : 0xe0574f, linewidth: 4, transparent: true, opacity: .9, depthWrite: false })
       this.frontLine = new LineSegments2(new LineSegmentsGeometry(), material); this.frontLine.renderOrder = 3; this.scene.add(this.frontLine)
     }
-    const grid = new THREE.GridHelper(W, Math.round(W / 3), 0x71838a, 0x485d66); grid.material.transparent = true; grid.material.opacity = .32; this.scene.add(grid); this.groundGrid = grid
+    const grid = new THREE.GridHelper(W, Math.round(W / (W > GRID_WIDE ? 12 : 3)), 0x71838a, 0x485d66); grid.material.transparent = true; grid.material.opacity = .32; this.scene.add(grid); this.groundGrid = grid
     const box = new THREE.BoxGeometry(W, H, D); box.translate(0, H / 2, 0)
     this.boxEdges = new THREE.LineSegments(new THREE.EdgesGeometry(box), new THREE.LineBasicMaterial({ color: 0x75909c, transparent: true, opacity: .4 })); this.scene.add(this.boxEdges)
     this.levelHelpers = [0xb6d4dd, 0xe1bf7e, 0xd88e74].map(color => { const h = new THREE.GridHelper(W, 12, color, color); h.material.transparent = true; h.material.opacity = .18; this.scene.add(h); return h })
@@ -1188,6 +1198,7 @@ if(abs(uSurface - 2.0) < 0.5){
   }
 
   render() {
+    if (!this.observer) this.air.uAirScale.value = AIR_OUTSIDE * Math.min(1, AIR_REACH / this.camera.position.length())
     const s = this.settings, m = this.model, { dx, dy } = m.grid
     const rec = this.recording, now = rec ? rec.now : performance.now()
     // A video's frame: its own size at one pixel each (the screen shows it stretched meanwhile).
