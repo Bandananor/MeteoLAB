@@ -1,5 +1,5 @@
 import { L } from '../i18n'
-import { type AtmosphereModel, type Circulation, DBZ_FLOOR, DUAL_MIN_DBZ, MESO_STRENGTH, type MesoStrength, MesocycloneDetector, fold, PHENOMENA, type PhenomenaLevels, PPI, RADARS, type RadarId, type RadarProduct, type VadWind, TDA_LOW_DV, TDA_MAX_DV } from '../core'
+import { type AtmosphereModel, type Circulation, DBZ_FLOOR, DUAL_MIN_DBZ, MESO_STRENGTH, type MesoStrength, MesocycloneDetector, fold, PHENOMENA, type PhenomenaLevels, PPI, RADARS, type RadarId, type RadarProduct, type VadWind, ECHO_KINDS, EchoTracker, ORG, STRATIFORM_KINDS, type TrackedEcho, TDA_LOW_DV, TDA_MAX_DV } from '../core'
 import { help, instrumentPalette, instrumentScreen, press, readings, section } from '../instrument'
 import { download } from '../share'
 import { MONO } from '../theme'
@@ -133,6 +133,8 @@ export class RadarPanel {
   private detector = new MesocycloneDetector(); private detections: Circulation[] = []; private lastScan = 0; private scanTime = -1; private showMda = true; private showWeak = false
   /** VAD winds of the last volume scan and whether they are drawn. */
   private vad: VadWind[] = []; private showVad = true
+  /** What the convection is organised into (core/organization.ts): the objects of the last scan, whether they are drawn. */
+  private echoTracker = new EchoTracker(); private echoes: TrackedEcho[] = []; private showOrg = true
   /** Storm motion for SRV (the Bunkers right mover of the environment), m/s. */
   private motion: readonly [number, number] = [0, 0]
   /** The vertical section: its line and field (kept in this browser), its values and raster, the cursor on it. */
@@ -181,6 +183,8 @@ export class RadarPanel {
         <label class="check" title="${L('Вращение слабее порога мезоциклона (Vrot < 12,5 м/с): на сетке ~1 км их много в любой сильной грозе', 'Rotation weaker than the mesocyclone threshold (Vrot < 12.5 m/s): on the ~1 km grid there are many in any strong storm')}"><input type="checkbox" id="radarWeak"> ${L('И слабые циркуляции', 'Weak circulations too')}</label>
         <div class="mda-list" id="radarMdaList"></div>
         <div class="mda-legend"><span class="label">${L('Метки силы · Vrot', 'Strength marks · Vrot')}</span>${strengths}</div>`)
+      + section(L('Организация конвекции', 'Convective organisation'), `<label class="check" title="${L('Что на экране: ячейка, кластер, ломаная линия, линия или дуга — по эху ниже 3 км от 40 dBZ. Линия: от 75 км и 3:1 (Gallus и др. 2008), мезомасштабная — от 100 км и 3 ч (Parker, Johnson 2000), кластер — несколько ядер от 50 dBZ, но вытянут меньше 3:1. Числового порога для дуги в литературе нет: здесь 40–200 км, выгиб передней кромки вперёд по движению от 0,1 её хорды, держится 30 мин — это выбор проекта. Для линии и дуги — купол у фронта против сдвига (RKW), тыловой приток и вихри на концах. Считается по полям модели, а не по лучам этого радара', 'What is on the screen: a cell, cluster, broken line, line or bow, from the echo below 3 km at 40 dBZ. A line: 75 km and 3:1 (Gallus et al. 2008), a mesoscale one 100 km and 3 h (Parker & Johnson 2000), a cluster: several 50 dBZ cores below 3:1. The literature has no number for a bow: here 40–200 km, the leading edge bowed forward by 0.1 of its chord, held 30 min — this project\'s choice. For a line and a bow: the cold pool at the front against the shear (RKW), the rear inflow and the line-end vortices. From the model\'s fields, not this radar\'s beams')}"><input type="checkbox" id="radarOrg" checked> ${L('Отмечать на экране', 'Mark on the screen')}</label>
+        <div class="mda-list" id="radarOrgList"></div>`)
       + section(L('Ветер (VAD)', 'Wind (VAD)'), `<label class="check" title="${L('Ветер над радаром по радиальной скорости, как VAD у настоящих радаров (у ДМРЛ-С — вертикальный профиль ветра и наноска векторов): на каждом наклоне скорость по кольцу 30, 20 или 10 км вписывается синусоидой по азимуту. Стрелки от радара — куда дует ветер на высоте кольца. Нужно эхо по кольцу: у модели нет эха ясного неба, поэтому ветер есть только там, где осадки', 'The wind over the radar from the radial velocity, as the VAD of real radars (the DMRL-C\'s wind profile and vectors): on each tilt the velocity around a 30, 20 or 10 km ring is fitted by a sine of the azimuth. The arrows from the radar point where the wind blows at the ring\'s height. It needs echo around the ring: the model has no clear-air echo, so there is wind only where it rains')}"><input type="checkbox" id="radarVad" checked> ${L('Стрелки от радара', 'Arrows from the radar')}</label>
         <div class="mda-list" id="radarVadList"></div>`)
       + section(L('Курсор', 'Cursor'), '<dl class="kv" id="radarReadout"></dl>')
@@ -205,6 +209,7 @@ export class RadarPanel {
     $('#xsStrongest').addEventListener('click', () => this.aimAtStrongest())
     $<HTMLInputElement>('#radarMda').addEventListener('change', e => { this.showMda = (e.target as HTMLInputElement).checked; this.draw() })
     $<HTMLInputElement>('#radarVad').addEventListener('change', e => { this.showVad = (e.target as HTMLInputElement).checked; this.draw() })
+    $<HTMLInputElement>('#radarOrg').addEventListener('change', e => { this.showOrg = (e.target as HTMLInputElement).checked; this.draw() })
     $<HTMLInputElement>('#radarWeak').addEventListener('change', e => { this.showWeak = (e.target as HTMLInputElement).checked; this.listMda(); this.draw() })
     $('.ibar__close').addEventListener('click', () => this.toggle(false))
     $('#radarTilts').addEventListener('click', e => { const b = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-tilt]'); if (b) this.setTilt(Number(b.dataset.tilt)) })
@@ -268,7 +273,7 @@ export class RadarPanel {
   private setRadar(radar: RadarId) {
     this.radar = radar
     try { localStorage.setItem(RADAR_STORE, radar) } catch { /* not kept */ }
-    if (this.ppi) { this.ppi.setProfile(RADARS[radar]); this.applyBins(); this.detector = new MesocycloneDetector(); this.detections = []; this.vad = []; this.scanTime = -1; this.listMda() }
+    if (this.ppi) { this.ppi.setProfile(RADARS[radar]); this.applyBins(); this.detector = new MesocycloneDetector(); this.detections = []; this.vad = []; this.echoTracker = new EchoTracker(); this.echoes = []; this.scanTime = -1; this.listMda() }
     this.showRadar(); this.markTilt(); this.refresh(true)
   }
 
@@ -308,7 +313,7 @@ export class RadarPanel {
     if (!inside(this.xs.a) || !inside(this.xs.b)) { this.xs.a = this.xs.b = null; this.cut = null }
     this.applyBins()
     this.raster.width = this.ppi.w; this.raster.height = this.ppi.h; this.image = this.rasterCtx.createImageData(this.ppi.w, this.ppi.h)
-    this.lastTime = -1; this.lastComposite = 0; this.scanTime = -1; this.detector = new MesocycloneDetector(); this.detections = []; this.vad = []; this.markTilt(); this.markSection()
+    this.lastTime = -1; this.lastComposite = 0; this.scanTime = -1; this.detector = new MesocycloneDetector(); this.detections = []; this.vad = []; this.echoTracker = new EchoTracker(); this.echoes = []; this.markTilt(); this.markSection()
   }
 
   toggle(open = !this.open) {
@@ -335,7 +340,7 @@ export class RadarPanel {
     this.cutSection()
     // New model time (or a new radar site): rescan, at most every MDA_EVERY ms. The detection's prepare() leaves the
     // dual-polarisation nodes as they are (it needs only Z and V).
-    if (this.scanTime < 0 || (time !== this.scanTime && now - this.lastScan >= MDA_EVERY)) { ppi.dual = false; this.detections = this.detector.scan(ppi, time, this.motion); this.vad = ppi.vad(); this.lastScan = now; this.scanTime = time; this.listMda(); this.listVad() }
+    if (this.scanTime < 0 || (time !== this.scanTime && now - this.lastScan >= MDA_EVERY)) { ppi.dual = false; this.detections = this.detector.scan(ppi, time, this.motion); this.vad = ppi.vad(); this.echoes = this.echoTracker.update(ppi.model); this.lastScan = now; this.scanTime = time; this.listMda(); this.listVad(); this.listOrg() }
     this.paint(); this.draw()
     const s = Math.floor(time); this.root.querySelector<HTMLElement>('#radarTime')!.textContent = `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`
   }
@@ -658,6 +663,18 @@ export class RadarPanel {
    * The detections in the side panel, with a check against the model itself: the strongest updraft helicity (2-5 km)
    * within 5 km, which the radar cannot see but the model knows.
    */
+  /** The organised objects, biggest first: what each is, its size and, for a line, the system behind it. */
+  private listOrg() {
+    const out = this.root.querySelector<HTMLElement>('#radarOrgList')!, km = L('км', 'km'), ms = L('м/с', 'm/s'), shown = this.echoes.slice(0, 5)
+    if (!shown.length) { out.innerHTML = `<span class="t-caption">${L('эха от 40 dBZ нет', 'no echo of 40 dBZ')}</span>`; return }
+    out.innerHTML = shown.map(e => {
+      const d = e.dynamics, name = e.kind === 'line' && e.length >= ORG.mcsLength && e.held ? L('линейная МКС', 'linear MCS') : ECHO_KINDS[e.kind]
+      const pending = !e.held ? ` <span class="t-caption">${L('кандидат', 'candidate')}, ${e.minutes.toFixed(0)} ${L('мин', 'min')}</span>` : ''
+      const facts = [`${e.length.toFixed(0)} ${km}, ${e.aspect.toFixed(1)}:1, ${e.peak.toFixed(0)} dBZ`, e.kind === 'bow' ? `${L('выгиб', 'bow')} ${e.sagitta.toFixed(2)}` : '', e.stratiform ? STRATIFORM_KINDS[e.stratiform] : '', d ? `C ${d.c.toFixed(0)} / Δu ${d.shear.toFixed(0)} ${ms} = ${d.balance.toFixed(1)}, ${L('купол', 'pool')} ${d.depth.toFixed(1)} ${km}` : '', d ? `${L('тыловой приток', 'rear inflow')} ${d.rear.toFixed(0)}, ${L('у фронта', 'at the front')} ${d.atFront.toFixed(0)} ${ms}${d.bookends ? `, ${L('вихри на концах', 'line-end vortices')}` : ''}` : ''].filter(Boolean)
+      return `<div><b>${name}</b>${pending}<br><span class="t-caption">${facts.join(' · ')}</span></div>`
+    }).join('')
+  }
+
   /** The VAD winds as a table: height, direction the wind comes from and speed. */
   private listVad() {
     const out = this.root.querySelector<HTMLElement>('#radarVadList')!
@@ -778,6 +795,21 @@ export class RadarPanel {
     ctx.fillStyle = '#e8f0f2'; ctx.beginPath(); ctx.arc(sx, sy, 3.5, 0, Math.PI * 2); ctx.fill()
     ctx.font = `11px ${MONO}`
     if (!this.grid.labels) ctx.fillText('N ▲', box.x + box.w - 34, box.y + 16)
+    // The organised systems: the leading edge of a line or bow, with its name (cells and clusters are left to the map).
+    if (this.showOrg && this.ppi) {
+      const [ox, oy] = this.ppi.model.frameOffset(), { width, depth } = this.ppi.model.grid
+      for (const e of this.echoes) {
+        if (e.kind === 'cell' || e.kind === 'cluster') continue
+        const pts = e.edge.map(([x, y]) => this.toScreen({ x: ((x * 1000 + ox) % width + width) % width, y: ((y * 1000 + oy) % depth + depth) % depth }))
+        ctx.strokeStyle = ctx.fillStyle = e.kind === 'bow' ? '#ff7ad9' : '#7ad9ff'; ctx.lineWidth = 2.5; ctx.setLineDash(e.held ? [] : [6, 4])
+        ctx.beginPath()
+        // The edge may cross the map's seam: no stroke across it.
+        pts.forEach(([x, y], k) => { if (k && Math.hypot(x - pts[k - 1][0], y - pts[k - 1][1]) > 80 * kmPx / 10) ctx.moveTo(x, y); else if (k) ctx.lineTo(x, y); else ctx.moveTo(x, y) })
+        ctx.stroke(); ctx.setLineDash([])
+        const [lx, ly] = pts[pts.length >> 1]
+        ctx.fillText(ECHO_KINDS[e.kind], lx + 8, ly - 8)
+      }
+    }
     // VAD winds: an arrow from the radar per height, 500 m on the map per m/s, coloured from low (warm) to high (cool).
     if (this.showVad && this.ppi) {
       const site = this.ppi.site, top = Math.max(1, ...this.vad.map(w => w.height))
