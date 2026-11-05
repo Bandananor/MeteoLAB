@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { AtmosphereModel, COLD_POOL, EDGE_ZONE, LINE_THERMAL, qsatP, rotationSummary, startOf, tornadoSigns, uhScale, createGrid, customGrid, DEFAULT_GRID, mesoGrid, domainGrid, DT, LARGE_GRID } from '.'
+import { AtmosphereModel, SCENARIOS, COLD_POOL, EDGE_ZONE, LINE_THERMAL, qsatP, rotationSummary, startOf, tornadoSigns, uhScale, createGrid, customGrid, DEFAULT_GRID, mesoGrid, domainGrid, DT, LARGE_GRID } from '.'
 import { SUMMER_DAY } from './fixtures'
-import { cleanSettings } from '../share'
+import { cleanSettings, decodeSettings, encodeSettings } from '../share'
 
 /** Fastest of `steps` model steps after two warm-up steps, ms (the fastest is the least disturbed by the machine). */
 function stepTime(model: AtmosphereModel, steps = 6) {
@@ -144,5 +144,31 @@ describe('the reference squall-line starts (start line-thermal and cold-pool)', 
 
   it('both pass the links', () => {
     for (const start of ['line-thermal', 'cold-pool'] as const) expect(cleanSettings({ start }).start).toBe(start)
+  })
+})
+
+describe('the Bow echo scenario (Weisman 1993)', () => {
+  const bow = SCENARIOS.find(x => x.name === 'Bow echo')!
+  it('starts from one ellipsoidal 2 K thermal a third of the way in, on the mesoscale domain', () => {
+    const config = { ...SUMMER_DAY, ...bow.values }, grid = createGrid(domainGrid(config.domain, config.top, config.domainSize)), model = new AtmosphereModel(config, grid)
+    const { nx, ny, nz, dx, dy, zs, width, depth } = grid
+    expect([width, depth]).toEqual([168_000, 162_000]); expect(model.edges()).toBe('relaxed-x'); expect(model.frame).toEqual([22.5, 0])
+    let peak = 0, at = 0, warm = 0
+    for (let z = 0, i = 0; z < nz; z++) for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++, i++) {
+      const d = model.theta[i] - model.env.thetaEnv(zs[z])
+      if (d > peak) { peak = d; at = i } if (d > .05) warm++
+    }
+    expect(peak).toBeGreaterThan(1.8); expect(peak).toBeLessThanOrEqual(2.001)
+    const x = at % nx, y = Math.floor(at / nx) % ny
+    expect(Math.abs(x * dx - width / 3)).toBeLessThan(2 * dx); expect(Math.abs(y * dy - depth / 2)).toBeLessThan(2 * dy)
+    // Only the one thermal: nothing warm farther than its radius.
+    expect(warm).toBeLessThan(Math.PI * (10_000 / dx) ** 2 * 12)
+  })
+
+  it('asks for the precise run at 1 km and survives a link', () => {
+    expect(bow.precise).toEqual({ spacing: 1, minutes: 240, every: 300 })
+    const names = SCENARIOS.map(x => x.name), base = { ...SUMMER_DAY, ...bow.values }
+    expect(decodeSettings(encodeSettings({ ...base, bubble: .5 }, base, 'Bow echo'), names)?.scenario).toBe(names.indexOf('Bow echo'))
+    expect(decodeSettings(encodeSettings({ ...SUMMER_DAY, start: 'ellipsoid' }, SUMMER_DAY, null), names)?.values.start).toBe('ellipsoid')
   })
 })

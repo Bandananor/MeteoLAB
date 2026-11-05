@@ -17,7 +17,9 @@
 // Every 10 model minutes:
 //   the gust front: in each row the eastern edge of the cold pool (ground nodes >= FRONT_COLD K colder) followed east
 //   from the row's coldest node across gaps of at most FRONT_GAP nodes, so that the outflow of new cells ahead and the
-//   weak cold of the old pool wrapped round the domain do not count, then a running median over FRONT_SMOOTH rows; its
+//   weak cold of the old pool wrapped round the domain do not count; a row more than FRONT_SPIKE m off the median of
+//   FRONT_WINDOW m of rows around it is dropped (between the cold cores a row's coldest node lies far back in the wake),
+//   then a running median over FRONT_SMOOTH rows; its
 //   length along y, its ground speed (the median over the middle third of the rows' displacements over 30 min, taken
 //   modulo the domain's width - 10 min steps were quantised by dx / 600 s = 3.3 m/s), and the bow - how far the middle third
 //   leads the ends (km; a finite line's spreading cold pool also leads in the middle, so tell a bow by the rear inflow
@@ -37,13 +39,13 @@
 import { isMainThread, Worker, workerData } from 'node:worker_threads'
 import { fileURLToPath } from 'node:url'
 import { mkdirSync, writeFileSync } from 'node:fs'
-import { AtmosphereModel, createGrid, domainGrid, DT, G, parcelIndices, reflectivity } from '../../src/core'
+import { AtmosphereModel, createGrid, domainGrid, DT, G, parcelIndices, reflectivity, SCENARIOS } from '../../src/core'
 import { AttachedMemory, controlBuffer, serveTasks, SharedMemory, ThreadRunner } from '../../src/core/threads'
 import { SUMMER_DAY } from '../../src/core/fixtures'
 
 const gridOf = c => createGrid(domainGrid(c.domain, c.top, c.domainSize, c.spacing))
 /** The largest gap (nodes) in a row's cold pool the front is followed across; the rows of the front's running median. */
-const FRONT_GAP = 2, FRONT_SMOOTH = 5, FRONT_COLD = 2, FRONT_SPAN = 3
+const FRONT_GAP = 2, FRONT_SMOOTH = 5, FRONT_COLD = 3, FRONT_SPAN = 3, FRONT_WINDOW = 30_000, FRONT_SPIKE = 15_000
 
 if (!isMainThread) {
   const { config, buffers, control } = workerData
@@ -52,10 +54,11 @@ if (!isMainThread) {
   const args = process.argv.slice(2), option = (name, d) => Number(args.find(a => a.startsWith(`${name}=`))?.slice(name.length + 1) ?? d)
   const us = option('us', 25), depth = option('depth', 2.5) * 1000, hours = option('hours', 4), threads = option('threads', 3), speed = option('speed', 22.5)
   const bubbles = option('bubbles', 0), spacing = option('spacing', 12) * 1000, strength = option('strength', 2), large = args.includes('large')
+  // The simulator's scenario, with the options over it.
   const config = {
-    ...SUMMER_DAY, profile: 'weisman-klemp', weismanKlemp: { qvMax: option('qv', 15) / 1000, u6: us, depth }, solarMax: 0, latitude: args.includes('coriolis') ? 40 : 0,
-    ...(option('dx', 0) ? { spacing: option('dx', 0) } : {}), bubble: 0, start: 'thermals', edges: 'relaxed-x', frameMotion: [speed, 0],
-    ...(large ? { domain: 'custom', domainSize: [144, 108] } : { domain: 'meso', domainSize: [168, 162] }),
+    ...SUMMER_DAY, ...SCENARIOS.find(s => s.name === 'Bow echo').values, weismanKlemp: { qvMax: option('qv', 15) / 1000, u6: us, depth }, latitude: args.includes('coriolis') ? 40 : 0,
+    ...(option('dx', 0) ? { spacing: option('dx', 0) } : {}), frameMotion: [speed, 0], ...(bubbles ? { start: 'thermals' } : {}),
+    ...(large ? { domain: 'custom', domainSize: [144, 108] } : {}),
   }
   const memory = new SharedMemory(), model = new AtmosphereModel(structuredClone(config), gridOf(config), undefined, { memory })
   const control = controlBuffer(), helpers = []
@@ -64,12 +67,7 @@ if (!isMainThread) {
   const { nx, ny, nz, dx, dy, layer, zs, hz, width: W, depth: D } = model.grid
   const out = args.find(a => a.startsWith('out='))?.slice(4)
   if (out) mkdirSync(out, { recursive: true })
-  // Weisman's thermal: 2 cos²(πβ/2) K, β = √((r / 10 km)² + ((z - 1.4 km) / 1.4 km)²) < 1, a third of the way in from the
-  // west, vapour kept; or a line of `bubbles` of our thermals `spacing` apart along y.
-  if (!bubbles) for (let z = 0; z < model.grid.nz; z++) for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++) {
-    const beta = Math.hypot((x * dx - W / 3) / 10_000, (y * dy - D / 2) / 10_000, (zs[z] - 1400) / 1400)
-    if (beta < 1) model.theta[x + nx * (y + ny * z)] += strength * Math.cos(Math.PI * beta / 2) ** 2
-  }
+  // A line of `bubbles` of our thermals `spacing` apart along y instead of Weisman's one (start 'ellipsoid').
   for (let k = 0; k < bubbles; k++) model.injectBubble(W / 3, D / 2 + (k - (bubbles - 1) / 2) * spacing, strength * (.9 + .2 * model.rng()))
   model.added = { heat: 0, vapour: 0, count: 0 }
   const idx = parcelIndices(model.env, model.grid.height)
@@ -112,11 +110,9 @@ if (!isMainThread) {
       while (k + 1 < cold.length && cold[k + 1] - cold[k] <= FRONT_GAP + 1) k++
       raw[y] = (centre + cold[k]) * dx
     }
-    for (let y = 0; y < ny; y++) if (!isNaN(raw[y])) {
-      const near = []
-      for (let j = -(FRONT_SMOOTH >> 1); j <= FRONT_SMOOTH >> 1; j++) if (y + j >= 0 && y + j < ny) near.push(raw[y + j])
-      front[y] = median(near)
-    }
+    const rowsAround = (a, y, half) => { const near = []; for (let j = -half; j <= half; j++) if (y + j >= 0 && y + j < ny) near.push(a[y + j]); return near }
+    const kept = Float64Array.from(raw, (v, y) => isNaN(v) || Math.abs(v - median(rowsAround(raw, y, Math.round(FRONT_WINDOW / dy / 2)))) > FRONT_SPIKE ? NaN : v)
+    for (let y = 0; y < ny; y++) if (!isNaN(kept[y])) front[y] = median(rowsAround(kept, y, FRONT_SMOOTH >> 1))
     const rows = [...front.keys()].filter(y => !isNaN(front[y]))
     let line = '', rear = '', vort = '', edge = 'C -', bow = NaN
     if (rows.length > 4) {

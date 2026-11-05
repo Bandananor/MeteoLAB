@@ -719,6 +719,8 @@ document.querySelector('#sitBuild')!.addEventListener('click', () => {
 document.querySelectorAll<HTMLButtonElement>('[data-preset]').forEach(button => button.addEventListener('click', () => {
   const index = Number(button.dataset.preset)
   built = null
+  // The domain stays from one scenario to the next, unless the last one chose its own.
+  if (baseScenario !== null && SCENARIOS[baseScenario].values.domain) { config.domain = undefined; config.domainSize = undefined }
   Object.assign(config, defaults, { speed: config.speed, followStorm: config.followStorm, lightning: config.lightning, domain: config.domain, domainSize: config.domainSize, wind05: undefined, wind1: undefined, windDir05: undefined, windDir1: undefined, profile: undefined, weismanKlemp: undefined, sounding: undefined, bubbleRadius: undefined, front: undefined, edges: undefined, start: undefined, nudge: undefined, single: undefined, shade: undefined, rainN0: undefined, frameMotion: undefined, top: undefined, spacing: undefined, nightInversion: undefined, zones: undefined, frontLine: undefined, largeScale: undefined, transport: 'weno' }, presets[index].values)
   fillLowWind(config)
   baseScenario = index
@@ -734,7 +736,7 @@ function syncControls() {
   surfaceSelect.value = config.surfaceType
   transportSelect.value = config.transport ?? 'weno'
   microSelect.value = config.microphysics ?? 'ice'
-  nudgeCheck.checked = startOf(config) === 'nudge'; nudgeCheck.disabled = config.start === 'line' || config.start === 'line-thermal' || config.start === 'cold-pool'; singleCheck.checked = !!config.single; shadeCheck.checked = config.shade !== false
+  nudgeCheck.checked = startOf(config) === 'nudge'; nudgeCheck.disabled = config.start === 'ellipsoid' || config.start === 'line' || config.start === 'line-thermal' || config.start === 'cold-pool'; singleCheck.checked = !!config.single; shadeCheck.checked = config.shade !== false
   followCheck.checked = config.followStorm !== false; lightningCheck.checked = config.lightning !== false; domainSelect.value = config.domain ?? 'standard'; showDomainControls()
   advection.show(config); markProfileGroups(); markModified(); showSimple()
 }
@@ -998,7 +1000,7 @@ async function playFrames(file: Blob) {
   } catch (error) { endReplay(); note(`${L('Не удалось открыть', 'Could not open it')}: ${(error as Error).message}`) }
 }
 // A precise run launched from here (roadmap C2 step 4): computed in its own worker, then played back as above.
-const precise = new PreciseDialog({ config: () => config, onRunning: pauseFor, play: playFrames })
+const precise = new PreciseDialog({ config: () => config, suggested: () => baseScenario === null ? undefined : SCENARIOS[baseScenario].precise, onRunning: pauseFor, play: playFrames })
 document.querySelector('#preciseOpen')!.addEventListener('click', () => void precise.open())
 replayRange.addEventListener('input', () => { replayToggle(false); replayShow(Number(replayRange.value)) })
 replayPlay.addEventListener('click', () => replayToggle())

@@ -102,6 +102,13 @@ export const NUDGE = { w: 10, xr: 10_000, zr: 1500, zc: 1500, alpha: .5, t1: 900
 export const startOf = (c: Pick<SimConfig, 'start' | 'domain' | 'front' | 'frontLine'>) => c.start ?? (c.domain === 'meso' && !c.front && !c.frontLine ? 'nudge' : 'thermals')
 
 /**
+ * The start of Weisman's idealized bow echo (1993, JAS 50, 645, section 2; start 'ellipsoid'): one thermal of amplitude
+ * strength cos²(πβ/2), β = √((r / radius)² + ((z - height) / depth)²) < 1, with the horizontal radius 10 km and the vertical
+ * 1.4 km centred at 1.4 km, 2 K, vapour kept, a third of the way in from the west and in the middle along y.
+ */
+export const ELLIPSOID = { radius: 10_000, depth: 1400, height: 1400, strength: 2, across: 1 / 3 } as const
+
+/**
  * The squall-line starts of the reference studies (start 'line-thermal' and 'cold-pool'), both the same all along y with
  * white noise of ±noise K, never a row of thermals with gaps (on a 1.2-2 km grid such a row sets the cells itself).
  * The line thermal: amplitude cos²(πβ/2), β = √(((x - x0) / halfWidth)² + ((z - zc) / halfDepth)²) < 1, vapour kept (CM1
@@ -356,6 +363,13 @@ export class AtmosphereModel implements TaskModel {
       // Thermals every 6 km along y (periodic: the line has no ends), strength x (0.85-1.15).
       for (let y = 3000; y < D; y += 6000) bubble(W * .5, y, this.config.bubble * (.85 + .3 * this.rng()))
     } else if (start === 'line-thermal' || start === 'cold-pool') this.startLine(start)
+    else if (start === 'ellipsoid') {
+      const { nx, ny, dx, dy } = this.grid, { radius, depth, height, strength, across } = ELLIPSOID
+      for (let z = 0; z < nz; z++) for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++) {
+        const beta = Math.hypot((x * dx - W * across - sx) / radius, (y * dy - D / 2 - sy) / radius, (zs[z] - height) / depth)
+        if (beta < 1) this.theta[x + nx * (y + ny * z)] += strength * Math.cos(Math.PI * beta / 2) ** 2
+      }
+    }
     else if (this.config.front) {
       for (let z = 0, i = 0; z < nz; z++) for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++, i++) this.theta[i] -= this.frontDeficit(x, y, zs[z])
       // Weak thermals on the warm side, 3 km from the front, between the western zone and the front's end.

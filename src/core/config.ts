@@ -126,9 +126,10 @@ export interface SimConfig {
    * 'line-thermal' and 'cold-pool' — the squall-line starts of the reference studies, the same all along y (model.ts
    * LINE_THERMAL: CM1 iinit 8, a 2 K line thermal 20 km wide and 3 km deep; COLD_POOL: CM1 iinit 2, -6 K at the ground to
    * 0 at 2.5 km west of the middle), with ±0.2 K noise.
+   * 'ellipsoid' — the one thermal of Weisman (1993), 10 km wide and 1.4 km deep (model.ts ELLIPSOID), a third of the way in.
    * In the mesoscale mode absent means 'nudge' (startOf): on 2 km a thermal does not start a storm.
    */
-  start?: 'thermals' | 'line' | 'nudge' | 'line-thermal' | 'cold-pool'
+  start?: 'thermals' | 'line' | 'nudge' | 'line-thermal' | 'cold-pool' | 'ellipsoid'
   /** The updraught the nudging aims at, m/s (absent = NUDGE.w), with start 'nudge'. */
   nudge?: number
   /**

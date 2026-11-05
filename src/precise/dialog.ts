@@ -38,6 +38,8 @@ const km = (v: number) => v >= 1 ? `${decimal(v, v % 1 ? 1 : 0)} ${L('км', 'km
 export interface PreciseHost {
   /** The settings going on (the run takes them with the chosen spacing). */
   config: () => SimConfig
+  /** The grid, length and frames the scenario going on asks for, if any (the mesoscale kind of run). */
+  suggested: () => { spacing: number; minutes: number; every: number } | undefined
   /** Called with true when the run starts (the live run pauses), false when it ends. */
   onRunning: (running: boolean) => void
   /** Plays frames back on the page (as "Play back a precise run…" does with a file). */
@@ -73,6 +75,8 @@ export class PreciseDialog {
   private choice: Choice = { ...DEFAULTS.fine, threads: threads(), seed: null, domain: 'current' }
   /** The kind of run the choices are now for (its own options and bounds; switching it sets its defaults). */
   private mode: Mode | null = null
+  /** The scenario's run taken last (suggested). */
+  private taken: { spacing: number; minutes: number; every: number } | undefined
   private worker: Worker | null = null
   private paused = false
   /** What the finished run left: its frames (a file in the storage or a blob) and its final state. */
@@ -142,7 +146,11 @@ export class PreciseDialog {
   private send(message: PreciseRequest) { this.worker?.postMessage(message) }
 
   async open() {
-    this.show(); this.dialog.showModal()
+    this.show()
+    // A scenario's own run (once per scenario, so the author's changes stay), not finer than a phone may go.
+    const own = this.host.suggested()
+    if (own && own !== this.taken && !this.worker) { this.taken = own; Object.assign(this.choice, own); this.show() }
+    this.dialog.showModal()
     if (!this.worker && !this.result) this.$('#preciseLast').hidden = !(await storedFrames())
   }
 

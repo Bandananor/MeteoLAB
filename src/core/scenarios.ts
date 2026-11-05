@@ -15,6 +15,8 @@ export interface Scenario {
   name: string; title: string; summary: string; hint: string; values: Partial<SimConfig>; mesocyclone?: boolean
   /** A synoptic situation (2.6, situations.ts): shown apart from the scenarios, with its story by the hour. */
   story?: StoryStage[]
+  /** The precise run it asks for (the dialog starts from it): what the live grid cannot show. */
+  precise?: { spacing: number; minutes: number; every: number }
 }
 
 /**
@@ -106,6 +108,13 @@ export const SCENARIOS: Scenario[] = [
     values: { bubble: 0, surfaceTemp: 26, rhSurface: 75, rhLow: 70, rhMid: 50, moistLayer: 1.2, capStrength: .7, lapseMid: 5.8, lapseUpper: 6.2,
       wind0: 4, windDir0: 180, wind3: 12, windDir3: 220, wind6: 18, windDir6: 240, wind10: 24, windDir10: 250,
       frontLine: { kind: 'cold', contrast: 9, depth: 2.5, slope: 80, speed: 9, heading: 90, start: -12 } } },
+  // Weisman (1993): 2 km gives a line of separate cells, 1 km the bow (03.11.2026, tests/bench/bow.ts); he finds 1 and 2 km
+  // alike. So the live run is a preview and the scenario asks for the precise run. bubble 0: the scenario tests skip it.
+  { name: 'Bow echo', title: 'Bow echo',
+    summary: L('Дуга с тыловым притоком — только в точном прогоне на 1 км', 'A bow with a rear inflow jet — only in the precise run at 1 km'),
+    hint: L('Идеализированный опыт Weisman (1993): CAPE ~2400 Дж/кг, сдвиг 25 м/с в нижних 2,5 км поперёк линии, выше ветер постоянный, f = 0, один термик 10 × 1,4 км, 2 K, область идёт за системой со скоростью 22,5 м/с. На 1 км за 3–4 часа вырастает дуга ~100 км с приподнятой струёй тылового притока, вихрями на концах и порывами до 40 м/с. На сетке 2 км, в живом режиме, дуги нет — только цепочка ячеек, у Weisman 1 и 2 км почти не отличаются. Поэтому смотреть её нужно в «Эксперименты» → «Точный прогон…»: окно предложит 1 км и 4 часа модели, это несколько часов счёта на компьютере.', 'The idealized run of Weisman (1993): CAPE ~2400 J/kg, 25 m/s of shear over the lowest 2.5 km across the line, a constant wind above, f = 0, one 10 × 1.4 km thermal of 2 K, the domain following the system at 22.5 m/s. At 1 km a ~100 km bow grows in 3–4 hours with an elevated rear-inflow jet, line-end vortices and gusts to 40 m/s. On the 2 km grid of the live mode there is no bow, only a chain of cells, while Weisman finds 1 and 2 km alike. So watch it in “Experiments” → “Precise run…”: the dialog offers 1 km and 4 model hours, some hours of computing on a desktop.'),
+    values: { profile: 'weisman-klemp', weismanKlemp: { qvMax: .015, u6: 25, depth: 2500 }, solarMax: 0, latitude: 0, bubble: 0, start: 'ellipsoid', edges: 'relaxed-x', frameMotion: [22.5, 0], domain: 'meso', domainSize: [168, 162] },
+    precise: { spacing: 1, minutes: 240, every: 300 } },
   // Synoptic situations (2.6): stories over hours, shown apart from the scenarios (they have a story). Calibration
   // 2026-10-13 (tests/bench/scout.ts, 3 h each; the slow test in situations.test.ts).
   { name: 'Тёплый сектор и холодный фронт', title: L('Тёплый сектор и холодный фронт', 'Warm sector and cold front'),
