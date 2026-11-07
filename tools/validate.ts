@@ -3,30 +3,48 @@
 // the source, with the model's version, the date and the machine — and, apart, the known deviations from nature
 // (src/validation/deviations.ts, roadmap A7) measured on the same model: their bounds are nature's, they are expected
 // outside them and do not count towards the exit status.
-//   npm run validate -- [only=straka,bryan-fritsch] [threads=N] [out=docs/validation.md] [deviations=0]
+//   npm run validate -- [only=straka,bryan-fritsch] [threads=N] [out=docs/validation.md] [deviations=0] [long=1] [inner=6]
 // All the cases take ~2 h of one core (~25 min on 8), the deviations ~40 min more. Exits 1 if a check is outside its bounds.
+// The long cases (cases.ts LONG_CASES, ~2.3 h each on 8 threads) run only when `only` names them or with long=1, each on
+// `inner` threads of its own (helpers of this same file over the model's shared memory).
 import { isMainThread, parentPort, Worker, workerData } from 'node:worker_threads'
 import { fileURLToPath } from 'node:url'
 import { availableParallelism, cpus } from 'node:os'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
-import { CASES, type CaseResult, type Check, passes } from '../src/validation/cases'
+import { CASES, type CaseResult, type Check, LONG_CASES, passes } from '../src/validation/cases'
+import { AtmosphereModel } from '../src/core'
+import { AttachedMemory, controlBuffer, serveTasks, ThreadRunner } from '../src/core/threads'
+import { squallGrid, type Threads } from '../src/validation/squall'
 import { DEVIATIONS, QUALITATIVE } from '../src/validation/deviations'
 import { MODEL_VERSION } from '../src/version'
 
 interface Done { id: string; result?: CaseResult; error?: string; seconds: number }
 
-if (!isMainThread) {
-  const c = [...CASES, ...DEVIATIONS].find(x => x.id === workerData.id)!, started = Date.now()
+if (!isMainThread && workerData.helper) {
+  // A long case's helper thread: a view of that case's model, doing the step's tasks it is handed.
+  const { config, buffers, control } = workerData.helper
+  serveTasks(new AtmosphereModel(config, squallGrid(config), undefined, { memory: new AttachedMemory(buffers), attach: true }), control)
+} else if (!isMainThread) {
+  const c = [...CASES, ...LONG_CASES, ...DEVIATIONS].find(x => x.id === workerData.id)!, started = Date.now(), inner = workerData.inner as number
+  const threads: Threads = (model, config, memory) => {
+    if (inner < 2) return () => {}
+    const control = controlBuffer(), helpers: Worker[] = []
+    for (let k = 0; k < inner - 1; k++) helpers.push(new Worker(fileURLToPath(import.meta.url), { workerData: { helper: { config: structuredClone(config), buffers: memory.buffers, control } } }))
+    const runner = new ThreadRunner(model, control, inner - 1)
+    model.transportSlabs = 10; model.runner = runner
+    return () => { runner.stop(); for (const h of helpers) void h.terminate() }
+  }
   let done: Done
-  try { done = { id: c.id, result: c.run(), seconds: (Date.now() - started) / 1000 } } catch (e) { done = { id: c.id, error: String((e as Error).stack ?? e), seconds: (Date.now() - started) / 1000 } }
+  try { done = { id: c.id, result: c.run(threads), seconds: (Date.now() - started) / 1000 } } catch (e) { done = { id: c.id, error: String((e as Error).stack ?? e), seconds: (Date.now() - started) / 1000 } }
   parentPort!.postMessage(done)
 } else {
   const args = process.argv.slice(2), option = (name: string) => args.find(a => a.startsWith(`${name}=`))?.slice(name.length + 1)
   const only = option('only')?.split(','), out = option('out') ?? 'docs/validation.md'
-  const all = option('deviations') === '0' ? CASES : [...CASES, ...DEVIATIONS], deviating = new Set(DEVIATIONS.map(d => d.id))
-  const cases = only ? all.filter(c => only.includes(c.id)) : all
-  if (!cases.length) { console.error(`no such cases: ${only}; there are ${all.map(c => c.id).join(', ')}`); process.exit(2) }
+  const all = [...CASES, ...(option('deviations') === '0' ? [] : DEVIATIONS)], deviating = new Set(DEVIATIONS.map(d => d.id))
+  const cases = only ? [...all, ...LONG_CASES].filter(c => only.includes(c.id)) : [...all, ...(option('long') === '1' ? LONG_CASES : [])]
+  const inner = Math.max(1, Number(option('inner') ?? 6))
+  if (!cases.length) { console.error(`no such cases: ${only}; there are ${[...all, ...LONG_CASES].map(c => c.id).join(', ')}`); process.exit(2) }
   const threads = Math.max(1, Math.min(cases.length, Number(option('threads') ?? availableParallelism())))
   // The longest first, so the last to start is a short one.
   const queue = [...cases].sort((a, b) => b.minutes - a.minutes), results: Done[] = [], started = Date.now()
@@ -34,7 +52,7 @@ if (!isMainThread) {
   const start = () => {
     const c = queue.shift()
     if (!c) return
-    const w = new Worker(fileURLToPath(import.meta.url), { workerData: { id: c.id } })
+    const w = new Worker(fileURLToPath(import.meta.url), { workerData: { id: c.id, inner } })
     w.once('message', (d: Done) => {
       results.push(d)
       const bad = d.result?.checks.filter(x => !passes(x)).length

@@ -10,6 +10,7 @@
 import { AtmosphereModel, CP, createGrid, DT, G, KAPPA, LARGE_GRID, levelAt, LV, MESO_PERSISTENCE, qsatP, RD, saturationAdjust, SCENARIOS, type SimConfig, weismanKlemp } from '../core'
 import type { EnvironmentProfile } from '../core/environment'
 import { SUMMER_DAY } from '../core/fixtures'
+import { squallLine, type Threads } from './squall'
 
 export interface Check {
   quantity: string; unit: string; value: number
@@ -21,9 +22,10 @@ export interface Check {
 export interface CaseResult { checks: Check[]; note?: string }
 export interface ValidationCase {
   id: string; title: string; source: string
-  /** Rough minutes on one laptop core, for planning. */
+  /** Rough minutes on one laptop core, for planning (a long case: minutes on its own threads). */
   minutes: number
-  run(): CaseResult
+  /** `threads`: helper threads for a long case (LONG_CASES); the others run on one. */
+  run(threads?: Threads): CaseResult
 }
 
 export const passes = (c: Check) => c.value >= c.bounds[0] && c.value <= c.bounds[1]
@@ -344,3 +346,33 @@ export const CASES: ValidationCase[] = [
     return { id: `situation-${k}`, title: `Situation «${name}», with and without its trigger`, source: 'the situation’s story (2.6)', minutes: k === 1 ? 25 : 18, run: run[name] }
   }),
 ]
+
+/**
+ * The long cases: a squall line at 1 km for 4 h after Weisman & Rotunno (2004, WR04; src/validation/squall.ts), each
+ * ~2.3 h on 8 threads — too long for every report, the slow tests and the cloud. They run on request:
+ * `npm run validate -- only=squall-line-10,squall-line-20 inner=6` (or `long=1` for all of them with the rest).
+ * Measured from 2 h, when the lines have formed, to 4 h, every 30 min; the line-averaged numbers as WR04 measure them.
+ * WR04 Table 1b (warm rain, CAPE 2200, 600 x 160 km at 1 km): C 19-26 m/s; C / dU(0-5 km) > 1.5 upshear-tilted, 1-1.5
+ * most upright, < 1 downshear; Us 10 / 2.5 km 2.3 (upshear, UP), Us 20 / 2.5 km 1.3 (bow echoes, B); Wmax 27-43 m/s
+ * (3-6 h). Here 288 x 72 km and 4 h (they ran 6 h). At 2 km the lines break up by 3-4 h: these cases are at 1 km.
+ */
+export const LONG_CASES: ValidationCase[] = ([
+  { us: 10, ratio: 'upshear-tilted: 2.3 (WR04 Us 10 / 2.5 km), > 1.5', ratioBounds: [1.5, 3.2], tilt: 'rearward (upshear)', tiltBounds: [-INF, -5] },
+  { us: 20, ratio: 'most upright: 1.3 (WR04 Us 20 / 2.5 km), 1–1.5', ratioBounds: [.9, 1.6], tilt: 'upright', tiltBounds: [-10, 3] },
+] as const).map(k => ({
+  id: `squall-line-${k.us}`, title: `Squall line, shear ${k.us} m/s over 2.5 km (Weisman & Rotunno 2004), 1 km, 4 h`, source: 'Weisman & Rotunno 2004, J. Atmos. Sci. 61, Table 1; WK82 sounding, line thermal, f = 0', minutes: 140,
+  run(threads?: Threads): CaseResult {
+    const samples = squallLine({ us: k.us, dx: 1, hours: 4 }, threads), late = samples.filter(s => s.minutes >= 120)
+    const fronts = late.flatMap(s => s.front ? [s.front] : []), mean = (v: number[]) => v.length ? v.reduce((a, b) => a + b, 0) / v.length : NaN
+    return {
+      checks: [
+        check('2–4 h: samples with a −1 K line-averaged cold pool', '', fronts.length / late.length, 'all (lines live 6 h)', [1, 1]),
+        check('2–4 h: mean C (eq. 11, C² = −B min H)', 'm/s', mean(fronts.map(f => f.c)), '19–26', [18, 28]),
+        check('2–4 h: mean C / ΔU(0–5 km)', '', mean(fronts.map(f => f.cdU5)), k.ratio, k.ratioBounds),
+        check('2–4 h: mean tilt, x(1.5 km) − x(6 km) of the line-averaged w max', 'km', mean(fronts.map(f => f.tilt)), k.tilt, k.tiltBounds),
+        check('2–4 h: least w max', 'm/s', Math.min(...late.map(s => s.wMax)), '27–43 (3–6 h)', [20, INF]),
+      ],
+      note: `Every 30 min from 2 h: C ${fronts.map(f => f.c.toFixed(1)).join(', ')} m/s; C/ΔU ${fronts.map(f => f.cdU5.toFixed(2)).join(', ')}; tilt ${fronts.map(f => f.tilt.toFixed(0)).join(', ')} km; front speed ${fronts.map(f => f.speed.toFixed(1)).join(', ')} m/s; rows with w ≥ 5 m/s at 3 km ${late.map(s => (100 * s.rows).toFixed(0)).join(', ')} %.`,
+    }
+  },
+}))
