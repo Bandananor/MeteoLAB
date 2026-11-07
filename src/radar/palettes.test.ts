@@ -29,6 +29,16 @@ describe('radar palettes', () => {
     expect(() => parsePal('Product: BR\nUnits: DBZ', 'Z')).toThrow()
   })
 
+  it('holds the Russian networks’ palettes as sent: IRAM and Hydrometcentre velocity, METEORAD and IRAM cloud tops', () => {
+    const by = (id: string) => BUILTIN.find(p => p.id === id)!
+    expect(colorAt(by('v-iram'), -30)).toEqual([0, 0, 130, 255]); expect(colorAt(by('v-iram'), 31)).toEqual([80, 0, 0, 255])
+    expect(colorAt(by('v-hydromet'), 0)).toEqual([255, 255, 255, 255]); expect(colorAt(by('v-hydromet'), -40)).toEqual([76, 133, 104, 255])
+    expect(colorAt(by('et-meteorad'), 8.5)).toEqual([228, 217, 0, 255]); expect(colorAt(by('et-meteorad'), 0.05)).toBeNull()
+    expect(colorAt(by('et-iram'), 10.7)).toEqual([255, 0, 0, 255])
+    // The defaults stay the first of their kind.
+    expect(new Palettes(null).chosen('V').id).toBe('v-classic'); expect(new Palettes(null).chosen('ET').id).toBe('et-classic')
+  })
+
   it('writes .pal back so that reading it gives the same palette', () => {
     for (const p of BUILTIN) {
       const back = parsePal(toPal(p), p.kind === 'Z' ? 'V' : 'Z')
