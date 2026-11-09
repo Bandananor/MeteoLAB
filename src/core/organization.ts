@@ -84,6 +84,9 @@ export function classifyEcho(field: Float32Array, nx: number, ny: number, dx: nu
   const step = Math.max(1, Math.round(ORG.cell / Math.min(dx, dy))), { out: z, w, h } = coarsen(field, nx, ny, step), cx = dx * step, cy = dy * step
   const reach = Math.max(1, Math.ceil(ORG.gap / 2 / Math.min(cx, cy)))
   const objects = components(c => z[c] >= ORG.core, w, h, reach), echoes: EchoObject[] = []
+  // The >= ORG.stratiform echo in joined pieces: a line's stratiform is only what is joined to it.
+  const joined = new Int32Array(w * h).fill(-1)
+  components(c => z[c] >= ORG.stratiform, w, h, 1).forEach((piece, k) => { for (const p of piece) joined[mod(p.x, w) + w * mod(p.y, h)] = k })
   for (const cells of objects) {
     const area = cells.length * cx * cy
     if (area < cx * cy * 3) continue
@@ -115,19 +118,22 @@ export function classifyEcho(field: Float32Array, nx: number, ny: number, dx: nu
     const bow = aspect >= ORG.aspect && length >= ORG.bowMin && length <= ORG.bowMax && sagitta >= ORG.bowSagitta
     const kind: EchoKind = bow ? 'bow' : line ? 'line' : cores >= 2 || length >= ORG.mcsLength ? 'cluster' : 'cell'
     const wraps = hi - lo >= (Math.abs(axis[0]) * w * cx + Math.abs(axis[1]) * h * cy) * .9
-    echoes.push({ kind, x: mx, y: my, edge, length, width, aspect, area, peak, cores, axis, normal, sagitta, stratiform: line || bow ? stratiformOf(z, w, h, cx, cy, mx, my, axis, normal, lo, hi, width) : null, wraps })
+    echoes.push({ kind, x: mx, y: my, edge, length, width, aspect, area, peak, cores, axis, normal, sagitta, stratiform: line || bow ? stratiformOf(z, w, h, cx, cy, mx, my, axis, normal, lo, hi, width, joined, joined[mod(cells[0].x, w) + w * mod(cells[0].y, h)]) : null, wraps })
   }
   echoes.sort((a, b) => b.area - a.area)
   return [...echoes, ...brokenLines(echoes, w * cx, h * cy, motion)].sort((a, b) => b.area - a.area)
 }
 
-/** Where the stratiform echo lies around a line: behind, ahead or along it (the share of ORG.stratiformShare), none if too little. */
-function stratiformOf(z: Float32Array, w: number, h: number, cx: number, cy: number, mx: number, my: number, axis: readonly [number, number], normal: readonly [number, number], lo: number, hi: number, width: number): StratiformKind {
+/**
+ * Where the stratiform echo lies around a line: behind, ahead or along it (the share of ORG.stratiformShare), none if too
+ * little. Only the 30-40 dBZ echo joined to the line (piece `own` of `joined`) within 120 km counts, not other cells' edges.
+ */
+function stratiformOf(z: Float32Array, w: number, h: number, cx: number, cy: number, mx: number, my: number, axis: readonly [number, number], normal: readonly [number, number], lo: number, hi: number, width: number, joined: Int32Array, own: number): StratiformKind {
   const reach = 120
   let behind = 0, ahead = 0, ends = 0
   for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
     const v = z[x + w * y]
-    if (v < ORG.stratiform || v >= ORG.core) continue
+    if (v < ORG.stratiform || v >= ORG.core || joined[x + w * y] !== own) continue
     const a = wrap(x * cx - mx, w * cx), b = wrap(y * cy - my, h * cy), s = a * axis[0] + b * axis[1], n = a * normal[0] + b * normal[1]
     if (Math.abs(n) > reach || s < lo - reach || s > hi + reach) continue
     if (s < lo || s > hi) ends++
@@ -225,8 +231,10 @@ export function lineDynamics(m: AtmosphereModel, line: EchoObject, speed: number
       ends[side][0] = Math.max(ends[side][0], z); ends[side][1] = Math.min(ends[side][1], z)
     }
   }
-  const pair = (a: number, b: number) => ends[0][a] >= ORG.vortex && ends[1][b] <= -ORG.vortex
-  return { c, depth: count ? depthSum / count : 0, shear, balance: shear > .1 ? c / shear : 0, rear, atFront, ends, bookends: pair(0, 1) || pair(1, 0) }
+  // Bookends as Weisman (1993): cyclonic at the left end looking along the motion, anticyclonic at the right. Side 0 is
+  // the low end of the axis; it is the left one when the axis points to the right of the motion.
+  const left = line.axis[0] * -nv + line.axis[1] * nu < 0 ? 0 : 1
+  return { c, depth: count ? depthSum / count : 0, shear, balance: shear > .1 ? c / shear : 0, rear, atFront, ends, bookends: ends[left][0] >= ORG.vortex && ends[1 - left][1] <= -ORG.vortex }
 }
 
 export interface TrackedEcho extends EchoObject {

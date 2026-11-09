@@ -36,6 +36,9 @@ describe('the organisation of convection from the echo (organization.ts)', () =>
     const leading = classifyEcho(field((x, y) => Math.max(line(x, y), Math.abs(y - 100) < 50 && x > 100 && x < 150 ? 35 : -20)), NX, NY, D, D, [1, 0])[0]
     expect(trailing.stratiform).toBe('trailing'); expect(leading.stratiform).toBe('leading')
     expect(classifyEcho(field(line), NX, NY, D, D, [1, 0])[0].stratiform).toBe('none')
+    // 30-40 dBZ behind but cut off from the line by a 4 km gap: another cell's edge, not the line's stratiform.
+    const apart = classifyEcho(field((x, y) => Math.max(line(x, y), Math.abs(y - 100) < 50 && x > 50 && x < 90 ? 35 : -20)), NX, NY, D, D, [1, 0])
+    expect(apart.find(o => o.kind === 'line')!.stratiform).toBe('none')
   })
 
   it('finds a broken line of discrete cells and leaves scattered ones alone', () => {
