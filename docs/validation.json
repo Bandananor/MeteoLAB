@@ -1,13 +1,13 @@
 {
-  "version": "v2.10.0.1-25-geaaf5fd",
-  "date": "2026-10-25",
+  "version": "v2.10.3-18-g150fc03",
+  "date": "2026-11-09",
   "node": "v24.16.0",
   "cases": [
     {
       "id": "straka",
       "title": "Density current (Straka et al. 1993), 100 m, 900 s",
       "source": "Straka, Wilhelmson, Wicker, Anderson, Droegemeier 1993, Int. J. Numer. Methods Fluids 17; converged 25 m solution",
-      "seconds": 229.299,
+      "seconds": 134.966,
       "checks": [
         {
           "quantity": "front position (θ′ = −1 K at the ground)",
@@ -56,7 +56,7 @@
       "id": "bryan-fritsch",
       "title": "Rising thermal, dry and saturated (Bryan & Fritsch 2002), 100 m, 1000 s",
       "source": "Bryan & Fritsch 2002, Mon. Wea. Rev. 130; numbers as quoted by Duarte et al. 2014 (arXiv:1311.4265)",
-      "seconds": 350.544,
+      "seconds": 266.875,
       "checks": [
         {
           "quantity": "dry: top of the thermal",
@@ -135,7 +135,7 @@
       "id": "weisman-klemp",
       "title": "Supercell split (Weisman & Klemp 1982), 96 × 72 km, 60 min",
       "source": "Weisman & Klemp 1982, Mon. Wea. Rev. 110: a split by 40–60 min into a stronger cyclonic right mover and an anticyclonic left mover",
-      "seconds": 1666.455,
+      "seconds": 1405.082,
       "checks": [
         {
           "quantity": "updraught cores at 4.5 km, 35 min (w > 8 m/s)",
@@ -203,7 +203,7 @@
       "id": "scenario-0",
       "title": "Scenario «Летний день», 40 min",
       "source": "meant to grow no mesocyclone",
-      "seconds": 515.098,
+      "seconds": 353.526,
       "checks": [
         {
           "quantity": "values clipped by the limiters",
@@ -218,7 +218,7 @@
         {
           "quantity": "max updraught",
           "unit": "m/s",
-          "value": 39.51206970214844,
+          "value": 39.48084259033203,
           "reference": "≤ 55 (observed storms ≤ ~0.6 √(2 CAPE))",
           "bounds": [
             0,
@@ -236,13 +236,13 @@
           ]
         }
       ],
-      "note": "UH max 250 m²/s², wind at 100 m 21.4 m/s, rain 8.0 mm, hail 0.0 cm aloft / 0.0 mm at the ground."
+      "note": "UH max 249 m²/s², wind at 100 m 21.1 m/s, rain 7.9 mm, hail 0.0 cm aloft / 0.0 mm at the ground."
     },
     {
       "id": "scenario-1",
       "title": "Scenario «Многоячейковая гроза», 40 min",
       "source": "no rotation is asked of it",
-      "seconds": 507.738,
+      "seconds": 394.685,
       "checks": [
         {
           "quantity": "values clipped by the limiters",
@@ -257,7 +257,7 @@
         {
           "quantity": "max updraught",
           "unit": "m/s",
-          "value": 33.642913818359375,
+          "value": 48.97771453857422,
           "reference": "≤ 55 (observed storms ≤ ~0.6 √(2 CAPE))",
           "bounds": [
             0,
@@ -267,7 +267,7 @@
         {
           "quantity": "longest mesocyclone",
           "unit": "s",
-          "value": 39,
+          "value": 0,
           "reference": "—",
           "bounds": [
             0,
@@ -275,13 +275,13 @@
           ]
         }
       ],
-      "note": "UH max 360 m²/s², wind at 100 m 20.8 m/s, rain 4.1 mm, hail 0.0 cm aloft / 0.0 mm at the ground."
+      "note": "UH max 545 m²/s², wind at 100 m 23.7 m/s, rain 8.9 mm, hail 0.3 cm aloft / 0.0 mm at the ground."
     },
     {
       "id": "scenario-2",
       "title": "Scenario «Классическая суперячейка», 40 min",
       "source": "meant to grow a supercell",
-      "seconds": 667.555,
+      "seconds": 531.607,
       "checks": [
         {
           "quantity": "values clipped by the limiters",
@@ -296,7 +296,7 @@
         {
           "quantity": "max updraught",
           "unit": "m/s",
-          "value": 55.25324630737305,
+          "value": 55.0432243347168,
           "reference": "—",
           "bounds": [
             0,
@@ -314,13 +314,13 @@
           ]
         }
       ],
-      "note": "UH max 2222 m²/s², wind at 100 m 33.4 m/s, rain 23.7 mm, hail 1.2 cm aloft / 2.8 mm at the ground."
+      "note": "UH max 2219 m²/s², wind at 100 m 33.0 m/s, rain 23.6 mm, hail 1.2 cm aloft / 2.8 mm at the ground."
     },
     {
       "id": "scenario-3",
       "title": "Scenario «Суперячейка WK», 40 min",
       "source": "meant to grow a supercell",
-      "seconds": 597.467,
+      "seconds": 444.373,
       "checks": [
         {
           "quantity": "values clipped by the limiters",
@@ -359,7 +359,7 @@
       "id": "scenario-4",
       "title": "Scenario «HSLC», 40 min",
       "source": "meant to grow a supercell",
-      "seconds": 555.2,
+      "seconds": 397.922,
       "checks": [
         {
           "quantity": "values clipped by the limiters",
@@ -374,7 +374,7 @@
         {
           "quantity": "max updraught",
           "unit": "m/s",
-          "value": 20.84421730041504,
+          "value": 20.46131134033203,
           "reference": "—",
           "bounds": [
             0,
@@ -392,13 +392,13 @@
           ]
         }
       ],
-      "note": "UH max 819 m²/s², wind at 100 m 25.0 m/s, rain 14.1 mm, hail 1.2 cm aloft / 2.0 mm at the ground."
+      "note": "UH max 765 m²/s², wind at 100 m 24.9 m/s, rain 14.0 mm, hail 1.2 cm aloft / 1.8 mm at the ground."
     },
     {
       "id": "scenario-5",
       "title": "Scenario «Микропорыв», 40 min",
       "source": "meant to grow no mesocyclone",
-      "seconds": 509.222,
+      "seconds": 352.921,
       "checks": [
         {
           "quantity": "values clipped by the limiters",
@@ -413,7 +413,7 @@
         {
           "quantity": "max updraught",
           "unit": "m/s",
-          "value": 22.437597274780273,
+          "value": 22.436904907226562,
           "reference": "≤ 55 (observed storms ≤ ~0.6 √(2 CAPE))",
           "bounds": [
             0,
@@ -431,13 +431,13 @@
           ]
         }
       ],
-      "note": "UH max 170 m²/s², wind at 100 m 26.2 m/s, rain 3.3 mm, hail 0.0 cm aloft / 0.0 mm at the ground."
+      "note": "UH max 170 m²/s², wind at 100 m 25.9 m/s, rain 3.3 mm, hail 0.0 cm aloft / 0.0 mm at the ground."
     },
     {
       "id": "scenario-6",
       "title": "Scenario «Тропическая конвекция», 40 min",
       "source": "meant to grow no mesocyclone",
-      "seconds": 506.08,
+      "seconds": 351.651,
       "checks": [
         {
           "quantity": "values clipped by the limiters",
@@ -452,7 +452,7 @@
         {
           "quantity": "max updraught",
           "unit": "m/s",
-          "value": 24.608352661132812,
+          "value": 24.46188735961914,
           "reference": "≤ 55 (observed storms ≤ ~0.6 √(2 CAPE))",
           "bounds": [
             0,
@@ -470,13 +470,13 @@
           ]
         }
       ],
-      "note": "UH max 96 m²/s², wind at 100 m 17.9 m/s, rain 21.6 mm, hail 0.7 cm aloft / 0.1 mm at the ground."
+      "note": "UH max 96 m²/s², wind at 100 m 17.9 m/s, rain 21.2 mm, hail 0.7 cm aloft / 0.1 mm at the ground."
     },
     {
       "id": "situation-0",
       "title": "Situation «Тёплый сектор и холодный фронт», with and without its trigger",
       "source": "the situation’s story (2.6)",
-      "seconds": 1498.029,
+      "seconds": 1218.718,
       "checks": [
         {
           "quantity": "values clipped by the limiters",
@@ -491,7 +491,7 @@
         {
           "quantity": "with the front: max updraught",
           "unit": "m/s",
-          "value": 46.18024826049805,
+          "value": 42.875125885009766,
           "reference": "storms on the front",
           "bounds": [
             25,
@@ -511,7 +511,7 @@
         {
           "quantity": "without the front: max updraught",
           "unit": "m/s",
-          "value": 4.407582759857178,
+          "value": 3.035388708114624,
           "reference": "no storms (the cap holds)",
           "bounds": [
             0,
@@ -524,7 +524,7 @@
       "id": "situation-1",
       "title": "Situation «Высотная ложбина», with and without its trigger",
       "source": "the situation’s story (2.6)",
-      "seconds": 2108.198,
+      "seconds": 1848.719,
       "checks": [
         {
           "quantity": "values clipped by the limiters",
@@ -539,7 +539,7 @@
         {
           "quantity": "with the trough: max updraught",
           "unit": "m/s",
-          "value": 31.475732803344727,
+          "value": 31.40254020690918,
           "reference": "storms by 11:30",
           "bounds": [
             20,
@@ -549,7 +549,7 @@
         {
           "quantity": "without the trough: max updraught",
           "unit": "m/s",
-          "value": 26.2229061126709,
+          "value": 26.309240341186523,
           "reference": "storms by 11:30 too",
           "bounds": [
             15,
@@ -559,7 +559,7 @@
         {
           "quantity": "with the trough: 12:10–12:50 mean updraught",
           "unit": "m/s",
-          "value": 11.15000331401825,
+          "value": 11.663957965373992,
           "reference": "new cells keep going",
           "bounds": [
             8,
@@ -569,7 +569,7 @@
         {
           "quantity": "12:10–12:50 mean updraught, with − without the trough",
           "unit": "m/s",
-          "value": 5.975287353992462,
+          "value": 6.524533367156982,
           "reference": "the trough makes them last",
           "bounds": [
             3,
@@ -579,7 +579,7 @@
         {
           "quantity": "with the trough: heaviest rain 12:10–12:50",
           "unit": "mm/h",
-          "value": 56.23719253525616,
+          "value": 56.272131395894185,
           "reference": "downpours go on",
           "bounds": [
             10,
@@ -589,7 +589,7 @@
         {
           "quantity": "without the trough: heaviest rain 12:10–12:50",
           "unit": "mm/h",
-          "value": 1.5763403136960785,
+          "value": 0.3865481279443645,
           "reference": "the rain has ended by 12:20",
           "bounds": [
             0,
@@ -603,12 +603,12 @@
       "id": "situation-2",
       "title": "Situation «Тёплый воздух над слоем: гроз не будет», with and without its trigger",
       "source": "the situation’s story (2.6)",
-      "seconds": 1400.309,
+      "seconds": 1164.097,
       "checks": [
         {
           "quantity": "with the warm air aloft: max updraught",
           "unit": "m/s",
-          "value": 3.8774781227111816,
+          "value": 3.8774707317352295,
           "reference": "no storms",
           "bounds": [
             0,
@@ -628,7 +628,7 @@
         {
           "quantity": "without it: max updraught",
           "unit": "m/s",
-          "value": 26.2229061126709,
+          "value": 26.309240341186523,
           "reference": "storms",
           "bounds": [
             20,
@@ -646,6 +646,104 @@
           ]
         }
       ]
+    }
+  ],
+  "deviations": [
+    {
+      "id": "supercell-microphysics",
+      "title": "Classic supercell, 60 min: outflow, hail and lightning",
+      "source": "RFD θv′ at the ground: under ~2 K in strongly tornadic RFDs, ~4–7 K in nontornadic ones (Markowski, Straka & Rasmussen 2002, MWR 130, 1692, as quoted by later papers); SHIP > 1 — an environment favourable for hail ≥ 5 cm (SPC); +CG 8.7–10.6 % of ground flashes over the USA, regionally < 2 to > 25 % (Rudlosky & Fuelberg 2010, MWR 138, 3623; Orville et al. 2011, MWR 139, 1305)",
+      "seconds": 760.114,
+      "checks": [
+        {
+          "quantity": "outflow θv deficit under the low-level rotation, max 30–60 min",
+          "unit": "K",
+          "value": 10.03094482421875,
+          "reference": "≲ 2 tornadic, 4–7 nontornadic RFDs",
+          "bounds": [
+            0,
+            7
+          ]
+        },
+        {
+          "quantity": "largest hail at the ground",
+          "unit": "mm",
+          "value": 11.948689309057297,
+          "reference": "≥ 50 favoured (SHIP > 1 here)",
+          "bounds": [
+            50,
+            null
+          ]
+        },
+        {
+          "quantity": "share of positive ground flashes",
+          "unit": "",
+          "value": 1,
+          "reference": "0.09–0.11 over the USA, regionally 0.02–0.25",
+          "bounds": [
+            0.02,
+            0.25
+          ]
+        }
+      ],
+      "note": "71 CG and 4204 IC flashes; strongest updraught 55.0 m/s; max reflectivity 73 dBZ, VIL 60 kg/m², MESH 69 mm; the largest outflow deficit anywhere 11.6 K."
+    },
+    {
+      "id": "ordinary-graupel-core",
+      "title": "Ordinary cell («Summer day»), 40 min: the graupel core",
+      "source": "ordinary (pulse) cells: core ~50–60 dBZ (a forecasters’ rule of thumb; no peer-reviewed typical maximum found yet)",
+      "seconds": 305.665,
+      "checks": [
+        {
+          "quantity": "max reflectivity of the cell",
+          "unit": "dBZ",
+          "value": 70.45582709240853,
+          "reference": "50–60",
+          "bounds": [
+            50,
+            60
+          ]
+        }
+      ],
+      "note": "VIL 46 kg/m², MESH 58 mm, strongest updraught 39.6 m/s."
+    },
+    {
+      "id": "tropical-updraught",
+      "title": "Tropical convection over the ocean, 40 min: the updraught",
+      "source": "GATE oceanic cores: only 10 % have a mean w above 5 m/s (LeMone & Zipser 1980, JAS 37, 2444); TAMEX median under 3 m/s (Jorgensen & LeMone 1989, JAS 46, 621); peaks of 10–15 m/s rare (not verified)",
+      "seconds": 308.836,
+      "checks": [
+        {
+          "quantity": "strongest updraught",
+          "unit": "m/s",
+          "value": 24.512653350830078,
+          "reference": "core means mostly < 5, peaks rarely 10–15",
+          "bounds": [
+            0,
+            15
+          ]
+        }
+      ],
+      "note": "max reflectivity 73 dBZ."
+    },
+    {
+      "id": "calm-high-cape",
+      "title": "No shear, high CAPE (WK, moisture 1.1), 40 min: the updraught against parcel theory",
+      "source": "about half of parcel theory’s √(2 CAPE) in ordinary convection (a textbook rule, e.g. Stull 2017, ch. 14; no measured ratio verified yet), more in supercells (Peters, Nowotarski & Morrison 2019, JAS 76, 3169)",
+      "seconds": 376.783,
+      "checks": [
+        {
+          "quantity": "strongest updraught / √(2 ML CAPE)",
+          "unit": "",
+          "value": 0.8613961655418726,
+          "reference": "0.5–0.6",
+          "bounds": [
+            0.5,
+            0.6
+          ]
+        }
+      ],
+      "note": "ML CAPE 3931 J/kg, strongest updraught 76.4 m/s."
     }
   ]
 }
