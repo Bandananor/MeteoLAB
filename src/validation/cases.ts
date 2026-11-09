@@ -354,13 +354,16 @@ export const CASES: ValidationCase[] = [
  * Measured from 2 h, when the lines have formed, to 4 h, every 30 min; the line-averaged numbers as WR04 measure them.
  * WR04 Table 1b (warm rain, CAPE 2200, 600 x 160 km at 1 km): C 19-26 m/s; C / dU(0-5 km) > 1.5 upshear-tilted, 1-1.5
  * most upright, < 1 downshear; Us 10 / 2.5 km 2.3 (upshear, UP), Us 20 / 2.5 km 1.3 (bow echoes, B); Wmax 27-43 m/s
- * (3-6 h). Here 288 x 72 km and 4 h (they ran 6 h). At 2 km the lines break up by 3-4 h: these cases are at 1 km.
+ * (3-6 h). Here 288 x 72 km and 4 h (they ran 6 h), averaged over 2-4 h (theirs 3-5 h). Their reference is warm rain;
+ * the model has ice, and its own parcel gives SB 1730 / ML 1865 J/kg for this set-up, not 2200; its outflow is known to
+ * run cold (A7, D2), so C within 19-26 is agreement, not proof. The tilt metric and its bounds are the project's: WR04
+ * classify by eye (Table 1a). At 2 km the lines break up by 3-4 h: these cases are at 1 km.
  */
 export const LONG_CASES: ValidationCase[] = ([
-  { us: 10, ratio: 'upshear-tilted: 2.3 (WR04 Us 10 / 2.5 km), > 1.5', ratioBounds: [1.5, 3.2], tilt: 'rearward (upshear)', tiltBounds: [-INF, -5] },
-  { us: 20, ratio: 'most upright: 1.3 (WR04 Us 20 / 2.5 km), 1–1.5', ratioBounds: [.9, 1.6], tilt: 'upright', tiltBounds: [-10, 3] },
+  { us: 10, ratio: 'upshear-tilted: 2.3 (WR04 Us 10 / 2.5 km), > 1.5', ratioBounds: [1.5, 3.2], tilt: 'rearward (upshear); project\'s bound, WR04 classify by eye', tiltBounds: [-INF, -5] },
+  { us: 20, ratio: 'most upright: 1.3 (WR04 Us 20 / 2.5 km), 1–1.5', ratioBounds: [.9, 1.6], tilt: 'upright; project\'s bound, WR04 classify by eye', tiltBounds: [-10, 3] },
 ] as const).map(k => ({
-  id: `squall-line-${k.us}`, title: `Squall line, shear ${k.us} m/s over 2.5 km (Weisman & Rotunno 2004), 1 km, 4 h`, source: 'Weisman & Rotunno 2004, J. Atmos. Sci. 61, Table 1; WK82 sounding, line thermal, f = 0', minutes: 140,
+  id: `squall-line-${k.us}`, title: `Squall line, shear ${k.us} m/s over 2.5 km (Weisman & Rotunno 2004), 1 km, 4 h`, source: 'Weisman & Rotunno 2004, J. Atmos. Sci. 61, Table 1 (warm rain; the model has ice, its own CAPE 1.7-1.9 kJ/kg); WK82 sounding, line thermal, f = 0', minutes: 140,
   run(threads?: Threads): CaseResult {
     const samples = squallLine({ us: k.us, dx: 1, hours: 4 }, threads), late = samples.filter(s => s.minutes >= 120)
     const fronts = late.flatMap(s => s.front ? [s.front] : []), mean = (v: number[]) => v.length ? v.reduce((a, b) => a + b, 0) / v.length : NaN

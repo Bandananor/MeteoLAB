@@ -29,7 +29,7 @@ export type EchoKind = 'cell' | 'cluster' | 'broken-line' | 'line' | 'bow'
 export type StratiformKind = 'trailing' | 'leading' | 'parallel' | 'none' | 'mixed'
 
 export const ECHO_KINDS: Record<EchoKind, string> = {
-  cell: L('ячейка', 'cell'), cluster: L('кластер', 'cluster'), 'broken-line': L('ломаная линия', 'broken line'), line: L('линия', 'line'), bow: L('дуга (bow echo)', 'bow echo'),
+  cell: L('ячейка', 'cell'), cluster: L('кластер', 'cluster'), 'broken-line': L('прерывистая линия', 'broken line'), line: L('линия', 'line'), bow: L('дуга (bow echo)', 'bow echo'),
 }
 export const STRATIFORM_KINDS: Record<StratiformKind, string> = {
   trailing: L('слоистые осадки сзади (TS)', 'trailing stratiform (TS)'), leading: L('слоистые осадки спереди (LS)', 'leading stratiform (LS)'), parallel: L('слоистые осадки вдоль линии (PS)', 'parallel stratiform (PS)'), none: L('без слоистых осадков', 'no stratiform'), mixed: L('слоистые осадки вокруг', 'stratiform around'),

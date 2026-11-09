@@ -2,7 +2,7 @@
 // Scouting new scenarios (2.1 review): a named variant's environment, then every 5 model minutes the strongest
 // updraught, cloud top, rain, cold pool, gust, hail, UH and how long a mesocyclone has held.
 //   npx vite build --ssr tests/bench/scout.ts --outDir .bench/scout && node .bench/scout/scout.js <variant> [minutes=40] [env]
-import { AtmosphereModel, createGrid, domainGrid, DT, Environment, liveSounding, parcelIndices, SCENARIOS, skewIndices, stormIndices } from '../../src/core'
+import { AtmosphereModel, createGrid, domainGrid, DT, Environment, environmentProfile, liveSounding, parcelIndices, SCENARIOS, skewIndices, stormIndices } from '../../src/core'
 import { SUMMER_DAY, SUPERCELL } from '../../src/core/fixtures'
 import { existsSync, readFileSync } from 'node:fs'
 
@@ -14,7 +14,7 @@ const file = '.bench/variants.json'
 if (existsSync(file)) for (const [k, v] of Object.entries(JSON.parse(readFileSync(file, 'utf8')))) VARIANTS[k] = Array.isArray(v) ? { ...VARIANTS[v[0]], ...v[1] } : v
 const args = process.argv.slice(2), name = args[0], minutes = Number(args[1] ?? 40), envOnly = args.includes('env')
 const config = { ...SUMMER_DAY, ...(VARIANTS[name] ?? (v => Array.isArray(v) ? { ...VARIANTS[v[0]], ...v[1] } : v)(JSON.parse(name))) }, grid = createGrid(domainGrid(config.domain, config.top, config.domainSize))
-const env = new Environment(config, grid), i = parcelIndices(env, grid.height), k = skewIndices(env, grid.height), st = stormIndices(env, i)
+const env = new Environment(config, grid, environmentProfile(config, grid.height)), i = parcelIndices(env, grid.height), k = skewIndices(env, grid.height), st = stormIndices(env, i)
 const f = (x, d = 0) => x === null || x === undefined ? '—' : x.toFixed(d)
 console.log(`${name}: SB ${f(i.sb.cape)}/${f(i.sb.cin)} ML ${f(i.ml.cape)}/${f(i.ml.cin)} MU ${f(i.mu.cape)} LCL ${f(i.ml.lcl, 1)} LFC ${f(i.ml.lfc, 1)} EL ${f(i.ml.el, 1)} DCAPE ${f(i.dcape)} S06 ${f(st.shear06)} SRH1 ${f(st.srh01)} SRH3 ${f(st.srh03)} PW ${f(k.pw)} 0C ${f(k.freezing, 1)} LR75 ${f(k.lapse75, 1)} SCP ${f(st.scp, 1)} STP ${f(st.stp, 1)}`)
 if (!envOnly) {
