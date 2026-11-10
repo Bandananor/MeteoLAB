@@ -9,7 +9,7 @@ import { MAX_THREADS } from '../simulation'
 import { PRECISE_DIR, PRECISE_FILE, type PreciseReply, type PreciseRequest } from './precise.worker'
 
 /**
- * Two kinds of run: a storm on a finer grid than the live one ('fine'), and the mesoscale mode ('meso', roadmap-2.x
+ * Two kinds of run: a storm on a finer grid than the live one ('fine'), and the mesoscale mode ('meso', the roadmap's
  * 2.11): squall lines and MCSs live 3-6 h, longer than the live run is worth waiting for, so on the same 2 km or finer
  * (1 km resolves a squall line's inner structure better: Bryan, Wyngaard & Fritsch 2003) and for hours.
  */
