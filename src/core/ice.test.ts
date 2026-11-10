@@ -94,7 +94,8 @@ describe('ice microphysics (stage 1)', () => {
     const water = (s: typeof cold) => s.q[0] + s.cloud[0] + s.ice[0] + s.snow[0] + s.rain[0], before = water(cold)
     for (let k = 0; k < 60; k++) snowProcesses(cold.theta, cold.q, cold.cloud, cold.ice, cold.snow, cold.rain, 0, exner, p, rho, 1.1, 1)
     expect(cold.snow[0]).toBeGreaterThan(1e-3)
-    expect(water(cold)).toBeCloseTo(before, 9)
+    // Float32 fields: 60 steps round the total by ~1e-7 of it (5.5e-10 here).
+    expect(Math.abs(water(cold) - before)).toBeLessThan(2e-9)
     const warm = { theta: one(278.15 / exner), q: one(.005), cloud: one(0), ice: one(0), snow: one(1e-3), rain: one(0) }
     const cooling = snowProcesses(warm.theta, warm.q, warm.cloud, warm.ice, warm.snow, warm.rain, 0, exner, p, rho, 1.1, 10)
     expect(warm.rain[0]).toBeGreaterThan(0)
