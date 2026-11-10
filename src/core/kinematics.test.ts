@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createGrid, domainGrid, Environment, derechoParameter, effectiveLayer, hailParameter, parcelIndices, SCENARIOS, type SimConfig, stormIndices } from '.'
+import { createGrid, domainGrid, Environment, derechoParameter, effectiveLayer, effectiveStp, hailParameter, liftParcel, parcelIndices, SCENARIOS, type SimConfig, stormIndices } from '.'
 import { CAPPED, SUMMER_DAY, SUPERCELL } from './fixtures'
 
 // MetPy 1.7.1 (bunkers_storm_motion, storm_relative_helicity for the right mover, supercell_composite with SRH 0-3 km
@@ -79,5 +79,17 @@ describe('the effective inflow layer (2.8)', () => {
     const layer = effectiveLayer(cold, 18_000)!
     expect(layer.base).toBeGreaterThanOrEqual(300)
     expect(effectiveLayer(Object.create(env, { qEnv: { value: () => 1e-4 } }), 18_000)).toBeNull()
+  })
+
+  it('leaves out air with CAPE under a lid of more than 250 J/kg, and the effective STP falls with the lid', () => {
+    // CIN is its magnitude (positive): until 10.11.2026 both were written for a negative CIN and never acted.
+    const config = { ...SUMMER_DAY }, env = new Environment(config, createGrid(domainGrid(config.domain, config.top, config.domainSize)))
+    const cold = Object.create(env, { temperatureEnv: { value: (z: number) => env.temperatureEnv(z) - Math.max(0, 8 * (1 - z / 800)) } })
+    const ground = liftParcel(cold, 18_000, 'sb')
+    expect(ground.cape).toBeGreaterThan(100); expect(ground.cin).toBeGreaterThan(250)
+    expect(effectiveLayer(cold, 18_000)!.base).toBeGreaterThan(0)
+    const layer = { base: 0, srh: 150, shear: 20 }
+    expect(effectiveStp(1500, 800, 0, layer)).toBeCloseTo(1, 6); expect(effectiveStp(1500, 800, 50, layer)).toBeCloseTo(1, 6)
+    expect(effectiveStp(1500, 800, 125, layer)).toBeCloseTo(.5, 6); expect(effectiveStp(1500, 800, 250, layer)).toBe(0)
   })
 })

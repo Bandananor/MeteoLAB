@@ -29,5 +29,9 @@ describe('what to expect (2.8)', () => {
     // A dry day: no deep convection, nothing more to expect; the multicell storm: SCP 2 but little shear over the storm.
     expect(dry['Гроза'].level).toBe(0); expect(Object.keys(dry)).toHaveLength(1)
     expect(multi['Суперячейка'].level).toBeLessThanOrEqual(1)
+    // A lid: ML CIN ~120 J/kg still reads "likely", ~165 (a 4 K cap) "only with strong lift".
+    expect(say('Заряженное ружьё')['Гроза'].level).toBe(2)
+    const lid = say('Заряженное ружьё', { capStrength: 4 })['Гроза']
+    expect(lid.level).toBe(1); expect(lid.verdict).toBe('только при сильном подъёме')
   })
 })

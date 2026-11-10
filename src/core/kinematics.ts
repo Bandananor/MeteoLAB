@@ -24,12 +24,12 @@ export interface StormIndices {
 
 /**
  * The effective-layer significant tornado parameter (Thompson et al. 2012, as SPC): MLCAPE / 1500 × (2000 − ML LCL) /
- * 1000 (1 below 1000 m, 0 above 2000) × ESRH / 150 × EBWD / 20 m/s (0 below 12.5, at most 1.5) × (200 + MLCIN) / 150
- * (1 above −50 J/kg, 0 below −200); 0 when the effective layer does not start at the ground (an elevated storm).
+ * 1000 (1 below 1000 m, 0 above 2000) × ESRH / 150 × EBWD / 20 m/s (0 below 12.5, at most 1.5) × (200 − MLCIN) / 150
+ * (MLCIN the magnitude, positive, as ParcelIndex.cin: 1 below 50 J/kg, 0 above 200); 0 when the effective layer does not start at the ground (an elevated storm).
  */
 export function effectiveStp(mlCape: number, mlLcl: number, mlCin: number, effective: { base: number; srh: number; shear: number } | null) {
   if (!effective || effective.base > 0) return 0
-  const lcl = clamp((2000 - mlLcl) / 1000, 0, 1), shear = effective.shear < 12.5 ? 0 : Math.min(1.5, effective.shear / 20), cin = clamp((200 + mlCin) / 150, 0, 1)
+  const lcl = clamp((2000 - mlLcl) / 1000, 0, 1), shear = effective.shear < 12.5 ? 0 : Math.min(1.5, effective.shear / 20), cin = clamp((200 - mlCin) / 150, 0, 1)
   return Math.max(0, mlCape / 1500 * lcl * (effective.srh / 150) * shear * cin)
 }
 

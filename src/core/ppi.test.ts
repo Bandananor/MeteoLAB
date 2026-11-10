@@ -86,6 +86,11 @@ describe('radar PPI', () => {
     for (let i = 1; i < ppi.dbz.length; i++) if (ppi.dbz[i] > ppi.dbz[best]) best = i
     expect(ppi.zdr[best]).toBeGreaterThan(1); expect(ppi.rho[best]).toBeGreaterThan(.99); expect(ppi.kdp[best]).toBeGreaterThan(.3)
     expect(ppi.zdr.filter((_, i) => ppi.dbz[i] < 10).every(Number.isNaN)).toBe(true)
+    // KDP is at the radar's own wavelength (as 1 / lambda): a C-band radar reads about twice the S-band's in the same rain.
+    const peak = () => ppi.kdp.reduce((a, b) => b > a ? b : a, 0), s = peak()
+    ppi.setProfile(RADARS.dmrl); ppi.layout(); ppi.sample()
+    expect(peak() / s).toBeGreaterThan(1.5); expect(peak() / s).toBeLessThan(2.2)
+    ppi.setProfile(RADARS.wsr88d); ppi.tilt = .5; ppi.layout(); ppi.sample()
     // The same column with hail instead of rain: ZDR near zero under high reflectivity (the hail signature).
     for (let z = 0; z < nz; z++) { const i = cx + nx * cy + z * layer; if (zs[z] < 3000) { model.hail[i] = model.rain[i]; model.rain[i] = 0 } }
     model.theta.fill(260)

@@ -1,6 +1,6 @@
 import { heightAt, levelAt } from './grid'
 import type { AtmosphereModel } from './model'
-import { dualPol } from './polarimetry'
+import { dualPol, KDP_WAVELENGTH } from './polarimetry'
 import { DBZ_FLOOR, reflectivity, reflectivityFallSpeed } from './radar'
 import { RADARS, type RadarProfile } from './radars'
 import { phenomenon, RD_CRITERIA } from './phenomena'
@@ -213,7 +213,7 @@ export class PPI {
         const tc = m.theta[i] * exner - 273.15
         const radar = this.mie ? this.profile : undefined
         this.nodeDbz[i] = reflectivity(rho, rain, snow, graupel, tc, hail, radar); this.nodeFall[i] = reflectivityFallSpeed(rho, rhoGround, rain, snow, graupel, tc, hail, radar)
-        if (dual) { const d = dualPol(rho, rain, snow, graupel, tc, hail, radar); this.nodeZdr[i] = d.zdr; this.nodeRho[i] = d.rho; this.nodeKdp[i] = d.kdp }
+        if (dual) { const d = dualPol(rho, rain, snow, graupel, tc, hail, radar); this.nodeZdr[i] = d.zdr; this.nodeRho[i] = d.rho; this.nodeKdp[i] = d.kdp * KDP_WAVELENGTH / wavelength }
       }
     }
   }

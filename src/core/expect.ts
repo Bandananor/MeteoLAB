@@ -23,13 +23,16 @@ export const SUPERCELL_SHEAR = [12.5, 20] as const
 const pct = (v: number) => `${Math.round(v * 100)} %`
 const f1 = (v: number) => L(v.toFixed(1).replace('.', ','), v.toFixed(1))
 
+/** ML CIN (its magnitude, J/kg) above which a thunderstorm takes strong lift. */
+export const LID_CIN = 150
+
 /** The expectations of an environment (its standard parcels and storm indices). */
 export function expectations(p: ParcelIndices, k: StormIndices): Expectation[] {
   const out: Expectation[] = [], cape = p.ml.cape, cin = p.ml.cin, shear = k.effective?.shear ?? 0
   const deep = cape >= 100 || p.mu.cape >= 250
   out.push(!deep
     ? { topic: L('Гроза', 'Thunderstorm'), verdict: L('не ждать', 'not expected'), level: 0, detail: L(`MLCAPE ${cape.toFixed(0)} Дж/кг: частице не хватит плавучести на глубокое облако`, `MLCAPE ${cape.toFixed(0)} J/kg: a parcel lacks the buoyancy for a deep cloud`), source: L('теория частицы', 'parcel theory') }
-    : cin < -150
+    : cin > LID_CIN
       ? { topic: L('Гроза', 'Thunderstorm'), verdict: L('только при сильном подъёме', 'only with strong lift'), level: 1, detail: L(`MLCIN ${cin.toFixed(0)} Дж/кг — крышка: нужен фронт, сходимость или дневной прогрев (в модели — термик)`, `MLCIN ${cin.toFixed(0)} J/kg — a lid: it takes a front, convergence or the day's heating (in the model — the thermal)`), source: L('теория частицы', 'parcel theory') }
       : { topic: L('Гроза', 'Thunderstorm'), verdict: L('вероятна', 'likely'), level: 2, detail: L(`MLCAPE ${cape.toFixed(0)}, MLCIN ${cin.toFixed(0)} Дж/кг`, `MLCAPE ${cape.toFixed(0)}, MLCIN ${cin.toFixed(0)} J/kg`), source: L('теория частицы', 'parcel theory') })
   if (!deep) return out

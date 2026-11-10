@@ -1,7 +1,7 @@
 import { N0G, RHO_G } from './graupel'
 import { N0H, RHO_H } from './hail'
 import { mieExtinctionTable, porousIce } from './mie'
-import { rainKdp } from './polarimetry'
+import { KDP_WAVELENGTH, rainKdp } from './polarimetry'
 import { distributionSlope, meltedIntercept, meltedSlope, REFRACTIVE } from './radar'
 
 /**
@@ -47,7 +47,7 @@ function extinction(band: 'S' | 'C' | 'X', wavelength: number) {
  * ratios (kg/kg) in air of density rho at tc °C, height h (m), for a radar of `band` and wavelength (cm).
  */
 export function specificAttenuation(rho: number, rain: number, graupel: number, hail: number, tc: number, h: number, band: 'S' | 'C' | 'X', wavelength: number) {
-  const k = ATTENUATION[band], scale = 10.7 / wavelength
+  const k = ATTENUATION[band], scale = KDP_WAVELENGTH / wavelength
   let a = k.gas * Math.exp(-h / GAS_SCALE), dp = 0
   if (rain > 0) { const kdp = rainKdp(rho, rain) * scale; a += k.alpha * kdp; dp += k.beta * kdp }
   if (graupel > 0 || hail > 0) {

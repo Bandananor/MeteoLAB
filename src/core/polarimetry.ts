@@ -55,6 +55,8 @@ const RAIN_RHO = .997
 /** KDP of rain: (180 / lambda) 1e-3 C W (1 - r_m), deg/km, with lambda = 0.107 m, C = 3.75, W in g/m3 (Bringi and Chandrasekar 2001). */
 const KDP_FACTOR = 180 / .107 * 1e-3 * 3.75
 
+/** The wavelength rainKdp and dualPol give KDP for, cm: another radar's is KDP_WAVELENGTH / its wavelength times that. */
+export const KDP_WAVELENGTH = 10.7
 /** KDP of rain, deg/km at 10.7 cm, of a mixing ratio q (kg/kg) in air of density rho (Bringi and Chandrasekar 2001; scales as 1 / lambda). */
 export const rainKdp = (rho: number, q: number) => q > 0 ? KDP_FACTOR * rho * q * 1000 * (1 - rainTable(RAIN.axis, rho * q)) : 0
 
