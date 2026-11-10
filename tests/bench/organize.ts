@@ -10,7 +10,7 @@ import { AttachedMemory, controlBuffer, serveTasks, SharedMemory, ThreadRunner }
 import { SUMMER_DAY } from '../../src/core/fixtures'
 
 const gridOf = c => createGrid(domainGrid(c.domain, c.top, c.domainSize, c.spacing))
-const line = o => `${o.kind}${o.held === false ? '?' : ''} ${o.length.toFixed(0)} km, ${o.aspect.toFixed(1)}:1, s/c ${o.sagitta.toFixed(2)}, ${o.peak.toFixed(0)} dBZ, cores ${o.cores}${o.stratiform ? `, ${o.stratiform}` : ''}${o.minutes !== undefined ? `, ${o.minutes.toFixed(0)} min` : ''}${o.dynamics ? `, C ${o.dynamics.c.toFixed(0)} / ${o.dynamics.shear.toFixed(0)} = ${o.dynamics.balance.toFixed(2)}, ${o.dynamics.depth.toFixed(1)} km, rear ${o.dynamics.rear.toFixed(0)} (front ${o.dynamics.atFront.toFixed(0)})${o.dynamics.bookends ? ', bookends' : ''}` : ''}`
+const line = o => `${o.kind}${o.held === false ? '?' : ''} ${o.length.toFixed(0)} km, ${o.aspect.toFixed(1)}:1, s/c ${o.sagitta.toFixed(2)}, ${o.peak.toFixed(0)} dBZ, cores ${o.cores}${o.stratiform ? `, ${o.stratiform}` : ''}${o.minutes !== undefined ? `, ${o.minutes.toFixed(0)} min` : ''}${o.dynamics ? `, C ${o.dynamics.c.toFixed(0)} / ${o.dynamics.shear.toFixed(0)} = ${o.dynamics.balance.toFixed(2)}, ${o.dynamics.depth.toFixed(1)} km, rear ${o.dynamics.rear.toFixed(0)} (front ${o.dynamics.atFront.toFixed(0)})${o.dynamics.bookends ? ', bookends' : ''}, end vortices 1e-3/s ${o.dynamics.ends.map(e => `${(1e3 * e[0]).toFixed(1)} / ${(1e3 * e[1]).toFixed(1)}`).join(' | ')}` : ''}`
 const option = (name, d) => process.argv.slice(2).find(a => a.startsWith(`${name}=`))?.slice(name.length + 1) ?? d
 
 if (!isMainThread) {

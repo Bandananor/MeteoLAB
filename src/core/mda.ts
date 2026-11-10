@@ -1,5 +1,5 @@
 import { L } from '../i18n'
-import { beamHeight, type PPI, RADAR_TILTS } from './ppi'
+import { beamHeightOver, type PPI, RADAR_TILTS } from './ppi'
 
 /** Polar scan of the detection: 500 m gates out to 60 km, 1.5° beams. */
 const STEP = 500, GATES = 120, BEAMS = 240
@@ -96,7 +96,7 @@ function features(ppi: PPI, tilt: number, velocity: Float32Array) {
   for (const group of groups.values()) {
     if (new Set(group.map(s => s.gate)).size < MIN_SEGMENTS) continue
     const best = group.reduce((a, b) => b.dv > a.dv ? b : a), range = (best.gate + 1) * STEP, azimuth = ((best.b0 + best.b1) / 2 * 360 / BEAMS) % 360, a = azimuth * Math.PI / 180
-    found.push({ tilt, range, azimuth, x: ppi.site.x + range * Math.sin(a), y: ppi.site.y + range * Math.cos(a), height: beamHeight(range, tilt), vrot: best.dv / 2, diameter: best.length })
+    found.push({ tilt, range, azimuth, x: ppi.site.x + range * Math.sin(a), y: ppi.site.y + range * Math.cos(a), height: beamHeightOver(range, tilt), vrot: best.dv / 2, diameter: best.length })
   }
   return found
 }

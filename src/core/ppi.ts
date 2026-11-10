@@ -20,6 +20,18 @@ export function beamHeight(range: number, elevation: number) {
 }
 
 /**
+ * Height of the beam centre above the radar, m, over a point at ground distance `ground` (m, along the surface) from
+ * it: the same 4/3-Earth triangle by its angle at the centre, R cos el / cos(el + s / R) - R. The radar's maps and
+ * sections are laid out by the ground distance; taking it for the slant range puts the beam at s sin el instead of
+ * s tan el — 6 % low at 19.5°, 30 % at 45.5° and fourteen times at 86° (the DMRL-C's upper tilts; so until 10.11.2026).
+ * Infinity where the beam never comes over the point.
+ */
+export function beamHeightOver(ground: number, elevation: number) {
+  const a = elevation * Math.PI / 180 + ground / EARTH
+  return a < Math.PI / 2 - 1e-6 ? EARTH * (Math.cos(elevation * Math.PI / 180) / Math.cos(a) - 1) : Infinity
+}
+
+/**
  * VAD winds (Browning & Wexler 1968; NEXRAD VWP): slant ranges of the rings tried, longest first (the VAD's 30 km and the
  * enhanced VWP's 20 and 10 km), the fewest points and the azimuths a ring needs (>= 150° below 2°, >= 75° above - Losey et
  * al. 2017) and the largest RMS of the fit, m/s (5, the NEXRAD VAD's - from secondary sources).
@@ -147,7 +159,7 @@ export class PPI {
   /** Range (m), azimuth (degrees clockwise from north) and beam height (m) at a ground point. */
   beamAt(x: number, y: number) {
     const dx = x - this.site.x, dy = y - this.site.y, range = Math.hypot(dx, dy)
-    return { range, azimuth: (Math.atan2(dx, dy) * 180 / Math.PI + 360) % 360, height: beamHeight(range, this.tilt) }
+    return { range, azimuth: (Math.atan2(dx, dy) * 180 / Math.PI + 360) % 360, height: beamHeightOver(range, this.tilt) }
   }
 
   /** Where the radar samples for a pixel: its centre, or with `bins` the centre of the radial bin it lies in. */
@@ -186,7 +198,7 @@ export class PPI {
     const grid = this.model.grid
     gz = new Float32Array(this.w * this.h)
     for (let py = 0, i = 0; py < this.h; py++) for (let px = 0; px < this.w; px++, i++) {
-      const g = this.samplePoint(px, py), height = beamHeight(Math.hypot(g.x - this.site.x, g.y - this.site.y), tilt)
+      const g = this.samplePoint(px, py), height = beamHeightOver(Math.hypot(g.x - this.site.x, g.y - this.site.y), tilt)
       gz[i] = height > grid.height ? -1 : levelAt(grid, height)
     }
     this.levels.set(tilt, gz)
@@ -225,9 +237,11 @@ export class PPI {
    */
   private pathAttenuation(tilt: number) {
     const m = this.model, grid = m.grid, { dx, dy } = grid, [ox, oy] = this.shift(), step = PPI.PIA_STEP, beams = PPI.PIA_BEAMS
+    // The gates are steps over the ground; the beam's path through each is 1 / cos el longer.
+    const along = step / 1000 / Math.cos(tilt * Math.PI / 180)
     let far = 0; for (let i = 0; i < this.range.length; i++) far = Math.max(far, this.range[i])
     const gates = Math.ceil(Math.min(far, this.profile.range) / step) + 1, pia = new Float32Array(beams * gates), dp = new Float32Array(beams * gates)
-    const levels = Float64Array.from({ length: gates }, (_, g) => { const h = beamHeight((g + .5) * step, tilt); return h > grid.height ? -1 : levelAt(grid, h) })
+    const levels = Float64Array.from({ length: gates }, (_, g) => { const h = beamHeightOver((g + .5) * step, tilt); return h > grid.height ? -1 : levelAt(grid, h) })
     for (let b = 0; b < beams; b++) {
       const az = (b + .5) * 2 * Math.PI / beams, sa = Math.sin(az), ca = Math.cos(az)
       let sum = 0, sumDp = 0
@@ -235,7 +249,7 @@ export class PPI {
         const z = levels[g], r = (g + .5) * step
         if (z >= 0) {
           const gx = (this.site.x + r * sa) / dx - ox, gy = (this.site.y + r * ca) / dy - oy
-          sum += 2 * m.sample(this.nodeAtt, gx, gy, z) * step / 1000; sumDp += 2 * m.sample(this.nodeAttDp, gx, gy, z) * step / 1000
+          sum += 2 * m.sample(this.nodeAtt, gx, gy, z) * along; sumDp += 2 * m.sample(this.nodeAttDp, gx, gy, z) * along
         }
         pia[b * gates + g] = sum; dp[b * gates + g] = sumDp
       }
@@ -380,7 +394,7 @@ export class PPI {
         if (this.range[i] > reach) continue
         if (z < 0) {
           // Above the model top: no echo, which closes the tops of the beam below it (once: the higher tilts are higher still).
-          if (!Number.isNaN(last[i]) && lastH[i] < Infinity) { const h = beamHeight(this.range[i], tilt); top[i] = Math.max(top[i], crossing(lastH[i], lastD[i], h, DBZ_FLOOR, topDbz)); vgo[i] = Math.max(vgo[i], crossing(lastH[i], lastD[i], h, DBZ_FLOOR, VGO_DBZ)); lastH[i] = Infinity }
+          if (!Number.isNaN(last[i]) && lastH[i] < Infinity) { const h = beamHeightOver(this.range[i], tilt); top[i] = Math.max(top[i], crossing(lastH[i], lastD[i], h, DBZ_FLOOR, topDbz)); vgo[i] = Math.max(vgo[i], crossing(lastH[i], lastD[i], h, DBZ_FLOOR, VGO_DBZ)); lastH[i] = Infinity }
           continue
         }
         const raw = m.sample(this.nodeDbz, this.gx[i] - ox, this.gy[i] - oy, z), h = heightAt(grid, z)
@@ -471,9 +485,9 @@ export class PPI {
         below = tc
       }
     }
-    const beams = this.tilts.map(tilt => Float32Array.from(range, r => beamHeight(r, tilt))), reach = this.profile.range, doppler = this.profile.velocityRange
+    const beams = this.tilts.map(tilt => Float32Array.from(range, r => beamHeightOver(r, tilt))), reach = this.profile.range, doppler = this.profile.velocityRange
     // The scanned volume over each gate: beam heights of the lowest tilt's lower edge and the highest's upper edge.
-    const half = this.profile.beam / 2, vt = this.velocityTilts, edge = (tilt: number) => Float32Array.from(range, r => beamHeight(r, tilt))
+    const half = this.profile.beam / 2, vt = this.velocityTilts, edge = (tilt: number) => Float32Array.from(range, r => beamHeightOver(r, tilt))
     const low = edge(this.tilts[0] - half), high = edge(this.tilts[this.tilts.length - 1] + half), lowV = edge(vt[0] - half), highV = edge(vt[vt.length - 1] + half)
     for (let k = 0; k < rows; k++) {
       const h = (k + .5) * dz
@@ -494,7 +508,7 @@ export class PPI {
 
   /** Reflectivity (dBZ) the beam of `tilt` sees over a ground point, m (call prepare() first; periodic like the model). */
   dbzAt(x: number, y: number, tilt: number) {
-    const m = this.model, grid = m.grid, r = Math.hypot(x - this.site.x, y - this.site.y), h = beamHeight(r, tilt)
+    const m = this.model, grid = m.grid, r = Math.hypot(x - this.site.x, y - this.site.y), h = beamHeightOver(r, tilt)
     if (h > grid.height || r > this.profile.range) return DBZ_FLOOR
     const [ox, oy] = this.shift()
     return m.sample(this.nodeDbz, x / grid.dx - ox, y / grid.dy - oy, levelAt(grid, h))
@@ -511,7 +525,7 @@ export class PPI {
     const m = this.model, grid = m.grid, { dx, dy } = grid, el = tilt * Math.PI / 180, ce = Math.cos(el), se = Math.sin(el), [ox, oy] = this.shift(), [fu, fv] = m.frame
     const dbz = new Float32Array(gates * beams).fill(DBZ_FLOOR), velocity = new Float32Array(gates * beams).fill(NaN)
     const { range, velocityRange } = this.profile
-    const levels = Float64Array.from({ length: gates }, (_, g) => { const h = beamHeight((g + 1) * step, tilt); return h > grid.height || (g + 1) * step > range ? -1 : levelAt(grid, h) })
+    const levels = Float64Array.from({ length: gates }, (_, g) => { const h = beamHeightOver((g + 1) * step, tilt); return h > grid.height || (g + 1) * step > range ? -1 : levelAt(grid, h) })
     for (let b = 0; b < beams; b++) {
       const az = b * 2 * Math.PI / beams, sa = Math.sin(az), ca = Math.cos(az)
       for (let g = 0; g < gates; g++) {

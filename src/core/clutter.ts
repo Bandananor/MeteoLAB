@@ -1,4 +1,4 @@
-import { beamHeight } from './ppi'
+import { beamHeightOver } from './ppi'
 
 /**
  * Ground clutter and receiver noise of the simulated radar (notes .claude/literature/radar-profiles.md, 03.11.2026).
@@ -52,7 +52,7 @@ const NONE: Clutter = { dbz: -Infinity, zdr: 1, rho: 1 }
 export function clutterAt(range: number, azimuth: number, tilt: number, beam: number, filtered: boolean): Clutter {
   const gate = Math.floor(range / GATE), az = Math.floor(((azimuth % 360) + 360) % 360 / STEP)
   if (hash(gate, az, 1) >= CLUTTER.density) return NONE
-  const top = CLUTTER.targets * patches(range, azimuth) ** 3 * (.5 + .5 * hash(gate, az, 2)), lower = beamHeight(range, tilt - beam / 2), upper = beamHeight(range, tilt + beam / 2)
+  const top = CLUTTER.targets * patches(range, azimuth) ** 3 * (.5 + .5 * hash(gate, az, 2)), lower = beamHeightOver(range, tilt - beam / 2), upper = beamHeightOver(range, tilt + beam / 2)
   // Box-Muller from two more channels: the target's own echo.
   const g = Math.sqrt(-2 * Math.log(1 - hash(gate, az, 3))) * Math.cos(2 * Math.PI * hash(gate, az, 4))
   let dbz = Math.min(CLUTTER.max, Math.max(0, CLUTTER.median + CLUTTER.spread * g))

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { AtmosphereModel, beamHeight, clutterAt, createGrid, noiseFloor, PPI, RADAR_TILTS, RADARS, VGO_DBZ } from '.'
+import { AtmosphereModel, beamHeight, beamHeightOver, clutterAt, createGrid, noiseFloor, PPI, RADAR_TILTS, RADARS, VGO_DBZ } from '.'
 import { QUIET } from './fixtures'
 
 describe('radar PPI', () => {
@@ -51,6 +51,13 @@ describe('radar PPI', () => {
     expect(beamHeight(100_000, .5) / 1000).toBeCloseTo(1.46, 1)
     expect(beamHeight(20_000, 0)).toBeCloseTo(20_000 ** 2 / (2 * 4 / 3 * 6_371_000), 0)
     expect(beamHeight(20_000, 10)).toBeGreaterThan(beamHeight(20_000, 2))
+    // Over a point at a ground distance: the same beam, by the slant range that reaches it (s / cos el on a flat Earth).
+    for (const [s, el] of [[100_000, .5], [30_000, 19.5], [5_000, 45.5], [1_000, 86]]) {
+      const h = beamHeightOver(s, el), R = 4 / 3 * 6_371_000, slant = (R + h) * Math.sin(s / R) / Math.cos(el * Math.PI / 180)
+      expect(beamHeight(slant, el) / h).toBeCloseTo(1, 6)
+    }
+    expect(beamHeightOver(10_000, 45.5) / 10_000).toBeCloseTo(Math.tan(45.5 * Math.PI / 180), 2)
+    expect(beamHeightOver(1_000_000, 86)).toBe(Infinity)
   })
 
   it('sees a rain shaft at the height its beam crosses, and nothing in clear air', () => {

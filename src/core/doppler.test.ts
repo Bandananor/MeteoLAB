@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { AtmosphereModel, beamHeight, createGrid, ECHO_TOP_DBZ, fold, NYQUIST, PPI, RADAR_TILTS, VIL_MAX_DBZ } from '.'
+import { AtmosphereModel, beamHeightOver, createGrid, ECHO_TOP_DBZ, fold, NYQUIST, PPI, RADAR_TILTS, VIL_MAX_DBZ } from '.'
 import { QUIET } from './fixtures'
 
 // A domain fixed to the ground: the model winds set below are the winds over the ground.
@@ -78,7 +78,7 @@ describe('Doppler velocity and composite reflectivity', () => {
     const ppi = new PPI(model, 64, 45)
     ppi.composite()
     for (const [px, py] of [[50, 10], [40, 30], [10, 40]]) {
-      const i = px + py * ppi.w, g = ppi.ground(px, py), { range } = ppi.beamAt(g.x, g.y), low = beamHeight(range, RADAR_TILTS[0]), high = beamHeight(range, RADAR_TILTS[RADAR_TILTS.length - 1])
+      const i = px + py * ppi.w, g = ppi.ground(px, py), { range } = ppi.beamAt(g.x, g.y), low = beamHeightOver(range, RADAR_TILTS[0]), high = beamHeightOver(range, RADAR_TILTS[RADAR_TILTS.length - 1])
       // Even the highest tilt is in the rain: the top is above it, the echo top only a lower bound.
       expect(ppi.echoTop[i] * 1000).toBeCloseTo(high, -2); expect(ppi.echoTopped[i]).toBe(1)
       // Z within a few dB from level to level (density): VIL within ~15 % of 3.44e-6 Z^(4/7) over the beams' depth.
