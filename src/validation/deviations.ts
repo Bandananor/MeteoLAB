@@ -111,5 +111,7 @@ export const QUALITATIVE = [
   { title: 'LP / classic / HP supercells do not differ by environment', plan: 'B1', measured: 'tests/bench/sctype.ts: the same precipitation distribution in LP, classic and HP environments' },
   { title: 'The cell tracker’s splits are random', plan: 'A8', measured: '21.10.2026: none at 30 m/s straight shear, no pattern in other runs — the tracker against the vorticity fields' },
   { title: 'Initiation by the sun is slow at 1.2 km', plan: 'C1', measured: 'a 1.5 K cap with CIN ~10 J/kg holds because of the grid' },
+  { title: 'A squall line at 1.2 km builds its cold pool late', plan: 'Э1', measured: '10.11.2026, tests/bench/lines.ts us=20 dx=1.2: C 15 m/s at 60 min, 17 at 90, 24 at 120 (Weisman & Rotunno 2004: 19–26), the line filled over 30 → 68 % of its length; only two hours run, the decay seen earlier on coarse grids comes later' },
+  { title: 'Line-end vortices do not tell a bow from a plain line', plan: 'Э1', measured: '10.11.2026, tests/bench/organize.ts: the strongest node vorticity at 2.5 km near the ends is 4–11e-3 1/s on the cold front’s line (1.2 km) and 8–17e-3 on the bow echo (1 km), both signs at both ends; ORG.vortex 2e-3 passes every line — a circulation over an area is needed' },
   { title: 'A storm from a real sounding weakens 20–40 min after the nudging', plan: 'E10', measured: 'Omaha 68 → 8 m/s by 60 min; subsidence on the standard domain is only part of it' },
 ]
