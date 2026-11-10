@@ -43,7 +43,9 @@ export const KA = 2.43e-2, PSI = 2.26e-5, NU = 1.51e-5, SC = .6
 // c = 152.93 cm^0.75/s, d = 0.25, n0s = 0.03 cm^-4, rho_s = 0.1 g/cm3).
 export const N0S = 3e6, RHO_S = 100
 const C_S = 152.93 * .01 ** .75, D_S = .25
-const GAMMA_3D = 2.5493, GAMMA_4D = 8.2850, GAMMA_5D2 = 1.8712 // Γ(3.25), Γ(4.25), Γ(2.625)
+// Γ(3.25), Γ(4.25), Γ(2.625). The last was 1.8712 until 10.11.2026: the ventilated part of snow's deposition, sublimation and
+// melting ran 28 % fast (20-23 % in all); with the right value the validation cases move by at most 1.5 %.
+const GAMMA_3D = 2.5493, GAMMA_4D = 8.2850, GAMMA_5D2 = 1.4569
 /** Cloud ice above this mixing ratio aggregates into snow (Lin 1983), kg/kg. */
 export const ICE_AUTOCONVERSION_THRESHOLD = .001
 
