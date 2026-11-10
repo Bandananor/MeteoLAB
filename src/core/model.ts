@@ -24,6 +24,7 @@ import { computeSounding, type Sounding } from './sounding'
 import { deficitNear, outflowDeficit } from './rkw'
 import { type Memory, type Phase, PRIVATE_MEMORY, type StepRunner, type TaskModel } from './threads'
 import { intervene } from './intervene'
+import { EXTINCTION, sunlightThrough } from './optics'
 
 /** One field a step transports: WENO (monotone) or linear upwind, with the positivity fix or not, and a decay factor per second. */
 interface Carried { field: Float32Array; monotone: boolean; conserve: boolean; decay: number }
@@ -71,27 +72,6 @@ const TINY_WATER = 1e-10
  */
 /** Where in the step RK3 evaluates each stage's tendency, in steps (the nudging's ramp). */
 const STAGE_TIME = [0, 1 / 3, 1 / 2]
-/**
- * Visible mass extinction of the condensate along the sun's ray, m2/kg (roadmap B10): cloud water 150 (3 / (2 rho_w r_e),
- * r_e 10 um; Chou-Suarez and Slingo give 158-159), ice 80 (r_e ~30 um, Chou-Suarez / Ebert & Curry), snow 10 (Fu's
- * 6-16 for r_e 250-100 um), rain 3 (Chou 1999), graupel and hail 4 (geometric optics, 400 kg/m3, r_e 1 mm).
- */
-export const EXTINCTION = { cloud: 150, ice: 80, snow: 10, rain: 3, graupel: 4 }
-/** Asymmetry factor of the cloud's scattering (delta-Eddington scales it, see sunlightThrough). */
-export const ASYMMETRY = .85
-
-/**
- * The share of the sunlight (direct and diffuse) a non-absorbing cloud lets through: the delta-Eddington two-stream
- * solution for single-scattering albedo 1 (Joseph, Wiscombe & Weinman 1976; Meador & Weaver 1980, eq. 24), vertical
- * optical depth tau, the sun's zenith cosine mu. An anvil of tau 10 lets ~60 % through with the sun high, a
- * cumulonimbus core (tau 200-1000) 1-5 % — WRF's Dudhia (1989) tables give 5-8 % for 1-10 kg/m2 of water.
- */
-export function sunlightThrough(tau: number, mu: number) {
-  if (tau <= 0) return 1
-  const f = ASYMMETRY * ASYMMETRY, g = ASYMMETRY / (1 + ASYMMETRY), t = (1 - f) * tau
-  const g1 = .75 * (1 - g), g3 = (2 - 3 * g * mu) / 4
-  return clamp(1 - (g1 * t + (g3 - g1 * mu) * (1 - Math.exp(-t / mu))) / (1 + g1 * t))
-}
 export const NUDGE = { w: 10, xr: 10_000, zr: 1500, zc: 1500, alpha: .5, t1: 900, t2: 1200 }
 
 /**
@@ -597,7 +577,7 @@ export class AtmosphereModel implements TaskModel {
         const row = mod(y + sy, ny) * nx + base
         for (let x = 0; x < nx; x++) {
           if (openX && (x + sx < 0 || x + sx >= nx)) continue
-          const i = row + mod(x + sx, nx), m = e.cloud * cloud[i] + e.ice * ice[i] + e.snow * snow[i] + e.rain * rain[i] + e.graupel * (graupel[i] + hail[i])
+          const i = row + mod(x + sx, nx), m = e.cloud * cloud[i] + e.ice * ice[i] + e.snow * snow[i] + e.rain * rain[i] + e.graupel * graupel[i] + e.hail * hail[i]
           if (m > 0) tau[x + nx * y] += m * path
         }
       }
@@ -678,6 +658,12 @@ export class AtmosphereModel implements TaskModel {
    */
   verticalLength: 'cube' | 'dz' = (globalThis as { process?: { env: Record<string, string | undefined> } }).process?.env?.STORMLAB_VLEN === 'dz' ? 'dz' : 'cube'
   verticalMixing: 'explicit' | 'implicit' = (globalThis as { process?: { env: Record<string, string | undefined> } }).process?.env?.STORMLAB_VMIX === 'implicit' ? 'implicit' : 'explicit'
+  /**
+   * The stability of cloudy air in the eddy viscosity (Turbulence.moistStability; experiment 10.11.2026): 'thetae', the
+   * model's g / theta_e d theta_e / dz, or 'durran-klemp', the saturated N² of Durran & Klemp (1982) as in CM1.
+   * STORMLAB_MOISTN2=dk sets it for a whole run in Node.
+   */
+  moistStability: 'thetae' | 'durran-klemp' = (globalThis as { process?: { env: Record<string, string | undefined> } }).process?.env?.STORMLAB_MOISTN2 === 'dk' ? 'durran-klemp' : 'thetae'
   /**
    * Reference cases (Straka et al. 1993, Bryan & Fritsch 2002): a constant eddy viscosity, m2/s, the same for momentum
    * and scalars, instead of Smagorinsky; null = Smagorinsky.
@@ -873,7 +859,7 @@ export class AtmosphereModel implements TaskModel {
         const e = this.env, moist = { q: this.q, condensate: this.withIce() ? this.condensate : this.cloud, exner: e.exner }
         // Set here, in the task, not before the phase: a helper thread runs this task on its own Turbulence (until
         // 30.10.2026 the helpers' levels kept the cube-root width while the main thread's had the anisotropic one).
-        this.turbulence.anisotropic = this.turbulenceWidth === 'anisotropic'; this.turbulence.verticalLength = this.verticalLength; this.turbulence.implicitVertical = this.verticalMixing === 'implicit'
+        this.turbulence.anisotropic = this.turbulenceWidth === 'anisotropic'; this.turbulence.verticalLength = this.verticalLength; this.turbulence.implicitVertical = this.verticalMixing === 'implicit'; this.turbulence.moistStability = this.moistStability
         this.turbulence.viscosity(this.u, this.v, this.w, this.theta, e.theta, SMAGORINSKY * this.config.turbulence / .55, dt, moist, k, k + 1)
         break
       }
@@ -1117,13 +1103,13 @@ export class AtmosphereModel implements TaskModel {
 
   /** The settings helper threads must follow (threads.ts): the config and the model's switches. */
   settings() {
-    return JSON.stringify({ config: this.config, microphysics: this.microphysics, transport: this.transport, rainFormation: this.rainFormation, windRelaxation: this.windRelaxation, fixedViscosity: this.fixedViscosity, transportSlabs: this.transportSlabs, pressureInStages: this.pressureInStages, rainIntercept: this.rainIntercept, turbulenceWidth: this.turbulenceWidth, verticalLength: this.verticalLength, verticalMixing: this.verticalMixing })
+    return JSON.stringify({ config: this.config, microphysics: this.microphysics, transport: this.transport, rainFormation: this.rainFormation, windRelaxation: this.windRelaxation, fixedViscosity: this.fixedViscosity, transportSlabs: this.transportSlabs, pressureInStages: this.pressureInStages, rainIntercept: this.rainIntercept, turbulenceWidth: this.turbulenceWidth, verticalLength: this.verticalLength, verticalMixing: this.verticalMixing, moistStability: this.moistStability })
   }
 
   applySettings(json: string) {
     const s = JSON.parse(json)
     Object.assign(this.config, s.config)
-    this.microphysics = s.microphysics; this.transport = s.transport; this.rainFormation = s.rainFormation; this.windRelaxation = s.windRelaxation; this.fixedViscosity = s.fixedViscosity; this.transportSlabs = s.transportSlabs; this.pressureInStages = s.pressureInStages; this.rainIntercept = s.rainIntercept; this.turbulenceWidth = s.turbulenceWidth; this.verticalLength = s.verticalLength; this.verticalMixing = s.verticalMixing
+    this.microphysics = s.microphysics; this.transport = s.transport; this.rainFormation = s.rainFormation; this.windRelaxation = s.windRelaxation; this.fixedViscosity = s.fixedViscosity; this.transportSlabs = s.transportSlabs; this.pressureInStages = s.pressureInStages; this.rainIntercept = s.rainIntercept; this.turbulenceWidth = s.turbulenceWidth; this.verticalLength = s.verticalLength; this.verticalMixing = s.verticalMixing; this.moistStability = s.moistStability ?? 'thetae'
   }
 
   /** Makes the node velocities exactly free of dual-cell divergence (see PressureSolver); ground and top are rigid walls. */

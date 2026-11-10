@@ -62,7 +62,7 @@ describe('threaded steps (src/core/threads.ts)', () => {
   })
 
   it('keeps it so with the vertical mixing experiments switched on (they reach the helpers in the settings)', () => {
-    const variant = (m: AtmosphereModel) => { m.verticalLength = 'dz'; m.verticalMixing = 'implicit' }
+    const variant = (m: AtmosphereModel) => { m.verticalLength = 'dz'; m.verticalMixing = 'implicit'; m.moistStability = 'durran-klemp' }
     const plain = run(m => { variant(m); return m.runner }, 200)
     const memory = new SharedMemory()
     const shared = run(m => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { AtmosphereModel, cloudReflectance, createGrid, GROUND_ALBEDO, overshootingTops, satelliteImage } from '.'
+import { AtmosphereModel, cloudReflectance, createGrid, EXTINCTION, GROUND_ALBEDO, overshootingTops, satelliteImage, sunlightThrough, VIS_EXTINCTION } from '.'
 import { QUIET } from './fixtures'
 
 const grid = () => createGrid({ nx: 24, ny: 24, nz: 30, width: 24 * 1200, depth: 24 * 1200, height: 18_000, bottomSpacing: 100 })
@@ -13,7 +13,9 @@ describe('the satellite (2.8)', () => {
     const img = satelliteImage(m, 1), ground = m.theta[0] * m.env.exner[0] - 273.15
     // Clear air: the ground's albedo and the air at the ground.
     expect(img.visible[0]).toBeCloseTo(GROUND_ALBEDO, 3); expect(img.infrared[0]).toBeCloseTo(ground, 1); expect(img.tau[0]).toBe(0)
-    // The anvil: optically thick (τ ~ 55 m²/kg × 0.5 g/kg × ρ × 2 km ≈ 20), bright, its top's temperature in the infrared.
+    // One set of optics with the cloud shadows: what the satellite sees reflected is what does not reach the ground.
+    expect(VIS_EXTINCTION).toBe(EXTINCTION); expect(cloudReflectance(10, .5)).toBeCloseTo(1 - sunlightThrough(10, .5), 12)
+    // The anvil: optically thick (τ ~ 80 m²/kg × 0.5 g/kg × ρ × 2 km ≈ 30), bright, its top's temperature in the infrared.
     expect(img.tau[anvil]).toBeGreaterThan(10); expect(img.visible[anvil]).toBeGreaterThan(cloudReflectance(10))
     const topTemp = m.theta[anvil + top * layer] * m.env.exner[top] - 273.15
     expect(img.infrared[anvil]).toBeLessThan(topTemp + 8); expect(img.infrared[anvil]).toBeLessThan(ground - 40)

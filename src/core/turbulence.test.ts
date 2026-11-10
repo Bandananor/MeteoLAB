@@ -82,4 +82,25 @@ describe('Smagorinsky-Lilly turbulence', () => {
     t.mix(q, base, f, dt)
     for (let z = 0; z < nz; z++) expect(q[c + z * layer]).toBeCloseTo(x[z] + base[z], 5)
   })
+
+  it('in a cloud takes the saturated stability of Durran & Klemp (1982) when asked: about half the theta-e form\'s', () => {
+    // A saturated layer at ~291 K with 12 g/kg, theta rising 1.5 K/km, uniform vapour and cloud water, a shear of 0.01 1/s:
+    // g d ln theta_e / dz = 4.4e-5 1/s2 shuts the mixing off (S² = 1e-4 < 3 N²); Durran & Klemp's 2.3e-5 does not.
+    const exner = new Array(grid.nz).fill(.97), theta = f((_x, _y, z) => 300 + 1.5e-3 * grid.zs[z]), shear = f((_x, _y, z) => .01 * grid.zs[z])
+    const moist = { q: f(() => .012), condensate: f(() => 1e-3), exner }, calm = f(() => 0), env = new Array(grid.nz).fill(300)
+    const mid = 3 + grid.nx * 3 + 4 * grid.layer, t = new Turbulence(grid, rho)
+    t.viscosity(shear, calm, calm, theta, env, .18, 1, moist)
+    expect(t.km[mid]).toBe(0)
+    t.moistStability = 'durran-klemp'
+    t.viscosity(shear, calm, calm, theta, env, .18, 1, moist)
+    expect(t.km[mid]).toBeGreaterThan(1)
+    // The saturated N² it implies: K = l² sqrt(S² - 3 N²), l = 0.18 (dx dy dz)^(1/3).
+    const l2 = (.18 * Math.cbrt(grid.dx * grid.dy * grid.hz[4])) ** 2, n2 = (1e-4 - (t.km[mid] / l2) ** 2) / 3
+    expect(n2).toBeGreaterThan(2.1e-5); expect(n2).toBeLessThan(2.5e-5)
+    // More cloud water above than below: the lifted air carries its water up, less stable (the total-water term).
+    const loaded = { ...moist, condensate: f((_x, _y, z) => 1e-3 + 1e-6 * grid.zs[z]) }
+    const before = t.km[mid]
+    t.viscosity(shear, calm, calm, theta, env, .18, 1, loaded)
+    expect(t.km[mid]).toBeGreaterThan(before)
+  })
 })

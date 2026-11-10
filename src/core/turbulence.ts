@@ -1,4 +1,4 @@
-import { CP, G, LV } from './constants'
+import { CP, EPS, G, LV, RD } from './constants'
 import type { Grid } from './grid'
 import { type Memory, PRIVATE_MEMORY } from './threads'
 
@@ -45,6 +45,15 @@ export class Turbulence {
    * Nicolson). Only with `anisotropic`, where km mixes the vertical alone; the horizontal stays explicit with its cap.
    */
   implicitVertical = false
+  /**
+   * The stability of cloudy air (experiment 10.11.2026, AtmosphereModel.moistStability). 'thetae': g / theta_e
+   * d theta_e / dz, the model's. 'durran-klemp': the saturated Brunt-Väisälä frequency of Durran & Klemp (1982, eq. 36),
+   * N² = g { (1 + L q_s / (R_d T)) / (1 + eps L² q_s / (c_p R_d T²)) (d ln theta / dz + L / (c_p T) d q_s / dz) - d q_w / dz },
+   * q_w the vapour and the cloud condensate — CM1's. The theta_e form is its bracket without the factor in front (0.4-0.5
+   * in a warm cloud base, towards 1 aloft) and without the total-water term: stability and instability alike come out
+   * about twice as strong low in a cloud. Used where the node and both its neighbours above and below are cloudy.
+   */
+  moistStability: 'thetae' | 'durran-klemp' = 'thetae'
   private readonly tmp: Float32Array
   /** Scratch of the implicit vertical solve: the coefficients and the right-hand side of one column. */
   private readonly lower: Float64Array; private readonly upper: Float64Array; private readonly diag: Float64Array; private readonly rhs: Float64Array
@@ -69,7 +78,7 @@ export class Turbulence {
     moist?: { q: Float32Array; condensate: Float32Array; exner: ArrayLike<number> }, z0 = 0, z1 = this.grid.nz) {
     const { nx, ny, nz, dx, dy, zs, dzs, hz, layer, xp, xm, yp, ym } = this.grid, km = this.km, kh = this.kh
     // Horizontal filter width and stability cap of the anisotropic option (horizontal fluxes only see dx and dy).
-    const lenH2 = (cs * Math.sqrt(dx * dy)) ** 2, capH = .05 * Math.min(dx, dy) ** 2 / dt, implicit = this.implicitVertical && this.anisotropic
+    const lenH2 = (cs * Math.sqrt(dx * dy)) ** 2, capH = .05 * Math.min(dx, dy) ** 2 / dt, implicit = this.implicitVertical && this.anisotropic, saturated = this.moistStability === 'durran-klemp'
     for (let z = z0, i = z0 * layer; z < z1; z++) {
       // Filter width from the local vertical spacing (the spacing next to the ground and top nodes, which own half a layer).
       const local = z === 0 ? dzs[0] : z === nz - 1 ? dzs[nz - 2] : hz[z], len2 = (cs * (this.anisotropic && this.verticalLength === 'dz' ? local : Math.cbrt(dx * dy * local))) ** 2
@@ -88,7 +97,15 @@ export class Turbulence {
           const dvdz = (v[i + up] - v[i + down]) / span, dwdy = (w[n] - w[s]) / (2 * dy)
           const s2 = 2 * (dudx * dudx + dvdy * dvdy + dwdz * dwdz) + (dudy + dvdx) ** 2 + (dudz + dwdx) ** 2 + (dvdz + dwdy) ** 2
           let n2 = G / thetaEnv[z] * (theta[i + up] - theta[i + down]) / span
-          if (moist && moist.condensate[i] > 1e-5) {
+          if (moist && moist.condensate[i] > 1e-5 && saturated && moist.condensate[i + up] > 1e-5 && moist.condensate[i + down] > 1e-5) {
+            // Inside the cloud only, both neighbours cloudy: there the vapour is the saturation value (the adjustment keeps
+            // it there), which the formula is derived for. At the cloud's edge a neighbour's vapour is not q_s and the jump
+            // of q_w is of first order (the numerics review 10.11.2026: at a cloud top the sign of N² turned on it), so the
+            // edge keeps the theta_e form below. Ice counts as cloud with L_v (a few per cent in N² in an anvil).
+            const a = i + up, b = i + down, t = theta[i] * moist.exner[z], qs = moist.q[i]
+            const factor = (1 + LV * qs / (RD * t)) / (1 + EPS * LV * LV * qs / (CP * RD * t * t))
+            n2 = G * (factor * ((theta[a] - theta[b]) / theta[i] + LV / (CP * t) * (moist.q[a] - moist.q[b])) - (moist.q[a] + moist.condensate[a] - moist.q[b] - moist.condensate[b])) / span
+          } else if (moist && moist.condensate[i] > 1e-5) {
             const te = (k: number, level: number) => theta[k] * Math.exp(LV * moist.q[k] / (CP * theta[k] * moist.exner[level]))
             n2 = G / te(i, z) * (te(i + up, z + (up ? 1 : 0)) - te(i + down, z - (down ? 1 : 0))) / span
           }

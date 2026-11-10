@@ -47,14 +47,25 @@ export function criticalRar(tc: number) {
  * q- = 3.9 (RARc - 0.1) (4 ((RAR - (RARc + 0.1)/2) / (RARc - 0.1))² - 1), negative between 0.1 and RARc, the most
  * negative halfway. Zero above 0 °C and colder than CHARGING_COLDEST; bounded by MAX_COLLISION_CHARGE.
  */
-export function collisionCharge(tc: number, rar: number, d: number, v: number) {
+export function collisionCharge(tc: number, rar: number, d: number, v: number, signed = SIGNED_COEFFICIENTS) {
   if (tc >= 0 || tc < CHARGING_COLDEST || d <= 0 || v <= 0) return 0
   const c = criticalRar(tc)
   const q = rar > c ? 6.74 * (rar - c) : rar > .1 ? 3.9 * (c - .1) * (4 * ((rar - (c + .1) / 2) / (c - .1)) ** 2 - 1) : 0
-  const scale = d < 155e-6 ? 4.92e13 * d ** 3.76 : d < 452e-6 ? 4.04e6 * d ** 1.9 : 52.8 * d ** .44
-  const dq = scale * v ** 2.5 * q * 1e-15
+  const scale = signed && q < 0 ? (d < 253e-6 ? 5.24e8 * d ** 2.54 : 24 * d ** .5) * v ** 2.8
+    : (d < 155e-6 ? 4.92e13 * d ** 3.76 : d < 452e-6 ? 4.04e6 * d ** 1.9 : 52.8 * d ** .44) * v ** 2.5
+  const dq = scale * q * 1e-15
   return Math.max(-MAX_COLLISION_CHARGE, Math.min(MAX_COLLISION_CHARGE, dq))
 }
+
+/**
+ * Whether the negative charging takes its own B, a, b (experiment 10.11.2026; STORMLAB_SIGNED=1 for a whole run in Node).
+ * The table of Saunders et al. (1991) is by the sign of the charge the graupel gains (Mansell et al. 2005, Table 1; as
+ * WRF-ELEC has it, MicroTed/wrf4-elec elec/module_mp_nssl_2mom_elec.F, routines saund*): positive 4.92e13 d^3.76
+ * (< 155 um), 4.04e6 d^1.9 (155-452), 52.8 d^0.44 (> 452), all with V^2.5; negative 5.24e8 d^2.54 (< 253 um), 24 d^0.5
+ * (> 253) with V^2.8. Until now the positive branch stood for both signs: at 6 m/s the negative charge per collision was
+ * a third of the table's for 50 um crystals, 0.7 of it at 100 um and 1.15 at 300 um.
+ */
+export const SIGNED_COEFFICIENTS = (globalThis as { process?: { env: Record<string, string | undefined> } }).process?.env?.STORMLAB_SIGNED === '1'
 
 /** Reference size of the crystals that charge, m: ~100 µm, as in the laboratory (Takahashi 1978, Saunders et al. 1991). */
 export const CRYSTAL_SIZE = 100e-6

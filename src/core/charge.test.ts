@@ -16,6 +16,14 @@ describe('electrification (2.3): non-inductive charging and charge carried with 
     expect(collisionCharge(-10, 3, 100e-6, 5)).toBeGreaterThan(0)
     // At -20 °C with a moderate rate (1 < 2.8): negative graupel — the main negative region at -10…-25 °C.
     expect(collisionCharge(-20, 1, 100e-6, 5)).toBeLessThan(0)
+    // With the table by sign (Saunders et al. 1991 as in Mansell et al. 2005 and WRF-ELEC) the negative charge is 5.24e8
+    // d^2.54 V^2.8 below 253 um and 24 d^0.5 V^2.8 above, continuous there; the positive charge is unchanged.
+    const ratio = (d: number, v: number) => collisionCharge(-20, 1, d, v, true) / collisionCharge(-20, 1, d, v, false)
+    // At 2 m/s: faster impacts reach MAX_COLLISION_CHARGE with either table.
+    expect(ratio(100e-6, 2)).toBeCloseTo(5.24e8 * 100e-6 ** 2.54 * 2 ** 2.8 / (4.92e13 * 100e-6 ** 3.76 * 2 ** 2.5), 6)
+    expect(ratio(50e-6, 2)).toBeGreaterThan(2); expect(ratio(300e-6, .5)).toBeLessThan(1)
+    expect(collisionCharge(-20, 1, 253e-6 * (1 - 1e-9), 3, true) / collisionCharge(-20, 1, 253e-6, 3, true)).toBeCloseTo(1, 2)
+    expect(collisionCharge(-10, 3, 100e-6, 5, true)).toBe(collisionCharge(-10, 3, 100e-6, 5, false))
     // Tens of femtocoulombs at most for 100 µm crystals at 5 m/s, as in the laboratory.
     expect(Math.abs(collisionCharge(-20, 1.4, 100e-6, 5))).toBeGreaterThan(1e-16); expect(Math.abs(collisionCharge(-20, 1.4, 100e-6, 5))).toBeLessThanOrEqual(MAX_COLLISION_CHARGE)
     expect(collisionCharge(1, 3, 100e-6, 5)).toBe(0); expect(collisionCharge(-35, 3, 100e-6, 5)).toBe(0); expect(collisionCharge(-15, .05, 100e-6, 5)).toBe(0)

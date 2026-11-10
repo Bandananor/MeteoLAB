@@ -4,17 +4,13 @@
 // for in it. No water vapour absorption (a window channel), no cloud shadows or slant view (the satellite looks straight
 // down), no scattering between columns: each column is a plane-parallel layer.
 import type { AtmosphereModel } from './model'
+import { cloudReflectance, EXTINCTION } from './optics'
 
 type Species = 'cloud' | 'ice' | 'snow' | 'rain' | 'graupel' | 'hail'
-/**
- * Visible extinction per mass, 3 / (2 ρ_particle r_e), m²/kg: cloud droplets r_e 10 µm, cloud ice 30 µm, snow 300 µm, rain
- * 1 mm, graupel 1.5 mm, hail 5 mm — the small particles make the cloud's brightness, the big ones hardly count.
- */
-export const VIS_EXTINCTION: Record<Species, number> = { cloud: 150, ice: 55, snow: 5, rain: 1.5, graupel: 1, hail: .3 }
+/** Visible extinction per mass, m²/kg: the model's own (optics.ts), the one its cloud shadows use. */
+export const VIS_EXTINCTION: Record<Species, number> = EXTINCTION
 /** Infrared (10.8 µm) absorption per mass, m²/kg: liquid water 158 (Stephens 1978: ε = 1 − exp(−0.158 LWP g/m²)), ice about a fifth of its visible extinction's share. */
 export const IR_ABSORPTION: Record<Species, number> = { cloud: 158, ice: 30, snow: 3, rain: 1, graupel: .5, hail: .2 }
-/** Reflectance of a cloud of optical depth τ (two-stream, asymmetry 0.85): τ / (τ + 13.3). */
-export const cloudReflectance = (tau: number) => tau / (tau + 13.3)
 /** The ground's visible albedo (grass and fields). */
 export const GROUND_ALBEDO = .15
 /** An overshooting top (Bedka et al. 2010): at most this cold, °C, and colder than the anvil 5-10 km around by at least OT_CONTRAST K. */
@@ -46,7 +42,8 @@ export function satelliteImage(m: SatelliteSource, sun: number): SatelliteImage 
     }
     // The ground through what is left: the lowest node's air (no skin temperature in the model).
     infrared[c] = bright + through * (m.theta[c] * m.env.exner[0] - 273.15)
-    const r = cloudReflectance(t)
+    // What the cloud does not let through to the ground it sends back (optics.ts): the shadows' own delta-Eddington.
+    const r = light > 0 ? cloudReflectance(t, Math.max(light, .02)) : 0
     visible[c] = light * (r + (1 - r) ** 2 * GROUND_ALBEDO / (1 - r * GROUND_ALBEDO)); tau[c] = t
   }
   return { visible, infrared, tau }
