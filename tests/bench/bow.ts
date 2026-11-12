@@ -12,7 +12,7 @@
 // at the leading edge; "B": a 40-80 km arc, strong system-relative outflow only in a 5-10 km zone behind the gust front;
 // "W" (weak shear): the cold pool overwhelms the shear, rear inflow descends to the ground; "S" (strong): isolated
 // splitting supercells. Surface winds >= 30 m/s at 4 h for CAPE >= 2000 and >= 15 m/s over 2.5-5 km.
-// Ours: the same, on the mesoscale mode (2 km, 168 x 162 km, our 50 stretched levels) with relaxed western and eastern
+// Ours: the same, on the mesoscale mode (2 km, 168 x 216 km, our 50 stretched levels) with relaxed western and eastern
 // edges (periodic along y); f = 0 unless `coriolis`. bubbles=N instead starts a north-south line of N of our thermals.
 // Every 10 model minutes:
 //   the gust front: in each row the eastern edge of the cold pool (ground nodes >= FRONT_COLD K colder) followed east

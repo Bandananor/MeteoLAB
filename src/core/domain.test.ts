@@ -152,7 +152,7 @@ describe('the Bow echo scenario (Weisman 1993)', () => {
   it('starts from one ellipsoidal 2 K thermal a third of the way in, on the mesoscale domain', () => {
     const config = { ...SUMMER_DAY, ...bow.values }, grid = createGrid(domainGrid(config.domain, config.top, config.domainSize)), model = new AtmosphereModel(config, grid)
     const { nx, ny, nz, dx, dy, zs, width, depth } = grid
-    expect([width, depth]).toEqual([168_000, 162_000]); expect(model.edges()).toBe('relaxed-x'); expect(model.frame).toEqual([22.5, 0])
+    expect([width, depth]).toEqual([168_000, 216_000]); expect(model.edges()).toBe('relaxed-x'); expect(model.frame).toEqual([22.5, 0])
     let peak = 0, at = 0, warm = 0
     for (let z = 0, i = 0; z < nz; z++) for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++, i++) {
       const d = model.theta[i] - model.env.thetaEnv(zs[z])
