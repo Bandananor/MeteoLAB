@@ -1,13 +1,13 @@
 {
-  "version": "v2.10.3-18-g150fc03",
-  "date": "2026-11-09",
+  "version": "v2.11.0-7-gdd4075b",
+  "date": "2026-11-12",
   "node": "v24.16.0",
   "cases": [
     {
       "id": "straka",
       "title": "Density current (Straka et al. 1993), 100 m, 900 s",
       "source": "Straka, Wilhelmson, Wicker, Anderson, Droegemeier 1993, Int. J. Numer. Methods Fluids 17; converged 25 m solution",
-      "seconds": 134.966,
+      "seconds": 142.682,
       "checks": [
         {
           "quantity": "front position (θ′ = −1 K at the ground)",
@@ -56,7 +56,7 @@
       "id": "bryan-fritsch",
       "title": "Rising thermal, dry and saturated (Bryan & Fritsch 2002), 100 m, 1000 s",
       "source": "Bryan & Fritsch 2002, Mon. Wea. Rev. 130; numbers as quoted by Duarte et al. 2014 (arXiv:1311.4265)",
-      "seconds": 266.875,
+      "seconds": 291.417,
       "checks": [
         {
           "quantity": "dry: top of the thermal",
@@ -135,7 +135,7 @@
       "id": "weisman-klemp",
       "title": "Supercell split (Weisman & Klemp 1982), 96 × 72 km, 60 min",
       "source": "Weisman & Klemp 1982, Mon. Wea. Rev. 110: a split by 40–60 min into a stronger cyclonic right mover and an anticyclonic left mover",
-      "seconds": 1405.082,
+      "seconds": 1611.762,
       "checks": [
         {
           "quantity": "updraught cores at 4.5 km, 35 min (w > 8 m/s)",
@@ -160,7 +160,7 @@
         {
           "quantity": "right mover w − left mover w",
           "unit": "m/s",
-          "value": 8.666704177856445,
+          "value": 8.658349990844727,
           "reference": "> 0 (right mover dominant)",
           "bounds": [
             0,
@@ -170,7 +170,7 @@
         {
           "quantity": "right mover UH 2–5 km",
           "unit": "m²/s²",
-          "value": 572.1559448242188,
+          "value": 572.0580444335938,
           "reference": "> 0 (cyclonic)",
           "bounds": [
             0,
@@ -180,7 +180,7 @@
         {
           "quantity": "left mover UH 2–5 km",
           "unit": "m²/s²",
-          "value": -293.4355163574219,
+          "value": -293.422119140625,
           "reference": "< 0 (anticyclonic)",
           "bounds": [
             null,
@@ -190,7 +190,7 @@
         {
           "quantity": "strongest updraught at 60 min",
           "unit": "m/s",
-          "value": 26.846879959106445,
+          "value": 26.920061111450195,
           "reference": "> 15 (long-lived)",
           "bounds": [
             15,
@@ -203,7 +203,7 @@
       "id": "scenario-0",
       "title": "Scenario «Летний день», 40 min",
       "source": "meant to grow no mesocyclone",
-      "seconds": 353.526,
+      "seconds": 383.506,
       "checks": [
         {
           "quantity": "values clipped by the limiters",
@@ -242,7 +242,7 @@
       "id": "scenario-1",
       "title": "Scenario «Многоячейковая гроза», 40 min",
       "source": "no rotation is asked of it",
-      "seconds": 394.685,
+      "seconds": 430.851,
       "checks": [
         {
           "quantity": "values clipped by the limiters",
@@ -257,7 +257,7 @@
         {
           "quantity": "max updraught",
           "unit": "m/s",
-          "value": 48.97771453857422,
+          "value": 48.97856140136719,
           "reference": "≤ 55 (observed storms ≤ ~0.6 √(2 CAPE))",
           "bounds": [
             0,
@@ -281,7 +281,7 @@
       "id": "scenario-2",
       "title": "Scenario «Классическая суперячейка», 40 min",
       "source": "meant to grow a supercell",
-      "seconds": 531.607,
+      "seconds": 599.847,
       "checks": [
         {
           "quantity": "values clipped by the limiters",
@@ -296,7 +296,7 @@
         {
           "quantity": "max updraught",
           "unit": "m/s",
-          "value": 55.0432243347168,
+          "value": 55.043006896972656,
           "reference": "—",
           "bounds": [
             0,
@@ -320,7 +320,7 @@
       "id": "scenario-3",
       "title": "Scenario «Суперячейка WK», 40 min",
       "source": "meant to grow a supercell",
-      "seconds": 444.373,
+      "seconds": 505.138,
       "checks": [
         {
           "quantity": "values clipped by the limiters",
@@ -335,7 +335,7 @@
         {
           "quantity": "max updraught",
           "unit": "m/s",
-          "value": 50.124237060546875,
+          "value": 50.12392807006836,
           "reference": "—",
           "bounds": [
             0,
@@ -359,7 +359,7 @@
       "id": "scenario-4",
       "title": "Scenario «HSLC», 40 min",
       "source": "meant to grow a supercell",
-      "seconds": 397.922,
+      "seconds": 458.371,
       "checks": [
         {
           "quantity": "values clipped by the limiters",
@@ -374,7 +374,7 @@
         {
           "quantity": "max updraught",
           "unit": "m/s",
-          "value": 20.46131134033203,
+          "value": 20.461402893066406,
           "reference": "—",
           "bounds": [
             0,
@@ -398,7 +398,7 @@
       "id": "scenario-5",
       "title": "Scenario «Микропорыв», 40 min",
       "source": "meant to grow no mesocyclone",
-      "seconds": 352.921,
+      "seconds": 405.984,
       "checks": [
         {
           "quantity": "values clipped by the limiters",
@@ -437,7 +437,7 @@
       "id": "scenario-6",
       "title": "Scenario «Тропическая конвекция», 40 min",
       "source": "meant to grow no mesocyclone",
-      "seconds": 351.651,
+      "seconds": 400.504,
       "checks": [
         {
           "quantity": "values clipped by the limiters",
@@ -476,7 +476,7 @@
       "id": "situation-0",
       "title": "Situation «Тёплый сектор и холодный фронт», with and without its trigger",
       "source": "the situation’s story (2.6)",
-      "seconds": 1218.718,
+      "seconds": 1390.922,
       "checks": [
         {
           "quantity": "values clipped by the limiters",
@@ -491,7 +491,7 @@
         {
           "quantity": "with the front: max updraught",
           "unit": "m/s",
-          "value": 42.875125885009766,
+          "value": 42.87361526489258,
           "reference": "storms on the front",
           "bounds": [
             25,
@@ -524,7 +524,7 @@
       "id": "situation-1",
       "title": "Situation «Высотная ложбина», with and without its trigger",
       "source": "the situation’s story (2.6)",
-      "seconds": 1848.719,
+      "seconds": 2079.954,
       "checks": [
         {
           "quantity": "values clipped by the limiters",
@@ -539,7 +539,7 @@
         {
           "quantity": "with the trough: max updraught",
           "unit": "m/s",
-          "value": 31.40254020690918,
+          "value": 31.402536392211914,
           "reference": "storms by 11:30",
           "bounds": [
             20,
@@ -559,7 +559,7 @@
         {
           "quantity": "with the trough: 12:10–12:50 mean updraught",
           "unit": "m/s",
-          "value": 11.663957965373992,
+          "value": 11.569392657279968,
           "reference": "new cells keep going",
           "bounds": [
             8,
@@ -569,7 +569,7 @@
         {
           "quantity": "12:10–12:50 mean updraught, with − without the trough",
           "unit": "m/s",
-          "value": 6.524533367156982,
+          "value": 6.424645924568176,
           "reference": "the trough makes them last",
           "bounds": [
             3,
@@ -579,7 +579,7 @@
         {
           "quantity": "with the trough: heaviest rain 12:10–12:50",
           "unit": "mm/h",
-          "value": 56.272131395894185,
+          "value": 56.250735931730055,
           "reference": "downpours go on",
           "bounds": [
             10,
@@ -589,7 +589,7 @@
         {
           "quantity": "without the trough: heaviest rain 12:10–12:50",
           "unit": "mm/h",
-          "value": 0.3865481279443645,
+          "value": 0.38763120121200173,
           "reference": "the rain has ended by 12:20",
           "bounds": [
             0,
@@ -603,7 +603,7 @@
       "id": "situation-2",
       "title": "Situation «Тёплый воздух над слоем: гроз не будет», with and without its trigger",
       "source": "the situation’s story (2.6)",
-      "seconds": 1164.097,
+      "seconds": 1318.58,
       "checks": [
         {
           "quantity": "with the warm air aloft: max updraught",
@@ -653,12 +653,12 @@
       "id": "supercell-microphysics",
       "title": "Classic supercell, 60 min: outflow, hail and lightning",
       "source": "RFD θv′ at the ground: under ~2 K in strongly tornadic RFDs, ~4–7 K in nontornadic ones (Markowski, Straka & Rasmussen 2002, MWR 130, 1692, as quoted by later papers); SHIP > 1 — an environment favourable for hail ≥ 5 cm (SPC); +CG 8.7–10.6 % of ground flashes over the USA, regionally < 2 to > 25 % (Rudlosky & Fuelberg 2010, MWR 138, 3623; Orville et al. 2011, MWR 139, 1305)",
-      "seconds": 760.114,
+      "seconds": 848.376,
       "checks": [
         {
           "quantity": "outflow θv deficit under the low-level rotation, max 30–60 min",
           "unit": "K",
-          "value": 10.03094482421875,
+          "value": 10.0316162109375,
           "reference": "≲ 2 tornadic, 4–7 nontornadic RFDs",
           "bounds": [
             0,
@@ -668,7 +668,7 @@
         {
           "quantity": "largest hail at the ground",
           "unit": "mm",
-          "value": 11.948689309057297,
+          "value": 11.945711863513427,
           "reference": "≥ 50 favoured (SHIP > 1 here)",
           "bounds": [
             50,
@@ -686,18 +686,18 @@
           ]
         }
       ],
-      "note": "71 CG and 4204 IC flashes; strongest updraught 55.0 m/s; max reflectivity 73 dBZ, VIL 60 kg/m², MESH 69 mm; the largest outflow deficit anywhere 11.6 K."
+      "note": "66 CG and 4325 IC flashes; strongest updraught 55.0 m/s; max reflectivity 73 dBZ, VIL 60 kg/m², MESH 69 mm; the largest outflow deficit anywhere 11.6 K."
     },
     {
       "id": "ordinary-graupel-core",
       "title": "Ordinary cell («Summer day»), 40 min: the graupel core",
       "source": "ordinary (pulse) cells: core ~50–60 dBZ (a forecasters’ rule of thumb; no peer-reviewed typical maximum found yet)",
-      "seconds": 305.665,
+      "seconds": 342.499,
       "checks": [
         {
           "quantity": "max reflectivity of the cell",
           "unit": "dBZ",
-          "value": 70.45582709240853,
+          "value": 70.45582350088534,
           "reference": "50–60",
           "bounds": [
             50,
@@ -711,12 +711,12 @@
       "id": "tropical-updraught",
       "title": "Tropical convection over the ocean, 40 min: the updraught",
       "source": "GATE oceanic cores: only 10 % have a mean w above 5 m/s (LeMone & Zipser 1980, JAS 37, 2444); TAMEX median under 3 m/s (Jorgensen & LeMone 1989, JAS 46, 621); peaks of 10–15 m/s rare (not verified)",
-      "seconds": 308.836,
+      "seconds": 345.57,
       "checks": [
         {
           "quantity": "strongest updraught",
           "unit": "m/s",
-          "value": 24.512653350830078,
+          "value": 24.51264762878418,
           "reference": "core means mostly < 5, peaks rarely 10–15",
           "bounds": [
             0,
@@ -730,12 +730,12 @@
       "id": "calm-high-cape",
       "title": "No shear, high CAPE (WK, moisture 1.1), 40 min: the updraught against parcel theory",
       "source": "about half of parcel theory’s √(2 CAPE) in ordinary convection (a textbook rule, e.g. Stull 2017, ch. 14; no measured ratio verified yet), more in supercells (Peters, Nowotarski & Morrison 2019, JAS 76, 3169)",
-      "seconds": 376.783,
+      "seconds": 429.314,
       "checks": [
         {
           "quantity": "strongest updraught / √(2 ML CAPE)",
           "unit": "",
-          "value": 0.8613961655418726,
+          "value": 0.8613965097384849,
           "reference": "0.5–0.6",
           "bounds": [
             0.5,
