@@ -8,7 +8,8 @@ import { reflectivity } from './radar'
  * lines, the model's winds. Notes: .claude/literature/convective-mode-classification.md (05.11.2026; most sources through
  * excerpts, not read in full). Published: an echo object at >= 40 dBZ; a line >= 75 km long and 3:1 (Gallus et al. 2008,
  * WAF 23, 101), a linear MCS > 100 km for > 3 h (Parker & Johnson 2000, MWR 128, 3413); a cluster as a QLCS below 3:1
- * (Smith et al. 2012, WAF 27, 1114); a discrete cell with a maximum >= 50 dBZ (Trapp et al. 2005, WAF 20, 23); stratiform
+ * (Smith et al. 2012, WAF 27, 1114); a discrete cell with a maximum >= 50 dBZ (Trapp et al. 2005, WAF 20, 23), a smaller
+ * object without one is a weak echo, not a cell (a growing or decaying storm, showers); stratiform
  * >= 30 dBZ over at least twice the line's width, otherwise a line without stratiform (Gallus, after Hilgendorf & Johnson
  * 1998). Bow echoes have no published threshold of curvature (Burke & Schultz 2004 say so, Klimowski et al. 2003 sort them
  * by eye): 40-200 km comes from Klimowski and Weisman 1993. This project's choices, to be calibrated: the sagitta / chord
@@ -25,11 +26,11 @@ export const ORG = {
   rearLevel: 2500, rearFrom: 5, rearTo: 40, vortex: .002,
 } as const
 
-export type EchoKind = 'cell' | 'cluster' | 'broken-line' | 'line' | 'bow'
+export type EchoKind = 'weak' | 'cell' | 'cluster' | 'broken-line' | 'line' | 'bow'
 export type StratiformKind = 'trailing' | 'leading' | 'parallel' | 'none' | 'mixed'
 
 export const ECHO_KINDS: Record<EchoKind, string> = {
-  cell: L('ячейка', 'cell'), cluster: L('кластер', 'cluster'), 'broken-line': L('прерывистая линия', 'broken line'), line: L('линия', 'line'), bow: L('дуга (bow echo)', 'bow echo'),
+  weak: L('эхо без ядра 50 dBZ', 'echo without a 50 dBZ core'), cell: L('ячейка', 'cell'), cluster: L('кластер', 'cluster'), 'broken-line': L('прерывистая линия', 'broken line'), line: L('линия', 'line'), bow: L('дуга (bow echo)', 'bow echo'),
 }
 export const STRATIFORM_KINDS: Record<StratiformKind, string> = {
   trailing: L('слоистые осадки сзади (TS)', 'trailing stratiform (TS)'), leading: L('слоистые осадки спереди (LS)', 'leading stratiform (LS)'), parallel: L('слоистые осадки вдоль линии (PS)', 'parallel stratiform (PS)'), none: L('без слоистых осадков', 'no stratiform'), mixed: L('слоистые осадки вокруг', 'stratiform around'),
@@ -116,7 +117,7 @@ export function classifyEcho(field: Float32Array, nx: number, ny: number, dx: nu
     const cores = components(c => inside.has(c) && z[c] >= ORG.cellCore, w, h, 1).length
     const line = length >= ORG.lineLength && aspect >= ORG.aspect
     const bow = aspect >= ORG.aspect && length >= ORG.bowMin && length <= ORG.bowMax && sagitta >= ORG.bowSagitta
-    const kind: EchoKind = bow ? 'bow' : line ? 'line' : cores >= 2 || length >= ORG.mcsLength ? 'cluster' : 'cell'
+    const kind: EchoKind = bow ? 'bow' : line ? 'line' : cores >= 2 || length >= ORG.mcsLength ? 'cluster' : cores ? 'cell' : 'weak'
     const wraps = hi - lo >= (Math.abs(axis[0]) * w * cx + Math.abs(axis[1]) * h * cy) * .9
     echoes.push({ kind, x: mx, y: my, edge, length, width, aspect, area, peak, cores, axis, normal, sagitta, stratiform: line || bow ? stratiformOf(z, w, h, cx, cy, mx, my, axis, normal, lo, hi, width, joined, joined[mod(cells[0].x, w) + w * mod(cells[0].y, h)]) : null, wraps })
   }
@@ -149,7 +150,8 @@ const wrap = (a: number, n: number) => a - n * Math.round(a / n)
 
 /** Discrete cells in a row: chains of cells and clusters at most ORG.brokenGap km apart that make a line by their centres. */
 function brokenLines(echoes: EchoObject[], width: number, depth: number, motion: readonly [number, number]) {
-  const parts = echoes.filter(e => e.kind === 'cell' || e.kind === 'cluster'), used = new Set<number>(), out: EchoObject[] = []
+  // Weak echoes count too: a broken line's cells may be growing or decaying (Gallus et al. 2008 classify by 40 dBZ).
+  const parts = echoes.filter(e => e.kind === 'weak' || e.kind === 'cell' || e.kind === 'cluster'), used = new Set<number>(), out: EchoObject[] = []
   const near = (a: EchoObject, b: EchoObject) => Math.hypot(wrap(a.x - b.x, width), wrap(a.y - b.y, depth)) - (a.length + b.length) / 2 <= ORG.brokenGap
   for (let i = 0; i < parts.length; i++) {
     if (used.has(i)) continue

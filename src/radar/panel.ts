@@ -799,7 +799,7 @@ export class RadarPanel {
     if (this.showOrg && this.ppi) {
       const [ox, oy] = this.ppi.model.frameOffset(), { width, depth } = this.ppi.model.grid
       for (const e of this.echoes) {
-        if (e.kind === 'cell' || e.kind === 'cluster') continue
+        if (e.kind === 'weak' || e.kind === 'cell' || e.kind === 'cluster') continue
         const pts = e.edge.map(([x, y]) => this.toScreen({ x: ((x * 1000 + ox) % width + width) % width, y: ((y * 1000 + oy) % depth + depth) % depth }))
         ctx.strokeStyle = ctx.fillStyle = e.kind === 'bow' ? '#ff7ad9' : '#7ad9ff'; ctx.lineWidth = 2.5; ctx.setLineDash(e.held ? [] : [6, 4])
         ctx.beginPath()

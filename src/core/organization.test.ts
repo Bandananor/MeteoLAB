@@ -14,6 +14,11 @@ describe('the organisation of convection from the echo (organization.ts)', () =>
     expect(two[0].kind).toBe('cluster'); expect(two[0].cores).toBe(2)
   })
 
+  it('calls an object without a >= 50 dBZ core a weak echo, not a cell (Trapp et al. 2005)', () => {
+    const weak = classifyEcho(field((x, y) => blob(x, y, 100, 100, 8, 47)), NX, NY, D, D)
+    expect(weak.map(o => o.kind)).toEqual(['weak']); expect(weak[0].cores).toBe(0)
+  })
+
   it('finds a line >= 75 km and 3:1, not a shorter or fatter one', () => {
     const bar = (len: number, wide: number) => classifyEcho(field((x, y) => Math.abs(y - 100) < len / 2 && Math.abs(x - 100) < wide / 2 ? 50 : -20), NX, NY, D, D, [1, 0])[0]
     const line = bar(120, 12)
