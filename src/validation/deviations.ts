@@ -6,11 +6,12 @@
  * that must hold (tools/validate.ts). Deviations without a number to test (the supercell types, the tracker's splits,
  * the slow initiation by the sun) are listed in QUALITATIVE.
  */
-import { AtmosphereModel, DT, reflectivity, SCENARIOS, type SimConfig } from '../core'
+import { AtmosphereModel, classifyEcho, DT, lowEcho, reflectivity, SCENARIOS, type SimConfig, type StratiformKind } from '../core'
 import { ECHO_TOP_DBZ, VIL_MAX_DBZ } from '../core/ppi'
 import { SUMMER_DAY } from '../core/fixtures'
 import { environmentOf, withMoisture, withShear } from '../regime/grid'
 import type { Check, ValidationCase } from './cases'
+import { squallLine, type Threads } from './squall'
 
 const INF = Infinity
 const check = (quantity: string, unit: string, value: number, reference: string, bounds: readonly [number, number]): Check => ({ quantity, unit, value, reference, bounds })
@@ -106,12 +107,39 @@ export const DEVIATIONS: (ValidationCase & { plan: string; cause: string })[] = 
   },
 ]
 
+/**
+ * Long deviations (roadmap Э1 acceptance): like cases.ts LONG_CASES, hours on several threads, so they run only on request —
+ * `npm run validate -- only=squall-line-coarse inner=6` or `long=1` — and not in the slow test.
+ */
+export const LONG_DEVIATIONS: (ValidationCase & { plan: string; cause: string })[] = [
+  {
+    id: 'squall-line-coarse', title: 'Squall line at 1.2 km, shear 20 m/s over 2.5 km (Weisman & Rotunno 2004 set-up), 4 h', minutes: 90, plan: 'Э1 (B1)',
+    source: 'mature squall lines keep a cold pool with C 19–26 m/s for 6 h (Weisman & Rotunno 2004, Table 1b, at 1 km); linear MCSs have a stratiform region — trailing in 58 %, leading 19 %, parallel 23 % (Parker & Johnson 2000, MWR 128, 3413)',
+    cause: 'single-moment graupel and snow fall out near the convective line instead of spreading rearward (12.11.2026: no stratiform at any sample of 2–4 h, while the line holds — C 22.6–28.1 m/s, mean 24.5; 108 min on 10 threads)',
+    run(threads?: Threads) {
+      const stratiform: StratiformKind[] = []
+      const samples = squallLine({ us: 20, dx: 1.2, hours: 4 }, threads, (s, m) => {
+        if (s.minutes < 120) return
+        const g = m.grid, line = classifyEcho(lowEcho(m), g.nx, g.ny, g.dx / 1000, g.dy / 1000, [1, 0]).find(o => o.kind === 'line' || o.kind === 'bow')
+        stratiform.push(line?.stratiform ?? 'none')
+      })
+      const late = samples.filter(s => s.minutes >= 120), fronts = late.flatMap(s => s.front ? [s.front] : [])
+      const mean = (v: number[]) => v.length ? v.reduce((a, b) => a + b, 0) / v.length : NaN
+      return { checks: [
+        check('2–4 h: samples with a −1 K line-averaged cold pool', '', fronts.length / late.length, 'all (lines live 6 h)', [1, 1]),
+        check('2–4 h: mean C (eq. 11, C² = −B min H)', 'm/s', mean(fronts.map(f => f.c)), '19–26', [19, 26]),
+        check('2–4 h: share of samples whose line has a stratiform region', '', stratiform.filter(k => k !== 'none').length / Math.max(1, stratiform.length), 'most linear MCSs', [.5, 1]),
+      ], note: `Every 30 min from 2 h: C ${fronts.map(f => f.c.toFixed(1)).join(', ')} m/s; stratiform ${stratiform.join(', ')}; rows with w ≥ 5 m/s at 3 km ${late.map(s => s.rows.toFixed(2)).join(', ')}; w max ${late.map(s => s.wMax.toFixed(0)).join(', ')} m/s.` }
+    },
+  },
+]
+
 /** Deviations with no number to test yet, each with what is known and the item meant to fix it. */
 export const QUALITATIVE = [
   { title: 'LP / classic / HP supercells do not differ by environment', plan: 'B1', measured: 'tests/bench/sctype.ts: the same precipitation distribution in LP, classic and HP environments' },
   { title: 'The cell tracker’s splits are random', plan: 'A8', measured: '21.10.2026: none at 30 m/s straight shear, no pattern in other runs — the tracker against the vorticity fields' },
   { title: 'Initiation by the sun is slow at 1.2 km', plan: 'C1', measured: 'a 1.5 K cap with CIN ~10 J/kg holds because of the grid' },
-  { title: 'A squall line at 1.2 km builds its cold pool late', plan: 'Э1', measured: '10.11.2026, tests/bench/lines.ts us=20 dx=1.2: C 15 m/s at 60 min, 17 at 90, 24 at 120 (Weisman & Rotunno 2004: 19–26), the line filled over 30 → 68 % of its length; only two hours run, the decay seen earlier on coarse grids comes later' },
+  { title: 'A squall line at 1.2 km builds its cold pool late (first 2 h)', plan: 'Э1', measured: '10.11.2026, tests/bench/lines.ts us=20 dx=1.2: C 15 m/s at 60 min, 17 at 90, 24 at 120 (Weisman & Rotunno 2004: 19–26), the line filled over 30 → 68 % of its length; from 2 to 4 h it holds (LONG_DEVIATIONS squall-line-coarse, 12.11.2026)' },
   { title: 'Line-end vortices do not tell a bow from a plain line', plan: 'Э1', measured: '10.11.2026, tests/bench/organize.ts: the strongest node vorticity at 2.5 km near the ends is 4–11e-3 1/s on the cold front’s line (1.2 km) and 8–17e-3 on the bow echo (1 km), both signs at both ends; ORG.vortex 2e-3 passes every line — a circulation over an area is needed' },
   { title: 'A storm from a real sounding weakens 20–40 min after the nudging', plan: 'E10', measured: 'Omaha 68 → 8 m/s by 60 min; subsidence on the standard domain is only part of it' },
 ]

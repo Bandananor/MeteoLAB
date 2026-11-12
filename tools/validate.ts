@@ -16,7 +16,7 @@ import { CASES, type CaseResult, type Check, LONG_CASES, passes } from '../src/v
 import { AtmosphereModel } from '../src/core'
 import { AttachedMemory, controlBuffer, serveTasks, ThreadRunner } from '../src/core/threads'
 import { squallGrid, type Threads } from '../src/validation/squall'
-import { DEVIATIONS, QUALITATIVE } from '../src/validation/deviations'
+import { DEVIATIONS, LONG_DEVIATIONS, QUALITATIVE } from '../src/validation/deviations'
 import { MODEL_VERSION } from '../src/version'
 
 interface Done { id: string; result?: CaseResult; error?: string; seconds: number }
@@ -26,7 +26,7 @@ if (!isMainThread && workerData.helper) {
   const { config, buffers, control } = workerData.helper
   serveTasks(new AtmosphereModel(config, squallGrid(config), undefined, { memory: new AttachedMemory(buffers), attach: true }), control)
 } else if (!isMainThread) {
-  const c = [...CASES, ...LONG_CASES, ...DEVIATIONS].find(x => x.id === workerData.id)!, started = Date.now(), inner = workerData.inner as number
+  const c = [...CASES, ...LONG_CASES, ...DEVIATIONS, ...LONG_DEVIATIONS].find(x => x.id === workerData.id)!, started = Date.now(), inner = workerData.inner as number
   const threads: Threads = (model, config, memory) => {
     if (inner < 2) return () => {}
     const control = controlBuffer(), helpers: Worker[] = []
@@ -41,10 +41,11 @@ if (!isMainThread && workerData.helper) {
 } else {
   const args = process.argv.slice(2), option = (name: string) => args.find(a => a.startsWith(`${name}=`))?.slice(name.length + 1)
   const only = option('only')?.split(','), out = option('out') ?? 'docs/validation.md'
-  const all = [...CASES, ...(option('deviations') === '0' ? [] : DEVIATIONS)], deviating = new Set(DEVIATIONS.map(d => d.id))
-  const cases = only ? [...all, ...LONG_CASES].filter(c => only.includes(c.id)) : [...all, ...(option('long') === '1' ? LONG_CASES : [])]
+  const all = [...CASES, ...(option('deviations') === '0' ? [] : DEVIATIONS)], deviating = new Set([...DEVIATIONS, ...LONG_DEVIATIONS].map(d => d.id))
+  const long = [...LONG_CASES, ...LONG_DEVIATIONS]
+  const cases = only ? [...all, ...long].filter(c => only.includes(c.id)) : [...all, ...(option('long') === '1' ? long : [])]
   const inner = Math.max(1, Number(option('inner') ?? 6))
-  if (!cases.length) { console.error(`no such cases: ${only}; there are ${[...all, ...LONG_CASES].map(c => c.id).join(', ')}`); process.exit(2) }
+  if (!cases.length) { console.error(`no such cases: ${only}; there are ${[...all, ...long].map(c => c.id).join(', ')}`); process.exit(2) }
   const threads = Math.max(1, Math.min(cases.length, Number(option('threads') ?? availableParallelism())))
   // The longest first, so the last to start is a short one.
   const queue = [...cases].sort((a, b) => b.minutes - a.minutes), results: Done[] = [], started = Date.now()
@@ -92,7 +93,7 @@ if (!isMainThread && workerData.helper) {
     if (deviations.length || !only) {
       lines.push('## Known deviations from nature (roadmap A7)', '', 'Measured on the same model; the bounds here are the range observed in nature, so ✗ is expected until the roadmap item named fixes it (the slow test `src/core/deviations.test.ts` marks each one `it.fails`). They do not count in the total above. The cases are in `src/validation/deviations.ts`.', '')
       for (const { c, d } of deviations) {
-        const dev = DEVIATIONS.find(x => x.id === c.id)!
+        const dev = [...DEVIATIONS, ...LONG_DEVIATIONS].find(x => x.id === c.id)!
         lines.push(`### ${c.title}`, '', `Nature: ${c.source}. Cause: ${dev.cause}. Fixed by: ${dev.plan}. Run time ${Math.round(d.seconds / 60)} min.`, '')
         if (d.error) { lines.push('**The case failed to run:**', '', '```', d.error, '```', ''); continue }
         lines.push('| Quantity | Model | Nature | |', '|---|---:|---|:-:|')
