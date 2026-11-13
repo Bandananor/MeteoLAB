@@ -171,6 +171,15 @@ export function settleCrystals(ice: Float32Array, number: Float32Array, i: numbe
 }
 
 /**
+ * Whether heavily rimed snow turns into graupel (experiment 13.11.2026; STORMLAB_RIMED=1 for a whole run in Node). Lin et
+ * al. (1983) keep the snow's riming (P_sacw) as snow, so graupel starts only from frozen rain — in a winter cell with no
+ * warm rain it hardly forms (tests/bench/graupelbudget.ts). Switched on, as in WRF's Thompson scheme
+ * (module_mp_thompson.F, read 13.11.2026; the code calls it ad hoc): where the riming exceeds twice the depositional
+ * growth, the share min(0.95, 0.15 + 0.028 (R - 2)) of the riming goes to graupel, R = min(30, P_sacw / P_sdep).
+ */
+export const RIMED_SNOW_TO_GRAUPEL = (globalThis as { process?: { env: Record<string, string | undefined> } }).process?.env?.STORMLAB_RIMED === '1'
+
+/**
  * Snow processes at cell i over dt (Lin et al. 1983): below 0 °C cloud ice aggregates into snow (P_saut, P_saci),
  * snow rimes cloud water (P_sacw, freezing it) and grows or sublimates by vapour diffusion (P_sdep); above 0 °C snow
  * melts into rain (P_smlt, with the heat carried by the rimed water) and the water it collects becomes rain. Every
@@ -178,7 +187,7 @@ export function settleCrystals(ice: Float32Array, number: Float32Array, i: numbe
  * cold-pool indicator.
  */
 export function snowProcesses(theta: Float32Array, q: Float32Array, cloud: Float32Array, ice: Float32Array, snow: Float32Array, rain: Float32Array,
-  i: number, exner: number, p: number, rho: number, rhoGround: number, dt: number) {
+  i: number, exner: number, p: number, rho: number, rhoGround: number, dt: number, graupel?: Float32Array) {
   const tk = theta[i] * exner, tc = tk - T0, qs = snow[i]
   if (tc < 0 && ice[i] > 0) {
     // Aggregation of cloud ice into snow; efficiency exp(0.025 Tc).
@@ -202,6 +211,10 @@ export function snowProcesses(theta: Float32Array, q: Float32Array, cloud: Float
     const dep = rate > 0 ? Math.min(rate * dt, (q[i] - qsi) / (1 + LS * LS * qsi / (CP * RV * tk * tk))) : -Math.min(snow[i], -rate * dt)
     snow[i] += dep; q[i] -= dep; theta[i] += LS / (CP * exner) * dep
     if (dep < 0) cooling -= LS / (CP * exner) * dep
+    if (RIMED_SNOW_TO_GRAUPEL && graupel && sacw > 2 * Math.max(0, dep)) {
+      const ratio = dep > 0 ? Math.min(30, sacw / dep) : 30, rimed = Math.min(snow[i], Math.min(.95, .15 + .028 * (ratio - 2)) * sacw)
+      snow[i] -= rimed; graupel[i] += rimed
+    }
   } else {
     const sacw = Math.min(cloud[i], sweep * cloud[i] * dt); cloud[i] -= sacw; rain[i] += sacw
     const rate = 2 * Math.PI * KA * tc * vent / (rho * LF) + CW * tc / LF * sweep * cloud[i]

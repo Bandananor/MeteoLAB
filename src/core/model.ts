@@ -978,7 +978,7 @@ export class AtmosphereModel implements TaskModel {
             cold[i] += iceProcesses(theta, q, ice, snow, iceNumber, i, exner, p, rhoZ, dt)
             if (budget) { bIce![i] += theta[i] - mark; given += theta[i] - mark; mark = theta[i] }
             const iceBefore = ice[i], cloudBefore = cloud[i]
-            cold[i] += snowProcesses(theta, q, cloud, ice, snow, rain, i, exner, p, rhoZ, rhoGround, dt)
+            cold[i] += snowProcesses(theta, q, cloud, ice, snow, rain, i, exner, p, rhoZ, rhoGround, dt, graupel)
             if (budget) { bSnow![i] += theta[i] - mark; given += theta[i] - mark; mark = theta[i] }
             const rainBefore = rain[i]
             cold[i] += graupelProcesses(theta, q, cloud, ice, snow, rain, graupel, i, exner, p, rhoZ, dt)
