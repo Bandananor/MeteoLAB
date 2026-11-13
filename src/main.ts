@@ -160,7 +160,7 @@ app.innerHTML = `<div class="app">
           ${knob('simpleTurn', L('Поворот ветра 0–3 км', 'Wind turning 0–3 km'), -45, 180, 5, L('На сколько градусов ветер поворачивает по часовой стрелке от земли до 3 км: поворот даёт спиральность (SRH) и вращение', 'How many degrees the wind turns clockwise from the ground to 3 km: the turning gives helicity (SRH) and rotation'))}
           <p class="t-caption" id="simpleNote" hidden></p>`, { open: true })}
         ${group(L('Температурный профиль', 'Temperature profile'), `
-          ${slider('surfaceTemp',L('Температура у земли', 'Surface temperature'),15,40,.5,30,' °C',1)}
+          ${slider('surfaceTemp',L('Температура у земли', 'Surface temperature'),-30,40,.5,30,' °C',1)}
           ${slider('lapseLow',L('Градиент 0–3 км', 'Lapse rate 0–3 km'),3,11,.1,8.4,KKM,1)}
           ${slider('lapseMid',L('Градиент 3–8 км', 'Lapse rate 3–8 km'),3,11,.1,7.2,KKM,1)}
           ${slider('lapseUpper',L('Градиент 8 км–TP', 'Lapse rate 8 km–TP'),3,11,.1,6.5,KKM,1)}
