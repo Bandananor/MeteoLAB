@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createGrid, Environment, parcelIndices, SCENARIOS, type SimConfig } from '.'
+import { createGrid, Environment, environmentProfile, parcelIndices, SCENARIOS, type SimConfig } from '.'
 import { SUMMER_DAY } from './fixtures'
 import { CASES, passes, SHORT_SCENARIOS as SHORT } from '../validation/cases'
 
@@ -15,7 +15,8 @@ describe('scenarios: realistic environments', () => {
   // The ~1 km model gets close to parcel theory (w ~0.7-0.8 sqrt(2 CAPE), real storms ~0.5-0.6): scenarios keep SB CAPE
   // at most 4 kJ/kg so their updraughts stay near the strongest observed ones.
   for (const s of SCENARIOS.filter(s => !s.values.profile)) it(`${s.name}: SB CAPE at most 4 kJ/kg`, () => {
-    const grid = createGrid(), i = parcelIndices(new Environment(config(s.values), grid), grid.height)
+    // The scenario's own sounding when it has one (Снежная гроза), else the sliders.
+    const grid = createGrid(), c = config(s.values), i = parcelIndices(new Environment(c, grid, environmentProfile(c, grid.height)), grid.height)
     expect(i.sb.cape).toBeLessThan(4000)
   })
 })

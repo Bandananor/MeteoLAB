@@ -1,7 +1,7 @@
 import type { SimConfig } from './config'
 import { CP, G } from './constants'
 import type { EnvironmentProfile } from './environment'
-import { soundingProfile } from './soundingfile'
+import { type SoundingLevel, soundingProfile } from './soundingfile'
 
 /**
  * The environment a configuration asks for instead of the slider profile, or undefined for the sliders: a loaded
@@ -10,6 +10,36 @@ import { soundingProfile } from './soundingfile'
 export function environmentProfile(config: SimConfig, height: number): EnvironmentProfile | undefined {
   if (config.sounding) return soundingProfile(config.sounding, height + 2000).profile
   return config.profile === 'weisman-klemp' ? weismanKlemp({ qvMax: .016, ...config.weismanKlemp }) : undefined
+}
+
+/**
+ * An idealised sounding of elevated thundersnow (13.11.2026, tests/bench/winter.ts and .bench/winter): a near-isothermal
+ * cold layer at the ground (-2 °C, -0.5 K/km, to 0.8 km), a frontal inversion up to a warm nose that stays below 0 °C
+ * (-1 °C at 1.5 km, so the snow does not melt), and above it moist air (95 %) with 8 K/km up to a 9 km tropopause. The
+ * wind veers from a north-easterly 8 m/s at the ground to a south-westerly 30 m/s at 3 km — warm advection over the cold
+ * dome. Its own parcels: SB CAPE 0, MU CAPE ~160 J/kg from 1.8 km, EL ~6.3 km, the -10 °C level at 2.8 km (winter
+ * lightning needs it above ~1.4-1.8 km, Kitagawa & Michimoto 1994, abstract). Levels every 250 m to 16 km, hydrostatic.
+ */
+export function elevatedSnowSounding(): SoundingLevel[] {
+  const t0 = -2, cold = .8, nose = -1, base = 1.5, lapse = 8, rh = 95, trop = 9, low = [8, 60], aloft = [30, 230]
+  const tAt = (km: number) => {
+    if (km <= cold) return t0 - .5 * km
+    const top = t0 - .5 * cold
+    if (km <= base) return top + (nose - top) * (km - cold) / (base - cold)
+    if (km <= trop) return nose - lapse * (km - base)
+    return nose - lapse * (trop - base) + (km - trop)
+  }
+  const rhAt = (km: number) => km <= cold ? 92 : km <= base ? 85 : km <= 6 ? rh : km <= trop ? 60 : 20
+  const es = (t: number) => 611.2 * Math.exp(17.67 * t / (t + 243.5))
+  const levels: SoundingLevel[] = []
+  let p = 100000
+  for (let z = 0; z <= 16000; z += 250) {
+    const km = z / 1000, t = tAt(km), e = es(t) * rhAt(km) / 100, x = Math.log(e / 611.2), f = Math.min(1, km / 3)
+    const speed = low[0] + (aloft[0] - low[0]) * f, dir = (low[1] + (aloft[1] - low[1]) * f) * Math.PI / 180
+    levels.push({ p, z, t, td: 243.5 * x / (17.67 - x), u: -speed * Math.sin(dir), v: -speed * Math.cos(dir) })
+    p *= Math.exp(-G * 250 / (287 * (t + 273.15 - .8125)))
+  }
+  return levels
 }
 
 export interface WeismanKlempOptions {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createGrid, Environment, NIGHT_DEPTH, parcelIndices, SCENARIOS, type SimConfig } from '.'
+import { createGrid, Environment, environmentProfile, NIGHT_DEPTH, parcelIndices, SCENARIOS, type SimConfig } from '.'
 import { SUMMER_DAY } from './fixtures'
 
 describe('wind profile', () => {
@@ -34,7 +34,7 @@ describe('slider profiles are not unstable by themselves (Environment.neutralise
   // the lid cooled at 11-12.5 K/km: both overturned in ~30 min with no sun and no thermal. What is left is the 10 m
   // table interpolated: up to -0.35 K/km over 25 m (0.01 K), nothing that could overturn.
   const unstable = (values: Partial<SimConfig>) => {
-    const env = new Environment({ ...SUMMER_DAY, ...values }, createGrid()), thv = (z: number) => env.thetaEnv(z) * (1 + .61 * env.qEnv(z))
+    const c = { ...SUMMER_DAY, ...values }, grid = createGrid(), env = new Environment(c, grid, environmentProfile(c, grid.height)), thv = (z: number) => env.thetaEnv(z) * (1 + .61 * env.qEnv(z))
     let worst = 0
     for (let z = 0; z < 14_000; z += 25) worst = Math.min(worst, (thv(z + 25) - thv(z)) / .025)
     return worst

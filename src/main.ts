@@ -94,8 +94,9 @@ const tip = (id: string, title: string, text: string, scale = '', foot = '') =>
 function environmentNums(c: SimConfig) {
   const grid = createGrid(), env = new Environment(c, grid, environmentProfile(c, grid.height)), p = parcelIndices(env, grid.height), k = stormIndices(env, p)
   const minus = (v: number) => String(Math.round(v)).replace('-', '−')
-  return L(`ML CAPE ${minus(p.ml.cape)} Дж/кг · ML CIN ${minus(p.ml.cin)} · сдвиг 0–6 км ${Math.round(k.shear06)} м/с · SRH 0–1 км ${Math.round(k.srh01)} м²/с²`,
-    `ML CAPE ${minus(p.ml.cape)} J/kg · ML CIN ${minus(p.ml.cin)} · 0–6 km shear ${Math.round(k.shear06)} m/s · SRH 0–1 km ${Math.round(k.srh01)} m²/s²`)
+  const cin = p.ml.lfc === null ? '—' : minus(p.ml.cin), mu = p.mu.start >= .5 && p.mu.cape > p.ml.cape + 50 ? ` · MU CAPE ${minus(p.mu.cape)}` : ''
+  return L(`ML CAPE ${minus(p.ml.cape)} Дж/кг · ML CIN ${cin}${mu} · сдвиг 0–6 км ${Math.round(k.shear06)} м/с · SRH 0–1 км ${Math.round(k.srh01)} м²/с²`,
+    `ML CAPE ${minus(p.ml.cape)} J/kg · ML CIN ${cin}${mu} · 0–6 km shear ${Math.round(k.shear06)} m/s · SRH 0–1 km ${Math.round(k.srh01)} m²/s²`)
 }
 const presets = SCENARIOS.map(s => ({ ...s, nums: environmentNums({ ...defaults, ...s.values }) }))
 /**
@@ -761,7 +762,10 @@ function showEnvironment() {
     const grid = createGrid(), env = new Environment(config, grid, environmentProfile(config, grid.height)), p = parcelIndices(env, grid.height), k = stormIndices(env, p)
     const n = (v: number) => String(Math.round(v)).replace('-', '−'), km = (v: number | null) => v === null ? '—' : `${decimal(v, 2)} ${L('км', 'km')}`
     document.querySelector('#envSummary')!.innerHTML = ([
-      ['ML CAPE', `${n(p.ml.cape)} ${JKG}`], ['ML CIN', `${n(p.ml.cin)} ${JKG}`], ['LCL', km(p.ml.lcl)], ['LFC', km(p.ml.lfc)],
+      // No LFC: the CIN would be the whole negative area up to the top (tens of kJ/kg), so a dash. An elevated storm's
+      // instability lies above a cold layer: then the most-unstable parcel too.
+      ['ML CAPE', `${n(p.ml.cape)} ${JKG}`], ['ML CIN', p.ml.lfc === null ? '—' : `${n(p.ml.cin)} ${JKG}`], ['LCL', km(p.ml.lcl)], ['LFC', km(p.ml.lfc)],
+      ...(p.mu.start >= .5 && p.mu.cape > p.ml.cape + 50 ? [[L('MU CAPE', 'MU CAPE'), `${n(p.mu.cape)} ${JKG} ${L('с', 'from')} ${decimal(p.mu.start, 1)} ${L('км', 'km')}`] as const] : []),
       [L('Сдвиг 0–6 км', 'Shear 0–6 km'), `${n(k.shear06)}${MS}`], ['DCAPE', `${n(p.dcape)} ${JKG}`], ['SRH 0–1 км', `${n(k.srh01)} ${L('м²/с²', 'm²/s²')}`], ['SRH 0–3 км', `${n(k.srh03)} ${L('м²/с²', 'm²/s²')}`],
     ] as const).map(([a, b]) => `<div><dt>${a.replace(' км', L(' км', ' km'))}</dt><dd>${b}</dd></div>`).join('')
   })
