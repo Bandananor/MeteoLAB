@@ -14,10 +14,10 @@ export function environmentProfile(config: SimConfig, height: number): Environme
 
 /**
  * An idealised sounding of elevated thundersnow (13.11.2026, tests/bench/winter.ts and .bench/winter): a near-isothermal
- * cold layer at the ground (-2 °C, -0.5 K/km, to 0.8 km), a frontal inversion up to a warm nose that stays below 0 °C
- * (-1 °C at 1.5 km, so the snow does not melt), and above it moist air (95 %) with 8 K/km up to a 9 km tropopause. The
+ * cold layer at the ground (-2 °C, -0.5 K/km, to 0.8 km), a frontal inversion peaking below 0 °C (-1 °C at 1.5 km, so
+ * the snow does not melt), and above it moist air (95 %) with 8 K/km up to a 9 km tropopause. The
  * wind veers from a north-easterly 8 m/s at the ground to a south-westerly 30 m/s at 3 km — warm advection over the cold
- * dome. Its own parcels: SB CAPE 0, MU CAPE ~160 J/kg from 1.8 km, EL ~6.3 km, the -10 °C level at 2.8 km (winter
+ * dome. Its own parcels: SB CAPE 0, MU CAPE ~160 J/kg from 1.8 km, EL ~6.3 km, the -10 °C level at ~2.6 km (~2.8 in the parcel; winter
  * lightning needs it above ~1.4-1.8 km, Kitagawa & Michimoto 1994, abstract). Levels every 250 m to 16 km, hydrostatic.
  */
 export function elevatedSnowSounding(): SoundingLevel[] {
