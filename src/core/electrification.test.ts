@@ -67,3 +67,15 @@ describe('electrification in the model (2.3 step 2)', () => {
     }
   })
 })
+
+describe('the estimated peak current of a CG (peakCurrents)', () => {
+  it('follows I = 10.6 Q^0.7 kA per stroke of a -CG and 0.2 of the charge for a +CG, within 2-300 kA', async () => {
+    const { peakCurrents } = await import('./lightning')
+    expect(peakCurrents({ kind: 'IC', charge: 5 })).toEqual([])
+    const neg = peakCurrents({ kind: 'CG', charge: -5.45, strokes: [-4.5, -0.95] })
+    expect(neg[0]).toBeCloseTo(-10.6 * 4.5 ** .7, 6); expect(neg[0]).toBeCloseTo(-30, 0) // Berger's median first stroke
+    expect(neg[1]).toBeCloseTo(-10.6 * .95 ** .7, 6)
+    expect(peakCurrents({ kind: 'CG', charge: 25 })[0]).toBeCloseTo(10.6 * 5 ** .7, 6) // ~33 kA
+    expect(peakCurrents({ kind: 'CG', charge: -1e4 })[0]).toBe(-300); expect(peakCurrents({ kind: 'CG', charge: -1e-4 })[0]).toBe(-2)
+  })
+})

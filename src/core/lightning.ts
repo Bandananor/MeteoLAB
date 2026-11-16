@@ -92,8 +92,26 @@ export interface Flash {
    * lowered positive charge); 0 for IC. What drives the field above the storm, and with it sprites and halos (tle.ts).
    */
   moment: number
+  /** CG: the charge each stroke lowered to the ground, C, signed, in order (at most STROKES; their sum is `charge`). */
+  strokes?: number[]
   /** CG: the transient luminous event above it, if its moment change was enough (tle.ts). */
   tle?: TransientEvent
+}
+
+/**
+ * Estimated peak current of a CG's strokes, kA, signed as the charge lowered (the model has no current): the regression
+ * of Berger et al. (1975) first negative strokes as Cooray, Rakov & Theethayi (2007) give it, I = 10.6 Q^0.7 (Q the
+ * impulse charge, C; R² 0.59, scatter ~×1.5, the medians 4.5 C → 30 kA), for each stroke of a -CG from the charge that
+ * stroke lowered; for a +CG, whose charge goes mostly in the continuing current, from 0.2 of the flash's charge (the ratio
+ * of Berger's median impulse to flash charge, 16 to 80 C — this project's reading, ×2-3 uncertain). Within 2-300 kA.
+ * Notes: .claude/literature/lightning-peak-current.md (16.11.2026; the sources through abstracts and quotations). Empty
+ * for an IC.
+ */
+export function peakCurrents(flash: Pick<Flash, 'kind' | 'charge' | 'strokes'>): number[] {
+  if (flash.kind !== 'CG') return []
+  const amps = (q: number) => Math.sign(q) * Math.min(300, Math.max(2, 10.6 * Math.abs(q) ** .7))
+  if (flash.charge > 0) return [amps(.2 * flash.charge)]
+  return (flash.strokes?.length ? flash.strokes : [flash.charge]).filter(q => q !== 0).map(amps)
 }
 
 /**
@@ -270,6 +288,7 @@ export class Lightning {
     const { layer } = this.grid, id = ++this.flashId, { frontier, weight, scale, link } = this
     const nodes: number[] = [], parent: number[] = [], polarity: number[] = []
     let sum = 0, potential = 0, ground = -1, before = 0, touched = false, left = false, neutralized = 0, lowered = 0, strokes = 0
+    const strokeCharges: number[] = []
     this.size = 0; this.moment = 0
     const add = (j: number, from: number) => {
       this.mark[j] = id; nodes.push(j); parent.push(from)
@@ -314,7 +333,7 @@ export class Lightning {
         if (touched) { touched = false; event = true; break }
       }
       // Before the contact each stage neutralizes charge of both signs, after it each stroke lowers charge to the ground.
-      if (ground >= 0) lowered += this.deposit(nodes, polarity, potential, true, carriers); else neutralized += this.deposit(nodes, polarity, potential, false, carriers)
+      if (ground >= 0) { const q = this.deposit(nodes, polarity, potential, true, carriers); lowered += q; strokeCharges.push(q) } else neutralized += this.deposit(nodes, polarity, potential, false, carriers)
       if (ground >= 0 && (++strokes >= STROKES || (!event && nodes.length === grown))) break
       if (ground < 0 && !event) break
       if (nodes.length >= MAX_CHANNEL) break
@@ -323,7 +342,7 @@ export class Lightning {
       if (ground < 0) { sum = 0; for (const i of nodes) sum += this.phi[i]; potential = sum / nodes.length }
     }
     const flash: Flash = { time, kind: ground >= 0 ? 'CG' : 'IC', start, nodes: Int32Array.from(nodes), parent: Int32Array.from(parent), polarity: Int8Array.from(polarity), potential: ground >= 0 ? before : potential, charge: ground >= 0 ? lowered : neutralized, ground, moment: ground >= 0 ? this.moment : 0 }
-    if (ground >= 0) { const tle = transientEvent(this.moment); if (tle) flash.tle = tle }
+    if (ground >= 0) { flash.strokes = strokeCharges; const tle = transientEvent(this.moment); if (tle) flash.tle = tle }
     return flash
   }
 

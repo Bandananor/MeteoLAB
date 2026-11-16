@@ -1,7 +1,7 @@
 // What the lightning detector derives from the model's flashes (core/lightning.ts): where they are on the ground now,
 // the flash rate minute by minute, lightning jumps, the flash density, and the numbers of one flash for its card.
 import { L } from '../i18n'
-import type { Flash, Grid } from '../core'
+import { type Flash, type Grid, peakCurrents } from '../core'
 
 /** What the detector needs of the model: the grid, the domain's motion over the ground (m/s) and the time now. */
 export interface DetectorSource { grid: Grid; frame: readonly [number, number]; time: number }
@@ -108,5 +108,6 @@ export function flashFacts(m: DetectorSource, flash: Flash) {
     /** Share of the channel that was positive leader (in negative charge). */ positiveShare: positive / flash.nodes.length,
     /** Charge: IC — of each sign neutralized; CG — lowered to the ground, signed, C. */ charge: flash.charge,
     /** Channel potential, MV. */ potential: flash.potential / 1e6,
+    /** CG: the estimated peak current of each stroke, kA, signed (peakCurrents; the first is what a network reports). */ currents: peakCurrents(flash),
   }
 }
