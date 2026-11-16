@@ -97,9 +97,134 @@ fn profileTendency(@builtin(global_invocation_id) g: vec3u) {
   out[i] = -(faceAbove(z, i, r0) - below) / (M.z * M.w);
 }`
 
+// Э3 step 6: the sedimentation (model.ts sedimentPart) before the transport, and after the physics the subgrid
+// turbulence (Turbulence.viscosity, explicit mix), the surface friction (mixStep) — then the projection (elliptic.ts).
+const PHYS = /* wgsl */`
+struct T { nx: u32, ny: u32, nz: u32, flags: u32, dx: f32, dy: f32, lenH2: f32, capH: f32, dt: f32, pad0: f32, pad1: f32, pad2: f32 }
+@group(0) @binding(0) var<uniform> p: T;
+// Per level, three vec4: (len2, cap, span, theta_base), (exner, rho, h, dzs), (rho at the face above, -, -, -).
+@group(0) @binding(1) var<storage, read> lv: array<vec4f>;
+@group(0) @binding(2) var<storage, read_write> u: array<f32>;
+@group(0) @binding(3) var<storage, read_write> v: array<f32>;
+@group(0) @binding(4) var<storage, read_write> w: array<f32>;
+@group(0) @binding(5) var<storage, read> th: array<f32>;
+@group(0) @binding(6) var<storage, read> qv: array<f32>;
+@group(0) @binding(7) var<storage, read> cond: array<f32>;
+@group(0) @binding(8) var<storage, read_write> k2: array<vec2f>;
+struct M { factor: f32, dt: f32, column: u32, pad: f32 }
+@group(0) @binding(9) var<uniform> m: M;
+@group(0) @binding(10) var<storage, read> a: array<f32>;
+@group(0) @binding(11) var<storage, read_write> scratch: array<f32>;
+@group(0) @binding(12) var<storage, read> base: array<f32>;
+@group(0) @binding(13) var<storage, read_write> dst: array<f32>;
+struct Drag { factor: f32, fu: f32, fv: f32, ue0: f32, ve0: f32, pad0: f32, pad1: f32, pad2: f32 }
+@group(0) @binding(14) var<uniform> drag: Drag;
+@group(0) @binding(15) var<storage, read> vt: array<f32>;
+@group(0) @binding(16) var<storage, read_write> ground: array<f32>;
+
+const G = 9.81; const LV = 2.5e6; const CP = 1004.0; const RD = 287.05; const EPS = 0.622; const PRANDTL = 0.33333334;
+
+fn node(x: u32, y: u32, z: u32) -> u32 { return x + p.nx * (y + p.ny * z); }
+
+// One sub-step of a field's fall (upwind from above, flux form) into scratch; what leaves the ground node into ground.
+@compute @workgroup_size(256)
+fn sediment(@builtin(global_invocation_id) g: vec3u) {
+  let layer = p.nx * p.ny; let i = g.x; if (i >= layer * p.nz) { return; }
+  let z = i / layer; let L = lv[3u * z + 1u];
+  var inflow = 0.0; if (z < p.nz - 1u) { inflow = lv[3u * (z + 1u) + 1u].y * a[i + layer] * vt[i + layer]; }
+  let out = L.y * a[i] * vt[i];
+  scratch[i] = a[i] + m.dt * (inflow - out) / (L.y * L.z);
+  if (z == 0u) { ground[m.column * layer + i] += out * m.dt; }
+}
+
+// scratch back into the field.
+@compute @workgroup_size(256)
+fn copyBack(@builtin(global_invocation_id) g: vec3u) {
+  let i = g.x; if (i >= p.nx * p.ny * p.nz) { return; }
+  dst[i] = scratch[i];
+}
+
+// The eddy viscosities (Turbulence.viscosity): K = len² sqrt(max(0, |S|² - N²/Pr)), capped; theta is the departure from
+// the base profile, the base's own difference added from the levels.
+@compute @workgroup_size(256)
+fn viscosity(@builtin(global_invocation_id) g: vec3u) {
+  let layer = p.nx * p.ny; let i = g.x; if (i >= layer * p.nz) { return; }
+  let z = i / layer; let c = i % layer; let x = c % p.nx; let y = c / p.nx;
+  let e = node((x + 1u) % p.nx, y, z); let wst = node((x + p.nx - 1u) % p.nx, y, z);
+  let n = node(x, (y + 1u) % p.ny, z); let s = node(x, (y + p.ny - 1u) % p.ny, z);
+  var up = i; var zu = z; if (z < p.nz - 1u) { up = i + layer; zu = z + 1u; }
+  var dn = i; var zd = z; if (z > 0u) { dn = i - layer; zd = z - 1u; }
+  let A = lv[3u * z]; let span = A.z;
+  let dudx = (u[e] - u[wst]) / (2.0 * p.dx); let dvdy = (v[n] - v[s]) / (2.0 * p.dy); let dwdz = (w[up] - w[dn]) / span;
+  let dudy = (u[n] - u[s]) / (2.0 * p.dy); let dvdx = (v[e] - v[wst]) / (2.0 * p.dx);
+  let dudz = (u[up] - u[dn]) / span; let dwdx = (w[e] - w[wst]) / (2.0 * p.dx);
+  let dvdz = (v[up] - v[dn]) / span; let dwdy = (w[n] - w[s]) / (2.0 * p.dy);
+  let s2 = 2.0 * (dudx * dudx + dvdy * dvdy + dwdz * dwdz) + (dudy + dvdx) * (dudy + dvdx) + (dudz + dwdx) * (dudz + dwdx) + (dvdz + dwdy) * (dvdz + dwdy);
+  let bu = lv[3u * zu].w; let bd = lv[3u * zd].w; let bz = A.w;
+  var n2 = G / bz * (th[up] - th[dn] + bu - bd) / span;
+  let saturated = (p.flags & 4u) != 0u;
+  if (cond[i] > 1e-5 && saturated && cond[up] > 1e-5 && cond[dn] > 1e-5) {
+    let t = (th[i] + bz) * lv[3u * z + 1u].x; let qs = qv[i];
+    let factor = (1.0 + LV * qs / (RD * t)) / (1.0 + EPS * LV * LV * qs / (CP * RD * t * t));
+    n2 = G * (factor * ((th[up] - th[dn] + bu - bd) / (th[i] + bz) + LV / (CP * t) * (qv[up] - qv[dn])) - (qv[up] + cond[up] - qv[dn] - cond[dn])) / span;
+  } else if (cond[i] > 1e-5) {
+    let tu = th[up] + bu; let td = th[dn] + bd; let ti = th[i] + bz;
+    let eu = tu * exp(LV * qv[up] / (CP * tu * lv[3u * zu + 1u].x));
+    let ed = td * exp(LV * qv[dn] / (CP * td * lv[3u * zd + 1u].x));
+    let ei = ti * exp(LV * qv[i] / (CP * ti * lv[3u * z + 1u].x));
+    n2 = G / ei * (eu - ed) / span;
+  }
+  let rate = sqrt(max(0.0, s2 - n2 / PRANDTL));
+  let km = min(A.y, A.x * rate);
+  var kh = km; if ((p.flags & 1u) != 0u) { kh = min(p.capH, p.lenH2 * rate); }
+  k2[i] = vec2f(km, kh);
+}
+
+// The explicit diffusion of a's departure from its base (Turbulence.mix, gathered per node) into scratch.
+@compute @workgroup_size(256)
+fn mix(@builtin(global_invocation_id) g: vec3u) {
+  let layer = p.nx * p.ny; let i = g.x; if (i >= layer * p.nz) { return; }
+  let z = i / layer; let c = i % layer; let x = c % p.nx; let y = c / p.nx; let f = m.factor;
+  let here = a[i] - base[z]; let K = k2[i]; let B = lv[3u * z + 1u];
+  let e = node((x + 1u) % p.nx, y, z); let wst = node((x + p.nx - 1u) % p.nx, y, z);
+  let n = node(x, (y + 1u) % p.ny, z); let s = node(x, (y + p.ny - 1u) % p.ny, z);
+  var t = f * (K.y + k2[e].y) / 2.0 * (a[e] - base[z] - here) / p.dx / p.dx;
+  t -= f * (k2[wst].y + K.y) / 2.0 * (here - (a[wst] - base[z])) / p.dx / p.dx;
+  t += f * (K.y + k2[n].y) / 2.0 * (a[n] - base[z] - here) / p.dy / p.dy;
+  t -= f * (k2[s].y + K.y) / 2.0 * (here - (a[s] - base[z])) / p.dy / p.dy;
+  if (z < p.nz - 1u) { let fz = f * lv[3u * z + 2u].x * (K.x + k2[i + layer].x) / 2.0 * (a[i + layer] - base[z + 1u] - here) / B.w; t += fz / (B.y * B.z); }
+  if (z > 0u) { let Bd = lv[3u * (z - 1u) + 1u]; let fz = f * lv[3u * (z - 1u) + 2u].x * (k2[i - layer].x + K.x) / 2.0 * (here - (a[i - layer] - base[z - 1u])) / Bd.w; t -= fz / (B.y * B.z); }
+  scratch[i] = a[i] + m.dt * t;
+}
+
+// The surface drag on the ground node and the rigid ground and top (mixStep).
+@compute @workgroup_size(256)
+fn surface(@builtin(global_invocation_id) g: vec3u) {
+  let layer = p.nx * p.ny; let b = g.x; if (b >= layer) { return; }
+  let ug = u[b] + drag.fu; let vg = v[b] + drag.fv; let speed = sqrt(ug * ug + vg * vg); let envSpeed = sqrt(drag.ue0 * drag.ue0 + drag.ve0 * drag.ve0);
+  u[b] -= drag.factor * (speed * ug - envSpeed * drag.ue0); v[b] -= drag.factor * (speed * vg - envSpeed * drag.ve0);
+  w[b] = 0.0; w[b + (p.nz - 1u) * layer] = 0.0;
+}`
+
 type Kernel = 'loading' | 'buoyancy' | 'rigid' | 'profileTendency'
 const USES: Record<Kernel, number[]> = {
   loading: [0, 7, 9, 10, 11, 12, 13, 14], buoyancy: [0, 1, 2, 3, 4, 5, 6, 7, 8], rigid: [0, 8], profileTendency: [0, 2, 15, 16, 17],
+}
+type PhysKernel = 'sediment' | 'copyBack' | 'viscosity' | 'mix' | 'surface'
+const PHYS_USES: Record<PhysKernel, number[]> = {
+  sediment: [0, 1, 9, 10, 11, 15, 16], copyBack: [0, 11, 13], viscosity: [0, 1, 2, 3, 4, 5, 6, 7, 8], mix: [0, 1, 8, 9, 10, 11, 12], surface: [0, 2, 3, 4, 14],
+}
+
+/** A falling field for the GPU's sedimentation (model.ts fallInputs): its index among the fields, fall speed, sub-steps. */
+export interface DynamicsFall { k: number; vt: Float32Array; parts: number }
+
+/** What the GPU's turbulence, friction and projection need (model.ts mixingInputs). */
+export interface MixingInputs {
+  /** The mixed fields: index among the fields of step(), base profile (null: none) and K factor. */
+  mixed: readonly { k: number; base: ArrayLike<number> | null; factor: number }[]
+  condensate: Float32Array; exner: ArrayLike<number>
+  cs: number; anisotropic: boolean; lengthDz: boolean; saturated: boolean
+  drag: { factor: number; fu: number; fv: number; ue0: number; ve0: number }
 }
 
 /** Which carried field a slot is, for the buoyancy: its loading, its vapour, theta, w. */
@@ -136,6 +261,14 @@ export class GpuDynamics {
   private readonly zeroed = new Set<number>(); private readBuffer: GPUBuffer | null = null; private signature = ''
   /** The bind groups of the field set (made anew with it). */
   private groups: { load: GPUBindGroup; buoyancy: GPUBindGroup[]; rigid: GPUBindGroup; profile: GPUBindGroup } | null = null
+  /** Step 6: the sedimentation and turbulence kernels, their buffers (made on first use) and the slots of the last step. */
+  private readonly phys = new Map<PhysKernel, GPUComputePipeline>()
+  private readonly physParams: GPUBuffer; private readonly physLevels: GPUBuffer; private readonly k2: GPUBuffer; private readonly scratch: GPUBuffer
+  private readonly cond: GPUBuffer; private readonly dragParams: GPUBuffer
+  private ground: GPUBuffer | null = null; private groundRead: GPUBuffer | null = null
+  private readonly fallBuffers: GPUBuffer[] = []; private readonly fallParams: GPUBuffer[] = []
+  private readonly mixParams: GPUBuffer[] = []; private readonly mixBases: GPUBuffer[] = []
+  private slots: Slot[] = []; private thetaIndex = -1
 
   static async create(grid: Grid, env: { rho: ArrayLike<number>; theta: ArrayLike<number>; exner: ArrayLike<number> }, options: GPURequestAdapterOptions = { powerPreference: 'high-performance' }) {
     const adapter = await navigator.gpu?.requestAdapter(options)
@@ -157,6 +290,108 @@ export class GpuDynamics {
     this.stageRates = [0, 1, 2].map(() => device.createBuffer({ size: 16, usage: UNIFORM | COPY_DST }))
     this.levels = make(32 * nz); this.zone = make(8 * layer); this.load = make(4 * n); this.zero = make(4 * n); this.base = make(4 * nz)
     device.queue.writeBuffer(this.base, 0, Float32Array.from(env.theta))
+    const phys = device.createShaderModule({ code: PHYS })
+    for (const k of Object.keys(PHYS_USES) as PhysKernel[]) this.phys.set(k, device.createComputePipeline({ layout: 'auto', compute: { module: phys, entryPoint: k } }))
+    this.physParams = device.createBuffer({ size: 48, usage: UNIFORM | COPY_DST }); this.dragParams = device.createBuffer({ size: 32, usage: UNIFORM | COPY_DST })
+    this.physLevels = make(48 * nz); this.k2 = make(8 * n); this.scratch = make(4 * n); this.cond = make(4 * n)
+  }
+
+  private physGroup(k: PhysKernel, buffers: Record<number, GPUBuffer>) {
+    return this.device.createBindGroup({ layout: this.phys.get(k)!.getBindGroupLayout(0), entries: PHYS_USES[k].map(b => ({ binding: b, resource: { buffer: buffers[b] } })) })
+  }
+
+  private physDispatch(pass: GPUComputePassEncoder, k: PhysKernel, group: GPUBindGroup, threads: number) {
+    pass.setPipeline(this.phys.get(k)!); pass.setBindGroup(0, group); pass.dispatchWorkgroups(Math.ceil(threads / 256))
+  }
+
+  /** The uniforms and per-level data of the step-6 kernels (Turbulence.viscosity's widths and caps, the levels). */
+  private writePhysics(dt: number, mix: MixingInputs | null) {
+    const g = this.grid, { nx, ny, nz, dx, dy, zs, dzs, hz } = g, rho = this.env.rho, cs = mix?.cs ?? 0
+    const raw = new ArrayBuffer(48), U = new Uint32Array(raw, 0, 4), F = new Float32Array(raw, 16, 8)
+    U.set([nx, ny, nz, (mix?.anisotropic ? 1 : 0) | (mix?.saturated ? 4 : 0)])
+    F.set([dx, dy, (cs * Math.sqrt(dx * dy)) ** 2, .05 * Math.min(dx, dy) ** 2 / dt, dt, 0, 0, 0])
+    this.device.queue.writeBuffer(this.physParams, 0, raw)
+    const lv = new Float32Array(12 * nz)
+    for (let z = 0; z < nz; z++) {
+      const local = z === 0 ? dzs[0] : z === nz - 1 ? dzs[nz - 2] : hz[z], len2 = (cs * (mix?.anisotropic && mix.lengthDz ? local : Math.cbrt(dx * dy * local))) ** 2
+      const cap = .05 * Math.min(dx, dy, z > 0 ? dzs[z - 1] : Infinity, z < nz - 1 ? dzs[z] : Infinity) ** 2 / dt
+      const span = zs[z + (z < nz - 1 ? 1 : 0)] - zs[z - (z > 0 ? 1 : 0)]
+      lv.set([len2, cap, span, this.env.theta[z], mix?.exner[z] ?? this.env.exner[z], rho[z], hz[z], z < nz - 1 ? dzs[z] : 1, z < nz - 1 ? (rho[z] + rho[z + 1]) / 2 : 0, 0, 0, 0], 12 * z)
+    }
+    this.device.queue.writeBuffer(this.physLevels, 0, lv)
+  }
+
+  /** Encodes the sedimentation of the falls (into the fields' slots), what leaves the ground into `ground`. */
+  private encodeFalls(enc: GPUCommandEncoder, falls: readonly DynamicsFall[], slots: Slot[], dt: number) {
+    const d = this.device, { n, layer } = this.grid
+    if (!falls.length) return
+    if (!this.ground || this.ground.size < 4 * layer * falls.length) {
+      this.ground?.destroy(); this.groundRead?.destroy()
+      this.ground = d.createBuffer({ size: 4 * layer * falls.length, usage: STORAGE | COPY_SRC | COPY_DST })
+      this.groundRead = d.createBuffer({ size: 4 * layer * falls.length, usage: MAP_READ | COPY_DST })
+    }
+    enc.clearBuffer(this.ground, 0, 4 * layer * falls.length)
+    falls.forEach((f, j) => {
+      if (!this.fallBuffers[j]) { this.fallBuffers[j] = d.createBuffer({ size: 4 * n, usage: STORAGE | COPY_DST }); this.fallParams[j] = d.createBuffer({ size: 16, usage: UNIFORM | COPY_DST }) }
+      d.queue.writeBuffer(this.fallBuffers[j], 0, f.vt)
+      const raw = new ArrayBuffer(16); new Float32Array(raw, 0, 2).set([0, dt / f.parts]); new Uint32Array(raw, 8, 1)[0] = j
+      d.queue.writeBuffer(this.fallParams[j], 0, raw)
+    })
+    const pass = enc.beginComputePass()
+    falls.forEach((f, j) => {
+      const q = slots[f.k].q
+      const fall = this.physGroup('sediment', { 0: this.physParams, 1: this.physLevels, 9: this.fallParams[j], 10: q, 11: this.scratch, 15: this.fallBuffers[j], 16: this.ground! })
+      const back = this.physGroup('copyBack', { 0: this.physParams, 11: this.scratch, 13: q })
+      for (let part = 0; part < f.parts; part++) { this.physDispatch(pass, 'sediment', fall, n); this.physDispatch(pass, 'copyBack', back, n) }
+    })
+    pass.end()
+  }
+
+  /**
+   * After the physics (CPU), the subgrid turbulence of the mixed fields, the surface friction and the projection on the
+   * GPU (model.ts mixStep and project): uploads the mixed fields and the condensate, returns the mixed fields (in
+   * `mix.mixed` order) and the pressure (the solver's cells, as model.pressure), and the round trip, ms.
+   * Needs the slots of a step() just done (the same fields, by index).
+   */
+  async mix(fields: readonly DynamicsField[], mix: MixingInputs, dt: number): Promise<{ fields: Float32Array[]; pressure: Float32Array; gpuMs: number }> {
+    const d = this.device, g = this.grid, { n, nz, layer } = g, queue = d.queue, el = this.elliptic, slots = this.slots, th = this.thetaIndex, base = this.env.theta
+    if (!slots.length) throw new Error('GpuDynamics.mix before step')
+    this.writePhysics(dt, mix)
+    el.setPressureStep(dt)
+    queue.writeBuffer(this.dragParams, 0, Float32Array.of(mix.drag.factor, mix.drag.fu, mix.drag.fv, mix.drag.ue0, mix.drag.ve0, 0, 0, 0))
+    queue.writeBuffer(this.cond, 0, mix.condensate)
+    mix.mixed.forEach(({ k, base: profile, factor }, j) => {
+      const f = fields[k].q
+      if (k === th) { const pert = new Float32Array(n); for (let i = 0; i < n; i++) pert[i] = f[i] - base[Math.floor(i / layer)]; queue.writeBuffer(slots[k].q, 0, pert) }
+      else queue.writeBuffer(slots[k].q, 0, f)
+      if (!this.mixParams[j]) { this.mixParams[j] = d.createBuffer({ size: 16, usage: UNIFORM | COPY_DST }); this.mixBases[j] = d.createBuffer({ size: Math.max(16, 4 * nz), usage: STORAGE | COPY_DST }) }
+      queue.writeBuffer(this.mixParams[j], 0, Float32Array.of(factor, dt, 0, 0))
+      // theta's slot holds the departure already: its base is zero.
+      queue.writeBuffer(this.mixBases[j], 0, k === th || !profile ? new Float32Array(nz) : Float32Array.from(profile))
+    })
+    const roleOf = (r: Role) => slots[fields.findIndex(f => f.role === r)].q
+    const t0 = performance.now(), enc = d.createCommandEncoder(), pass = enc.beginComputePass()
+    this.physDispatch(pass, 'viscosity', this.physGroup('viscosity', { 0: this.physParams, 1: this.physLevels, 2: el.buffer(8), 3: el.buffer(9), 4: el.buffer(10), 5: slots[th].q, 6: roleOf('q'), 7: this.cond, 8: this.k2 }), n)
+    mix.mixed.forEach(({ k }, j) => {
+      const q = slots[k].q
+      this.physDispatch(pass, 'mix', this.physGroup('mix', { 0: this.physParams, 1: this.physLevels, 8: this.k2, 9: this.mixParams[j], 10: q, 11: this.scratch, 12: this.mixBases[j] }), n)
+      this.physDispatch(pass, 'copyBack', this.physGroup('copyBack', { 0: this.physParams, 11: this.scratch, 13: q }), n)
+    })
+    this.physDispatch(pass, 'surface', this.physGroup('surface', { 0: this.physParams, 2: el.buffer(8), 3: el.buffer(9), 4: el.buffer(10), 14: this.dragParams }), layer)
+    el.encodePressure(pass)
+    pass.end()
+    const cells = g.nx * g.ny * (nz - 1), bytes = 4 * (n * mix.mixed.length + cells)
+    if (!this.readBuffer || this.readBuffer.size < bytes) { this.readBuffer?.destroy(); this.readBuffer = d.createBuffer({ size: bytes, usage: MAP_READ | COPY_DST }) }
+    const read = this.readBuffer
+    mix.mixed.forEach(({ k }, j) => enc.copyBufferToBuffer(slots[k].q, 0, read, 4 * n * j, 4 * n))
+    enc.copyBufferToBuffer(el.buffer(4), 0, read, 4 * n * mix.mixed.length, 4 * cells)
+    queue.submit([enc.finish()]); await read.mapAsync(1, 0, bytes)
+    const all = new Float32Array(read.getMappedRange(0, bytes).slice(0)); read.unmap()
+    const gpuMs = performance.now() - t0
+    const out = mix.mixed.map((_, j) => all.subarray(j * n, (j + 1) * n))
+    mix.mixed.forEach(({ k }, j) => { if (k === th) for (let i = 0; i < n; i++) out[j][i] += base[Math.floor(i / layer)] })
+    this.errors.push(...this.transport.errors.splice(0), ...el.errors.splice(0))
+    return { fields: out, pressure: all.subarray(n * mix.mixed.length), gpuMs }
   }
 
   /** Whether this instance fits a model's grid and base state (a new model with the same domain may keep it). */
@@ -181,7 +416,7 @@ export class GpuDynamics {
    * after the three stages, in the same order (views of one array), and the time: with `timed` the computation's alone
    * (ms, submission to completion), otherwise the whole round trip with the read-back.
    */
-  async step(fields: readonly DynamicsField[], env: DynamicsEnv, dt: number, timed = false): Promise<{ fields: Float32Array[]; gpuMs: number }> {
+  async step(fields: readonly DynamicsField[], env: DynamicsEnv, dt: number, timed = false, falls: readonly DynamicsFall[] = []): Promise<{ fields: Float32Array[]; ground: Float32Array[]; gpuMs: number }> {
     const d = this.device, g = this.grid, { n, nz, layer } = g, queue = d.queue, el = this.elliptic
     const roleOf = (r: Role) => fields.findIndex(f => f.role === r)
     // Uniforms and per-level data.
@@ -225,8 +460,12 @@ export class GpuDynamics {
     const { load: loadGroup, buoyancy: buoyGroups, rigid: rigidGroup, profile: profileGroup } = this.groups
     // timed (the bench): the computation alone, from a quiet queue to its completion; otherwise one submission with the
     // read-back and a single wait for it (the app).
+    this.slots = slots; this.thetaIndex = th
+    if (falls.length) this.writePhysics(dt, null)
     if (timed) await queue.onSubmittedWorkDone()
     const t0 = performance.now(), enc = d.createCommandEncoder()
+    // Step 6: the precipitation falls first (model.ts beginStep), then the transport.
+    this.encodeFalls(enc, falls, slots, dt)
     {
       const pass = enc.beginComputePass()
       el.encodeFaces(pass, true)
@@ -250,12 +489,16 @@ export class GpuDynamics {
     if (!this.readBuffer || this.readBuffer.size < bytes) { this.readBuffer?.destroy(); this.readBuffer = d.createBuffer({ size: bytes, usage: MAP_READ | COPY_DST }) }
     const read = this.readBuffer, e2 = timed ? d.createCommandEncoder() : enc
     slots.forEach((s, k) => e2.copyBufferToBuffer(s.q, 0, read, 4 * n * k, 4 * n))
-    queue.submit([e2.finish()]); await read.mapAsync(1, 0, bytes)
+    const groundBytes = 4 * layer * falls.length
+    if (falls.length) e2.copyBufferToBuffer(this.ground!, 0, this.groundRead!, 0, groundBytes)
+    queue.submit([e2.finish()]); await Promise.all([read.mapAsync(1, 0, bytes), falls.length ? this.groundRead!.mapAsync(1, 0, groundBytes) : null])
     const all = new Float32Array(read.getMappedRange(0, bytes).slice(0)); read.unmap()
+    let landed = new Float32Array(0)
+    if (falls.length) { landed = new Float32Array(this.groundRead!.getMappedRange(0, groundBytes).slice(0)); this.groundRead!.unmap() }
     if (!timed) gpuMs = performance.now() - t0
     const out = slots.map((_, k) => all.subarray(k * n, (k + 1) * n))
     if (th >= 0) for (let i = 0; i < n; i++) out[th][i] += base[Math.floor(i / layer)]
     this.errors.push(...this.transport.errors.splice(0), ...el.errors.splice(0))
-    return { fields: out, gpuMs }
+    return { fields: out, ground: falls.map((_, j) => landed.subarray(j * layer, (j + 1) * layer)), gpuMs }
   }
 }

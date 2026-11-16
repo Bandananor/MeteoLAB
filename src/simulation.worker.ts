@@ -3,6 +3,7 @@
 // With cross-origin isolation the steps are shared with helper threads (step.worker.ts, src/core/threads.ts).
 import { AtmosphereModel, controlBuffer, createGrid, domainGrid, DT, type SimConfig, SharedMemory, ThreadRunner, TRANSPORT_SLABS, applyState, readState, intervene, saveState } from './core'
 import type { GpuDynamics } from './gpu/dynamics'
+import { gpuStep } from './gpu/step'
 import { BATCH_BUDGET_MS, type GpuMode, MAX_STEPS_PER_BATCH, maxThreads, SNAPSHOT_COLUMNS, SNAPSHOT_FIELDS, type Snapshot, type Tuned, TUNE_STEPS, TUNE_WARM, TUNE_WORSE, type WorkerRequest } from './simulation'
 import type { HelperStart } from './step.worker'
 import { setLang } from './i18n'
@@ -55,18 +56,11 @@ const timing = { step: 0, gpu: 0, steps: 0 }
 async function stepModel(m: AtmosphereModel) {
   const g = gpu
   if (!g || !m.gpuDynamics()) { m.step(DT); m.time += DT; return }
-  m.beginStep(DT)
-  const { fields, env } = m.dynamicsInputs()
-  let result: Float32Array[] | null = null
-  const t0 = performance.now()
-  try { result = (await g.step(fields, env, DT)).fields } catch (e) { g.errors.push(String(e)) }
-  timing.gpu += performance.now() - t0
-  if (g.errors.length || !result) {
-    // The GPU failed: this step's transport on the CPU, and the CPU from now on.
-    gpuState = `error: ${g.errors[0] ?? 'no result'}`; gpu = null; g.destroy()
-    m.dynamics(DT)
-  } else m.setCarried(result)
-  m.endStep(DT); m.time += DT
+  const { waitMs, failed } = await gpuStep(m, g, DT)
+  timing.gpu += waitMs
+  // The GPU failed: the step was finished on the CPU, and the CPU goes on from now.
+  if (failed !== null) { gpuState = `error: ${failed}`; gpu = null; g.destroy() }
+  m.time += DT
 }
 
 /** Threads for the physics: this worker plus helpers, leaving one core for the page. One without shared memory. */

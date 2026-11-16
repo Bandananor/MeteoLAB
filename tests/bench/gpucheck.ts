@@ -3,7 +3,8 @@
 // the TypeScript core (FluxTransport.tendency) on a storm, and their times. In a browser with WebGPU:
 //   npx vite, then open /tests/bench/gpucheck.html[?scenario=<name>&minutes=20&spacing=<km>] — the result in window.__gpucheck
 // (headless: tools/cdp.mjs; Chrome takes the integrated GPU unless started with --force_high_performance_gpu).
-import { AtmosphereModel, createGrid, domainGrid, DT, SCENARIOS } from '../../src/core'
+import { AtmosphereModel, applyState, createGrid, domainGrid, DT, readState, saveState, SCENARIOS } from '../../src/core'
+import { gpuStep as stepWithGpu } from '../../src/gpu/step'
 import { SUMMER_DAY } from '../../src/core/fixtures'
 import { GpuTransport } from '../../src/gpu/transport'
 import { GpuElliptic } from '../../src/gpu/elliptic'
@@ -23,6 +24,7 @@ try {
   result.grid = `${model.grid.nx} x ${model.grid.ny} x ${model.grid.nz}`
   for (let t = 0; t < minutes * 60; t += DT) { model.step(DT); model.time += DT }
   log(`stepped to ${minutes} min`)
+  const state = saveState(model, config)
   const flux = model['flux'], grid = model.grid, { n, nz } = grid
   flux.setVelocity(model.u, model.v, model.w)
   const carried = model['carried']()
@@ -135,6 +137,34 @@ try {
       result.dynamics.fields.push(row); log('dynamics ' + JSON.stringify(row))
     })
     result.dynamicsErrors = dyn.errors.slice(0, 5)
+  }
+  // Step 6: whole steps with the GPU (src/gpu/step.ts, as the worker runs them) against model.step, from the same state:
+  // after 1 step the difference per field relative to that step's change; after `steps` the drift (physics thresholds
+  // turn float32 differences into local ones), the rain at the ground and the charge to the ground.
+  {
+    const make = () => { const m = new AtmosphereModel(config, createGrid(domainGrid(config.domain, config.top, config.domainSize, config.spacing))); applyState(m, readState(state)); return m }
+    const cpu = make(), gpuModel = make(), start = make(), dyn = await GpuDynamics.create(grid, gpuModel.env)
+    const steps = Number(params.get('steps') ?? 10), rows: any[] = [], fieldNames = ['u', 'v', 'w', 'theta', 'q', 'cloud', 'rain', 'ice', 'snow', 'graupel', 'hail', 'chargeIce', 'chargeGraupel', 'chargeRain', 'chargeAir']
+    let cpuMs = 0, gpuMs = 0, wait = 0
+    const compare = (when: number) => fieldNames.forEach(f => {
+      let scale = 0, err = 0
+      for (let i = 0; i < n; i++) { scale = Math.max(scale, Math.abs(cpu[f][i] - start[f][i])); err = Math.max(err, Math.abs(gpuModel[f][i] - cpu[f][i])) }
+      rows.push({ steps: when, field: f, changeMax: +scale.toExponential(2), maxRelOfChange: scale ? +(err / scale).toExponential(2) : 0 })
+    })
+    for (let s = 1; s <= steps; s++) {
+      let t0 = performance.now(); cpu.step(DT); cpu.time += DT; cpuMs += performance.now() - t0
+      t0 = performance.now(); const r = await stepWithGpu(gpuModel, dyn, DT); gpuModel.time += DT; gpuMs += performance.now() - t0; wait += r.waitMs
+      if (r.failed) { result.stepFailed = r.failed; break }
+      if (s === 1) compare(1)
+    }
+    compare(steps)
+    const sum = (a: ArrayLike<number>) => { let t = 0; for (let i = 0; i < a.length; i++) t += a[i]; return t }
+    const p0 = sum(start.precipitation), pc = sum(cpu.precipitation) - p0, pg = sum(gpuModel.precipitation) - p0
+    let pScale = 0, pErr = 0; for (let c = 0; c < cpu.pressure.length; c++) { pScale = Math.max(pScale, Math.abs(cpu.pressure[c])); pErr = Math.max(pErr, Math.abs(cpu.pressure[c] - gpuModel.pressure[c])) }
+    result.fullStep = { steps, cpuMsPerStep: +(cpuMs / steps).toFixed(1), gpuPathMsPerStep: +(gpuMs / steps).toFixed(1), gpuWaitMsPerStep: +(wait / steps).toFixed(1),
+      rainCpu: +pc.toExponential(3), rainGpu: +pg.toExponential(3), chargeGroundCpu: +(cpu.chargeGround - start.chargeGround).toExponential(3), chargeGroundGpu: +(gpuModel.chargeGround - start.chargeGround).toExponential(3),
+      pressureRel: pScale ? +(pErr / pScale).toExponential(2) : 0, clipped: [cpu.clipped, gpuModel.clipped], rows, errors: dyn.errors.slice(0, 5) }
+    log('fullStep ' + JSON.stringify(result.fullStep))
   }
   result.errors = gpu.errors.slice(0, 5)
   log(`CPU ${result.cpuMs} ms, GPU ${result.gpuMs} ms for ${carried.length} fields (${result.adapter})`)

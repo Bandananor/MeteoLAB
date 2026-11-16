@@ -476,13 +476,20 @@ export class AtmosphereModel implements TaskModel {
 
   /** `deposit`: the field is water that lands in the rain gauge (charge is not). */
   private sediment(rain: Float32Array, vt: Float32Array, dt: number, deposit = true) {
+    const parts = this.fallParts(rain, vt, dt)
+    for (let p = 0; p < parts; p++) this.sedimentPart(rain, vt, dt / parts, deposit)
+  }
+
+  /**
+   * Sub-steps of a field's fall: the explicit upwind fall is stable while a node loses at most all of its water in one
+   * go — large hail (30-40 m/s) through the 100 m levels at the ground needs sub-steps at dt = 3 s (fall speeds kept from
+   * the start of the step).
+   */
+  private fallParts(rain: Float32Array, vt: Float32Array, dt: number) {
     const { nz, layer } = this.grid, rho = this.env.rho, lw = this.levelWeight, dz = this.grid.dz
-    // The explicit upwind fall is stable while a node loses at most all of its water in one go: large hail (30-40 m/s)
-    // through the 100 m levels at the ground needs sub-steps at dt = 3 s (fall speeds kept from the start of the step).
     let courant = 0
     for (let z = 0; z < nz; z++) { const c = dt * rho[z] / (lw[z] * dz); for (let i = z * layer; i < (z + 1) * layer; i++) if (rain[i] !== 0) courant = Math.max(courant, c * vt[i]) }
-    const parts = Math.max(1, Math.ceil(courant / .8))
-    for (let p = 0; p < parts; p++) this.sedimentPart(rain, vt, dt / parts, deposit)
+    return Math.max(1, Math.ceil(courant / .8))
   }
 
   private sedimentPart(rain: Float32Array, vt: Float32Array, dt: number, deposit: boolean) {
@@ -738,18 +745,46 @@ export class AtmosphereModel implements TaskModel {
     return this.withIce() ? [[this.rain, this.fallSpeed], [this.snow, this.snowFall], [this.graupel, this.graupelFall], [this.hail, this.hailFall]] : [[this.rain, this.fallSpeed]]
   }
 
-  /** The start of a step: the ground and shade, the fall speeds, hail collection and (WENO) the sedimentation. */
-  beginStep(dt: number) {
+  /**
+   * The start of a step: the ground and shade, the fall speeds, hail collection and (WENO) the sedimentation, unless
+   * `sediment` is false (the GPU does it: fallInputs, landed).
+   */
+  beginStep(dt: number, sediment = true) {
     const { nz } = this.grid
     this.updateGround(); this.updateShade()
     this.runner.run('fall', nz, dt)
     if (this.withIce()) this.collectHail(dt)
-    // Precipitation first falls (sedimentation, here), then every field is transported. The face fluxes of the
-    // transport velocity (dynamics) depend on u, v, w only, so the fall may come before them.
-    if ((this.config.transport ?? this.transport) === 'weno') {
-      for (const [field, vt] of this.falling()) this.sediment(field, vt, dt)
-      if (this.electrified()) for (const [field, vt] of this.chargeFalls()) this.sediment(field, vt, dt, false)
-    }
+    if (sediment) this.sedimentStep(dt)
+  }
+
+  /**
+   * The sedimentation of a step (WENO): precipitation first falls, then every field is transported. The face fluxes of
+   * the transport velocity (dynamics) depend on u, v, w only, so the fall may come before them.
+   */
+  sedimentStep(dt: number) {
+    if ((this.config.transport ?? this.transport) !== 'weno') return
+    for (const [field, vt] of this.falling()) this.sediment(field, vt, dt)
+    if (this.electrified()) for (const [field, vt] of this.chargeFalls()) this.sediment(field, vt, dt, false)
+  }
+
+  /**
+   * The sedimentation of this step for the GPU: each falling field (its index in dynamicsInputs()), its fall speed, its
+   * sub-steps (as sediment()) and whether it lands in the rain gauge (water) or only carries charge to the ground.
+   */
+  fallInputs(dt: number) {
+    const carried = this.carried(), index = (f: Float32Array) => carried.findIndex(c => c.field === f)
+    const list = [...this.falling().map(([f, vt]) => ({ k: index(f), vt, deposit: true })), ...(this.electrified() ? this.chargeFalls().map(([f, vt]) => ({ k: index(f), vt, deposit: false })) : [])]
+    return list.map(x => ({ ...x, parts: this.fallParts(carried[x.k].field, x.vt, dt) }))
+  }
+
+  /** What fell through the ground in the GPU's sedimentation (per fall of fallInputs, per column: rho0 q Vt dt summed). */
+  landed(falls: readonly { deposit: boolean }[], ground: readonly ArrayLike<number>[]) {
+    const { layer, dx, dy } = this.grid
+    falls.forEach((f, j) => {
+      const g = ground[j]
+      if (f.deposit) { for (let i = 0; i < layer; i++) if (g[i] !== 0) this.deposit(i, g[i]) }
+      else { let out = 0; for (let i = 0; i < layer; i++) out += g[i]; this.chargeGround += out * dx * dy }
+    })
   }
 
   /**
@@ -807,16 +842,64 @@ export class AtmosphereModel implements TaskModel {
     }
   }
 
-  /** The end of a step: (WENO) the positivity fix, then physics, turbulence, friction, the projection, lightning. */
+  /** The end of a step: physicsStep (positivity fix, physics), mixStep (turbulence, friction), the projection, afterStep. */
   endStep(dt: number) {
-    const { nz, hz, layer } = this.grid
+    this.physicsStep(dt)
+    this.finishStep(dt)
+  }
+
+  /** After the physics, on the CPU: mixStep, the projection, afterStep. */
+  finishStep(dt: number) {
+    this.mixStep(dt)
+    this.project(dt)
+    this.afterStep(dt)
+  }
+
+  /** (WENO) the positivity fix of the transported fields, then the physics node by node. */
+  physicsStep(dt: number) {
     if ((this.config.transport ?? this.transport) === 'weno') {
       const carried = this.carried()
       this.runner.run('finish', carried.length, dt)
       for (let k = 0; k < carried.length; k++) if (carried[k].conserve) this.negativeFilled += this.taskNegative[k]
     }
     // Microphysics, buoyancy, Coriolis, surface fluxes and the sponge: node by node, one task per level.
-    this.runner.run('physics', nz, dt)
+    this.runner.run('physics', this.grid.nz, dt)
+  }
+
+  /** After the projection: the rotation tracking and the lightning. */
+  afterStep(dt: number) {
+    this.updateRotation(dt)
+    if (this.electrified()) this.discharge(dt)
+  }
+
+  /** Whether the turbulence and friction are the ones the GPU does (Smagorinsky K, explicit vertical mixing). */
+  gpuMixing() { return this.gpuDynamics() && this.fixedViscosity === null && this.verticalMixing === 'explicit' }
+
+  /**
+   * What the GPU's turbulence, friction and projection need (see mixStep, Turbulence.viscosity and mix): the mixed
+   * fields (their index in dynamicsInputs(), base state, K factor), the condensate, the options, the surface drag.
+   */
+  mixingInputs(dt: number) {
+    const carried = this.carried(), e = this.env, cfg = this.config, hz = this.grid.hz, [fu, fv] = this.frame
+    const mixed = this.mixed().map(([field, base, factor]) => ({ k: carried.findIndex(c => c.field === field), base, factor }))
+    return {
+      mixed, condensate: this.withIce() ? this.condensate : this.cloud, exner: e.exner,
+      cs: SMAGORINSKY * cfg.turbulence / .55, anisotropic: this.turbulenceWidth === 'anisotropic', lengthDz: this.verticalLength === 'dz', saturated: this.moistStability === 'durran-klemp',
+      drag: { factor: this.surfaceDrag ? dragCoefficient(cfg, 2 * hz[0]) * dt / hz[0] : 0, fu, fv, ue0: e.u[0], ve0: e.v[0] },
+    }
+  }
+
+  /** The end of a step after the GPU's turbulence, friction and projection: the mixed fields (mixingInputs order), the pressure. */
+  endGpuStep(dt: number, mixed: readonly Float32Array[], pressure: ArrayLike<number> | null) {
+    this.mixed().forEach(([field], j) => field.set(mixed[j]))
+    if (pressure) for (let c = 0; c < this.pressure.length; c++) this.pressure[c] = pressure[c]
+    this.clipWind()
+    this.afterStep(dt)
+  }
+
+  /** The subgrid turbulence and the surface friction, the ground and top rigid (before the projection). */
+  mixStep(dt: number) {
+    const { nz, hz, layer } = this.grid
     const cfg = this.config, e = this.env, u = this.u, v = this.v, w = this.w
     // Smagorinsky-Lilly subgrid mixing of momentum, heat and water (replaces the old horizontal smoothing of theta and q).
     const turb = this.turbulence
@@ -835,9 +918,6 @@ export class AtmosphereModel implements TaskModel {
       u[b] -= drag * (speed * ug - envSpeed * ue0); v[b] -= drag * (speed * vg - envSpeed * ve0)
       w[b] = 0; w[b + (nz - 1) * layer] = 0
     }
-    this.project(dt)
-    this.updateRotation(dt)
-    if (this.electrified()) this.discharge(dt)
   }
 
   /** Whether this step's buoyancy goes into the transport's stages (pressureInStages, WENO only) instead of physics(). */
@@ -1167,11 +1247,15 @@ export class AtmosphereModel implements TaskModel {
 
   /** Makes the node velocities exactly free of dual-cell divergence (see PressureSolver); ground and top are rigid walls. */
   private project(dt: number, limit = true) {
-    const u = this.u, v = this.v, w = this.w
     const { nz, ny } = this.grid, run = (phase: Phase, tasks: number) => this.runner.run(phase, tasks, dt)
     run('pressureDivergence', nz - 1); run('pressureForward', nz - 1); run('pressureModes', ny); run('pressureInverse', nz - 1); run('pressureCorrect', nz)
     // The safety limits act once a step, on the final velocity, not on the stages' (clipped counts per step as before).
-    if (!limit) return
+    if (limit) this.clipWind()
+  }
+
+  /** The safety limits of the wind (U_LIMIT, W_LIMIT), counted in `clipped`. */
+  private clipWind() {
+    const u = this.u, v = this.v, w = this.w
     let clipped = 0
     for (let i = 0; i < this.grid.n; i++) {
       if (u[i] < -U_LIMIT || u[i] > U_LIMIT) { u[i] = clamp(u[i], -U_LIMIT, U_LIMIT); clipped++ }
