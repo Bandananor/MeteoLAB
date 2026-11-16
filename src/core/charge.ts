@@ -13,13 +13,15 @@ import { N0S, plateSize, RHO_S } from './ice'
 /** No charge separation colder than this (Mansell et al. 2005 / Saunders and Peck 1998: no data), °C. */
 export const CHARGING_COLDEST = -33
 /**
- * Which non-inductive charging (experiment 16.11.2026, STORMLAB_CHARGING=tak for a whole run in Node): 'sp98' — the
- * charge per collision of Saunders et al. (1991) signed by the critical rime accretion rate of Saunders & Peck (1998),
- * the default; 'tak' — the Takahashi (1978) table by temperature and cloud water as WRF-ELEC has it (takahashi.ts,
+ * Which non-inductive charging: 'tak' (the default since 16.11.2026) — the Takahashi (1978) table by temperature and cloud water as WRF-ELEC has it (takahashi.ts,
  * routine TAKA): times min(5 (D / 100 µm)² |ΔV| / 8 m/s, 10), at most 500 fC, the share of collisions that charge
- * 0.5 (1 - 0.1 exp(0.1 Tc)) (ecollmx and the sticking efficiency there), down to -40 °C.
+ * 0.5 (1 - 0.1 exp(0.1 Tc)) (ecollmx and the sticking efficiency there), down to -40 °C; 'sp98' (STORMLAB_CHARGING=sp98 for
+ * a whole run in Node, the default until then) — the charge per collision of Saunders et al. (1991) signed by the
+ * critical rime accretion rate of Saunders & Peck (1998). With SP98 the positive charging at 0…-15 °C was 40 times weaker
+ * than the negative above and the model gave no -CG (classic supercell, 50 min: IC 4057, -CG 0, +CG 52); with TAK IC 2235,
+ * -CG 128, +CG 15 (tests/bench/flashes.ts, README journal 15-16.11.2026).
  */
-export const CHARGING_SCHEME: 'sp98' | 'tak' = (globalThis as { process?: { env: Record<string, string | undefined> } }).process?.env?.STORMLAB_CHARGING === 'tak' ? 'tak' : 'sp98'
+export const CHARGING_SCHEME: 'sp98' | 'tak' = (globalThis as { process?: { env: Record<string, string | undefined> } }).process?.env?.STORMLAB_CHARGING === 'sp98' ? 'sp98' : 'tak'
 /**
  * Upper limit of the charge separated per collision, C — keeps the fit, extrapolated to large aggregates and fast
  * impacts, bounded (20 fC as in Ziegler et al. 1991 and Mansell et al. 2005, by memory).
@@ -121,8 +123,8 @@ const CD = .6, GAMMA_45 = 11.6317
  * charges 0.5 (1 - 0.1 exp(0.1 Tc)) instead of the Lin rebound, down to -40 °C, and the rate is held within
  * ±TAK_RATE_MAX for each pair of a rimer and a crystal kind, as WRF-ELEC holds it (scxacymax).
  */
-export function chargingRate(tc: number, rho: number, cloud: number, ice: number, snow: number, graupel: number, hail: number, snowFall: number, wetGraupel = false, wetHail = false, crystals?: number) {
-  const tak = CHARGING_SCHEME === 'tak'
+export function chargingRate(tc: number, rho: number, cloud: number, ice: number, snow: number, graupel: number, hail: number, snowFall: number, wetGraupel = false, wetHail = false, crystals?: number, scheme: 'sp98' | 'tak' = CHARGING_SCHEME) {
+  const tak = scheme === 'tak'
   if (tc >= 0 || tc < (tak ? -40 : CHARGING_COLDEST) || cloud <= 0 || ice + snow <= 0 || graupel + hail <= 0) return 0
   // Called at every mixed-phase node each step: no arrays, two rimers by two crystal kinds written out.
   const rebound = tak ? .5 * (1 - .1 * Math.exp(.1 * tc)) : 1 - Math.exp(.09 * tc), water = rho * cloud * 1000
@@ -136,8 +138,8 @@ export function chargingRate(tc: number, rho: number, cloud: number, ice: number
   const snowSlope = snow > 0 ? (Math.PI * RHO_S * N0S / (rho * snow)) ** .25 : 0, ns = snow > 0 ? N0S / snowSlope : 0, ds = snow > 0 ? (tak ? 1.8171 : 1) / snowSlope : 0
   let rate = 0
   const table = tak ? takahashiCharge(tc, water) : 0
-  if (graupel > 0 && !wetGraupel) rate += rimerRate(GRAUPEL, graupel, tc, rho, water, rebound, ni, di, ns, ds, snowFall, table)
-  if (hail > 0 && !wetHail) rate += rimerRate(HAIL, hail, tc, rho, water, rebound, ni, di, ns, ds, snowFall, table)
+  if (graupel > 0 && !wetGraupel) rate += rimerRate(GRAUPEL, graupel, tc, rho, water, rebound, ni, di, ns, ds, snowFall, table, tak)
+  if (hail > 0 && !wetHail) rate += rimerRate(HAIL, hail, tc, rho, water, rebound, ni, di, ns, ds, snowFall, table, tak)
   return rate
 }
 
@@ -145,11 +147,10 @@ export function chargingRate(tc: number, rho: number, cloud: number, ice: number
 export const TAK_RATE_MAX = 3e-9
 
 /** One rimer's share of chargingRate: its collisions with the cloud ice (ni per m³ of diameter di, at rest) and the snow (ns, ds, falling at vs). */
-function rimerRate(rimer: Rimer, mass: number, tc: number, rho: number, water: number, rebound: number, ni: number, di: number, ns: number, ds: number, vs: number, table: number) {
+function rimerRate(rimer: Rimer, mass: number, tc: number, rho: number, water: number, rebound: number, ni: number, di: number, ns: number, ds: number, vs: number, table: number, tak: boolean) {
   const lambda = (Math.PI * rimer.density * rimer.n0 / (rho * mass)) ** .25, fall = Math.sqrt(4 * G * rimer.density / (3 * CD * rho)) * GAMMA_45 / 6 / Math.sqrt(lambda)
   const impact = Math.min(fall, CHARGING_SPEED), rar = COLLECTION_EFFICIENCY * water * impact, l2 = lambda * lambda, l3 = l2 * lambda, k = Math.PI / 4 * rimer.n0 * rebound
   let rate = 0
-  const tak = CHARGING_SCHEME === 'tak'
   const pair = (r: number) => tak ? Math.max(-TAK_RATE_MAX, Math.min(TAK_RATE_MAX, r)) : r
   if (ni > 0) rate += pair(ni * k * (2 / l3 + 2 * di / l2 + di * di / lambda) * fall * (tak ? takahashiScaled(table, di, fall) : collisionCharge(tc, rar, di, impact)))
   if (ns > 0) { const v = Math.abs(fall - vs); rate += pair(ns * k * (2 / l3 + 2 * ds / l2 + ds * ds / lambda) * v * (tak ? takahashiScaled(table, ds, v) : collisionCharge(tc, rar, ds, Math.abs(impact - vs)))) }

@@ -38,14 +38,20 @@ describe('electrification (2.3): non-inductive charging and charge carried with 
     expect(chargingRate(-15, rho, 1e-3, 5e-4, 5e-4, 0, 0, .8)).toBe(0)
     expect(chargingRate(5, ...args)).toBe(0)
     // Little cloud water at -20 °C: negative graupel; much of it at -10 °C: positive.
-    expect(chargingRate(-20, rho, 2e-4, 5e-4, 5e-4, 2e-3, 0, .8)).toBeLessThan(0)
-    expect(chargingRate(-10, rho, 2e-3, 5e-4, 5e-4, 2e-3, 0, .8)).toBeGreaterThan(0)
+    expect(chargingRate(-20, rho, 2e-4, 5e-4, 5e-4, 2e-3, 0, .8, false, false, undefined, 'sp98')).toBeLessThan(0)
+    expect(chargingRate(-10, rho, 2e-3, 5e-4, 5e-4, 2e-3, 0, .8, false, false, undefined, 'sp98')).toBeGreaterThan(0)
     // A mature updraft's flank (1 g/m³ of graupel and of ice, 0.2 g/m³ of cloud water): ~0.01-10 nC/m³ per minute, the
     // order that builds storm fields in ten minutes or so where many such nodes charge.
     // The effective water (0.6 of the cloud water) at the charging rimers' impact speed (6 m/s): at -20 °C graupel turns
     // positive only above ~0.8 g/m³ of cloud water (the strong core), negative below it (the flanks, the anvil).
-    expect(chargingRate(-20, 1, 1.5e-3, 5e-4, 5e-4, 2e-3, 0, .8)).toBeGreaterThan(0)
-    expect(chargingRate(-20, 1, .5e-3, 5e-4, 5e-4, 2e-3, 0, .8)).toBeLessThan(0)
+    expect(chargingRate(-20, 1, 1.5e-3, 5e-4, 5e-4, 2e-3, 0, .8, false, false, undefined, 'sp98')).toBeGreaterThan(0)
+    expect(chargingRate(-20, 1, .5e-3, 5e-4, 5e-4, 2e-3, 0, .8, false, false, undefined, 'sp98')).toBeLessThan(0)
+    // Takahashi (the default since 16.11.2026): positive graupel at -10 °C with 0.4 g/m³, negative at -15 °C with 2 g/m³,
+    // and at -35 °C, colder than SP98 charges, still some (the table tapers to -40 °C).
+    expect(chargingRate(-10, 1, .4e-3, 5e-4, 5e-4, 2e-3, 0, .8, false, false, undefined, 'tak')).toBeGreaterThan(0)
+    expect(chargingRate(-15, 1, 2e-3, 5e-4, 5e-4, 2e-3, 0, .8, false, false, undefined, 'tak')).toBeLessThan(0)
+    expect(chargingRate(-35, 1, .4e-3, 5e-4, 5e-4, 2e-3, 0, .8, false, false, undefined, 'sp98')).toBe(0)
+    expect(chargingRate(-35, 1, .4e-3, 5e-4, 5e-4, 2e-3, 0, .8, false, false, undefined, 'tak')).not.toBe(0)
     // In wet growth the crystals stick: no charge.
     expect(chargingRate(-10, rho, 2e-3, 5e-4, 5e-4, 2e-3, 0, .8, true)).toBe(0)
     const perMinute = Math.abs(chargingRate(-20, rho, 3e-4, 1.4e-3, 1e-3, 1.4e-3, 0, .8)) * 60

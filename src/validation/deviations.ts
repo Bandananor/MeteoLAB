@@ -65,7 +65,7 @@ export const DEVIATIONS: (ValidationCase & { plan: string; cause: string })[] = 
   {
     id: 'supercell-microphysics', title: 'Classic supercell, 60 min: outflow, hail and lightning', minutes: 12, plan: 'B1, B2, B6',
     source: 'RFD θv′ at the ground: under ~2 K in strongly tornadic RFDs, ~4–7 K in nontornadic ones (Markowski, Straka & Rasmussen 2002, MWR 130, 1692, as quoted by later papers); SHIP > 1 — an environment favourable for hail ≥ 5 cm (SPC); +CG 8.7–10.6 % of ground flashes over the USA, regionally < 2 to > 25 % (Rudlosky & Fuelberg 2010, MWR 138, 3623; Orville et al. 2011, MWR 139, 1305)',
-    cause: 'the outflow: rain evaporation with the fixed Marshall-Palmer N₀ gives 65–75 % of the cooling (D2; N₀ 1e6 would bring it to ~5 K); hail: single-moment, no size sorting or growth along trajectories; −CG: the graupel’s charging sign at −5…−15 °C (B6)',
+    cause: 'the outflow: rain evaporation with the fixed Marshall-Palmer N₀ gives 65–75 % of the cooling (D2; N₀ 1e6 would bring it to ~5 K); hail: single-moment, no size sorting or growth along trajectories; the +CG share is within nature’s range since the Takahashi charging (16.11.2026: 0.04; with SP98 ~0.8)',
     run() {
       const r = deviationRun({ ...SUMMER_DAY, ...scenario('Классическая суперячейка') }, 60)
       return { checks: [
