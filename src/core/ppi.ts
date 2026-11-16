@@ -72,6 +72,8 @@ export const ECHO_TOP_DBZ = 18, VIL_MAX_DBZ = 56
 export const VGO_DBZ = -5, Z1_LAYER = [600, 1000] as const, Z2_LAYER = [2000, 4000] as const, H3_ABOVE = 2250, ZMAX_FROM = 1000
 /** GIMET-2010's precipitation height (heightPrecipitation), m: its Z1 is the echo there. */
 export const Z1_HEIGHT = 600
+/** The ZDR column's thresholds: ZDR, dB (Snyder et al. 2015), and reflectivity, dBZ (Lo et al. 2024). */
+export const ZDR_COLUMN = { zdr: 1, dbz: 10 } as const
 
 /**
  * Nyquist velocities of the folding option, m/s: a pulsed Doppler radar measures the radial velocity only within
@@ -106,6 +108,8 @@ export class PPI {
    * cloud base H_НГО, the lowest beam height with VGO_DBZ (km, 0: no echo).
    */
   readonly z06: Float32Array; readonly zT15: Float32Array; readonly ngo: Float32Array
+  /** The ZDR column's depth above the 0 °C level, km, with zdrColumn() (NaN beyond range). */
+  readonly zdrColumnDepth: Float32Array
   /** The levels H2 and H3 of the last composite(), m. */
   levelH2 = 0; levelH3 = 0
   /** The -15 °C level of the last composite(), m (GIMET-2010's Z3). */
@@ -156,7 +160,7 @@ export class PPI {
   constructor(model: AtmosphereModel, w: number, h: number) {
     this.model = model; this.w = w; this.h = h
     const n = w * h, f = () => new Float32Array(n)
-    this.dbz = f(); this.velocity = f(); this.compositeDbz = f(); this.zdr = f(); this.rho = f(); this.kdp = f(); this.vil = f(); this.echoTop = f(); this.echoTopped = new Uint8Array(n); this.mesh = f(); this.vgo = f(); this.z1 = f(); this.z2 = f(); this.zmax = f(); this.zh2 = f(); this.zh3 = f(); this.zCore = f(); this.z06 = f(); this.zT15 = f(); this.ngo = f(); this.codes = new Uint8Array(n); this.gx = f(); this.gy = f(); this.sinAz = f(); this.cosAz = f(); this.range = f()
+    this.dbz = f(); this.velocity = f(); this.compositeDbz = f(); this.zdr = f(); this.rho = f(); this.kdp = f(); this.vil = f(); this.echoTop = f(); this.echoTopped = new Uint8Array(n); this.mesh = f(); this.vgo = f(); this.z1 = f(); this.z2 = f(); this.zmax = f(); this.zh2 = f(); this.zh3 = f(); this.zCore = f(); this.z06 = f(); this.zT15 = f(); this.ngo = f(); this.zdrColumnDepth = f(); this.codes = new Uint8Array(n); this.gx = f(); this.gy = f(); this.sinAz = f(); this.cosAz = f(); this.range = f()
     this.nodeDbz = new Float32Array(model.grid.n); this.nodeFall = new Float32Array(model.grid.n)
     this.nodeZdr = new Float32Array(model.grid.n); this.nodeRho = new Float32Array(model.grid.n).fill(1); this.nodeKdp = new Float32Array(model.grid.n)
     this.site = { x: model.grid.width / 2, y: model.grid.depth / 2 }
@@ -447,6 +451,46 @@ export class PPI {
    * tornado; 31 (no data) beyond the radar's range. `criteria`: 'rd' — RD 52.04.320-91 (phenomenon), 'gimet' — the
    * GIMET-2010 example criteria of the warm period (phenomenonGimet).
    */
+  /**
+   * The ZDR column (Snyder et al. 2015, from the abstract and the papers that retell it; .claude/literature/zdr-column.md):
+   * how far above the environment's 0 °C level ZDR >= ZDR_COLUMN.zdr dB reaches, unbroken from that level up, km; with
+   * Z >= ZDR_COLUMN.dbz (the UK variant of Lo et al. 2024 — S15's own Z threshold was not found). Along each column of
+   * the map the tilts give the heights; between two tilts linear, the top where ZDR falls through the threshold. Needs
+   * prepare() with `dual`. 0 where ZDR at the 0 °C level is below it or no beam reaches the level; beyond range NaN.
+   */
+  zdrColumn() {
+    const m = this.model, grid = m.grid, out = this.zdrColumnDepth, [ox, oy] = this.shift(), reach = this.profile.range
+    let h0 = 0
+    while (h0 < grid.height && m.env.temperatureEnv(h0) > 0) h0 += 25
+    this.levelH2 = h0
+    out.fill(0)
+    const state = new Int8Array(out.length) // 0 below the level, 1 in the column, 2 done
+    const lastH = new Float32Array(out.length).fill(NaN), lastZ = new Float32Array(out.length), lastOk = new Uint8Array(out.length)
+    const { zdr: zt, dbz: dt } = ZDR_COLUMN
+    for (const tilt of this.tilts) {
+      const gz = this.levelsFor(tilt)
+      for (let i = 0; i < out.length; i++) {
+        if (this.range[i] > reach) { out[i] = NaN; continue }
+        if (state[i] === 2) continue
+        const z = gz[i]
+        if (z < 0) { if (state[i] === 1) state[i] = 2; continue }
+        const gx = this.gx[i] - ox, gy = this.gy[i] - oy, h = heightAt(grid, z)
+        const zdr = m.sample(this.nodeZdr, gx, gy, z), ok = zdr >= zt && m.sample(this.nodeDbz, gx, gy, z) >= dt ? 1 : 0
+        if (state[i] === 0 && h >= h0) {
+          // The beam's first crossing of the level: the value there, linear from the beam below when there is one.
+          const atLevel = Number.isNaN(lastH[i]) ? ok : (lastOk[i] && ok) || (ok && (h - h0) < (h0 - lastH[i])) || (lastOk[i] && (h - h0) >= (h0 - lastH[i])) ? 1 : 0
+          if (!atLevel) { state[i] = 2; continue }
+          state[i] = 1
+        }
+        if (state[i] === 1) {
+          if (ok) out[i] = Math.max(out[i], (h - h0) / 1000)
+          else { if (lastOk[i] && lastH[i] >= h0) out[i] = Math.max(out[i], (lastH[i] + (h - lastH[i]) * (lastZ[i] - zt) / Math.max(1e-6, lastZ[i] - zdr) - h0) / 1000); state[i] = 2 }
+        }
+        lastH[i] = h; lastZ[i] = zdr; lastOk[i] = ok
+      }
+    }
+  }
+
   phenomena(motion: number, hooks: readonly { x: number; y: number }[] = [], criteria: 'rd' | 'gimet' = 'rd') {
     const reach = RD_CRITERIA.tornadoHook * 1000 / 2
     const e = this.model.env, top = this.model.grid.height, t = (h: number) => e.temperatureEnv(h)

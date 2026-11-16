@@ -9,7 +9,7 @@ import { L } from '../i18n'
  * read in a primary document.
  */
 /** The radar screen's products (src/radar/panel.ts). */
-export type RadarProduct = 'Z' | 'V' | 'SRV' | 'CR' | 'ZDR' | 'RHO' | 'KDP' | 'VIL' | 'ET' | 'MESH' | 'VGO' | 'MAP'
+export type RadarProduct = 'Z' | 'V' | 'SRV' | 'CR' | 'ZDR' | 'RHO' | 'KDP' | 'VIL' | 'ET' | 'MESH' | 'VGO' | 'MAP' | 'ZDC'
 
 export interface RadarProfile {
   name: string
@@ -47,7 +47,7 @@ export const RADARS: Record<RadarId, RadarProfile> = {
     // NEXRAD Level III (NCEI product descriptions): base and storm-relative velocity, the dual-pol moments ZDR, CC, KDP,
     // composite reflectivity, VIL, enhanced echo tops; the hail detection algorithm gives its largest hail size per cell
     // (MEHS, Hail Index), the MESH field here is gridded as MRMS does.
-    products: ['Z', 'V', 'SRV', 'ZDR', 'RHO', 'KDP', 'CR', 'VIL', 'ET', 'MESH'],
+    products: ['Z', 'V', 'SRV', 'ZDR', 'RHO', 'KDP', 'CR', 'VIL', 'ET', 'MESH', 'ZDC'],
     note: L('NEXRAD, США: S-диапазон, VCP 12/212 (14 наклонов за ~4,5 мин), строб 250 м', 'NEXRAD, USA: S band, VCP 12/212 (14 tilts in ~4.5 min), 250 m gates'),
     verified: L('наклоны VCP 12/212 и время — документация NWS (WDTD); луч 0,95°, дальности и Найквист 25–34 м/с — по вторичным источникам', 'VCP 12/212 tilts and time — NWS documentation (WDTD); 0.95° beam, ranges and Nyquist 25–34 m/s — secondary sources'),
   },
@@ -67,7 +67,7 @@ export const RADARS: Record<RadarId, RadarProfile> = {
     tilts: [.5, 1.5, 2.5, 3.5, 4.5, 5.5, 8, 12, 17, 25], nyquist: 32, range: 180_000, velocityRange: 180_000, volume: 300,
     // DWD radar products (dwd.de "Radarprodukte", read 03.11.2026): sweeps of Z, V, ZDR, rhoHV and PhiDP (no KDP), the
     // maximum composite DMAX (as CR), the single-site echo top PE at 5 dBZ; VII (integrated ice), not VIL; no SRV, no MESH.
-    products: ['Z', 'V', 'ZDR', 'RHO', 'CR', 'ET'], echoTopDbz: 5,
+    products: ['Z', 'V', 'ZDR', 'RHO', 'CR', 'ET', 'ZDC'], echoTopDbz: 5,
     note: L('Сеть Германии: C-диапазон, 10 наклонов за 5 мин, двойная частота импульсов 600/800 Гц', 'The German network: C band, 10 tilts in 5 min, dual PRF 600/800 Hz'),
     verified: L('всё — Helmert и др., ERAD 2014', 'all — Helmert et al., ERAD 2014'),
   },
@@ -75,7 +75,7 @@ export const RADARS: Record<RadarId, RadarProfile> = {
     name: L('Мобильный X (RaXPol)', 'Mobile X (RaXPol)'), band: 'X', wavelength: 3.08, beam: 1, step: 1, gate: 75,
     tilts: [1, 2, 3, 4, 5, 6, 8, 10, 12, 15], nyquist: 38.5, range: 30_000, velocityRange: 30_000, volume: 20,
     // A research radar gives the moments only (FARM, RaXPol): Z, V, ZDR, rhoHV; KDP from the phase in post-processing.
-    products: ['Z', 'V', 'ZDR', 'RHO', 'KDP'],
+    products: ['Z', 'V', 'ZDR', 'RHO', 'KDP', 'ZDC'],
     note: L('Исследовательский радар на грузовике: X-диапазон, объём за ~20 с, дальность 30 км', 'A truck-mounted research radar: X band, a volume in ~20 s, 30 km range'),
     verified: L('длина волны, луч, дальность, время — Pazmany и Bluestein 2011; наклоны — типичный набор (в источнике только их число, 10)', 'wavelength, beam, range, time — Pazmany & Bluestein 2011; the tilts — a typical set (the source gives only their number, 10)'),
   },
