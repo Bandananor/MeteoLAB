@@ -2,7 +2,8 @@
 // answers each batch of steps with a snapshot of the fields the view draws (see Atmosphere), in recycled buffers.
 // With cross-origin isolation the steps are shared with helper threads (step.worker.ts, src/core/threads.ts).
 import { AtmosphereModel, controlBuffer, createGrid, domainGrid, DT, type SimConfig, SharedMemory, ThreadRunner, TRANSPORT_SLABS, applyState, readState, intervene, saveState } from './core'
-import { BATCH_BUDGET_MS, MAX_STEPS_PER_BATCH, maxThreads, SNAPSHOT_COLUMNS, SNAPSHOT_FIELDS, type Snapshot, type Tuned, TUNE_STEPS, TUNE_WARM, TUNE_WORSE, type WorkerRequest } from './simulation'
+import type { GpuDynamics } from './gpu/dynamics'
+import { BATCH_BUDGET_MS, type GpuMode, MAX_STEPS_PER_BATCH, maxThreads, SNAPSHOT_COLUMNS, SNAPSHOT_FIELDS, type Snapshot, type Tuned, TUNE_STEPS, TUNE_WARM, TUNE_WORSE, type WorkerRequest } from './simulation'
 import type { HelperStart } from './step.worker'
 import { setLang } from './i18n'
 
@@ -23,6 +24,50 @@ let buffers = 0
 let pool: ThreadRunner | null = null, ready = true, generation = 0
 /** Threads the model runs on now, and the most it may use (the page's limit and the device). */
 let current = 1, ceiling = 1
+
+/**
+ * The dynamics on the GPU (Э3 step 5, src/gpu/dynamics.ts): the face projection and the RK3 stages of the transport with
+ * the pressure in them run on WebGPU, everything else on the CPU threads. 'auto' uses it where WebGPU exists and the
+ * model's transport is the one the GPU does (model.gpuDynamics()); 'off', or no WebGPU, or an error: the CPU as before.
+ */
+let gpuMode: GpuMode = 'auto', gpu: GpuDynamics | null = null, gpuState = 'off'
+
+/** Makes (or keeps) the GPU dynamics for the current model; the CPU steps until it is ready. */
+function startGpu() {
+  const m = model
+  if (!m) return
+  if (gpu && (gpuMode === 'off' || !gpu.matches(m.grid, m.env))) { gpu.destroy(); gpu = null }
+  if (gpu || gpuMode === 'off' || !m.gpuDynamics()) { gpuState = gpu ? gpuState : gpuMode === 'off' ? 'off' : 'cpu-transport'; return }
+  const nav = navigator as Navigator & { gpu?: GPU }
+  if (!nav.gpu) { gpuState = 'unavailable'; return }
+  const id = generation
+  gpuState = 'starting'
+  void import('./gpu/dynamics').then(({ GpuDynamics }) => GpuDynamics.create(m.grid, m.env)).then(g => {
+    if (id !== generation || gpuMode === 'off' || model !== m) { g.destroy(); return }
+    gpu = g; gpuState = g.adapter || 'WebGPU'
+  }, e => { gpuState = `error: ${String((e as Error)?.message ?? e)}` })
+}
+
+/** Time of the steps since the last snapshot, ms: whole steps and the wait for the GPU's part, and their count. */
+const timing = { step: 0, gpu: 0, steps: 0 }
+
+/** One model step: on the GPU when it is ready, otherwise (or after a GPU error) all on the CPU. */
+async function stepModel(m: AtmosphereModel) {
+  const g = gpu
+  if (!g || !m.gpuDynamics()) { m.step(DT); m.time += DT; return }
+  m.beginStep(DT)
+  const { fields, env } = m.dynamicsInputs()
+  let result: Float32Array[] | null = null
+  const t0 = performance.now()
+  try { result = (await g.step(fields, env, DT)).fields } catch (e) { g.errors.push(String(e)) }
+  timing.gpu += performance.now() - t0
+  if (g.errors.length || !result) {
+    // The GPU failed: this step's transport on the CPU, and the CPU from now on.
+    gpuState = `error: ${g.errors[0] ?? 'no result'}`; gpu = null; g.destroy()
+    m.dynamics(DT)
+  } else m.setCarried(result)
+  m.endStep(DT); m.time += DT
+}
 
 /** Threads for the physics: this worker plus helpers, leaving one core for the page. One without shared memory. */
 function threadCount(limit = Infinity) {
@@ -62,7 +107,7 @@ function start(config: SimConfig, limit?: number) {
   const threads = threadCount(limit), id = ++generation
   current = threads
   sentFlashes = 0
-  if (threads === 1) { model = new AtmosphereModel(config); ready = true; send(); return }
+  if (threads === 1) { model = new AtmosphereModel(config); ready = true; startGpu(); send(); return }
   const memory = new SharedMemory(), grid = domainGrid(config.domain, config.top, config.domainSize, config.spacing), control = controlBuffer()
   model = new AtmosphereModel(config, createGrid(grid), undefined, { memory })
   const runner = new ThreadRunner(model, control, threads - 1), started: Promise<unknown>[] = []
@@ -72,6 +117,7 @@ function start(config: SimConfig, limit?: number) {
     helper.postMessage({ config: { ...config }, grid, buffers: memory.buffers, control } satisfies HelperStart)
   }
   model.runner = pool = runner; model.transportSlabs = TRANSPORT_SLABS; ready = false
+  startGpu()
   void Promise.all(started).then(() => { if (id === generation) { ready = true; send() } })
 }
 
@@ -86,15 +132,21 @@ function send() {
   for (const key of SNAPSHOT_COLUMNS) { data.set(model[key], offset); offset += layer }
   const total = flashTotal(model), flashes = model.flashes.slice(Math.max(0, model.flashes.length - (total - sentFlashes)))
   sentFlashes = total
-  const snapshot: Snapshot = { type: 'snapshot', buffer, steps: pendingSteps, flashes, flashCount: { ...model.flashCount }, chargeGround: model.chargeGround, added: { ...model.added }, time: model.time, rotation: { ...model.rotation }, diagnostics: model.diagnostics(), threads: pool ? pool.helpers + 1 : 1, loaded }
+  const snapshot: Snapshot = { type: 'snapshot', buffer, steps: pendingSteps, flashes, flashCount: { ...model.flashCount }, chargeGround: model.chargeGround, added: { ...model.added }, time: model.time, rotation: { ...model.rotation }, diagnostics: model.diagnostics(), threads: pool ? pool.helpers + 1 : 1, gpu: gpuState, loaded,
+    stepMs: timing.steps ? { step: timing.step / timing.steps, gpu: timing.gpu / timing.steps } : undefined }
+  timing.step = timing.gpu = timing.steps = 0
   pendingSteps = 0; loaded = false
   scope.postMessage(snapshot, [buffer])
 }
 
-scope.addEventListener('message', ({ data }) => {
+// Requests are handled one after another: a GPU step awaits the GPU, and nothing may change the model in between.
+let queue: Promise<void> = Promise.resolve()
+scope.addEventListener('message', ({ data }) => { queue = queue.then(() => handle(data)).catch(e => console.error(e)) })
+
+async function handle(data: WorkerRequest) {
   switch (data.type) {
     case 'init': {
-      accumulator = 0; if (data.lang) setLang(data.lang)
+      accumulator = 0; if (data.lang) setLang(data.lang); if (data.gpu) gpuMode = data.gpu
       ceiling = threadCount(data.threads)
       start(data.config, data.tuned ? Math.min(data.tuned, ceiling) : ceiling)
       // A trial only without a remembered count and with threads to choose from: the most, then two thirds, a half, a third, one.
@@ -113,16 +165,18 @@ scope.addEventListener('message', ({ data }) => {
       } else { tune = null; const n = threadCount(data.count); if (n !== current) switchThreads(n) }
       break
     }
+    case 'gpu': gpuMode = data.mode; startGpu(); send(); break
     case 'intervene': if (model) intervene(model, data.intervention); break
     case 'release': free.push(data.buffer); break
-    case 'load': if (model) { applyState(model, readState(data.buffer)); sentFlashes = flashTotal(model); loaded = true; send() } break
+    case 'load': if (model) { applyState(model, readState(data.buffer)); sentFlashes = flashTotal(model); loaded = true; startGpu(); send() } break
     case 'advance': {
       if (!model || !ready) break
       accumulator = Math.min(accumulator + data.seconds * model.config.speed, MAX_STEPS_PER_BATCH * DT)
       let steps = 0
       const start = performance.now()
       while (accumulator >= DT && steps < MAX_STEPS_PER_BATCH && performance.now() - start < BATCH_BUDGET_MS) {
-        const t0 = performance.now(); model.step(DT); model.time += DT; accumulator -= DT; steps++
+        const t0 = performance.now(); await stepModel(model); accumulator -= DT; steps++
+        timing.step += performance.now() - t0; timing.steps++
         if (tune) { tuneStep(performance.now() - t0); if (!ready) break }
       }
       // Time the budget cut off is dropped (the model falls behind the speed setting instead of catching up in a burst).
@@ -134,10 +188,10 @@ scope.addEventListener('message', ({ data }) => {
     }
     case 'steps': {
       if (!model) break
-      for (let k = 0; k < data.count; k++) { model.step(DT); model.time += DT }
+      for (let k = 0; k < data.count; k++) await stepModel(model)
       pendingSteps += data.count; accumulator = 0
       send()
       break
     }
   }
-})
+}

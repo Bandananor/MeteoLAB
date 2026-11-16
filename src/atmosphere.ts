@@ -7,7 +7,7 @@ import { isPhone, PHONE_THREADS } from './hud'
 import type { FieldMode } from './render/fields'
 import type { InterventionKind, UhLayer } from './core'
 import { type LayerMode, type Quality, StormView, type ViewSettings } from './render/view'
-import { SNAPSHOT_COLUMNS, SNAPSHOT_FIELDS, type Snapshot, type Tuned, type WorkerRequest } from './simulation'
+import { type GpuMode, SNAPSHOT_COLUMNS, SNAPSHOT_FIELDS, type Snapshot, type Tuned, type WorkerRequest } from './simulation'
 
 /** Where the browser keeps the settings' thread choice ('auto' or a number). */
 const THREAD_CHOICE = 'meteolab-threads-choice'
@@ -15,8 +15,18 @@ const THREAD_CHOICE = 'meteolab-threads-choice'
 export function threadChoice(): number | 'auto' {
   try { const v = localStorage.getItem(THREAD_CHOICE); return v && v !== 'auto' && Number(v) >= 1 ? Math.round(Number(v)) : 'auto' } catch { return 'auto' }
 }
-/** Where the browser keeps the thread count the trial found fastest, per device (its cores) and grid. */
-const tunedKey = (g: { nx: number; ny: number; nz: number }) => `meteolab-threads:${navigator.hardwareConcurrency || 1}:${g.nx}x${g.ny}x${g.nz}`
+/** Where the browser keeps the settings' GPU choice ('auto' by default, or 'off'); ?gpu=off in the address wins. */
+const GPU_CHOICE = 'meteolab-gpu'
+/** The GPU choice: the dynamics on WebGPU where the browser has it ('auto'), or never ('off'). */
+export function gpuChoice(): GpuMode {
+  if (new URLSearchParams(globalThis.location?.search ?? '').get('gpu') === 'off') return 'off'
+  try { return localStorage.getItem(GPU_CHOICE) === 'off' ? 'off' : 'auto' } catch { return 'auto' }
+}
+/**
+ * Where the browser keeps the thread count the trial found fastest, per device (its cores), grid and GPU choice (with
+ * the dynamics on the GPU the CPU threads do less, and their best count differs).
+ */
+const tunedKey = (g: { nx: number; ny: number; nz: number }) => `meteolab-threads:${navigator.hardwareConcurrency || 1}:${g.nx}x${g.ny}x${g.nz}${gpuChoice() === 'auto' && 'gpu' in navigator ? ':gpu' : ''}`
 
 /** How often the live sounding (src/core/live.ts) and everything derived from it is recomputed, s of model time. */
 export const LIVE_EVERY = 60
@@ -76,6 +86,15 @@ export class Atmosphere implements ViewSettings {
   /** The thread trial's timings, ms per step by thread count, when this run made one (null: a remembered count, or not yet). */
   tuning: { threads: number; ms: number }[] | null = null
   private tunedKey = ''
+  /** The GPU as the worker reports it: its name when the dynamics run on it, else 'off', 'starting', 'unavailable', 'error: …'. */
+  gpu = 'off'
+  /** Mean step time of the last batch, ms, and the GPU's part of it. */
+  stepMs = { step: 0, gpu: 0 }
+  /** The settings' GPU choice, applied to the running model and remembered by the browser. */
+  setGpu(mode: GpuMode) {
+    try { localStorage.setItem(GPU_CHOICE, mode) } catch { /* not kept */ }
+    this.post({ type: 'gpu', mode })
+  }
   /**
    * The settings' thread choice, applied to the running model: a number, or 'auto' — the remembered count is forgotten
    * and the trial runs again. Remembered by the browser for the next runs.
@@ -123,7 +142,7 @@ export class Atmosphere implements ViewSettings {
       if (d.type === 'tuned') { this.tuning = d.trial; if (!Number(new URLSearchParams(location.search).get('threads')) && threadChoice() === 'auto') try { localStorage.setItem(key, String(d.threads)) } catch { /* not kept */ } return }
       this.receive(d)
     })
-    this.post({ type: 'init', config: { ...config }, threads, tuned, lang: lang() })
+    this.post({ type: 'init', config: { ...config }, threads, tuned, lang: lang(), gpu: gpuChoice() })
   }
 
   get time() { return this.mirror.time }
@@ -338,7 +357,7 @@ export class Atmosphere implements ViewSettings {
     this.unpack(data)
     // Recording: the older state held gives way to this one.
     if (this.held) { const [a, b] = this.held; a.data.set(data); a.time = s.time; this.held = [b, a] }
-    m.time = s.time; Object.assign(m.rotation, s.rotation); this.latest = s.diagnostics; this.threads = s.threads
+    m.time = s.time; Object.assign(m.rotation, s.rotation); this.latest = s.diagnostics; this.threads = s.threads; this.gpu = s.gpu ?? 'off'; if (s.stepMs) this.stepMs = s.stepMs
     const now = performance.now(), mark = this.speedMark
     if (!mark || m.time < mark.model || now - mark.real > 5000) this.speedMark = { real: now, model: m.time }
     else if (now - mark.real > 2000) { this.realSpeed = (m.time - mark.model) / ((now - mark.real) / 1000); this.speedMark = { real: now, model: m.time } }

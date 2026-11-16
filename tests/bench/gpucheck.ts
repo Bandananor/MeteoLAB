@@ -115,7 +115,7 @@ try {
     for (let z = 0; z < nz; z++) { const [t, q] = model.envNow(z); env.thetaEnv.push(t); env.qEnv.push(q); env.shape.push(zones && grid.zs[z] < ZONE_DEPTH ? zoneShape(grid.zs[z]) : 0) }
     const dyn = await GpuDynamics.create(grid, model.env)
     let dynMs = Infinity, after: Float32Array[] = []
-    for (let r = 0; r < 4; r++) { const res = await dyn.step(fields, env, DT); dynMs = Math.min(dynMs, res.gpuMs); after = res.fields }
+    for (let r = 0; r < 4; r++) { const res = await dyn.step(fields, env, DT, true); dynMs = Math.min(dynMs, res.gpuMs); after = res.fields }
     // The CPU: the same phases as step() (model.ts), on the model's own fields.
     const run = (phase: string, tasks: number) => model.runner.run(phase, tasks, DT), layer = grid.layer
     const t0 = performance.now()

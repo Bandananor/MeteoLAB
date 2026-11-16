@@ -132,6 +132,10 @@ export class GpuDynamics {
   private readonly levels: GPUBuffer; private readonly zone: GPUBuffer; private readonly load: GPUBuffer; private readonly zero: GPUBuffer
   private readonly div: GPUBuffer; private readonly base: GPUBuffer
   private readonly env: { rho: ArrayLike<number>; theta: ArrayLike<number>; exner: ArrayLike<number> }
+  /** Slots whose constant tendency is zeroed already; the read-back buffer (grown when more fields come). */
+  private readonly zeroed = new Set<number>(); private readBuffer: GPUBuffer | null = null; private signature = ''
+  /** The bind groups of the field set (made anew with it). */
+  private groups: { load: GPUBindGroup; buoyancy: GPUBindGroup[]; rigid: GPUBindGroup; profile: GPUBindGroup } | null = null
 
   static async create(grid: Grid, env: { rho: ArrayLike<number>; theta: ArrayLike<number>; exner: ArrayLike<number> }, options: GPURequestAdapterOptions = { powerPreference: 'high-performance' }) {
     const adapter = await navigator.gpu?.requestAdapter(options)
@@ -155,6 +159,15 @@ export class GpuDynamics {
     device.queue.writeBuffer(this.base, 0, Float32Array.from(env.theta))
   }
 
+  /** Whether this instance fits a model's grid and base state (a new model with the same domain may keep it). */
+  matches(grid: Grid, env: { rho: ArrayLike<number>; theta: ArrayLike<number>; exner: ArrayLike<number> }) {
+    const g = this.grid, same = (a: ArrayLike<number>, b: ArrayLike<number>) => a.length === b.length && Array.from(a).every((x, k) => x === b[k])
+    return g.nx === grid.nx && g.ny === grid.ny && g.nz === grid.nz && g.dx === grid.dx && g.dy === grid.dy && same(g.zs, grid.zs) && same(this.env.rho, env.rho) && same(this.env.theta, env.theta) && same(this.env.exner, env.exner)
+  }
+
+  /** Frees the device and its buffers. */
+  destroy() { this.device.destroy() }
+
   private group(k: Kernel, buffers: Record<number, GPUBuffer>) {
     return this.device.createBindGroup({ layout: this.pipelines.get(k)!.getBindGroupLayout(0), entries: USES[k].map(b => ({ binding: b, resource: { buffer: buffers[b] } })) })
   }
@@ -165,9 +178,10 @@ export class GpuDynamics {
 
   /**
    * One step's dynamics by dt. `fields`: the carried fields in any order (u, v, w and theta among them); returns them
-   * after the three stages, in the same order, and the GPU time (ms, submission to completion).
+   * after the three stages, in the same order (views of one array), and the time: with `timed` the computation's alone
+   * (ms, submission to completion), otherwise the whole round trip with the read-back.
    */
-  async step(fields: readonly DynamicsField[], env: DynamicsEnv, dt: number): Promise<{ fields: Float32Array[]; gpuMs: number }> {
+  async step(fields: readonly DynamicsField[], env: DynamicsEnv, dt: number, timed = false): Promise<{ fields: Float32Array[]; gpuMs: number }> {
     const d = this.device, g = this.grid, { n, nz, layer } = g, queue = d.queue, el = this.elliptic
     const roleOf = (r: Role) => fields.findIndex(f => f.role === r)
     // Uniforms and per-level data.
@@ -187,22 +201,31 @@ export class GpuDynamics {
     if (env.zoneTheta && env.zoneVapour) for (let c = 0; c < layer; c++) { zone[2 * c] = env.zoneTheta[c]; zone[2 * c + 1] = env.zoneVapour[c] }
     queue.writeBuffer(this.zone, 0, zone)
     el.setPressureStep(dt); this.transport.setStages(dt)
-    // The fields: u, v, w in the elliptic solver's buffers (transported in place), the rest in the transport's own.
+    // The fields: u, v, w in the elliptic solver's buffers (transported in place), the rest in the transport's own;
+    // all made anew when the set of fields changes (e.g. the ice microphysics or lightning switched).
+    const signature = fields.map(f => f.role).join()
+    if (signature !== this.signature) { this.transport.reset(); this.zeroed.clear(); this.groups = null; this.signature = signature }
     const wind: Partial<Record<Role, number>> = { u: 8, v: 9, w: 10 }
     const slots: Slot[] = fields.map((f, k) => this.transport.slot(k, f.monotone, wind[f.role] !== undefined ? el.buffer(wind[f.role]!) : undefined))
     const th = roleOf('theta'), base = this.env.theta
     fields.forEach((f, k) => {
       if (k === th) { const pert = new Float32Array(n); for (let i = 0; i < n; i++) pert[i] = f.q[i] - base[Math.floor(i / layer)]; queue.writeBuffer(slots[k].q, 0, pert) }
       else queue.writeBuffer(slots[k].q, 0, f.q)
-      if (k !== th) queue.writeBuffer(slots[k].extra, 0, new Float32Array(n))
+      if (k !== th && !this.zeroed.has(k)) { queue.writeBuffer(slots[k].extra, 0, new Float32Array(n)); this.zeroed.add(k) }
     })
-    const slotOf = (r: Role) => { const k = roleOf(r); return k < 0 ? this.zero : slots[k].q }
-    const loadGroup = this.group('loading', { 0: this.params, 7: this.load, 9: slotOf('cloud'), 10: slotOf('ice'), 11: slotOf('rain'), 12: slotOf('snow'), 13: slotOf('graupel'), 14: slotOf('hail') })
-    const wSlot = slots[roleOf('w')]
-    const buoyGroups = this.stageRates.map(r => this.group('buoyancy', { 0: this.params, 1: r, 2: this.levels, 3: this.zone, 4: wSlot.tend, 5: slots[th].q, 6: slotOf('q'), 7: this.load, 8: el.buffer(10) }))
-    const rigidGroup = this.group('rigid', { 0: this.params, 8: el.buffer(10) })
-    const profileGroup = this.group('profileTendency', { 0: this.params, 2: this.levels, 15: el.buffer(13), 16: this.base, 17: slots[th].extra })
-    await queue.onSubmittedWorkDone()
+    if (!this.groups) {
+      const slotOf = (r: Role) => { const k = roleOf(r); return k < 0 ? this.zero : slots[k].q }, wSlot = slots[roleOf('w')]
+      this.groups = {
+        load: this.group('loading', { 0: this.params, 7: this.load, 9: slotOf('cloud'), 10: slotOf('ice'), 11: slotOf('rain'), 12: slotOf('snow'), 13: slotOf('graupel'), 14: slotOf('hail') }),
+        buoyancy: this.stageRates.map(r => this.group('buoyancy', { 0: this.params, 1: r, 2: this.levels, 3: this.zone, 4: wSlot.tend, 5: slots[th].q, 6: slotOf('q'), 7: this.load, 8: el.buffer(10) })),
+        rigid: this.group('rigid', { 0: this.params, 8: el.buffer(10) }),
+        profile: this.group('profileTendency', { 0: this.params, 2: this.levels, 15: el.buffer(13), 16: this.base, 17: slots[th].extra }),
+      }
+    }
+    const { load: loadGroup, buoyancy: buoyGroups, rigid: rigidGroup, profile: profileGroup } = this.groups
+    // timed (the bench): the computation alone, from a quiet queue to its completion; otherwise one submission with the
+    // read-back and a single wait for it (the app).
+    if (timed) await queue.onSubmittedWorkDone()
     const t0 = performance.now(), enc = d.createCommandEncoder()
     {
       const pass = enc.beginComputePass()
@@ -220,13 +243,17 @@ export class GpuDynamics {
       for (const s of slots) this.transport.encodeUpdate(pass, s, stage)
       if (stage < 2) { this.dispatch(pass, 'rigid', rigidGroup, layer); el.encodePressure(pass) }
     }
-    pass.end(); queue.submit([enc.finish()]); await queue.onSubmittedWorkDone()
-    const gpuMs = performance.now() - t0
-    const read = d.createBuffer({ size: 4 * n * slots.length, usage: MAP_READ | COPY_DST }), e2 = d.createCommandEncoder()
+    pass.end()
+    let gpuMs = 0
+    if (timed) { queue.submit([enc.finish()]); await queue.onSubmittedWorkDone(); gpuMs = performance.now() - t0 }
+    const bytes = 4 * n * slots.length
+    if (!this.readBuffer || this.readBuffer.size < bytes) { this.readBuffer?.destroy(); this.readBuffer = d.createBuffer({ size: bytes, usage: MAP_READ | COPY_DST }) }
+    const read = this.readBuffer, e2 = timed ? d.createCommandEncoder() : enc
     slots.forEach((s, k) => e2.copyBufferToBuffer(s.q, 0, read, 4 * n * k, 4 * n))
-    queue.submit([e2.finish()]); await read.mapAsync(1)
-    const all = new Float32Array(read.getMappedRange().slice(0)); read.unmap(); read.destroy()
-    const out = slots.map((_, k) => all.slice(k * n, (k + 1) * n))
+    queue.submit([e2.finish()]); await read.mapAsync(1, 0, bytes)
+    const all = new Float32Array(read.getMappedRange(0, bytes).slice(0)); read.unmap()
+    if (!timed) gpuMs = performance.now() - t0
+    const out = slots.map((_, k) => all.subarray(k * n, (k + 1) * n))
     if (th >= 0) for (let i = 0; i < n; i++) out[th][i] += base[Math.floor(i / layer)]
     this.errors.push(...this.transport.errors.splice(0), ...el.errors.splice(0))
     return { fields: out, gpuMs }

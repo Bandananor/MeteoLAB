@@ -18,11 +18,16 @@ export const BATCH_BUDGET_MS = 60
  */
 export const maxThreads = () => Math.max(1, (globalThis.navigator?.hardwareConcurrency || 1) - 1)
 
+/** The GPU setting: the dynamics on WebGPU where available, or never. */
+export type GpuMode = 'auto' | 'off'
+
 export type WorkerRequest =
   /** lang: the page's language (src/i18n.ts), for any text the worker makes. */
   /** threads: an upper limit for the physics threads (the page's ?threads= parameter, to compare speeds). */
   /** tuned: the thread count this browser found fastest for this grid before (no trial then); see ThreadTuning. */
-  | { type: 'init'; config: SimConfig; threads?: number; tuned?: number; lang?: Lang }
+  /** gpu: the dynamics on the GPU — 'auto' (where WebGPU exists) or 'off' (see simulation.worker.ts). */
+  | { type: 'init'; config: SimConfig; threads?: number; tuned?: number; lang?: Lang; gpu?: GpuMode }
+  | { type: 'gpu'; mode: GpuMode }
   | { type: 'advance'; seconds: number }
   /** The thread count chosen in the settings: a number (within maxThreads), or 'auto' — the trial again. */
   | { type: 'threads'; count: number | 'auto' }
@@ -54,6 +59,13 @@ export interface Snapshot {
   added: AtmosphereModel['added']
   /** Threads the physics runs on (1 without cross-origin isolation). */
   threads: number
+  /**
+   * The GPU: its name when the dynamics run on it; else 'off', 'starting', 'unavailable' (no WebGPU),
+   * 'cpu-transport' (a transport the GPU does not do) or 'error: …'.
+   */
+  gpu?: string
+  /** Mean time of the steps in this batch, ms: the whole step and the wait for the GPU's part of it. */
+  stepMs?: { step: number; gpu: number }
   /** The first snapshot after a 'load' request: the ones still on their way from before it are stale. */
   loaded?: boolean
 }

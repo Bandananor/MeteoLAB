@@ -163,6 +163,9 @@ export class GpuTransport {
     return s
   }
 
+  /** Forgets the fields' buffers (their set changed: another order of fields or other buffers to transport in place). */
+  reset() { for (const s of this.slots) if (s) { s.tend.destroy(); s.start.destroy(); s.extra.destroy(); s.params.destroy() } this.slots.length = 0 }
+
   /** Writes the RK3 stages' dt shares (uniforms: before the submission of the stages encoded with them). */
   setStages(dt: number) { RK3_FRACTIONS.forEach((f, k) => this.device.queue.writeBuffer(this.stages[k], 0, Float32Array.of(f * dt, 0, 0, 0))) }
 

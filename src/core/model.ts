@@ -717,37 +717,80 @@ export class AtmosphereModel implements TaskModel {
     return steps
   }
 
+  /**
+   * One model step: beginStep, the transport (dynamics), endStep. Split so that the dynamics can run elsewhere (the GPU,
+   * src/gpu/dynamics.ts, from the worker): beginStep, then the GPU's stages with dynamicsInputs() written back by
+   * setCarried(), then endStep — the same step when gpuDynamics() says the model's transport is the one the GPU does.
+   */
   step(dt: number) {
-    const { nz, hz, layer } = this.grid
+    this.beginStep(dt)
+    this.dynamics(dt)
+    this.endStep(dt)
+  }
+
+  /**
+   * Whether the transport is the one GpuDynamics does: flux-form WENO with the pressure and buoyancy in the stages.
+   */
+  gpuDynamics() { return this.staged() }
+
+  /** The falling fields with their fall speeds (snow, graupel and hail only with ice microphysics). */
+  private falling(): [Float32Array, Float32Array][] {
+    return this.withIce() ? [[this.rain, this.fallSpeed], [this.snow, this.snowFall], [this.graupel, this.graupelFall], [this.hail, this.hailFall]] : [[this.rain, this.fallSpeed]]
+  }
+
+  /** The start of a step: the ground and shade, the fall speeds, hail collection and (WENO) the sedimentation. */
+  beginStep(dt: number) {
+    const { nz } = this.grid
     this.updateGround(); this.updateShade()
-    // Water is transported conservatively (WENO: by the flux form; semi-Lagrangian: by the mass fixer). Only the
-    // cold-pool indicator decays. It is a diagnostic only since 2026-10-08: the cold-pool and microburst
-    // parameterisations that pushed the air by it (lift on its edge, a push down in its core, a radial push of a
-    // rain-loaded downdraught at the ground) are gone — they gave 30-36 m/s downdraughts and 44-52 m/s winds at
-    // 100 m in ordinary storms; without them 9-16 and 20-29 m/s, the WK supercell unchanged (cloud experiments).
-    const withIce = (this.config.microphysics ?? this.microphysics) === 'ice'
-    // Precipitation fields with their fall speeds (snow only with ice microphysics).
-    const falling: [Float32Array, Float32Array][] = withIce ? [[this.rain, this.fallSpeed], [this.snow, this.snowFall], [this.graupel, this.graupelFall], [this.hail, this.hailFall]] : [[this.rain, this.fallSpeed]]
     this.runner.run('fall', nz, dt)
-    if (withIce) this.collectHail(dt)
+    if (this.withIce()) this.collectHail(dt)
+    // Precipitation first falls (sedimentation, here), then every field is transported. The face fluxes of the
+    // transport velocity (dynamics) depend on u, v, w only, so the fall may come before them.
+    if ((this.config.transport ?? this.transport) === 'weno') {
+      for (const [field, vt] of this.falling()) this.sediment(field, vt, dt)
+      if (this.electrified()) for (const [field, vt] of this.chargeFalls()) this.sediment(field, vt, dt, false)
+    }
+  }
+
+  /**
+   * The carried fields with their schemes and roles, and what the buoyancy and nudging of the stages need now (see
+   * stageBuoyancy, nudgeLevel): the input of GpuDynamics.step. The fields are the model's own arrays.
+   */
+  dynamicsInputs() {
+    const { nz, zs, width, depth } = this.grid, zones = this.zoneGround !== null, cfg = this.config, [ox, oy] = cfg.startOffset ?? [0, 0]
+    const roles = { u: this.u, v: this.v, w: this.w, theta: this.theta, q: this.q, cloud: this.cloud, ice: this.ice, rain: this.rain, snow: this.snow, graupel: this.graupel, hail: this.hail }
+    const fields = this.carried().map(c => ({ q: c.field, monotone: c.monotone, role: ((Object.keys(roles) as (keyof typeof roles)[]).find(r => roles[r] === c.field) ?? 'other') as keyof typeof roles | 'other' }))
+    const thetaEnv: number[] = [], qEnv: number[] = [], shape: number[] = []
+    for (let z = 0; z < nz; z++) { const [t, q] = this.envNow(z); thetaEnv.push(t); qEnv.push(q); shape.push(zones && zs[z] < ZONE_DEPTH ? zoneShape(zs[z]) : 0) }
+    const env = { thetaEnv, qEnv, shape, zoneTheta: zones ? this.zoneThetaNow : null, zoneVapour: zones ? this.zoneVapourNow : null,
+      nudge: startOf(cfg) === 'nudge' ? { time: this.time, top: cfg.nudge ?? NUDGE.w, cx: width / 2 + ox, cy: depth / 2 + oy } : null }
+    return { fields, env }
+  }
+
+  /** The carried fields after a transport done elsewhere, in dynamicsInputs() order. */
+  setCarried(values: readonly Float32Array[]) { this.carried().forEach((c, k) => c.field.set(values[k])) }
+
+  /** The transport of a step on the CPU (between beginStep and endStep). */
+  dynamics(dt: number) {
+    const { nz, layer } = this.grid
+    const withIce = this.withIce(), falling = this.falling()
     if ((this.config.transport ?? this.transport) === 'weno') {
       // Flux-form WENO5 + RK3 with the velocity frozen at the start of the step. The face fluxes are projected to zero
       // divergence, so water is conserved by the scheme itself: no mass fixer, only a positivity fix (fillNegative).
-      // Precipitation first falls (sedimentation, here), then every field is transported (one task per field).
       // The face fluxes of the transport velocity, projected (FluxTransport.setVelocity, in parts).
       const run = (phase: Phase, tasks: number) => this.runner.run(phase, tasks, dt)
       run('faces', nz); run('faceDivergence', nz); run('faceForward', nz); run('faceModes', this.grid.ny); run('faceInverse', nz); run('faceCorrect', nz); run('faceDivergence', nz)
-      for (const [field, vt] of falling) this.sediment(field, vt, dt)
-      if (this.electrified()) for (const [field, vt] of this.chargeFalls()) this.sediment(field, vt, dt, false)
       const carried = this.carried(), tasks = carried.length * this.slabs()
       for (const stage of [0, 1, 2] as const) {
         this.runner.run(`tendency${stage}`, tasks, dt); this.runner.run(`update${stage}`, tasks, dt)
         // The pressure acts within the stages: each stage's velocity made divergence-free (the last by project() below).
         if (this.pressureInStages && stage < 2) { const top = (nz - 1) * layer; for (let b = 0; b < layer; b++) { this.w[b] = 0; this.w[b + top] = 0 } this.project(dt, false) }
       }
-      this.runner.run('finish', carried.length, dt)
-      for (let k = 0; k < carried.length; k++) if (carried[k].conserve) this.negativeFilled += this.taskNegative[k]
-    } else {
+      return
+    }
+    // Semi-Lagrangian: water conserved by the mass fixer. Only the cold-pool indicator decays (a diagnostic since
+    // 2026-10-08: the cold-pool and microburst parameterisations that pushed the air by it are gone, see the journal).
+    {
       for (const [field, fs] of falling) {
         const lost = this.fallout(field, fs, dt)
         // Semi-Lagrangian sedimentation looks up from the arrival node, so the rain-free air under a rain shaft must fall
@@ -761,6 +804,16 @@ export class AtmosphereModel implements TaskModel {
       if (this.budget) for (const t of BUDGET_TERMS) carry(this.budget[t], 1)
       // Charges fall with their carriers and move with the air (not mass-fixed: the fast transport does not conserve them exactly).
       if (this.electrified()) { for (const [field, vt] of this.chargeFalls()) { this.advectFalling(field, dt, vt); this.commit(field, 1) } carry(this.chargeAir, 1) }
+    }
+  }
+
+  /** The end of a step: (WENO) the positivity fix, then physics, turbulence, friction, the projection, lightning. */
+  endStep(dt: number) {
+    const { nz, hz, layer } = this.grid
+    if ((this.config.transport ?? this.transport) === 'weno') {
+      const carried = this.carried()
+      this.runner.run('finish', carried.length, dt)
+      for (let k = 0; k < carried.length; k++) if (carried[k].conserve) this.negativeFilled += this.taskNegative[k]
     }
     // Microphysics, buoyancy, Coriolis, surface fluxes and the sponge: node by node, one task per level.
     this.runner.run('physics', nz, dt)
