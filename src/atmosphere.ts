@@ -7,7 +7,10 @@ import { isPhone, PHONE_THREADS } from './hud'
 import type { FieldMode } from './render/fields'
 import type { InterventionKind, UhLayer } from './core'
 import { type LayerMode, type Quality, StormView, type ViewSettings } from './render/view'
-import { SNAPSHOT_COLUMNS, SNAPSHOT_FIELDS, type Snapshot, type WorkerRequest } from './simulation'
+import { SNAPSHOT_COLUMNS, SNAPSHOT_FIELDS, type Snapshot, type Tuned, type WorkerRequest } from './simulation'
+
+/** Where the browser keeps the thread count the trial found fastest, per device (its cores) and grid. */
+const tunedKey = (g: { nx: number; ny: number; nz: number }) => `meteolab-threads:${navigator.hardwareConcurrency || 1}:${g.nx}x${g.ny}x${g.nz}`
 
 /** How often the live sounding (src/core/live.ts) and everything derived from it is recomputed, s of model time. */
 export const LIVE_EVERY = 60
@@ -64,6 +67,8 @@ export class Atmosphere implements ViewSettings {
   private speedMark: { real: number; model: number } | null = null
   /** Threads the physics runs on (see simulation.worker.ts). */
   threads = 1
+  /** The thread trial's timings, ms per step by thread count, when this run made one (null: a remembered count, or not yet). */
+  tuning: { threads: number; ms: number }[] | null = null
   /**
    * The video recording (src/record/recorder.ts): while it runs the page neither sends real time nor draws — the
    * recorder steps the model and draws each frame itself. The last two states received (in the snapshot's layout) are
@@ -89,10 +94,17 @@ export class Atmosphere implements ViewSettings {
     this.live = this.derive(this.mirror.env, 0, 1, false)
     this.view = new StormView(canvas, this.mirror, this)
     this.worker = new Worker(new URL('./simulation.worker.ts', import.meta.url), { type: 'module' })
-    this.worker.addEventListener('message', (event: MessageEvent<Snapshot>) => this.receive(event.data))
-    // Fewer threads on a phone (it would overheat), unless the address asks for a number.
-    const threads = Number(new URLSearchParams(location.search).get('threads')) || (isPhone() ? PHONE_THREADS : undefined)
-    this.post({ type: 'init', config: { ...config }, threads, lang: lang() })
+    // Fewer threads on a phone (it would overheat), unless the address asks for a number. The count found fastest
+    // here before (simulation.ts, ThreadTuning) skips the trial; an address with ?threads= neither uses nor keeps one.
+    const asked = Number(new URLSearchParams(location.search).get('threads')), threads = asked || (isPhone() ? PHONE_THREADS : undefined), key = tunedKey(this.mirror.grid)
+    let tuned: number | undefined
+    if (!asked) try { tuned = Number(localStorage.getItem(key)) || undefined } catch { /* not kept */ }
+    this.worker.addEventListener('message', (event: MessageEvent<Snapshot | Tuned>) => {
+      const d = event.data
+      if (d.type === 'tuned') { this.tuning = d.trial; if (!asked) try { localStorage.setItem(key, String(d.threads)) } catch { /* not kept */ } return }
+      this.receive(d)
+    })
+    this.post({ type: 'init', config: { ...config }, threads, tuned, lang: lang() })
   }
 
   get time() { return this.mirror.time }

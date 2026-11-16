@@ -1,8 +1,8 @@
 // Runs the physics off the main thread. The main thread sends real elapsed time, config changes and thermals; the worker
 // answers each batch of steps with a snapshot of the fields the view draws (see Atmosphere), in recycled buffers.
 // With cross-origin isolation the steps are shared with helper threads (step.worker.ts, src/core/threads.ts).
-import { AtmosphereModel, controlBuffer, createGrid, domainGrid, DT, type SimConfig, SharedMemory, ThreadRunner, TRANSPORT_SLABS, applyState, readState, intervene } from './core'
-import { BATCH_BUDGET_MS, MAX_STEPS_PER_BATCH, MAX_THREADS, SNAPSHOT_COLUMNS, SNAPSHOT_FIELDS, type Snapshot, type WorkerRequest } from './simulation'
+import { AtmosphereModel, controlBuffer, createGrid, domainGrid, DT, type SimConfig, SharedMemory, ThreadRunner, TRANSPORT_SLABS, applyState, readState, intervene, saveState } from './core'
+import { BATCH_BUDGET_MS, MAX_STEPS_PER_BATCH, MAX_THREADS, SNAPSHOT_COLUMNS, SNAPSHOT_FIELDS, type Snapshot, type Tuned, TUNE_STEPS, TUNE_WARM, TUNE_WORSE, type WorkerRequest } from './simulation'
 import type { HelperStart } from './step.worker'
 import { setLang } from './i18n'
 
@@ -21,6 +21,8 @@ const free: ArrayBuffer[] = []
 let buffers = 0
 /** The helper threads of the current model; the model steps only once all of them have attached. */
 let pool: ThreadRunner | null = null, ready = true, generation = 0
+/** Threads the model runs on now, and the most it may use (the page's limit and the device). */
+let current = 1, ceiling = 1
 
 /** Threads for the physics: this worker plus helpers, leaving one core for the page. One without shared memory. */
 function threadCount(limit = MAX_THREADS) {
@@ -28,9 +30,37 @@ function threadCount(limit = MAX_THREADS) {
   return Math.max(1, Math.min(limit, MAX_THREADS, (navigator.hardwareConcurrency || 1) - 1))
 }
 
+/** The thread trial (see TUNE_* in simulation.ts): counts still to try, the timed ones, the count running, steps done on it, their time. */
+let tune: { left: number[]; done: { threads: number; ms: number }[]; current: number; steps: number; ms: number } | null = null
+
+/** Moves the running model onto `threads` threads: its state saved, the pool restarted, the state put back. */
+function switchThreads(threads: number) {
+  if (!model) return
+  const config = model.config, buffer = saveState(model, config)
+  start(config, threads)
+  applyState(model!, readState(buffer)); sentFlashes = flashTotal(model!)
+}
+
+/** One timed step of the trial; when a count is done, the next one or the end (the fastest kept, the page told). */
+function tuneStep(ms: number) {
+  const t = tune
+  if (!t || !ready) return
+  if (++t.steps <= TUNE_WARM) return
+  t.ms += ms
+  if (t.steps < TUNE_WARM + TUNE_STEPS) return
+  t.done.push({ threads: t.current, ms: t.ms / TUNE_STEPS })
+  const best = t.done.reduce((a, b) => (b.ms < a.ms ? b : a))
+  const next = t.left.shift()
+  if (next !== undefined && t.done[t.done.length - 1].ms <= best.ms * TUNE_WORSE) { t.current = next; t.steps = 0; t.ms = 0; switchThreads(next); return }
+  tune = null
+  if (best.threads !== current) switchThreads(best.threads)
+  scope.postMessage({ type: 'tuned', threads: best.threads, trial: t.done } satisfies Tuned, [])
+}
+
 function start(config: SimConfig, limit?: number) {
   pool?.stop(); pool = null
   const threads = threadCount(limit), id = ++generation
+  current = threads
   sentFlashes = 0
   if (threads === 1) { model = new AtmosphereModel(config); ready = true; send(); return }
   const memory = new SharedMemory(), grid = domainGrid(config.domain, config.top, config.domainSize, config.spacing), control = controlBuffer()
@@ -63,7 +93,15 @@ function send() {
 
 scope.addEventListener('message', ({ data }) => {
   switch (data.type) {
-    case 'init': accumulator = 0; if (data.lang) setLang(data.lang); start(data.config, data.threads); break
+    case 'init': {
+      accumulator = 0; if (data.lang) setLang(data.lang)
+      ceiling = threadCount(data.threads)
+      start(data.config, data.tuned ? Math.min(data.tuned, ceiling) : ceiling)
+      // A trial only without a remembered count and with threads to choose from: the most, then two thirds, a half, a third, one.
+      const counts = [...new Set([ceiling, Math.round(ceiling * 2 / 3), Math.round(ceiling / 2), Math.round(ceiling / 3), 1])].filter(n => n >= 1 && n < ceiling)
+      tune = !data.tuned && ceiling > 1 ? { left: counts, done: [], current: ceiling, steps: 0, ms: 0 } : null
+      break
+    }
     case 'config': if (model) Object.assign(model.config, data.config); break
     case 'intervene': if (model) intervene(model, data.intervention); break
     case 'release': free.push(data.buffer); break
@@ -73,7 +111,10 @@ scope.addEventListener('message', ({ data }) => {
       accumulator = Math.min(accumulator + data.seconds * model.config.speed, MAX_STEPS_PER_BATCH * DT)
       let steps = 0
       const start = performance.now()
-      while (accumulator >= DT && steps < MAX_STEPS_PER_BATCH && performance.now() - start < BATCH_BUDGET_MS) { model.step(DT); model.time += DT; accumulator -= DT; steps++ }
+      while (accumulator >= DT && steps < MAX_STEPS_PER_BATCH && performance.now() - start < BATCH_BUDGET_MS) {
+        const t0 = performance.now(); model.step(DT); model.time += DT; accumulator -= DT; steps++
+        if (tune) { tuneStep(performance.now() - t0); if (!ready) break }
+      }
       // Time the budget cut off is dropped (the model falls behind the speed setting instead of catching up in a burst).
       if (steps > 0 && accumulator >= DT) accumulator = 0
       pendingSteps += steps

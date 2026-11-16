@@ -21,7 +21,8 @@ export const MAX_THREADS = 6
 export type WorkerRequest =
   /** lang: the page's language (src/i18n.ts), for any text the worker makes. */
   /** threads: an upper limit for the physics threads (the page's ?threads= parameter, to compare speeds). */
-  | { type: 'init'; config: SimConfig; threads?: number; lang?: Lang }
+  /** tuned: the thread count this browser found fastest for this grid before (no trial then); see ThreadTuning. */
+  | { type: 'init'; config: SimConfig; threads?: number; tuned?: number; lang?: Lang }
   | { type: 'advance'; seconds: number }
   /** Exactly this many model steps, however long they take (the video recording, src/record/recorder.ts). */
   | { type: 'steps'; count: number }
@@ -30,6 +31,17 @@ export type WorkerRequest =
   | { type: 'release'; buffer: ArrayBuffer }
   /** A saved state (src/core/state.ts) for the model just started with its settings. */
   | { type: 'load'; buffer: ArrayBuffer }
+
+/**
+ * Self-tuning thread count (16.11.2026): with no count remembered for this device and grid, the worker runs a short
+ * trial at the start — the most threads it may use, then fewer, TUNE_WARM steps to settle after each switch and
+ * TUNE_STEPS timed — stops going down once a count is TUNE_WORSE slower than the best, and keeps the fastest; the model
+ * state moves with each switch, so the run goes on. The result is sent as 'tuned' and remembered by the page.
+ * On the author's 12-thread laptop the step kept getting faster up to 8 threads (standard domain 161 / 103 / 79 / 69 /
+ * 63 / 60 ms at 1 / 2 / 3 / 4 / 6 / 8, tests/bench/threads.ts); on other machines fewer can be faster.
+ */
+export const TUNE_WARM = 15, TUNE_STEPS = 40, TUNE_WORSE = 1.08
+export interface Tuned { type: 'tuned'; threads: number; trial: { threads: number; ms: number }[] }
 
 export interface Snapshot {
   type: 'snapshot'; buffer: ArrayBuffer; steps: number; time: number
