@@ -1,6 +1,6 @@
 # MeteoLab StormLab — validation report
 
-Model version **v2.11.0-7-gdd4075b**, 2026-11-12. Node v24.16.0, 12th Gen Intel(R) Core(TM) i5-12450H, 12 at once, 35 min.
+Model version **v2.11.0-24-g8bdd790**, 2026-11-16. Node v24.16.0, 12th Gen Intel(R) Core(TM) i5-12450H, 12 at once, 32 min.
 
 **53 of 53 checks within their bounds**.
 
@@ -21,7 +21,7 @@ Converges with the grid (400 → 50 m) to a front ~3 % behind and a u max ~4 % b
 
 ## Rising thermal, dry and saturated (Bryan & Fritsch 2002), 100 m, 1000 s
 
-Source: Bryan & Fritsch 2002, Mon. Wea. Rev. 130; numbers as quoted by Duarte et al. 2014 (arXiv:1311.4265). Run time 5 min.
+Source: Bryan & Fritsch 2002, Mon. Wea. Rev. 130; numbers as quoted by Duarte et al. 2014 (arXiv:1311.4265). Run time 4 min.
 
 | Quantity | Model | Reference | Bounds | |
 |---|---:|---|---|:-:|
@@ -37,7 +37,7 @@ Source: Bryan & Fritsch 2002, Mon. Wea. Rev. 130; numbers as quoted by Duarte et
 
 ## Supercell split (Weisman & Klemp 1982), 96 × 72 km, 60 min
 
-Source: Weisman & Klemp 1982, Mon. Wea. Rev. 110: a split by 40–60 min into a stronger cyclonic right mover and an anticyclonic left mover. Run time 27 min.
+Source: Weisman & Klemp 1982, Mon. Wea. Rev. 110: a split by 40–60 min into a stronger cyclonic right mover and an anticyclonic left mover. Run time 26 min.
 
 | Quantity | Model | Reference | Bounds | |
 |---|---:|---|---|:-:|
@@ -74,7 +74,7 @@ UH max 545 m²/s², wind at 100 m 23.7 m/s, rain 8.9 mm, hail 0.3 cm aloft / 0.0
 
 ## Scenario «Классическая суперячейка», 40 min
 
-Source: meant to grow a supercell. Run time 10 min.
+Source: meant to grow a supercell. Run time 8 min.
 
 | Quantity | Model | Reference | Bounds | |
 |---|---:|---|---|:-:|
@@ -98,7 +98,7 @@ UH max 1074 m²/s², wind at 100 m 20.7 m/s, rain 35.2 mm, hail 1.1 cm aloft / 1
 
 ## Scenario «HSLC», 40 min
 
-Source: meant to grow a supercell. Run time 8 min.
+Source: meant to grow a supercell. Run time 7 min.
 
 | Quantity | Model | Reference | Bounds | |
 |---|---:|---|---|:-:|
@@ -110,7 +110,7 @@ UH max 765 m²/s², wind at 100 m 24.9 m/s, rain 14.0 mm, hail 1.2 cm aloft / 1.
 
 ## Scenario «Микропорыв», 40 min
 
-Source: meant to grow no mesocyclone. Run time 7 min.
+Source: meant to grow no mesocyclone. Run time 6 min.
 
 | Quantity | Model | Reference | Bounds | |
 |---|---:|---|---|:-:|
@@ -122,7 +122,7 @@ UH max 170 m²/s², wind at 100 m 25.9 m/s, rain 3.3 mm, hail 0.0 cm aloft / 0.0
 
 ## Scenario «Тропическая конвекция», 40 min
 
-Source: meant to grow no mesocyclone. Run time 7 min.
+Source: meant to grow no mesocyclone. Run time 6 min.
 
 | Quantity | Model | Reference | Bounds | |
 |---|---:|---|---|:-:|
@@ -134,7 +134,7 @@ UH max 96 m²/s², wind at 100 m 17.9 m/s, rain 21.2 mm, hail 0.7 cm aloft / 0.1
 
 ## Situation «Тёплый сектор и холодный фронт», with and without its trigger
 
-Source: the situation’s story (2.6). Run time 23 min.
+Source: the situation’s story (2.6). Run time 21 min.
 
 | Quantity | Model | Reference | Bounds | |
 |---|---:|---|---|:-:|
@@ -145,7 +145,7 @@ Source: the situation’s story (2.6). Run time 23 min.
 
 ## Situation «Высотная ложбина», with and without its trigger
 
-Source: the situation’s story (2.6). Run time 35 min.
+Source: the situation’s story (2.6). Run time 32 min.
 
 | Quantity | Model | Reference | Bounds | |
 |---|---:|---|---|:-:|
@@ -161,7 +161,7 @@ Recalibrated 22.10.2026 for 2.7.2’s ice from processes (the trough −4 K inst
 
 ## Situation «Тёплый воздух над слоем: гроз не будет», with and without its trigger
 
-Source: the situation’s story (2.6). Run time 22 min.
+Source: the situation’s story (2.6). Run time 21 min.
 
 | Quantity | Model | Reference | Bounds | |
 |---|---:|---|---|:-:|
@@ -176,19 +176,19 @@ Measured on the same model; the bounds here are the range observed in nature, so
 
 ### Classic supercell, 60 min: outflow, hail and lightning
 
-Nature: RFD θv′ at the ground: under ~2 K in strongly tornadic RFDs, ~4–7 K in nontornadic ones (Markowski, Straka & Rasmussen 2002, MWR 130, 1692, as quoted by later papers); SHIP > 1 — an environment favourable for hail ≥ 5 cm (SPC); +CG 8.7–10.6 % of ground flashes over the USA, regionally < 2 to > 25 % (Rudlosky & Fuelberg 2010, MWR 138, 3623; Orville et al. 2011, MWR 139, 1305). Cause: the outflow: rain evaporation with the fixed Marshall-Palmer N₀ gives 65–75 % of the cooling (D2; N₀ 1e6 would bring it to ~5 K); hail: single-moment, no size sorting or growth along trajectories; −CG: the graupel’s charging sign at −5…−15 °C (B6). Fixed by: B1, B2, B6. Run time 14 min.
+Nature: RFD θv′ at the ground: under ~2 K in strongly tornadic RFDs, ~4–7 K in nontornadic ones (Markowski, Straka & Rasmussen 2002, MWR 130, 1692, as quoted by later papers); SHIP > 1 — an environment favourable for hail ≥ 5 cm (SPC); +CG 8.7–10.6 % of ground flashes over the USA, regionally < 2 to > 25 % (Rudlosky & Fuelberg 2010, MWR 138, 3623; Orville et al. 2011, MWR 139, 1305). Cause: the outflow: rain evaporation with the fixed Marshall-Palmer N₀ gives 65–75 % of the cooling (D2; N₀ 1e6 would bring it to ~5 K); hail: single-moment, no size sorting or growth along trajectories; the +CG share is within nature’s range since the Takahashi charging (16.11.2026: 0.04; with SP98 ~0.8). Fixed by: B1, B2, B6. Run time 13 min.
 
 | Quantity | Model | Nature | |
 |---|---:|---|:-:|
 | outflow θv deficit under the low-level rotation, max 30–60 min, K | 10.03 | ≲ 2 tornadic, 4–7 nontornadic RFDs | ✗ |
 | largest hail at the ground, mm | 11.95 | ≥ 50 favoured (SHIP > 1 here) | ✗ |
-| share of positive ground flashes | 1 | 0.09–0.11 over the USA, regionally 0.02–0.25 | ✗ |
+| share of positive ground flashes | 0.04 | 0.09–0.11 over the USA, regionally 0.02–0.25 | ✓ |
 
-66 CG and 4325 IC flashes; strongest updraught 55.0 m/s; max reflectivity 73 dBZ, VIL 60 kg/m², MESH 69 mm; the largest outflow deficit anywhere 11.6 K.
+186 CG and 2658 IC flashes; strongest updraught 55.0 m/s; max reflectivity 73 dBZ, VIL 60 kg/m², MESH 69 mm; the largest outflow deficit anywhere 11.6 K.
 
 ### Ordinary cell («Summer day»), 40 min: the graupel core
 
-Nature: ordinary (pulse) cells: core ~50–60 dBZ (a forecasters’ rule of thumb; no peer-reviewed typical maximum found yet). Cause: single-moment graupel with a fixed N₀ puts its mass in a few large particles (Z ∝ N₀^−¾); with it VIL and MESH run high. Fixed by: B1. Run time 6 min.
+Nature: ordinary (pulse) cells: core ~50–60 dBZ (a forecasters’ rule of thumb; no peer-reviewed typical maximum found yet). Cause: single-moment graupel with a fixed N₀ puts its mass in a few large particles (Z ∝ N₀^−¾); with it VIL and MESH run high. Fixed by: B1. Run time 5 min.
 
 | Quantity | Model | Nature | |
 |---|---:|---|:-:|
@@ -198,7 +198,7 @@ VIL 46 kg/m², MESH 58 mm, strongest updraught 39.6 m/s.
 
 ### Tropical convection over the ocean, 40 min: the updraught
 
-Nature: GATE oceanic cores: only 10 % have a mean w above 5 m/s (LeMone & Zipser 1980, JAS 37, 2444); TAMEX median under 3 m/s (Jorgensen & LeMone 1989, JAS 46, 621); peaks of 10–15 m/s rare (not verified). Cause: the sea’s heat flux is set by the sun as over land; the ~1 km grid; no boundary-layer scheme. Fixed by: B3, B4. Run time 6 min.
+Nature: GATE oceanic cores: only 10 % have a mean w above 5 m/s (LeMone & Zipser 1980, JAS 37, 2444); TAMEX median under 3 m/s (Jorgensen & LeMone 1989, JAS 46, 621); peaks of 10–15 m/s rare (not verified). Cause: the sea’s heat flux is set by the sun as over land; the ~1 km grid; no boundary-layer scheme. Fixed by: B3, B4. Run time 5 min.
 
 | Quantity | Model | Nature | |
 |---|---:|---|:-:|
@@ -221,6 +221,6 @@ Without a number to test yet:
 - **LP / classic / HP supercells do not differ by environment** — tests/bench/sctype.ts: the same precipitation distribution in LP, classic and HP environments (B1).
 - **The cell tracker’s splits are random** — 21.10.2026: none at 30 m/s straight shear, no pattern in other runs — the tracker against the vorticity fields (A8).
 - **Initiation by the sun is slow at 1.2 km** — a 1.5 K cap with CIN ~10 J/kg holds because of the grid (C1).
-- **A squall line at 1.2 km builds its cold pool late** — 10.11.2026, tests/bench/lines.ts us=20 dx=1.2: C 15 m/s at 60 min, 17 at 90, 24 at 120 (Weisman & Rotunno 2004: 19–26), the line filled over 30 → 68 % of its length; only two hours run, the decay seen earlier on coarse grids comes later (Э1).
+- **A squall line at 1.2 km builds its cold pool late (first 2 h)** — 10.11.2026, tests/bench/lines.ts us=20 dx=1.2: C 15 m/s at 60 min, 17 at 90, 24 at 120 (Weisman & Rotunno 2004: 19–26), the line filled over 30 → 68 % of its length; from 2 to 4 h it holds (LONG_DEVIATIONS squall-line-coarse, 12.11.2026) (Э1).
 - **Line-end vortices do not tell a bow from a plain line** — 10.11.2026, tests/bench/organize.ts: the strongest node vorticity at 2.5 km near the ends is 4–11e-3 1/s on the cold front’s line (1.2 km) and 8–17e-3 on the bow echo (1 km), both signs at both ends; ORG.vortex 2e-3 passes every line — a circulation over an area is needed (Э1).
 - **A storm from a real sounding weakens 20–40 min after the nudging** — Omaha 68 → 8 m/s by 60 min; subsidence on the standard domain is only part of it (E10).
