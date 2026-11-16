@@ -2,7 +2,7 @@
 // threads (step.worker.ts) as the live worker does, light frames (src/core/frames.ts) written as they come to a file in
 // the origin's private file system (OPFS) — or kept in memory where it has no synchronous access — and the state at the
 // end handed back for a .meteolab file. The page plays the frames back through Atmosphere.startReplay.
-import { AtmosphereModel, controlBuffer, createGrid, domainGrid, DT, encodeFrame, framesHeader, saveState, SharedMemory, type SimConfig, ThreadRunner, TRANSPORT_SLABS } from '../core'
+import { AtmosphereModel, controlBuffer, createGrid, domainGrid, DT, encodeFrame, framesHeader, saveState, SharedMemory, type SimConfig, ThreadRunner, TRANSPORT_SLABS, stepsPerDt } from '../core'
 import type { HelperStart } from '../step.worker'
 import { setLang } from '../i18n'
 
@@ -66,10 +66,13 @@ async function run(config: SimConfig, minutes: number, every: number, threads: n
   scope.postMessage({ type: 'started', threads, stored: sink.stored })
   sink.append(framesHeader(config, model.grid, every)); sink.append(await encodeFrame(model))
   let frames = 1, last = 0, from = performance.now(), steps = 0
+  const sub = stepsPerDt(config.spacing)
   const end = minutes * 60
   while (model.time < end - 1e-6 && !stopped) {
     if (paused) { await new Promise<void>(resolve => { wake = resolve }); from = performance.now(); steps = 0; continue }
-    model.step(DT); model.time += DT; steps++
+    // Finer than 250 m the step is cut in parts (stepsPerDt): the Courant number of 250 m at DT.
+    for (let k = 0; k < sub; k++) { model.step(DT / sub); model.time += DT / sub }
+    steps++
     const t = Math.round(model.time)
     if (t % every === 0) { sink.append(await encodeFrame(model)); frames++ }
     const now = performance.now()

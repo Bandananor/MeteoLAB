@@ -1,6 +1,6 @@
 // Sharing an experiment and taking its results away: a link that carries every setting (not only the seed), and the
 // time series as CSV files. The link is outside input, so decoding accepts only known settings of the right kind.
-import { MIN_SOUNDING_TOP, type SimConfig, type SoundingLevel } from './core'
+import { MIN_SOUNDING_TOP, type SimConfig, type SoundingLevel, SPACING_MIN } from './core'
 
 /** The settings a link may carry, with what each may be: a number, one of a few words, a flag, a pair of numbers, a sounding or zones. */
 const KINDS: Record<string, 'number' | 'boolean' | 'pair' | 'sounding' | 'zones' | 'front' | 'advection' | 'wk' | readonly string[]> = {
@@ -139,7 +139,10 @@ export function decodeSettings(text: string, names: readonly string[]): { scenar
   const { n, s, c } = data as { n?: unknown; s?: unknown; c?: unknown }
   const old = typeof n === 'string' ? n : Number.isInteger(s) ? NUMBERED[s as number] : undefined, name = old === undefined ? undefined : RENAMED[old] ?? old
   const index = name === undefined ? -1 : names.indexOf(name), retired = index < 0 && name !== undefined && Object.hasOwn(RETIRED, name) ? RETIRED[name] : {}
-  return { scenario: index < 0 ? null : index, values: { ...retired, ...cleanSettings(c) } }
+  // A link keeps to the live run's finest spacing (grid.ts SPACING_MIN): it could otherwise ask for a huge grid.
+  const values: Partial<SimConfig> = { ...retired, ...cleanSettings(c) }
+  if (values.spacing !== undefined && values.spacing < SPACING_MIN) values.spacing = SPACING_MIN
+  return { scenario: index < 0 ? null : index, values }
 }
 
 /** Only the known settings of the right kind from outside data (a link, a saved file), and a whole positive seed. */

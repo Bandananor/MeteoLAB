@@ -101,8 +101,10 @@ describe('a finer horizontal grid (SimConfig.spacing, roadmap C2)', () => {
     expect(domainGrid('large', undefined, undefined, .25)).toMatchObject({ nx: 384, ny: 288, width: 96_000 })
     expect(domainGrid('custom', 22, [36, 27], .6)).toMatchObject({ nx: 60, ny: 45, height: 22_000 })
     expect(domainGrid('standard', undefined, undefined, undefined)).toEqual(DEFAULT_GRID)
-    // Not finer than 0.25 km (a link could ask for any number), and it passes through links and saved files.
-    expect(domainGrid('standard', undefined, undefined, .01)).toMatchObject({ nx: 192, ny: 144 })
+    // Since 3.0 a grid goes finer than 0.25 km (precise runs: a memory guard, MAX_NODES); links keep to 0.25 km
+    // (finegrid.test.ts), and the spacing passes through links and saved files.
+    const fine = domainGrid('standard', undefined, undefined, .01)
+    expect(fine.nx * fine.ny * fine.nz).toBeLessThanOrEqual(2 ** 24 * 1.01)
     expect(cleanSettings({ spacing: .5 })).toEqual({ spacing: .5 })
   })
 

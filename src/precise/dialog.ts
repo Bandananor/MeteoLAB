@@ -3,7 +3,7 @@
 // live run is paused, its progress with a pause and a stop; at the end the frames are played back on the page and both
 // the frames and the final state can be saved as files. One run is kept in the browser's storage until the next.
 // "More" (for advanced users): any spacing, length and frame interval, the threads, the seed and the domain.
-import { domainGrid, DT, SPACING_MIN, type SimConfig } from '../core'
+import { domainGrid, DT, SPACING_FLOOR, SPACING_MIN, type SimConfig, stepsPerDt } from '../core'
 import { decimal, L, lang } from '../i18n'
 import { maxThreads } from '../simulation'
 import { PRECISE_DIR, PRECISE_FILE, type PreciseReply, type PreciseRequest } from './precise.worker'
@@ -24,12 +24,17 @@ type Domain = 'current' | 'standard' | 'large' | 'meso'
 type Choice = { spacing: number; minutes: number; every: number; threads: number; seed: number | null; domain: Domain }
 /** Bounds of the advanced fields: spacing (km), model minutes, seconds between frames. */
 const LIMITS = {
-  fine: { spacing: [SPACING_MIN, 1.2], minutes: [5, 240], every: [DT, 600] },
+  // Finer than 250 m at one's own risk (3.0): no lower limit but the floor of a grid, a memory guard (show()).
+  fine: { spacing: [SPACING_FLOOR, 1.2], minutes: [5, 240], every: [DT, 600] },
   meso: { spacing: [1, 4], minutes: [10, 360], every: [DT, 900] },
 } as const
 const clamp = (v: number, [lo, hi]: readonly [number, number]) => Math.min(hi, Math.max(lo, v))
 /** Bytes a node of the shared fields and of one frame (measured on the 500 m classic supercell: 134 MB, ~1 MB a frame). */
 const FIELD_BYTES = 390, FRAME_BYTES = 3
+/** Spacing below which the run needs its own confirmation, km: the model is not checked at all there. */
+const EXTREME = .1
+/** Memory the fields may take when the browser does not tell the device's; with it (Chrome's deviceMemory) half of it, at most BUDGET_MAX (a tab beyond that is not safe). */
+const DEFAULT_BUDGET = 4 * 2 ** 30, BUDGET_MAX = 8 * 2 ** 30
 /** Phones get no grid finer than 500 m (250 m is ~670 MB of fields), in the mesoscale mode none finer than 2 km (1 km: ~540 MB). */
 const COARSE = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches
 const PHONE_MIN: Record<Mode, number> = { fine: .5, meso: 2 }
@@ -94,13 +99,15 @@ export class PreciseDialog {
         ${seg('every', L('Кадр каждые', 'A frame every'))}
       </div>
       <details class="precise-more"><summary>${L('Дополнительно', 'More')}</summary><div class="precise-more__grid">
-        <label class="field"><span class="label" id="preciseSpacingLabel"></span><input class="input" type="number" id="preciseSpacingIn" step="0.05"></label>
+        <label class="field"><span class="label" id="preciseSpacingLabel"></span><input class="input" type="number" id="preciseSpacingIn" step="0.01"></label>
         <label class="field"><span class="label" id="preciseMinutesLabel"></span><input class="input" type="number" id="preciseMinutesIn" step="5"></label>
         <label class="field"><span class="label">${L(`Кадр каждые, с (кратно шагу ${DT} с)`, `A frame every, s (a multiple of the ${DT} s step)`)}</span><input class="input" type="number" id="preciseEveryIn" min="${DT}" step="${DT}"></label>
         <label class="field"><span class="label">${L(`Потоков (1–${threads()})`, `Threads (1–${threads()})`)}</span><input class="input" type="number" id="preciseThreadsIn" min="1" max="${threads()}" step="1"></label>
         <label class="field"><span class="label">${L('Зерно (пусто — как у опыта)', 'Seed (empty — the run’s own)')}</span><input class="input" type="number" id="preciseSeedIn" step="1" placeholder="—"></label>
         <label class="field"><span class="label">${L('Область', 'Domain')}</span><span class="select"><select id="preciseDomainIn"><option value="current">${L('как у опыта', 'the run’s own')}</option><option value="standard">${L('стандартная 48 × 36 км', 'standard 48 × 36 km')}</option><option value="large">${L('большая 96 × 72 км (вчетверо больше узлов)', 'large 96 × 72 km (four times the nodes)')}</option><option value="meso">${L('мезомасштаб 192 × 144 км (шаг 1–4 км, до 6 ч)', 'mesoscale 192 × 144 km (1-4 km spacing, up to 6 h)')}</option></select></span></label>
       </div><p class="modal__text">${L('Шаг модели остаётся 3 с: на 250 м он устойчив (проверено). Тот же опыт с тем же зерном даёт тот же прогон при любом числе потоков. Меньше потоков — медленнее, но ноутбук свободнее.', 'The model step stays 3 s: it is stable at 250 m (checked). The same run with the same seed gives the same result at any number of threads. Fewer threads — slower, but the laptop stays freer.')}</p></details>
+      <div class="notice" id="preciseFine" hidden><span class="notice__text" id="preciseFineText"></span></div>
+      <label class="check" id="preciseRiskRow" hidden><input type="checkbox" id="preciseRisk"> <span>${L('Понимаю, что на таком шаге модель не проверялась, и всё равно запускаю', 'I understand the model is not checked at this spacing, and run it anyway')}</span></label>
       <p class="modal__text" id="preciseSummary"></p>
       <div class="video-progress" id="preciseProgress" hidden><progress id="preciseBar" max="1" value="0"></progress><span class="t-caption" id="preciseStatus"></span></div>
       <p class="modal__text video-error" id="preciseError" role="alert" hidden></p>
@@ -130,6 +137,7 @@ export class PreciseDialog {
     field('#preciseThreadsIn', v => { if (v) this.choice.threads = Math.round(clamp(Number(v), [1, threads()])) })
     field('#preciseSeedIn', v => { this.choice.seed = v === '' ? null : Math.trunc(Number(v)) })
     field('#preciseDomainIn', v => { this.choice.domain = v as Domain })
+    this.$<HTMLInputElement>('#preciseRisk').addEventListener('change', () => this.show())
     this.$('#preciseStart').addEventListener('click', () => this.start())
     this.$('#precisePause').addEventListener('click', () => this.pause(!this.paused))
     this.$('#preciseStop').addEventListener('click', () => this.send({ type: 'stop' }))
@@ -177,12 +185,26 @@ export class PreciseDialog {
     const c = this.runConfig(), g = domainGrid(c.domain, c.top, c.domainSize, c.spacing), nodes = g.nx * g.ny * g.nz
     // The device's memory (GB, Chrome only, at most 8): fields above half of it are a risk.
     const device = (navigator as { deviceMemory?: number }).deviceMemory, tight = device !== undefined && nodes * FIELD_BYTES > device * 2 ** 30 / 2
+    // Finer than 250 m (3.0): a warning, the step cut in parts; finer than 100 m its own confirmation; beyond the memory
+    // budget no start at all. The grid itself is coarsened past MAX_NODES (grid.ts): the spacing it actually gets is shown.
+    const fine = this.choice.spacing < SPACING_MIN - 1e-9, extreme = this.choice.spacing < EXTREME - 1e-9, actual = g.width / g.nx / 1000, parts = stepsPerDt(this.choice.spacing)
+    const budget = device !== undefined ? Math.min(BUDGET_MAX, device * 2 ** 30 / 2) : DEFAULT_BUDGET, tooBig = nodes * FIELD_BYTES > budget
+    this.$('#preciseFine').hidden = !fine && !tooBig
+    this.$('#preciseRiskRow').hidden = !extreme
+    this.$('#preciseFineText').textContent = [
+      tooBig ? L(`Не хватит памяти: полям нужно ~${mb(nodes * FIELD_BYTES)}, а можно не больше ~${mb(budget)}. Выберите шаг крупнее или область меньше («Своя…» в настройках опыта).`, `Not enough memory: the fields need ~${mb(nodes * FIELD_BYTES)}, at most ~${mb(budget)} is allowed. Choose a coarser spacing or a smaller domain (“Custom…” in the run’s settings).`) : '',
+      fine ? L(`Мельче 250 м — на свой страх и риск. Вертикальная сетка та же (50 уровней: 100 м у земли, выше до ~1 км), так что ячейки вытянуты по вертикали и турбулентность мельче сетки описана грубее; сценарии и допуски настроены на 1,2 км, отчёта о проверке на такой сетке нет. Шаг по времени делится на ${parts}: ${decimal(DT / parts, 2)} с.`, `Finer than 250 m — at your own risk. The vertical grid is the same (50 levels: 100 m at the ground, up to ~1 km aloft), so the cells are stretched vertically and the subgrid turbulence is cruder; the scenarios and tolerances are tuned on 1.2 km, there is no validation report on such a grid. The time step is cut in ${parts}: ${decimal(DT / parts, 2)} s.`) : '',
+      extreme ? L('Мельче 100 м модель не проверялась вовсе: вертикальный шаг много грубее горизонтального, перемешивание по Смагоринскому здесь — грубое приближение, прогон может идти сутками.', 'Finer than 100 m the model is not checked at all: the vertical spacing is far coarser than the horizontal, the Smagorinsky mixing is a crude approximation here, and the run may take days.') : '',
+      fine && actual > this.choice.spacing * 1.02 ? L(`Сетка ограничена ${decimal(2 ** 24 / 1e6, 1)} млн узлов: фактический шаг ${km(Math.round(actual * 1000) / 1000)}.`, `The grid is limited to ${decimal(2 ** 24 / 1e6, 1)} M nodes: the actual spacing is ${km(Math.round(actual * 1000) / 1000)}.`) : '',
+    ].filter(Boolean).join(' ')
+    const blocked = tooBig || (extreme && !this.$<HTMLInputElement>('#preciseRisk').checked)
     const frames = Math.floor(this.choice.minutes * 60 / this.choice.every) + 1
     this.$('#preciseSummary').textContent = L(
       `Сетка ${g.nx} × ${g.ny} × ${g.nz} = ${decimal(nodes / 1e6, 2)} млн узлов · поля ~${mb(nodes * FIELD_BYTES)} памяти · кадров ${frames}, ~${mb(nodes * FRAME_BYTES * frames)} · потоков ${this.choice.threads}, зерно ${c.seed}. Время счёта — по первым шагам.${COARSE ? ` На телефоне — не мельче ${km(PHONE_MIN[mode])}.` : ''}${tight ? ` Полям нужно больше половины памяти устройства (~${device} ГБ): вкладка может упасть.` : ''}`,
       `Grid ${g.nx} × ${g.ny} × ${g.nz} = ${decimal(nodes / 1e6, 2)} M nodes · fields ~${mb(nodes * FIELD_BYTES)} of memory · ${frames} frames ~${mb(nodes * FRAME_BYTES * frames)} · ${this.choice.threads} threads, seed ${c.seed}. The computing time — from the first steps.${COARSE ? ` On a phone — no finer than ${km(PHONE_MIN[mode])}.` : ''}${tight ? ` The fields need over half the device’s memory (~${device} GB): the tab may crash.` : ''}`)
     const busy = !!this.worker, done = !!this.result && !busy
     this.$('#preciseStart').hidden = busy || done
+    this.$<HTMLButtonElement>('#preciseStart').disabled = blocked
     this.$('#precisePause').hidden = this.$('#preciseStop').hidden = !busy
     this.$('#precisePlay').hidden = this.$('#preciseFrames').hidden = this.$('#preciseState').hidden = !done
     if (busy || done) this.$('#preciseLast').hidden = true
@@ -209,7 +231,7 @@ export class PreciseDialog {
   }
 
   private start() {
-    if (this.worker) return
+    if (this.worker || this.$<HTMLButtonElement>('#preciseStart').disabled) return
     const config = this.runConfig(), { minutes, every } = this.choice
     this.result = null; this.paused = false
     this.$('#preciseError').hidden = true; this.$('#preciseProgress').hidden = false

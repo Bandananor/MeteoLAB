@@ -17,7 +17,7 @@ import { fileURLToPath } from 'node:url'
 import { availableParallelism } from 'node:os'
 import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, rmSync, statSync, truncateSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { AtmosphereModel, applyState, createGrid, domainGrid, DT, encodeFrame, frameIndex, framesHeader, readFramesHeader, readState, saveState, SCENARIOS, type SimConfig } from '../src/core'
+import { AtmosphereModel, applyState, createGrid, domainGrid, DT, encodeFrame, frameIndex, framesHeader, readFramesHeader, readState, saveState, SCENARIOS, type SimConfig, stepsPerDt } from '../src/core'
 import { AttachedMemory, controlBuffer, serveTasks, SharedMemory, ThreadRunner } from '../src/core/threads'
 import { setRunLink, stampColumns } from '../src/export/stamp'
 import { encodeSettings, toCsv } from '../src/share'
@@ -32,6 +32,8 @@ const ROW_EVERY = 30
 const PROBE_STEPS = 4
 
 const gridOf = (c: SimConfig) => domainGrid(c.domain, c.top, c.domainSize, c.spacing)
+/** Model steps per DT for a run's spacing (finer than 250 m: more, grid.ts stepsPerDt). */
+let sub = 1
 
 if (!isMainThread) {
   // A helper: a view of the main thread's model over the shared memory, doing the step's tasks it is handed.
@@ -49,6 +51,7 @@ if (!isMainThread) {
   if (runs.length !== 1) { console.error(`${path}: a precise run is one run ("vary": {}, "seeds": 1), this file makes ${runs.length}`); process.exit(1) }
   const config = runs[0].config, live = args.includes('live'), minutes = series.minutes, every = Number(option('every') ?? 5) * 60
   if (live) delete config.spacing
+  sub = stepsPerDt(config.spacing)
   const out = option('out') ?? path.replace(/\.json$/i, '') + (live ? '-live' : ''), threads = Math.max(1, Number(option('threads') ?? Math.min(6, availableParallelism() - 1)))
   const linkBase = seriesBase({ ...series, settings: {} })
   setRunLink(c => c ? `${SITE}?cfg=${encodeSettings(c, linkBase, series.scenario)}&seed=${c.seed}` : '')
@@ -69,9 +72,9 @@ if (!isMainThread) {
   // The estimate: a few steps timed on a copy of the start (the run itself then starts from the start again).
   {
     const start = saveState(model, config)
-    model.step(DT)
+    model.step(DT / sub)
     const t0 = performance.now()
-    for (let k = 0; k < PROBE_STEPS; k++) model.step(DT)
+    for (let k = 0; k < PROBE_STEPS * sub; k++) model.step(DT / sub)
     const ms = (performance.now() - t0) / PROBE_STEPS, total = ms * minutes * 60 / DT / 1000
     console.log(`estimate: ${ms.toFixed(0)} ms a step, ${(ms / DT / 1000).toFixed(2)} s of compute per model second, ~${total < 5400 ? `${Math.ceil(total / 60)} min` : `${(total / 3600).toFixed(1)} h`} for ${minutes} min (from the quiet start: the progress lines show the pace as the storm grows)`)
     if (args.includes('estimate')) await stop(0)
@@ -114,7 +117,8 @@ if (!isMainThread) {
   const started = performance.now(), from = model.time, end = minutes * 60
   let last = started
   while (model.time < end - 1e-6) {
-    model.step(DT); model.time += DT
+    // Finer than 250 m the step is cut in parts (stepsPerDt).
+    for (let k = 0; k < sub; k++) { model.step(DT / sub); model.time += DT / sub }
     const t = Math.round(model.time)
     if (t % ROW_EVERY === 0) appendFileSync(course, toCsv([row()], columns).split('\n')[1] + '\n')
     if (framesEvery > 0 && t % framesEvery === 0) appendFileSync(framesFile, await encodeFrame(model))

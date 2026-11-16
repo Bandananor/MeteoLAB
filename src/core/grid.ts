@@ -60,8 +60,18 @@ export function mesoGrid([width, depth]: readonly [number, number] = MESO_SIZE):
   return { ...DEFAULT_GRID, nx: w / MESO_SPACING, ny: d / MESO_SPACING, width: w * 1000, depth: d * 1000 }
 }
 
-/** The finest horizontal spacing a setting may ask for, km (SimConfig.spacing). */
+/**
+ * The finest horizontal spacing of a link and the live run, km (share.ts decodeSettings), and the finest the model is
+ * checked at: Δt 3 s is stable at 250 m. A precise run may go finer (3.0, the author's decision 16.11.2026: no lower
+ * limit, "at one's own risk", a memory guard only): its step is then cut in stepsPerDt parts.
+ */
 export const SPACING_MIN = .25
+/** The finest spacing any grid takes, km (10 m: below, the 100 m levels at the ground make the cells needles). */
+export const SPACING_FLOOR = .01
+/** The most nodes a grid gets (2^24 ≈ 16.8 M, some 6.5 GB of fields): a finer spacing is coarsened to fit. */
+export const MAX_NODES = 2 ** 24
+/** Model steps per DT on a grid of `spacing` km: DT / k keeps the horizontal Courant number of 250 m at DT. */
+export const stepsPerDt = (spacing?: number) => spacing !== undefined && spacing > 0 && spacing < SPACING_MIN ? Math.ceil(SPACING_MIN / Math.max(SPACING_FLOOR, spacing) - 1e-9) : 1
 
 /**
  * Grid options for a domain size setting (with the own size for 'custom') and, optionally, the height of the top (km)
@@ -69,8 +79,11 @@ export const SPACING_MIN = .25
  */
 export const domainGrid = (domain: 'standard' | 'large' | 'custom' | 'meso' | undefined, top?: number, size?: readonly [number, number], spacing?: number): GridOptions => {
   let base = domain === 'large' ? LARGE_GRID : domain === 'meso' ? mesoGrid(size) : domain === 'custom' && size ? customGrid(size) : DEFAULT_GRID
-  // Not finer than SPACING_MIN: a link could otherwise ask for tens of millions of nodes.
-  if (spacing !== undefined && spacing > 0) { const s = Math.max(SPACING_MIN, spacing) * 1000; base = { ...base, nx: Math.max(8, Math.round(base.width / s)), ny: Math.max(8, Math.round(base.depth / s)) } }
+  // Not finer than SPACING_FLOOR, and no more than MAX_NODES nodes (links are kept to SPACING_MIN in share.ts).
+  if (spacing !== undefined && spacing > 0) {
+    const fit = Math.sqrt(base.width * base.depth * base.nz / MAX_NODES) / 1000, s = Math.max(SPACING_FLOOR, fit, spacing) * 1000
+    base = { ...base, nx: Math.max(8, Math.round(base.width / s)), ny: Math.max(8, Math.round(base.depth / s)) }
+  }
   return top === undefined ? base : { ...base, height: top * 1000 }
 }
 
