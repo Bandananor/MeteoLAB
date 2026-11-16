@@ -87,7 +87,7 @@ fn update(@builtin(global_invocation_id) g: vec3u) {
 const RK3_FRACTIONS = [1 / 3, 1 / 2, 1] as const
 
 /** One field's transport on the GPU: its buffers and the bind group. */
-interface Slot { q: GPUBuffer; tend: GPUBuffer; start: GPUBuffer; extra: GPUBuffer; fluxGroup: GPUBindGroup; tendGroup: GPUBindGroup; updateGroups: GPUBindGroup[]; params: GPUBuffer }
+export interface Slot { q: GPUBuffer; tend: GPUBuffer; start: GPUBuffer; extra: GPUBuffer; fluxGroup: GPUBindGroup; tendGroup: GPUBindGroup; updateGroups: GPUBindGroup[]; params: GPUBuffer }
 
 /**
  * The transport tendency on the GPU for a grid: setFaces() uploads the projected face mass fluxes and their divergence
@@ -113,9 +113,15 @@ export class GpuTransport {
     return new GpuTransport(device, grid, rho, `${adapter.info?.vendor ?? ''} ${adapter.info?.architecture ?? ''}`.trim())
   }
 
+  /**
+   * On a device someone else made, optionally with face flux buffers of its own (the dynamics: the elliptic solver's
+   * projected mx, my, mz and their divergence) instead of buffers filled by setFaces().
+   */
+  static on(device: GPUDevice, grid: Grid, rho: ArrayLike<number>, faces?: { mx: GPUBuffer; my: GPUBuffer; mz: GPUBuffer; div: GPUBuffer }) { return new GpuTransport(device, grid, rho, '', faces) }
+
   readonly adapter: string
 
-  private constructor(device: GPUDevice, grid: Grid, rho: ArrayLike<number>, adapter: string) {
+  private constructor(device: GPUDevice, grid: Grid, rho: ArrayLike<number>, adapter: string, faces?: { mx: GPUBuffer; my: GPUBuffer; mz: GPUBuffer; div: GPUBuffer }) {
     this.device = device; this.grid = grid; this.adapter = adapter
     device.addEventListener('uncapturederror', e => this.errors.push((e as GPUUncapturedErrorEvent).error.message))
     const module = device.createShaderModule({ code: WGSL })
@@ -125,7 +131,7 @@ export class GpuTransport {
     this.update = device.createComputePipeline({ layout: 'auto', compute: { module, entryPoint: 'update' } })
     this.stages = [0, 1, 2].map(() => device.createBuffer({ size: 16, usage: UNIFORM | COPY_DST }))
     const n = grid.n, S = STORAGE | COPY_DST | COPY_SRC, f = (size = n) => device.createBuffer({ size: size * 4, usage: S })
-    this.mx = f(); this.my = f(); this.mz = f(); this.div = f(); this.fx = f(); this.fy = f(); this.fz = f()
+    this.mx = faces?.mx ?? f(); this.my = faces?.my ?? f(); this.mz = faces?.mz ?? f(); this.div = faces?.div ?? f(); this.fx = f(); this.fy = f(); this.fz = f()
     this.rho = f(grid.nz); this.h = f(grid.nz)
     device.queue.writeBuffer(this.rho, 0, Float32Array.from(rho)); device.queue.writeBuffer(this.h, 0, Float32Array.from(grid.hz))
   }
@@ -136,12 +142,16 @@ export class GpuTransport {
     q.writeBuffer(this.mx, 0, Float32Array.from(mx)); q.writeBuffer(this.my, 0, Float32Array.from(my)); q.writeBuffer(this.mz, 0, Float32Array.from(mz)); q.writeBuffer(this.div, 0, Float32Array.from(div))
   }
 
-  private slot(k: number, monotone: boolean) {
+  /**
+   * Field k's buffers (made on first use; `field`: a buffer of someone else's to transport in place, e.g. the elliptic
+   * solver's u, v, w) with its scheme set (monotone: WENO5, else linear).
+   */
+  slot(k: number, monotone: boolean, field?: GPUBuffer) {
     const d = this.device, g = this.grid, n = g.n
     let s = this.slots[k]
     if (!s) {
       const S = STORAGE | COPY_DST | COPY_SRC
-      const q = d.createBuffer({ size: n * 4, usage: S }), tend = d.createBuffer({ size: n * 4, usage: S }), params = d.createBuffer({ size: 32, usage: UNIFORM | COPY_DST })
+      const q = field ?? d.createBuffer({ size: n * 4, usage: S }), tend = d.createBuffer({ size: n * 4, usage: S }), params = d.createBuffer({ size: 32, usage: UNIFORM | COPY_DST })
       const start = d.createBuffer({ size: n * 4, usage: S }), extra = d.createBuffer({ size: n * 4, usage: S })
       const all = [params, q, this.mx, this.my, this.mz, this.fx, this.fy, this.fz, this.div, this.rho, this.h, tend, q, start, extra]
       const bind = (pipeline: GPUComputePipeline, used: number[], more: GPUBindGroupEntry[] = []) => d.createBindGroup({ layout: pipeline.getBindGroupLayout(0), entries: [...used.map(i => ({ binding: i, resource: { buffer: all[i] } })), ...more] })
@@ -153,23 +163,34 @@ export class GpuTransport {
     return s
   }
 
+  /** Writes the RK3 stages' dt shares (uniforms: before the submission of the stages encoded with them). */
+  setStages(dt: number) { RK3_FRACTIONS.forEach((f, k) => this.device.queue.writeBuffer(this.stages[k], 0, Float32Array.of(f * dt, 0, 0, 0))) }
+
+  /** Encodes a field's tendency (its face fluxes, then their divergence) into its tend buffer. */
+  encodeTendency(pass: GPUComputePassEncoder, s: Slot) {
+    const g = this.grid, wg = [Math.ceil(g.nx / 8), Math.ceil(g.ny / 8), Math.ceil(g.nz / 4)] as const
+    pass.setPipeline(this.fluxes); pass.setBindGroup(0, s.fluxGroup); pass.dispatchWorkgroups(...wg)
+    pass.setPipeline(this.tend); pass.setBindGroup(0, s.tendGroup); pass.dispatchWorkgroups(...wg)
+  }
+
+  /** Encodes RK3 stage `stage` of a field: start + share of dt times (tend + extra). */
+  encodeUpdate(pass: GPUComputePassEncoder, s: Slot, stage: number) {
+    pass.setPipeline(this.update); pass.setBindGroup(0, s.updateGroups[stage]); pass.dispatchWorkgroups(Math.ceil(this.grid.n / 256))
+  }
+
   /**
    * The three RK3 stages of the fields' transport by dt with the face fluxes of setFaces() (frozen over the step, as in the
    * model): each field uploaded once, its stages on the GPU, the result read back. `extra`: a constant tendency added in
    * every stage (theta's base profile). Returns the fields after the step and the GPU time from submission to completion.
    */
   async rk3(fields: readonly { q: Float32Array; monotone: boolean; extra?: Float32Array }[], dt: number): Promise<{ fields: Float32Array[]; gpuMs: number }> {
-    const d = this.device, g = this.grid, n = g.n, wg = [Math.ceil(g.nx / 8), Math.ceil(g.ny / 8), Math.ceil(g.nz / 4)] as const, flat = Math.ceil(n / 256)
-    RK3_FRACTIONS.forEach((f, k) => d.queue.writeBuffer(this.stages[k], 0, Float32Array.of(f * dt, 0, 0, 0)))
+    const d = this.device, n = this.grid.n
+    this.setStages(dt)
     const zero = new Float32Array(n)
     const slots = fields.map((f, k) => { const s = this.slot(k, f.monotone); d.queue.writeBuffer(s.q, 0, f.q); d.queue.writeBuffer(s.start, 0, f.q); d.queue.writeBuffer(s.extra, 0, f.extra ?? zero); return s })
     await d.queue.onSubmittedWorkDone()
     const t0 = performance.now(), enc = d.createCommandEncoder(), pass = enc.beginComputePass()
-    for (let stage = 0; stage < 3; stage++) for (const s of slots) {
-      pass.setPipeline(this.fluxes); pass.setBindGroup(0, s.fluxGroup); pass.dispatchWorkgroups(...wg)
-      pass.setPipeline(this.tend); pass.setBindGroup(0, s.tendGroup); pass.dispatchWorkgroups(...wg)
-      pass.setPipeline(this.update); pass.setBindGroup(0, s.updateGroups[stage]); pass.dispatchWorkgroups(flat)
-    }
+    for (let stage = 0; stage < 3; stage++) for (const s of slots) { this.encodeTendency(pass, s); this.encodeUpdate(pass, s, stage) }
     pass.end(); d.queue.submit([enc.finish()]); await d.queue.onSubmittedWorkDone()
     const gpuMs = performance.now() - t0
     const read = d.createBuffer({ size: n * 4 * slots.length, usage: MAP_READ | COPY_DST }), e2 = d.createCommandEncoder()
@@ -184,16 +205,11 @@ export class GpuTransport {
    * submission to completion, uploads excluded). Each field after the other: the face flux buffers are shared.
    */
   async tendencies(fields: readonly { q: Float32Array; monotone: boolean }[]): Promise<{ tend: Float32Array[]; gpuMs: number }> {
-    const d = this.device, g = this.grid, n = g.n, wg = [Math.ceil(g.nx / 8), Math.ceil(g.ny / 8), Math.ceil(g.nz / 4)] as const
+    const d = this.device, n = this.grid.n
     const slots = fields.map((f, k) => { const s = this.slot(k, f.monotone); d.queue.writeBuffer(s.q, 0, f.q); return s })
     await d.queue.onSubmittedWorkDone()
     const t0 = performance.now(), enc = d.createCommandEncoder()
-    for (const s of slots) {
-      const pass = enc.beginComputePass()
-      pass.setPipeline(this.fluxes); pass.setBindGroup(0, s.fluxGroup); pass.dispatchWorkgroups(...wg)
-      pass.setPipeline(this.tend); pass.setBindGroup(0, s.tendGroup); pass.dispatchWorkgroups(...wg)
-      pass.end()
-    }
+    for (const s of slots) { const pass = enc.beginComputePass(); this.encodeTendency(pass, s); pass.end() }
     d.queue.submit([enc.finish()]); await d.queue.onSubmittedWorkDone()
     const gpuMs = performance.now() - t0
     const read = d.createBuffer({ size: n * 4 * slots.length, usage: MAP_READ | COPY_DST }), e2 = d.createCommandEncoder()

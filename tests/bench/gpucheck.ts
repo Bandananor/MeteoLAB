@@ -7,13 +7,18 @@ import { AtmosphereModel, createGrid, domainGrid, DT, SCENARIOS } from '../../sr
 import { SUMMER_DAY } from '../../src/core/fixtures'
 import { GpuTransport } from '../../src/gpu/transport'
 import { GpuElliptic } from '../../src/gpu/elliptic'
+import { GpuDynamics } from '../../src/gpu/dynamics'
+import { NUDGE, startOf } from '../../src/core/model'
+import { ZONE_DEPTH, zoneShape } from '../../src/core/zones'
 
 const params = new URLSearchParams(location.search), name = params.get('scenario') ?? 'Классическая суперячейка', minutes = Number(params.get('minutes') ?? 20)
 const out = document.getElementById('out'), log = (s: string) => { out.textContent += '\n' + s }
 const result: any = { scenario: name, minutes, fields: [] }
 ;(window as any).__gpucheck = result
 try {
-  const spacing = Number(params.get('spacing') ?? 0), base = { ...SUMMER_DAY, ...SCENARIOS.find(s => s.name === name).values }, config = spacing ? { ...base, spacing } : base
+  const spacing = Number(params.get('spacing') ?? 0), base0 = { ...SUMMER_DAY, ...SCENARIOS.find(s => s.name === name).values }, config0 = spacing ? { ...base0, spacing } : base0
+  // ?zones=1: a warm moist zone of 20 km at the domain's middle (checks the buoyancy against a zone's own air).
+  const config = params.get('zones') ? { ...config0, zones: [{ points: [[10, 10], [30, 10], [30, 30], [10, 30]], temperature: 3, moisture: 2 }] } : config0
   const model = new AtmosphereModel(config, createGrid(domainGrid(config.domain, config.top, config.domainSize, config.spacing)))
   result.grid = `${model.grid.nx} x ${model.grid.ny} x ${model.grid.nz}`
   for (let t = 0; t < minutes * 60; t += DT) { model.step(DT); model.time += DT }
@@ -97,6 +102,39 @@ try {
       divLeftGpu: +(maxAbs(divOut) / maxAbs(divIn)).toExponential(2), divLeftCpu: +(maxAbs(divCpu) / maxAbs(divIn)).toExponential(2) }
     log('pressure ' + JSON.stringify(result.pressure))
     result.ellipticErrors = ell.errors.slice(0, 5)
+  }
+  // Step 4: the dynamics of a step (face projection, three RK3 stages of every carried field with buoyancy, nudging and
+  // the pressure in the stages) on the GPU against the model's own phases (step() without the sedimentation before them).
+  {
+    const cfg = model['config'], fieldsNow = carried.map(c => Float32Array.from(c.field))
+    const roleNames = ['u', 'v', 'w', 'theta', 'q', 'cloud', 'ice', 'rain', 'snow', 'graupel', 'hail']
+    const fields = carried.map((c, k) => ({ q: fieldsNow[k], monotone: c.monotone, role: (roleNames.find(f => model[f] === c.field) ?? 'other') as any }))
+    const zones = model.zoneGround !== null, nudging = startOf(cfg) === 'nudge', [ox, oy] = cfg.startOffset ?? [0, 0]
+    const env = { thetaEnv: [] as number[], qEnv: [] as number[], shape: [] as number[], zoneTheta: zones ? model['zoneThetaNow'] : null, zoneVapour: zones ? model['zoneVapourNow'] : null,
+      nudge: nudging ? { time: model.time, top: cfg.nudge ?? NUDGE.w, cx: grid.width / 2 + ox, cy: grid.depth / 2 + oy } : null }
+    for (let z = 0; z < nz; z++) { const [t, q] = model.envNow(z); env.thetaEnv.push(t); env.qEnv.push(q); env.shape.push(zones && grid.zs[z] < ZONE_DEPTH ? zoneShape(grid.zs[z]) : 0) }
+    const dyn = await GpuDynamics.create(grid, model.env)
+    let dynMs = Infinity, after: Float32Array[] = []
+    for (let r = 0; r < 4; r++) { const res = await dyn.step(fields, env, DT); dynMs = Math.min(dynMs, res.gpuMs); after = res.fields }
+    // The CPU: the same phases as step() (model.ts), on the model's own fields.
+    const run = (phase: string, tasks: number) => model.runner.run(phase, tasks, DT), layer = grid.layer
+    const t0 = performance.now()
+    run('faces', nz); run('faceDivergence', nz); run('faceForward', nz); run('faceModes', grid.ny); run('faceInverse', nz); run('faceCorrect', nz); run('faceDivergence', nz)
+    const tasks = carried.length * model['slabs']()
+    for (const stage of [0, 1, 2]) {
+      run(`tendency${stage}`, tasks); run(`update${stage}`, tasks)
+      if (stage < 2) { const top = (nz - 1) * layer; for (let b = 0; b < layer; b++) { model.w[b] = 0; model.w[b + top] = 0 } model['project'](DT, false) }
+    }
+    const cpuDynMs = performance.now() - t0
+    result.dynamics = { gpuMs: +dynMs.toFixed(2), cpuMs: +cpuDynMs.toFixed(1), nudging, zones, fields: [] as any[] }
+    carried.forEach((c, k) => {
+      const label = names.find(f => model[f] === c.field) ?? `#${k}`
+      let scale = 0, err = 0, big = 0
+      for (let i = 0; i < n; i++) { const cpuNew = c.field[i]; scale = Math.max(scale, Math.abs(cpuNew - fieldsNow[k][i])); err = Math.max(err, Math.abs(after[k][i] - cpuNew)); big = Math.max(big, Math.abs(cpuNew)) }
+      const row = { field: label, changeMax: +scale.toExponential(2), maxRelOfChange: scale ? +(err / scale).toExponential(2) : 0, maxAbs: +big.toExponential(2) }
+      result.dynamics.fields.push(row); log('dynamics ' + JSON.stringify(row))
+    })
+    result.dynamicsErrors = dyn.errors.slice(0, 5)
   }
   result.errors = gpu.errors.slice(0, 5)
   log(`CPU ${result.cpuMs} ms, GPU ${result.gpuMs} ms for ${carried.length} fields (${result.adapter})`)

@@ -223,6 +223,12 @@ export class GpuElliptic {
     return new GpuElliptic(device, grid, rho, `${adapter.info?.vendor ?? ''} ${adapter.info?.architecture ?? ''}`.trim())
   }
 
+  /** On a device someone else made (the dynamics share one device and the velocity and face buffers). */
+  static on(device: GPUDevice, grid: Grid, rho: ArrayLike<number>, adapter = '') { return new GpuElliptic(device, grid, rho, adapter) }
+
+  /** A buffer of the layout (4 real, 8-10 u v w, 11-13 mx my mz). */
+  buffer(k: number) { return this.buffers[k] }
+
   private constructor(device: GPUDevice, grid: Grid, rho: ArrayLike<number>, adapter: string) {
     this.device = device; this.grid = grid; this.adapter = adapter; this.mh = Math.floor(grid.nx / 2)
     device.addEventListener('uncapturederror', e => this.errors.push((e as GPUUncapturedErrorEvent).error.message))
@@ -268,25 +274,47 @@ export class GpuElliptic {
     this.run(pass, 'idftY', params, half); this.run(pass, 'idftX', params, layers * ny * nx)
   }
 
-  /** Projects the face fluxes of the current velocity (FluxTransport.setVelocity); returns the GPU time, ms. */
-  async faceProjection() {
-    const d = this.device, { n, nz } = this.grid, t0 = performance.now(), enc = d.createCommandEncoder(), pass = enc.beginComputePass(), P = this.faceParams
+  /**
+   * Encodes the face projection: face fluxes of u, v, w, projected; with `divergence`, their divergence is left in
+   * `real` (4) afterwards, as FluxTransport keeps it for the tendency's -q div term.
+   */
+  encodeFaces(pass: GPUComputePassEncoder, divergence = false) {
+    const { n, nz } = this.grid, P = this.faceParams
     this.run(pass, 'faces', P, n); this.run(pass, 'faceDivergence', P, n)
     this.solve(pass, P, nz, 'modesFaces')
     this.run(pass, 'correctFaces', P, n)
+    if (divergence) this.run(pass, 'faceDivergence', P, n)
+  }
+
+  /** The time step of the pressure projections encoded next (a uniform: written before the submission). */
+  setPressureStep(dt: number) {
+    const { nx, ny } = this.grid
+    this.device.queue.writeBuffer(this.pressureParams, 32, new Float32Array([this.grid.dx, this.grid.dy, dt, 1 / (nx * ny)]))
+  }
+
+  /** Encodes the pressure projection of u, v, w (with the step of setPressureStep). */
+  encodePressure(pass: GPUComputePassEncoder) {
+    const { nx, ny, nz, n } = this.grid, P = this.pressureParams
+    this.run(pass, 'pressureDivergence', P, nx * ny * (nz - 1))
+    this.solve(pass, P, nz - 1, 'modesPressure')
+    this.run(pass, 'pressureCorrect', P, n)
+  }
+
+  /** Projects the face fluxes of the current velocity (FluxTransport.setVelocity); returns the GPU time, ms. */
+  async faceProjection() {
+    const d = this.device, t0 = performance.now(), enc = d.createCommandEncoder(), pass = enc.beginComputePass()
+    this.encodeFaces(pass)
     pass.end(); d.queue.submit([enc.finish()]); await d.queue.onSubmittedWorkDone()
     return performance.now() - t0
   }
 
   /** Makes u, v, w free of dual-cell divergence (PressureSolver: divergence over dt, solve, correct); GPU time, ms. */
   async pressureProjection(dt: number) {
-    const d = this.device, { nx, ny, nz, n } = this.grid, P = this.pressureParams
-    const raw = new Float32Array([this.grid.dx, this.grid.dy, dt, 1 / (nx * ny)]); d.queue.writeBuffer(P, 32, raw)
+    const d = this.device
+    this.setPressureStep(dt)
     await d.queue.onSubmittedWorkDone()
     const t0 = performance.now(), enc = d.createCommandEncoder(), pass = enc.beginComputePass()
-    this.run(pass, 'pressureDivergence', P, nx * ny * (nz - 1))
-    this.solve(pass, P, nz - 1, 'modesPressure')
-    this.run(pass, 'pressureCorrect', P, n)
+    this.encodePressure(pass)
     pass.end(); d.queue.submit([enc.finish()]); await d.queue.onSubmittedWorkDone()
     return performance.now() - t0
   }
