@@ -176,14 +176,14 @@ function brokenLines(echoes: EchoObject[], width: number, depth: number, motion:
 }
 
 /** The strongest echo below ORG.level in each column of the model (dBZ, row-major nx x ny). */
-export function lowEcho(m: Pick<AtmosphereModel, 'grid' | 'env' | 'theta' | 'rain' | 'snow' | 'graupel' | 'hail'>) {
+export function lowEcho(m: Pick<AtmosphereModel, 'grid' | 'env' | 'theta' | 'rain' | 'snow' | 'graupel' | 'hail'> & { rainNumber?: ArrayLike<number> }) {
   const { nx, ny, layer, zs, nz } = m.grid, e = m.env, out = new Float32Array(layer).fill(-30)
   for (let z = 0; z < nz && zs[z] <= ORG.level; z++) {
     const rho = e.rho[z], exner = e.exner[z]
     for (let c = 0, i = z * layer; c < nx * ny; c++, i++) {
       const rain = m.rain[i], snow = m.snow[i], graupel = m.graupel[i], hail = m.hail[i]
       if (rain <= 0 && snow <= 0 && graupel <= 0 && hail <= 0) continue
-      const d = reflectivity(rho, rain, snow, graupel, m.theta[i] * exner - 273.15, hail)
+      const d = reflectivity(rho, rain, snow, graupel, m.theta[i] * exner - 273.15, hail, undefined, m.rainNumber?.[i])
       if (d > out[c]) out[c] = d
     }
   }

@@ -12,7 +12,7 @@ describe('light frames of a precise run (frames.ts, roadmap C2)', () => {
     m.precipitation[7] = 12.34; m.rotation.persisted = 321; m.flashCount = { ic: 5, cg: 2 }
     const record = await encodeFrame(m), view = new DataView(record.buffer)
     expect(view.getFloat32(4, true)).toBeCloseTo(m.time, 3)
-    const state = await decodeFrame(record.slice(RECORD_HEAD), { format: 'meteolab-frames', version: 1, config: m.config, nx: m.grid.nx, ny: m.grid.ny, nz, every: 30 })
+    const state = await decodeFrame(record.slice(RECORD_HEAD), { format: 'meteolab-frames', version: 2, config: m.config, nx: m.grid.nx, ny: m.grid.ny, nz, every: 30 })
     expect(state.header).toMatchObject({ time: m.time, persisted: 321, flashCount: { ic: 5, cg: 2 } })
     const copy = new AtmosphereModel({ ...SUMMER_DAY })
     applyState(copy, state)

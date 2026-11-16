@@ -23,6 +23,8 @@ interface EchoSource {
   env: { rho: ArrayLike<number>; exner: ArrayLike<number> }
   time: number
   theta: ArrayLike<number>; rain: ArrayLike<number>; snow: ArrayLike<number>; graupel: ArrayLike<number>; hail: ArrayLike<number>
+  /** Drops per kg of two-moment rain (absent: one-moment). */
+  rainNumber?: ArrayLike<number>
 }
 
 /** The strongest echo over each column now. */
@@ -32,7 +34,7 @@ export function echoMap(m: EchoSource): EchoMap {
     const rho = m.env.rho[k], exner = m.env.exner[k]
     for (let c = 0, i = k * layer; c < layer; c++, i++) {
       if (m.rain[i] + m.snow[i] + m.graupel[i] + m.hail[i] <= 0) continue
-      const d = reflectivity(rho, m.rain[i], m.snow[i], m.graupel[i], m.theta[i] * exner - 273.15, m.hail[i])
+      const d = reflectivity(rho, m.rain[i], m.snow[i], m.graupel[i], m.theta[i] * exner - 273.15, m.hail[i], undefined, m.rainNumber?.[i])
       if (d > out[c]) out[c] = d
     }
   }

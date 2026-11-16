@@ -238,7 +238,8 @@ export class PPI {
         }
         const tc = m.theta[i] * exner - 273.15
         const radar = this.mie ? this.profile : undefined
-        this.nodeDbz[i] = reflectivity(rho, rain, snow, graupel, tc, hail, radar); this.nodeFall[i] = reflectivityFallSpeed(rho, rhoGround, rain, snow, graupel, tc, hail, radar)
+        const drops = m.rainNumber[i]
+        this.nodeDbz[i] = reflectivity(rho, rain, snow, graupel, tc, hail, radar, drops); this.nodeFall[i] = reflectivityFallSpeed(rho, rhoGround, rain, snow, graupel, tc, hail, radar, drops)
         if (dual) { const d = dualPol(rho, rain, snow, graupel, tc, hail, radar); this.nodeZdr[i] = d.zdr; this.nodeRho[i] = d.rho; this.nodeKdp[i] = d.kdp * KDP_WAVELENGTH / wavelength }
       }
     }

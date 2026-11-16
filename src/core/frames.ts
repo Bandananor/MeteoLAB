@@ -14,10 +14,14 @@ import type { Grid } from './grid'
 import type { AtmosphereModel } from './model'
 import { STATE_COLUMNS, STATE_FIELDS, type SavedState, type StateHeader } from './state'
 
-const MAGIC = 'MLFR', VERSION = 1, STATE_VERSION = 3
+// Version 2 (3.0): the raindrop number (state version 4) among the fields; version 1 files (state version 3) still load.
+const MAGIC = 'MLFR', VERSION = 2
+/** The fields a frames file of this version holds, and the state version its frames decode to. */
+const fieldsOf = (version: number) => version === 1 ? STATE_FIELDS.slice(0, 17) : STATE_FIELDS
+const stateVersion = (version: number) => version === 1 ? 3 : 4
 /** Hydrometeors (never negative, mostly zero, spanning decades): stored as square roots. The vapour is linear: nearly
  * uniform on a level, its level's own range keeps it to ~1e-6 kg/kg. */
-const ROOTED: ReadonlySet<string> = new Set(['cloud', 'rain', 'cold', 'ice', 'snow', 'graupel', 'hail', 'iceNumber'])
+const ROOTED: ReadonlySet<string> = new Set(['cloud', 'rain', 'cold', 'ice', 'snow', 'graupel', 'hail', 'iceNumber', 'rainNumber'])
 /** Bytes of the record's own head: the payload's length and the frame's time. */
 export const RECORD_HEAD = 8
 
@@ -46,7 +50,7 @@ export function readFramesHeader(bytes: Uint8Array): { header: FramesHeader; sta
   const length = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getUint32(4, true)
   if (8 + length > bytes.length) throw new Error('the frames file is truncated')
   const header = JSON.parse(new TextDecoder().decode(bytes.subarray(8, 8 + length))) as FramesHeader
-  if (header?.format !== 'meteolab-frames' || header.version !== VERSION) throw new Error('unknown frames format or version')
+  if (header?.format !== 'meteolab-frames' || header.version !== VERSION && header.version !== 1) throw new Error('unknown frames format or version')
   return { header, start: pad4(8 + length) }
 }
 
@@ -83,12 +87,12 @@ export async function encodeFrame(m: FrameModel): Promise<Uint8Array> {
 
 /** A frame's payload (the record without its head) as a saved state of the file's settings. */
 export async function decodeFrame(packed: Uint8Array<ArrayBuffer>, header: FramesHeader): Promise<SavedState> {
-  const { nx, ny, nz } = header, layer = nx * ny, n = layer * nz, payload = await gzip(packed, 'decompress')
-  if (payload.length !== 40 + STATE_FIELDS.length * fieldBytes(nz, n) + STATE_COLUMNS.length * layer * 4) throw new Error('a frame does not match the grid')
+  const { nx, ny, nz } = header, layer = nx * ny, n = layer * nz, payload = await gzip(packed, 'decompress'), fields = fieldsOf(header.version)
+  if (payload.length !== 40 + fields.length * fieldBytes(nz, n) + STATE_COLUMNS.length * layer * 4) throw new Error('a frame does not match the grid')
   const view = new DataView(payload.buffer), [time, persisted, chargeGround, ic, cg] = [0, 1, 2, 3, 4].map(k => view.getFloat64(8 * k, true))
-  const data = new Float32Array(STATE_FIELDS.length * n + STATE_COLUMNS.length * layer)
+  const data = new Float32Array(fields.length * n + STATE_COLUMNS.length * layer)
   let o = 40, d = 0
-  for (const key of STATE_FIELDS) {
+  for (const key of fields) {
     const rooted = ROOTED.has(key), params = new Float32Array(payload.buffer, o, 2 * nz), bytes = payload.subarray(o + 8 * nz, o + 8 * nz + n)
     for (let z = 0; z < nz; z++) {
       const lo = params[2 * z], scale = params[2 * z + 1]
@@ -97,7 +101,7 @@ export async function decodeFrame(packed: Uint8Array<ArrayBuffer>, header: Frame
     o += fieldBytes(nz, n); d += n
   }
   for (let k = 0; k < STATE_COLUMNS.length; k++) { data.set(new Float32Array(payload.buffer, o, layer), d); o += layer * 4; d += layer }
-  const state: StateHeader = { format: 'meteolab-state', version: STATE_VERSION, config: header.config, time, persisted, nx, ny, nz, chargeGround, flashCount: { ic, cg } }
+  const state: StateHeader = { format: 'meteolab-state', version: stateVersion(header.version), config: header.config, time, persisted, nx, ny, nz, chargeGround, flashCount: { ic, cg } }
   return { header: state, data }
 }
 
