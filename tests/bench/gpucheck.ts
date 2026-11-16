@@ -36,6 +36,35 @@ try {
     const row = { field: label, monotone: c.monotone, maxRel: scale ? +(err / scale).toExponential(2) : 0, rmsRel: sqs ? +Math.sqrt(sq / sqs).toExponential(2) : 0 }
     result.fields.push(row); log(JSON.stringify(row))
   })
+  // Step 2: the three RK3 stages of the scalar fields (all but u, v, w) by DT, as the model does them (float64
+  // tendencies, float32 fields), against the GPU's; theta on the GPU as its departure from the base profile, the
+  // profile's own tendency added in float64 from the CPU.
+  const scalars = carried.filter(c => c.field !== model.u && c.field !== model.v && c.field !== model.w)
+  const RK = [1 / 3, 1 / 2, 1], ref = scalars.map(c => Float32Array.from(c.field))
+  let cpuStep = 0
+  {
+    const t0 = performance.now(), tend = new Float64Array(n)
+    scalars.forEach((c, k) => { const a = ref[k], start = Float32Array.from(a); for (const f of RK) { flux.tendency(a, tend, 0, nz, c.monotone); for (let i = 0; i < n; i++) a[i] = start[i] + f * DT * tend[i] } })
+    cpuStep = performance.now() - t0
+  }
+  const layer = grid.layer, thetaEnv = new Float32Array(n), thetaPert = new Float32Array(n), envTend = new Float64Array(n)
+  for (let i = 0; i < n; i++) { const z = Math.floor(i / layer); thetaEnv[i] = model.env.theta[z]; thetaPert[i] = model.theta[i] - model.env.theta[z] }
+  flux.tendency(thetaEnv, envTend, 0, nz, false)
+  const extra = Float32Array.from(envTend)
+  const inputs = scalars.map(c => c.field === model.theta ? { q: thetaPert, monotone: c.monotone, extra } : { q: c.field, monotone: c.monotone })
+  let gpuStep = Infinity, after: Float32Array[] = []
+  for (let rep = 0; rep < 4; rep++) { const r = await gpu.rk3(inputs, DT); gpuStep = Math.min(gpuStep, r.gpuMs); after = r.fields }
+  result.step = { cpuMs: +cpuStep.toFixed(1), gpuMs: +gpuStep.toFixed(2), fields: [] }
+  scalars.forEach((c, k) => {
+    const label = names.find(f => model[f] === c.field) ?? `#${k}`, theta = c.field === model.theta
+    let scale = 0, err = 0
+    for (let i = 0; i < n; i++) {
+      const before = c.field[i], cpuNew = ref[k][i], gpuNew = theta ? after[k][i] + thetaEnv[i] : after[k][i]
+      scale = Math.max(scale, Math.abs(cpuNew - before)); err = Math.max(err, Math.abs(gpuNew - cpuNew))
+    }
+    const row = { field: label, changeMax: +scale.toExponential(2), maxRelOfChange: scale ? +(err / scale).toExponential(2) : 0 }
+    result.step.fields.push(row); log('step ' + JSON.stringify(row))
+  })
   result.errors = gpu.errors.slice(0, 5)
   log(`CPU ${result.cpuMs} ms, GPU ${result.gpuMs} ms for ${carried.length} fields (${result.adapter})`)
 } catch (e) { result.error = String(e?.stack ?? e); log(result.error) }
