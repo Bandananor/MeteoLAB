@@ -1,5 +1,5 @@
 import { L } from '../i18n'
-import { type AtmosphereModel, columnLevels, type Environment, dryAdiabat, environmentLevels, mixingRatioTemperature, moistAdiabat, type ParcelKind, type ParcelPath, parcelIndices, parcelPath, type SkewIndices, skewIndices, type SkewLevel, stormIndices } from '../core'
+import { type AtmosphereModel, columnLevels, type Environment, type ParcelIndices, dryAdiabat, environmentLevels, mixingRatioTemperature, moistAdiabat, type ParcelKind, type ParcelPath, parcelIndices, parcelPath, type SkewIndices, skewIndices, type SkewLevel, stormIndices } from '../core'
 import { help, instrumentPalette, instrumentScreen, numbers, press, readings, section } from '../instrument'
 import { MONO } from '../theme'
 
@@ -19,6 +19,11 @@ const INFLOW_DISTANCE = 8000
 /** Which live sounding the diagram shows: its model time (s), the share of quiet columns it averages, or all of them. */
 export interface LiveInfo { time: number; quiet: number; all: boolean }
 
+/** One kept live sounding (Atmosphere.liveHistory): its model time, environment and standard parcels. */
+export interface HistoryEntry extends LiveInfo { env: Environment; indices: ParcelIndices }
+/** How many earlier profiles the diagram draws faintly behind the one shown. */
+const PAST_SHOWN = 3
+
 /** Where the model's virtual radiosonde goes: the selected cell (centre, motion) or nothing. */
 export interface ProbeCell { id: number; x: number; y: number; u: number; v: number }
 
@@ -35,6 +40,11 @@ export class SkewTPanel {
   private env: SkewLevel[] = []; private start: SkewLevel[] = []; private live: LiveInfo = { time: 0, quiet: 1, all: false }; private parcels: Partial<Record<ParcelKind, ParcelPath>> = {}; private summary: SkewIndices | null = null; private dcape = 0; private ship = 0
   private kind: ParcelKind = 'ml'; private probe: Probe = 'inflow'; private cell: ProbeCell | null = null
   private column: SkewLevel[] = []
+  /** The live sounding now and the kept ones; the moment shown (-1: now); whether earlier profiles are drawn; their levels by time. */
+  private liveEnv: Environment | null = null; private history: HistoryEntry[] = []; private moment = -1; private showPast = true
+  private readonly pastLevels = new Map<number, SkewLevel[]>()
+  /** The moment shown (for the side texts) and the ML parcel of the live sounding now (for the chart). */
+  private shown: LiveInfo = { time: 0, quiet: 1, all: false }; private liveMl: ParcelIndices['ml'] | null = null
   private hover: { x: number; y: number } | null = null; private lastDraw = 0; private lastTime = -1
   /** Plot rectangle in CSS pixels (set by draw). */
   private box = { left: 0, right: 0, top: 0, bottom: 0 }
@@ -50,8 +60,12 @@ export class SkewTPanel {
           <button data-probe="inflow" title="${L(`Колонка модели в ${INFLOW_DISTANCE / 1000} км от ядра против ветра 0–1 км относительно ячейки: воздух, который ячейка сейчас вдыхает`, `A model column ${INFLOW_DISTANCE / 1000} km from the core, upwind in the cell-relative 0–1 km wind: the air the cell is breathing in now`)}">${L('в притоке', 'inflow')}</button>
           <button data-probe="core" title="${L('Колонка модели в центре восходящего ядра ячейки', 'A model column at the centre of the cell’s updraught core')}">${L('в ядре', 'core')}</button>
           <button data-probe="none">${L('нет', 'none')}</button></div><p class="psec__hint" id="skewProbeInfo"></p>`)
+      + section(L('История среды', 'Environment history'), `<label class="check" title="${L('Бледные линии — живое зондирование 10, 20 и 30 модельных минут назад (от показанного момента): видно, как солнце греет пограничный слой, как уходит крышка, как холодает или сохнет воздух.', 'Faint lines — the live sounding 10, 20 and 30 model minutes earlier (than the moment shown): how the sun warms the boundary layer, how the cap goes, how the air cools or dries.')}"><input type="checkbox" id="skewPast" checked> ${L('Прошлые профили', 'Earlier profiles')}</label>
+          <div class="field"><span class="field__head"><span class="field__label">${L('Момент', 'Moment')}</span><output class="field__value" id="skewMomentLabel">${L('сейчас', 'now')}</output></span><input class="range" type="range" id="skewMoment" min="0" max="0" step="1" value="0"></div>
+          <canvas id="skewChart" height="120" style="width:100%;height:120px;display:block" title="${L('ML CAPE (красное) и ML CIN (синее) живого зондирования за прогон, раз в 10 модельных минут; вертикаль — показанный момент.', 'ML CAPE (red) and ML CIN (blue) of the live sounding over the run, every 10 model minutes; the vertical — the moment shown.')}"></canvas>
+          <dl class="kv" id="skewMomentIdx"></dl>`)
       + section(L('Курсор', 'Cursor'), '<dl class="kv" id="skewCursor"></dl>')
-      + help(L('Изотермы наклонены на 45°, давление — в логарифмическом масштабе. Сплошные коричневые — сухие адиабаты, пунктирные зелёные — влажные, точечные — отношение смеси насыщения (г/кг). Красное — CAPE, синее — CIN; они закрашены между виртуальными температурами частицы и среды (тонкие точечные линии рядом с кривыми): влага делает воздух легче, и CAPE считается по ним. Ветер — флажки в м/с: полное перо 5, половина 2,5, флаг 25. Среда — живое зондирование: профиль модели сейчас, средний по столбцам без облаков, осадков и холодного купола (раз в модельную минуту); бледный пунктир — исходная среда. Зонд в модели (оранжевое и голубое) показывает, как гроза изменила воздух.', 'The isotherms are skewed by 45°, the pressure is on a logarithmic scale. Solid brown — dry adiabats, dashed green — moist ones, dotted — saturation mixing ratio (g/kg). Red — CAPE, blue — CIN; they are shaded between the virtual temperatures of the parcel and the environment (the thin dotted lines beside the curves): moisture makes the air lighter, and CAPE is counted by them. The wind as barbs in m/s: a full barb 5, a half 2.5, a pennant 25. The environment is the live sounding: the model’s profile now, the mean over columns without cloud, precipitation and cold pool (once a model minute); the pale dashes — the initial environment. The probe in the model (orange and light blue) shows how the storm has changed the air.')))
+      + help(L('Изотермы наклонены на 45°, давление — в логарифмическом масштабе. Сплошные коричневые — сухие адиабаты, пунктирные зелёные — влажные, точечные — отношение смеси насыщения (г/кг). Красное — CAPE, синее — CIN; они закрашены между виртуальными температурами частицы и среды (тонкие точечные линии рядом с кривыми): влага делает воздух легче, и CAPE считается по ним. Ветер — флажки в м/с: полное перо 5, половина 2,5, флаг 25. Среда — живое зондирование: профиль модели сейчас, средний по столбцам без облаков, осадков и холодного купола (раз в модельную минуту); бледный пунктир — исходная среда. Зонд в модели (оранжевое и голубое) показывает, как гроза изменила воздух. История среды: раз в 10 модельных минут живое зондирование сохраняется — бледные линии показывают три прошлых профиля, ползунок «Момент» возвращает диаграмму и индексы к выбранному времени, график — ML CAPE (красное) и ML CIN (синее) за прогон.', 'The isotherms are skewed by 45°, the pressure is on a logarithmic scale. Solid brown — dry adiabats, dashed green — moist ones, dotted — saturation mixing ratio (g/kg). Red — CAPE, blue — CIN; they are shaded between the virtual temperatures of the parcel and the environment (the thin dotted lines beside the curves): moisture makes the air lighter, and CAPE is counted by them. The wind as barbs in m/s: a full barb 5, a half 2.5, a pennant 25. The environment is the live sounding: the model’s profile now, the mean over columns without cloud, precipitation and cold pool (once a model minute); the pale dashes — the initial environment. The probe in the model (orange and light blue) shows how the storm has changed the air. Environment history: the live sounding is kept every 10 model minutes — the faint lines show three earlier profiles, the «Moment» slider takes the diagram and indices back to the time chosen, the chart — ML CAPE (red) and ML CIN (blue) over the run.')))
     this.canvas = this.root.querySelector('canvas')!; this.ctx = this.canvas.getContext('2d')!
     this.root.querySelector('.ibar__close')!.addEventListener('click', () => this.toggle(false))
     this.root.querySelectorAll<HTMLButtonElement>('[data-kind]').forEach(b => b.addEventListener('click', () => { this.kind = b.dataset.kind as ParcelKind; this.mark(); this.draw() }))
@@ -60,6 +74,12 @@ export class SkewTPanel {
     this.canvas.addEventListener('mouseleave', () => { this.hover = null; this.draw() })
     addEventListener('keydown', e => { if (e.key === 'Escape' && this.open) this.toggle(false) })
     addEventListener('resize', () => this.open && this.draw())
+    ;(this.root.querySelector('#skewPast') as HTMLInputElement).addEventListener('change', e => { this.showPast = (e.target as HTMLInputElement).checked; this.draw() })
+    ;(this.root.querySelector('#skewMoment') as HTMLInputElement).addEventListener('input', e => {
+      const v = Number((e.target as HTMLInputElement).value)
+      this.moment = v >= this.history.length ? -1 : v
+      this.show()
+    })
     this.mark()
   }
 
@@ -67,19 +87,43 @@ export class SkewTPanel {
   attach(model: AtmosphereModel) {
     this.model = model
     this.start = environmentLevels(model.env, model.grid.height)
-    this.column = []; this.lastTime = -1
+    this.column = []; this.lastTime = -1; this.history = []; this.moment = -1; this.pastLevels.clear()
     this.setLive(model.env, { time: 0, quiet: 1, all: false })
   }
 
-  /** A new live sounding (src/core/live.ts): the environment, its parcels and indices. */
-  setLive(env: Environment, info: LiveInfo) {
+  /**
+   * A new live sounding (src/core/live.ts) and the kept ones (Atmosphere.liveHistory): the moment slider follows "now"
+   * unless a past moment is chosen and still kept.
+   */
+  setLive(env: Environment, info: LiveInfo, history: readonly HistoryEntry[] = []) {
+    const chosen = this.moment >= 0 ? this.history[this.moment]?.time : undefined
+    this.liveEnv = env; this.live = info; this.liveMl = parcelIndices(env, this.model!.grid.height).ml; this.history = history.filter(h => h.time < info.time - 1e-6)
+    this.moment = chosen === undefined ? -1 : this.history.findIndex(h => h.time === chosen)
+    for (const t of [...this.pastLevels.keys()]) if (!this.history.some(h => h.time === t)) this.pastLevels.delete(t)
+    const slider = this.root.querySelector('#skewMoment') as HTMLInputElement
+    slider.max = String(this.history.length); slider.value = String(this.moment < 0 ? this.history.length : this.moment)
+    this.show()
+  }
+
+  /** Levels of a kept sounding (cached by its time). */
+  private levelsOf(h: HistoryEntry) {
+    let l = this.pastLevels.get(h.time)
+    if (!l) { l = environmentLevels(h.env, this.model!.grid.height); this.pastLevels.set(h.time, l) }
+    return l
+  }
+
+  /** The diagram's environment: the moment chosen (a kept sounding) or the live one now; its parcels and indices. */
+  private show() {
+    const past = this.moment >= 0 ? this.history[this.moment] : null, env = past ? past.env : this.liveEnv!, info: LiveInfo = past ?? this.live
     const height = this.model!.grid.height
-    this.live = info
+    this.shown = info
+    const t = Math.floor(info.time / 60), clock = `T+${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}`
+    ;(this.root.querySelector('#skewMomentLabel') as HTMLElement).textContent = past ? (past.time <= 0 ? L('исходная', 'initial') : clock) : L('сейчас', 'now')
     this.env = environmentLevels(env, height)
     this.parcels = { sb: parcelPath(env, height, 'sb'), ml: parcelPath(env, height, 'ml'), mu: parcelPath(env, height, 'mu') }
     this.summary = skewIndices(env, height)
     const indices = parcelIndices(env, height); this.dcape = indices.dcape; this.ship = stormIndices(env, indices).ship
-    const t = Math.floor(info.time / 60), label = info.time <= 0 ? L('ИСХОДНАЯ', 'INITIAL') : `T+${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}, ${info.all ? L('ВСЯ ОБЛАСТЬ', 'WHOLE DOMAIN') : `${Math.round(info.quiet * 100)} % ${L('ОБЛАСТИ', 'OF THE DOMAIN')}`}`
+    const label = info.time <= 0 ? L('ИСХОДНАЯ', 'INITIAL') : `${past ? L('ПРОШЛОЕ ', 'PAST ') : ''}T+${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}, ${info.all ? L('ВСЯ ОБЛАСТЬ', 'WHOLE DOMAIN') : `${Math.round(info.quiet * 100)} % ${L('ОБЛАСТИ', 'OF THE DOMAIN')}`}`
     ;(this.root.querySelector('#skewLive') as HTMLElement).textContent = label
     if (this.open) this.draw()
   }
@@ -175,6 +219,13 @@ export class SkewTPanel {
     // The model column (thinner), the environment, the parcel.
     if (this.column.length) { line(this.column.map(l => ({ p: l.p, t: l.td })), '#4fc3e6', 1.6); line(this.column.map(l => ({ p: l.p, t: l.t })), '#ffa040', 1.6) }
     if (this.live.time > 0) { line(this.start.map(l => ({ p: l.p, t: l.td })), '#3f8a55', 1.3, [4, 3]); line(this.start.map(l => ({ p: l.p, t: l.t })), '#b04a3f', 1.3, [4, 3]) }
+    if (this.showPast) {
+      const upto = this.moment >= 0 ? this.moment : this.history.length, shown = this.history.slice(Math.max(1, upto - PAST_SHOWN), upto)
+      shown.forEach((h, k) => {
+        const a = .25 + .45 * (k + 1) / shown.length, lv = this.levelsOf(h)
+        line(lv.map(l => ({ p: l.p, t: l.td })), `rgba(62,207,106,${a * .7})`, 1.2); line(lv.map(l => ({ p: l.p, t: l.t })), `rgba(255,74,61,${a * .7})`, 1.2)
+      })
+    }
     line(this.env.map(l => ({ p: l.p, t: l.td })), '#3ecf6a', 2.2); line(this.env.map(l => ({ p: l.p, t: l.t })), '#ff4a3d', 2.2)
     // The virtual temperatures, thin and dotted: the environment's beside its temperature, the parcel's beside its path.
     if (parcel) { line(parcel.path.map(q => ({ p: q.p, t: q.tvEnv })), '#ff4a3d', 1, [1, 3]); line(parcel.path.map(q => ({ p: q.p, t: q.tv })), '#e9eef0', 1, [1, 3]) }
@@ -202,7 +253,33 @@ export class SkewTPanel {
     this.barbs(this.env, right + (narrow ? 26 : 34), '#cfe0e5')
     if (probe) this.barbs(this.column.filter((_, k) => k % 3 === 1), right + (narrow ? 58 : 84), '#ffa040')
     ctx.fillStyle = pal.label; ctx.fillText(L('среда', 'env.'), right + (narrow ? 8 : 22), top - 4); if (this.live.time > 0) { ctx.fillStyle = '#b04a3f'; ctx.fillText(L('- - исходная', '- - initial'), left + 6, top + 12) } if (this.column.length) { ctx.fillStyle = '#ffa040'; ctx.fillText(L('зонд', 'probe'), right + (narrow ? 48 : 72), top - 4) }
-    this.cursor(); this.side()
+    this.cursor(); this.side(); this.chart()
+  }
+
+  /** ML CAPE and CIN of the kept soundings and now, against model time; the moment shown marked. */
+  private chart() {
+    const c = this.root.querySelector('#skewChart') as HTMLCanvasElement, ctx = c.getContext('2d')!, dpr = Math.min(devicePixelRatio, 2)
+    const w = c.clientWidth || 260, h = 120
+    if (c.width !== Math.round(w * dpr)) { c.width = Math.round(w * dpr); c.height = Math.round(h * dpr) }
+    const pal = instrumentPalette(this.root)
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.fillStyle = pal.bg; ctx.fillRect(0, 0, w, h); ctx.font = `10px ${MONO}`
+    const now = this.liveMl ? { time: this.live.time, ml: this.liveMl } : null
+    const pts = [...this.history.map(e => ({ time: e.time, ml: e.indices.ml })), ...(now ? [now] : [])]
+    const idx = this.root.querySelector('#skewMomentIdx') as HTMLElement
+    if (pts.length < 2) { ctx.fillStyle = pal.label; ctx.fillText(L('копится: раз в 10 мин модели', 'building: every 10 model min'), 6, h / 2); idx.innerHTML = ''; return }
+    const t1 = Math.max(60, pts[pts.length - 1].time), top = Math.max(100, ...pts.map(p => p.ml.cape)), bottom = -Math.max(50, ...pts.map(p => p.ml.cin))
+    const L0 = 34, R0 = w - 6, T0 = 8, B0 = h - 16
+    const X = (t: number) => L0 + (R0 - L0) * t / t1, Y = (v: number) => T0 + (B0 - T0) * (top - v) / (top - bottom)
+    ctx.strokeStyle = pal.grid; ctx.beginPath(); ctx.moveTo(L0, Y(0)); ctx.lineTo(R0, Y(0)); ctx.stroke()
+    ctx.fillStyle = pal.label; ctx.fillText(String(Math.round(top)), 2, T0 + 8); ctx.fillText('0', 2, Y(0) + 3)
+    if (B0 - Y(0) > 14) ctx.fillText(`−${Math.round(-bottom)}`, 2, B0)
+    ctx.fillText(L('мин', 'min'), R0 - 18, h - 3); ctx.fillText(String(Math.round(t1 / 60)), R0 - 40, h - 3)
+    const plot = (f: (p: typeof pts[0]) => number, color: string) => { ctx.strokeStyle = color; ctx.lineWidth = 1.6; ctx.beginPath(); pts.forEach((p, k) => { const x = X(p.time), y = Y(f(p)); if (k) ctx.lineTo(x, y); else ctx.moveTo(x, y) }); ctx.stroke() }
+    plot(p => p.ml.cape, '#ff4a3d'); plot(p => -p.ml.cin, '#4f8fe0')
+    const sel = this.moment >= 0 ? pts[this.moment] : pts[pts.length - 1]
+    ctx.strokeStyle = pal.label; ctx.setLineDash([2, 2]); ctx.beginPath(); ctx.moveTo(X(sel.time), T0); ctx.lineTo(X(sel.time), B0); ctx.stroke(); ctx.setLineDash([])
+    const first = pts[0].ml
+    idx.innerHTML = readings([['ML CAPE', `${sel.ml.cape.toFixed(0)} ${L('Дж/кг', 'J/kg')} (${L('было', 'was')} ${first.cape.toFixed(0)})`], ['ML CIN', `${sel.ml.cin.toFixed(0)} ${L('Дж/кг', 'J/kg')} (${L('было', 'was')} ${first.cin.toFixed(0)})`], ['LCL', sel.ml.lcl === null ? '—' : `${sel.ml.lcl.toFixed(2)} ${L('км', 'km')}`]])
   }
 
   /** Wind barbs every 50 hPa along x: full barb 5 m/s, half 2.5, pennant 25. The staff points where the wind comes from. */
@@ -254,7 +331,7 @@ export class SkewTPanel {
     const km = (z: number | null, pr: number | null) => z === null ? '—' : `${z.toFixed(1)} ${L('км', 'km')} · ${pr!.toFixed(0)} ${L('гПа', 'hPa')}`
     if (p) (this.root.querySelector('#skewParcel') as HTMLElement).innerHTML = numbers([['CAPE', p.cape.toFixed(0), L('Дж/кг', 'J/kg')], ['CIN', p.cin.toFixed(0), L('Дж/кг', 'J/kg')]])
       + `<dl class="kv">${readings([['LI', p.li === null ? '—' : `${p.li.toFixed(1)} K`], ...(p.start > 0 ? [[L('старт', 'start'), `${p.start.toFixed(1)} ${L('км', 'km')}`] as [string, string]] : []), ['LCL', km(p.lcl, p.pLcl)], ['LFC', km(p.lfc, p.pLfc)], ['EL', km(p.el, p.pEl)]])}</dl>`
-    const live = this.live.time <= 0 ? L('исходная (расчёт ещё не шёл)', 'initial (the run has not started)') : this.live.all ? L('вся область: столбцов без облаков и оттока меньше 5 %', 'the whole domain: fewer than 5 % of the columns are free of cloud and outflow') : L(`модель сейчас, ${Math.round(this.live.quiet * 100)} % области без облаков и оттока`, `the model now, ${Math.round(this.live.quiet * 100)} % of the domain free of cloud and outflow`)
+    const shownLive = this.shown, live = shownLive.time <= 0 ? L('исходная (расчёт ещё не шёл)', 'initial (the run has not started)') : shownLive.all ? L('вся область: столбцов без облаков и оттока меньше 5 %', 'the whole domain: fewer than 5 % of the columns are free of cloud and outflow') : L(`модель ${shownLive === this.live ? 'сейчас' : 'в выбранный момент'}, ${Math.round(shownLive.quiet * 100)} % области без облаков и оттока`, `the model ${shownLive === this.live ? 'now' : 'at the moment chosen'}, ${Math.round(shownLive.quiet * 100)} % of the domain free of cloud and outflow`)
     if (s) (this.root.querySelector('#skewEnv') as HTMLElement).innerHTML = `<span class="t-caption">${live}</span><dl class="kv">${readings([
       [L('влагосодержание', 'precipitable water'), `${s.pw.toFixed(0)} ${L('мм', 'mm')}`], [L('γ 0–3 км', 'γ 0–3 km'), `${s.lapse03.toFixed(1)} ${L('K/км', 'K/km')}`], [L('γ 700–500 гПа', 'γ 700–500 hPa'), `${s.lapse75.toFixed(1)} ${L('K/км', 'K/km')}`],
       ['0 °C', s.freezing === null ? '—' : `${s.freezing.toFixed(1)} ${L('км', 'km')}`], ['DCAPE', `${this.dcape.toFixed(0)} ${L('Дж/кг', 'J/kg')}`], [L('сдвиг 0–6 км', 'shear 0–6 km'), `${s.shear06.toFixed(0)} ${L('м/с', 'm/s')}`], ['SHIP', this.ship.toFixed(1)]])}</dl>`

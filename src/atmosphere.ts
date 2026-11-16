@@ -11,6 +11,8 @@ import { SNAPSHOT_COLUMNS, SNAPSHOT_FIELDS, type Snapshot, type WorkerRequest } 
 
 /** How often the live sounding (src/core/live.ts) and everything derived from it is recomputed, s of model time. */
 export const LIVE_EVERY = 60
+/** Model time between the live soundings kept in Atmosphere.liveHistory, s. */
+export const LIVE_HISTORY_EVERY = 600
 
 /** Rewind points: a saved state every HISTORY_EVERY s of model time, the oldest dropped beyond HISTORY_BYTES in all. */
 export const HISTORY_EVERY = 300, HISTORY_BYTES = 64 * 1024 * 1024
@@ -42,6 +44,11 @@ export class Atmosphere implements ViewSettings {
    * recomputed every LIVE_EVERY s of model time; at the start, the starting environment.
    */
   live: Live
+  /**
+   * The live sounding's history: the starting one, then one every LIVE_HISTORY_EVERY s of model time, oldest first;
+   * a rewind drops the later ones (the Skew-T's past profiles, its moment slider and its chart of indices).
+   */
+  readonly liveHistory: Live[] = []
   /** Convective cells found and followed in every snapshot (src/core/cells.ts). */
   readonly cells = new CellTracker()
   /** The cold pool against the low-level shear (RKW, src/core/rkw.ts) at the last snapshot; null without a cold pool. */
@@ -234,7 +241,13 @@ export class Atmosphere implements ViewSettings {
 
   private derive(env: Environment, time: number, quiet: number, all: boolean): Live {
     const h = this.mirror.grid.height, indices = parcelIndices(env, h)
-    return { time, quiet, all, env, sounding: computeSounding(this.mirror.config, env, h), indices, storm: stormIndices(env, indices) }
+    const live: Live = { time, quiet, all, env, sounding: computeSounding(this.mirror.config, env, h), indices, storm: stormIndices(env, indices) }
+    // The history: drop what a rewind or a loaded state has left ahead of this time, keep one every LIVE_HISTORY_EVERY s.
+    const hist = this.liveHistory
+    while (hist.length && hist[hist.length - 1].time > Math.max(0, time)) hist.pop()
+    const last = hist[hist.length - 1]
+    if (time >= 0 && (!last || time - last.time >= LIVE_HISTORY_EVERY - 1e-6)) hist.push(live)
+    return live
   }
 
   /** Double-click: warm moist thermal under the given normalised screen point. */
