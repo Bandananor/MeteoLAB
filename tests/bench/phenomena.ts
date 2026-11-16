@@ -1,22 +1,27 @@
 // @ts-nocheck
-// The phenomena map (src/core/phenomena.ts) on a real run: every `every` model minutes the area of each code (km²) as
-// the chosen radar sees it from the domain's middle, the levels it used, and the strongest echo.
-//   npx vite build --ssr tests/bench/phenomena.ts --outDir .bench/phenomena && node .bench/phenomena/phenomena.js [scenario=0] [minutes=60] [every=10] [radar=dmrl]
+// The DMRL-C phenomena map by both criteria sets on a real run: every `every` model minutes the share of in-range pixels
+// with each code under RD 52.04.320-91 and under GIMET-2010's example (phenomena.ts), and how many pixels differ.
+//   npx vite-node tests/bench/phenomena.ts ["<scenario>"] [minutes=40] [every=10]
 import { AtmosphereModel, createGrid, domainGrid, DT, PHENOMENA, PPI, RADARS, SCENARIOS } from '../../src/core'
 import { SUMMER_DAY } from '../../src/core/fixtures'
 
-const option = (name, d) => process.argv.find(a => a.startsWith(`${name}=`))?.slice(name.length + 1) ?? d
-const scenario = SCENARIOS[Number(option('scenario', 0))], minutes = Number(option('minutes', 60)), every = Number(option('every', 10)), radar = RADARS[option('radar', 'dmrl')]
-const config = { ...SUMMER_DAY, ...scenario.values }, model = new AtmosphereModel(config, createGrid(domainGrid(config.domain)))
-const ppi = new PPI(model, Math.round(model.grid.width / 500), Math.round(model.grid.depth / 500)), motion = model.frame
-ppi.setProfile(radar); ppi.bins = null; ppi.layout()
-console.log(`${scenario.name} · ${radar.name}, cell motion ${Math.hypot(...motion).toFixed(1)} m/s`)
+const args = process.argv.slice(2).filter(a => !a.includes('=')), opt = (k, d) => Number(process.argv.find(a => a.startsWith(k + '='))?.slice(k.length + 1) ?? d)
+const name = args[0] ?? 'Классическая суперячейка', minutes = opt('minutes', 40), every = opt('every', 10)
+const s = SCENARIOS.find(x => x.name === name), config = { ...SUMMER_DAY, ...s.values }
+const model = new AtmosphereModel(config, createGrid(domainGrid(config.domain, config.top, config.domainSize)))
+const ppi = new PPI(model, 160, 120)
+ppi.setProfile(RADARS.dmrl)
+const label = c => `${c}:${(PHENOMENA.find(p => p.code === c)?.name ?? '?').slice(0, 18)}`
 for (let t = DT; t <= minutes * 60; t += DT) {
   model.step(DT); model.time += DT
-  if (t % (every * 60)) continue
-  ppi.composite(); const lv = ppi.phenomena(Math.hypot(...motion)), px = (model.grid.width / ppi.w) * (model.grid.depth / ppi.h) / 1e6
-  const area = new Map()
-  for (const c of ppi.codes) if (c) area.set(c, (area.get(c) ?? 0) + px)
-  const list = [...area].sort((a, b) => a[0] - b[0]).map(([c, a]) => `${c} ${a.toFixed(0)}`).join(', ')
-  console.log(`${t / 60} min: CR max ${Math.max(...ppi.compositeDbz).toFixed(0)} dBZ, top ${Math.max(...ppi.vgo).toFixed(1)} km (H0 ${lv.h0.toFixed(1)}, H-22 ${lv.h22.toFixed(1)}, trop ${lv.tropopause.toFixed(1)}) | km²: ${list || '-'}`)
+  if (Math.round(t) % (every * 60)) continue
+  ppi.composite()
+  ppi.phenomena(0, [], 'rd'); const rd = Uint8Array.from(ppi.codes)
+  ppi.phenomena(0, [], 'gimet'); const gm = Uint8Array.from(ppi.codes)
+  const count = codes => { const m = new Map(); for (const c of codes) if (c !== 31 && c !== 0) m.set(c, (m.get(c) ?? 0) + 1); return [...m].sort((a, b) => a[0] - b[0]).map(([c, n]) => `${label(c)} ${n}`).join(', ') }
+  let differ = 0, echo = 0
+  for (let i = 0; i < rd.length; i++) { if (rd[i] !== 31 && (rd[i] || gm[i])) { echo++; if (rd[i] !== gm[i]) differ++ } }
+  console.log(`${t / 60} min, H0 ${(ppi.levelH2 / 1000).toFixed(1)} km, -15 °C ${(ppi.levelT15 / 1000).toFixed(1)} km; ${differ} of ${echo} echo pixels differ`)
+  console.log(`  RD:    ${count(rd)}`)
+  console.log(`  GIMET: ${count(gm)}`)
 }

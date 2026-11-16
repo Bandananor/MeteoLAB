@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { lgZaToDbz, PHENOMENA, phenomenon, squallSpeed } from '.'
+import { lgZaToDbz, PHENOMENA, phenomenon, phenomenonGimet, squallSpeed } from '.'
 
 describe('the phenomena map of the Russian radars (phenomena.ts)', () => {
   const lv = { h0: 3.5, h22: 6, tropopause: 12, motion: 0 }
@@ -57,5 +57,30 @@ describe('the phenomena map of the Russian radars (phenomena.ts)', () => {
     // Nor away from a convective core (>= 46 dBZ above H0 + 1.4 km).
     expect(phenomenon({ ...storm, zCore: 40 }, { ...lv, motion: 100 })).toBe(12)
     expect(phenomenon(column({ top: 9, z1: 50, z2: 55, zh3: 33, zCore: 50, zmax: 64 }), lv)).toBe(11)
+  })
+
+  describe('GIMET-2010 example criteria (warm period)', () => {
+    const g = (c: Partial<Parameters<typeof phenomenonGimet>[0]>) => phenomenonGimet({ ...column({}), base: 0, z06: -32, zH0: -32, zT15: -32, ...c }, lv)
+    it('grades cloud, precipitation and showers by its table', () => {
+      expect(g({})).toBe(0)
+      expect(g({ top: 6, base: 3.5, zmax: 0 })).toBe(1) // a high base with Zmax >= -5: upper and middle cloud
+      expect(g({ top: 2, base: 1 })).toBe(2) // no criterion: stratiform
+      expect(g({ top: 3, base: .5, z06: 14 })).toBe(4) // moderate precipitation (Z1 >= 13)
+      expect(g({ top: 5, base: .5, zH0: 26 })).toBe(6) // cumulus: top >= 4 km, Z2 >= 25
+      expect(g({ top: 5, base: .5, z06: 36, zH0: 28 })).toBe(8) // moderate shower: Z1 >= 35 with Z2 >= 27
+      expect(g({ top: 3.5, base: .5, z06: 45, zH0: 28 })).toBe(5) // a low top: heavy precipitation, not a shower
+    })
+    it('grades thunder by the top, Z2 and Z3 together, and hail by the top, Z3 and Zmax', () => {
+      expect(g({ top: 6.5, z06: 30, zH0: 30, zT15: 30 })).toBe(10)
+      expect(g({ top: 7.5, z06: 30, zH0: 33, zT15: 33 })).toBe(11)
+      expect(g({ top: 9, z06: 30, zH0: 34, zT15: 33 })).toBe(11) // Z3 33 < 34: not > 90 %
+      expect(g({ top: 9, z06: 30, zH0: 40, zT15: 40 })).toBe(12)
+      expect(g({ top: 9.5, zH0: 40, zT15: 48, zmax: 55 })).toBe(13)
+      expect(g({ top: 11, zH0: 50, zT15: 52, zmax: 60 })).toBe(15)
+    })
+    it('keeps the RD squall over a > 90 % thunderstorm', () => {
+      const storm = { top: 12, zH0: 45, zT15: 45, zh3: 45, zCore: 50, zmax: 55, strongest: 55 }
+      expect(g(storm)).toBe(12); expect(phenomenonGimet({ ...column({}), base: 1, z06: 30, ...storm }, { ...lv, motion: 100 })).toBe(18)
+    })
   })
 })

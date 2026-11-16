@@ -3,7 +3,7 @@ import type { AtmosphereModel } from './model'
 import { dualPol, KDP_WAVELENGTH } from './polarimetry'
 import { DBZ_FLOOR, reflectivity, reflectivityFallSpeed } from './radar'
 import { RADARS, type RadarProfile } from './radars'
-import { phenomenon, RD_CRITERIA } from './phenomena'
+import { phenomenon, phenomenonGimet, RD_CRITERIA } from './phenomena'
 import { specificAttenuation } from './attenuation'
 import { clutterAt, noiseFloor } from './clutter'
 
@@ -70,6 +70,8 @@ export const ECHO_TOP_DBZ = 18, VIL_MAX_DBZ = 56
  * and Zmax above 1 km.
  */
 export const VGO_DBZ = -5, Z1_LAYER = [600, 1000] as const, Z2_LAYER = [2000, 4000] as const, H3_ABOVE = 2250, ZMAX_FROM = 1000
+/** GIMET-2010's precipitation height (heightPrecipitation), m: its Z1 is the echo there. */
+export const Z1_HEIGHT = 600
 
 /**
  * Nyquist velocities of the folding option, m/s: a pulsed Doppler radar measures the radial velocity only within
@@ -98,8 +100,16 @@ export class PPI {
   readonly vgo: Float32Array; readonly z1: Float32Array; readonly z2: Float32Array; readonly zmax: Float32Array; readonly zh2: Float32Array; readonly zh3: Float32Array
   /** The echo at H0 + 1.4 km (the hail core's level of RD 52.04.320-91), dBZ, with composite(). */
   readonly zCore: Float32Array
+  /**
+   * GIMET-2010's own levels (its operator's manual, .claude/literature/russian-radar-docs.md §2), with composite(): the
+   * echo at the precipitation height Z1_HEIGHT and at the -15 °C level (dBZ, DBZ_FLOOR where no beam passes), and the
+   * cloud base H_НГО, the lowest beam height with VGO_DBZ (km, 0: no echo).
+   */
+  readonly z06: Float32Array; readonly zT15: Float32Array; readonly ngo: Float32Array
   /** The levels H2 and H3 of the last composite(), m. */
   levelH2 = 0; levelH3 = 0
+  /** The -15 °C level of the last composite(), m (GIMET-2010's Z3). */
+  levelT15 = 0
   /** The phenomena map (phenomena.ts codes; 31 beyond the radar's range), with phenomena(). */
   readonly codes: Uint8Array
   private readonly gx: Float32Array; private readonly gy: Float32Array; private readonly sinAz: Float32Array; private readonly cosAz: Float32Array
@@ -146,7 +156,7 @@ export class PPI {
   constructor(model: AtmosphereModel, w: number, h: number) {
     this.model = model; this.w = w; this.h = h
     const n = w * h, f = () => new Float32Array(n)
-    this.dbz = f(); this.velocity = f(); this.compositeDbz = f(); this.zdr = f(); this.rho = f(); this.kdp = f(); this.vil = f(); this.echoTop = f(); this.echoTopped = new Uint8Array(n); this.mesh = f(); this.vgo = f(); this.z1 = f(); this.z2 = f(); this.zmax = f(); this.zh2 = f(); this.zh3 = f(); this.zCore = f(); this.codes = new Uint8Array(n); this.gx = f(); this.gy = f(); this.sinAz = f(); this.cosAz = f(); this.range = f()
+    this.dbz = f(); this.velocity = f(); this.compositeDbz = f(); this.zdr = f(); this.rho = f(); this.kdp = f(); this.vil = f(); this.echoTop = f(); this.echoTopped = new Uint8Array(n); this.mesh = f(); this.vgo = f(); this.z1 = f(); this.z2 = f(); this.zmax = f(); this.zh2 = f(); this.zh3 = f(); this.zCore = f(); this.z06 = f(); this.zT15 = f(); this.ngo = f(); this.codes = new Uint8Array(n); this.gx = f(); this.gy = f(); this.sinAz = f(); this.cosAz = f(); this.range = f()
     this.nodeDbz = new Float32Array(model.grid.n); this.nodeFall = new Float32Array(model.grid.n)
     this.nodeZdr = new Float32Array(model.grid.n); this.nodeRho = new Float32Array(model.grid.n).fill(1); this.nodeKdp = new Float32Array(model.grid.n)
     this.site = { x: model.grid.width / 2, y: model.grid.depth / 2 }
@@ -370,9 +380,13 @@ export class PPI {
     out.fill(DBZ_FLOOR); vil.fill(0); top.fill(0); this.echoTopped.fill(0); mesh.fill(0)
     const { vgo, z1, z2, zmax, zh2, zh3 } = this, lastD = new Float32Array(out.length)
     vgo.fill(0); z1.fill(DBZ_FLOOR); z2.fill(DBZ_FLOOR); zmax.fill(DBZ_FLOOR); zh2.fill(DBZ_FLOOR); zh3.fill(DBZ_FLOOR); this.zCore.fill(DBZ_FLOOR)
-    let h0 = 0, h20 = 0
+    const { z06, zT15, ngo } = this
+    z06.fill(DBZ_FLOOR); zT15.fill(DBZ_FLOOR); ngo.fill(0)
+    let h0 = 0, h20 = 0, h15 = 0
     while (h0 < grid.height && m.env.temperatureEnv(h0) > 0) h0 += 25
-    h20 = h0; while (h20 < grid.height && m.env.temperatureEnv(h20) > -20) h20 += 25
+    h15 = h0; while (h15 < grid.height && m.env.temperatureEnv(h15) > -15) h15 += 25
+    h20 = h15; while (h20 < grid.height && m.env.temperatureEnv(h20) > -20) h20 += 25
+    this.levelT15 = h15
     const h3 = h0 + H3_ABOVE, hCore = h0 + RD_CRITERIA.hailCoreAbove; this.levelH2 = h0; this.levelH3 = h3
     // The echo at height H between the previous beam (h1, d1) and this one (h2, d2), and a layer's strongest echo: the
     // beams inside it and the interpolated echo where the beams cross its bounds.
@@ -404,13 +418,15 @@ export class PPI {
         if (!Number.isNaN(last[i]) && h > lastH[i]) { top[i] = Math.max(top[i], crossing(lastH[i], lastD[i], h, d, topDbz)); vgo[i] = Math.max(vgo[i], crossing(lastH[i], lastD[i], h, d, VGO_DBZ)) }
         if (d >= topDbz) top[i] = Math.max(top[i], h / 1000)
         if (tilt === highest) this.echoTopped[i] = d >= topDbz ? 1 : 0
-        if (d >= VGO_DBZ) vgo[i] = Math.max(vgo[i], h / 1000)
+        if (d >= VGO_DBZ) { vgo[i] = Math.max(vgo[i], h / 1000); if (!ngo[i] || h / 1000 < ngo[i]) ngo[i] = h / 1000 }
         if (Number.isNaN(last[i])) { if (h >= ZMAX_FROM) zmax[i] = Math.max(zmax[i], d); if (h >= Z1_LAYER[0] && h <= Z1_LAYER[1]) z1[i] = d; if (h >= Z2_LAYER[0] && h <= Z2_LAYER[1]) z2[i] = d }
         else if (h > lastH[i]) {
           const h1 = lastH[i], d1 = lastD[i]
           layer(z1, i, h1, d1, h, d, Z1_LAYER[0], Z1_LAYER[1]); layer(z2, i, h1, d1, h, d, Z2_LAYER[0], Z2_LAYER[1]); layer(zmax, i, h1, d1, h, d, ZMAX_FROM, Infinity)
           if (h1 < h0 && h >= h0) zh2[i] = between(h1, d1, h, d, h0)
           if (h1 < h3 && h >= h3) zh3[i] = between(h1, d1, h, d, h3)
+          if (h1 < Z1_HEIGHT && h >= Z1_HEIGHT) z06[i] = between(h1, d1, h, d, Z1_HEIGHT)
+          if (h1 < h15 && h >= h15) zT15[i] = between(h1, d1, h, d, h15)
           if (h1 < hCore && h >= hCore) this.zCore[i] = between(h1, d1, h, d, hCore)
         }
         lastD[i] = d
@@ -428,9 +444,10 @@ export class PPI {
    * The phenomena map from the last composite() (phenomena.ts): the environment's 0 °C and -22 °C levels and its
    * tropopause (the lowest level from 5 km where the temperature falls less than 2 K over the next 2 km), the cell motion
    * `motion` (m/s) for the squalls, the hook echoes the mesocyclone detection found (ground positions, m) for the
-   * tornado; 31 (no data) beyond the radar's range.
+   * tornado; 31 (no data) beyond the radar's range. `criteria`: 'rd' — RD 52.04.320-91 (phenomenon), 'gimet' — the
+   * GIMET-2010 example criteria of the warm period (phenomenonGimet).
    */
-  phenomena(motion: number, hooks: readonly { x: number; y: number }[] = []) {
+  phenomena(motion: number, hooks: readonly { x: number; y: number }[] = [], criteria: 'rd' | 'gimet' = 'rd') {
     const reach = RD_CRITERIA.tornadoHook * 1000 / 2
     const e = this.model.env, top = this.model.grid.height, t = (h: number) => e.temperatureEnv(h)
     let h22 = 0; while (h22 < top && t(h22) > -22) h22 += 25
@@ -439,7 +456,10 @@ export class PPI {
     for (let i = 0; i < this.codes.length; i++) {
       if (this.range[i] > this.profile.range) { this.codes[i] = 31; continue }
       const g = hooks.length ? this.samplePoint(i % this.w, Math.floor(i / this.w)) : null, hook = !!g && hooks.some(k => Math.hypot(g.x - k.x, g.y - k.y) <= reach)
-      this.codes[i] = phenomenon({ top: this.vgo[i], strongest: this.compositeDbz[i], z1: this.z1[i], z2: this.z2[i], zh3: this.zh3[i], zCore: this.zCore[i], zmax: this.zmax[i], mesh: this.mesh[i], hook }, levels)
+      const column = { top: this.vgo[i], strongest: this.compositeDbz[i], z1: this.z1[i], z2: this.z2[i], zh3: this.zh3[i], zCore: this.zCore[i], zmax: this.zmax[i], mesh: this.mesh[i], hook }
+      this.codes[i] = criteria === 'gimet'
+        ? phenomenonGimet({ ...column, base: this.ngo[i], z06: this.z06[i], zH0: this.zh2[i], zT15: this.zT15[i] }, levels)
+        : phenomenon(column, levels)
     }
     return levels
   }

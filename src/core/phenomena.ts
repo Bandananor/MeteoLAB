@@ -101,10 +101,52 @@ export function phenomenon(c: ColumnEcho, lv: PhenomenaLevels) {
   if (!sure) return code
   const hail = (c.zmax >= RD_CRITERIA.hailAnywhere || (c.zmax >= RD_CRITERIA.hailHigh && c.top >= RD_CRITERIA.hailHighTop)) && c.zCore >= RD_CRITERIA.hailCore
   if (hail) code = Math.max(code, c.zmax >= OWN.hailModerate ? (c.mesh >= OWN.hailHeavyMesh ? 15 : 14) : 13)
+  return squallAndTornado(c, lv, code)
+}
+
+/** Squalls (RD table 2.7 with this project's grades) and the tornado (RD p. 71 with the hook), over a > 90 % thunderstorm. */
+function squallAndTornado(c: ColumnEcho, lv: PhenomenaLevels, code: number) {
   if (c.top >= RD_CRITERIA.squallTop && c.zh3 >= RD_CRITERIA.squallZ3 && c.zCore >= OWN.squallCore) {
     const v = squallSpeed(lv.motion)
     if (v >= OWN.squall[0]) code = Math.max(code, v > OWN.squall[2] ? 18 : v > OWN.squall[1] ? 17 : 16)
   }
   if (c.hook && c.top >= lv.tropopause + RD_CRITERIA.tornadoAbove && c.strongest >= RD_CRITERIA.tornadoDbz) code = 19
   return code
+}
+
+/**
+ * GIMET-2010's criteria as its operator's manual shows them (ПО ВОИ «ГИМЕТ-2010» v02, ФГБУ «ЦАО» 2021, руководство
+ * оператора p. 46, fig. 4.6, tab «Метеоявления», warm period; .claude/literature/russian-radar-docs.md §1): one site's
+ * example — the manual says specialists fill them in by the guidelines, so they may differ by site and season. Every
+ * criterion given must hold (the natural reading; the combination is not described). Heights in km: H_НГО the cloud base,
+ * H_ВГО the top (both at -5 dBZ); dBZ: Z1 the echo at 0.6 km, Z2 at the 0 °C level, Z3 at the -15 °C level, Zmax the
+ * strongest above 1 km. Z3 >= -33 means "any". No values are shown for squalls and the tornado: those stay RD's.
+ */
+export const GIMET_CRITERIA = {
+  upperCloud: { base: 3, zmax: -5 },
+  cumulus: { top: 4, z2: 25, z3: -33 },
+  precipitation: { z1: [5, 13, 23] },
+  shower: { top: 4, z1: [27, 35, 42], z2: 27, z3: -33 },
+  thunder: { top: [6, 7, 8], z2: [28, 32, 34], z3: [29, 33, 34] },
+  hail: { top: [9, 10, 10], z3: [48, 49, 51], zmax: [48, 49, 51] },
+} as const
+
+export interface GimetColumn extends ColumnEcho {
+  /** Cloud base H_НГО, km (0: no echo); the echo at 0.6 km, at the 0 °C level and at the -15 °C level, dBZ. */
+  base: number; z06: number; zH0: number; zT15: number
+}
+
+/** The phenomena code of one column by GIMET_CRITERIA: the highest one met; squalls and the tornado as phenomenon(). */
+export function phenomenonGimet(c: GimetColumn, lv: PhenomenaLevels) {
+  if (c.top <= 0) return 0
+  const g = GIMET_CRITERIA
+  let code = c.base >= g.upperCloud.base && c.zmax >= g.upperCloud.zmax ? 1 : 2
+  if (c.top >= g.cumulus.top && c.zH0 >= g.cumulus.z2 && c.zT15 >= g.cumulus.z3) code = 6
+  for (let k = 2; k >= 0; k--) if (c.z06 >= g.precipitation.z1[k]) { code = Math.max(code, 3 + k); break }
+  if (c.top >= g.shower.top && c.zH0 >= g.shower.z2 && c.zT15 >= g.shower.z3) for (let k = 2; k >= 0; k--) if (c.z06 >= g.shower.z1[k]) { code = Math.max(code, 7 + k); break }
+  let thunder = -1
+  for (let k = 2; k >= 0; k--) if (c.top >= g.thunder.top[k] && c.zH0 >= g.thunder.z2[k] && c.zT15 >= g.thunder.z3[k]) { thunder = k; break }
+  if (thunder >= 0) code = Math.max(code, 10 + thunder)
+  for (let k = 2; k >= 0; k--) if (c.top >= g.hail.top[k] && c.zT15 >= g.hail.z3[k] && c.zmax >= g.hail.zmax[k]) { code = Math.max(code, 13 + k); break }
+  return thunder === 2 ? squallAndTornado(c, lv, code) : code
 }
