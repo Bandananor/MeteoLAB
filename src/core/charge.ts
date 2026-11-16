@@ -1,3 +1,4 @@
+import { takahashiCharge } from './takahashi'
 import { G } from './constants'
 import { EPSILON0 } from './electric'
 import { N0G, RHO_G } from './graupel'
@@ -11,6 +12,14 @@ import { N0S, plateSize, RHO_S } from './ice'
 
 /** No charge separation colder than this (Mansell et al. 2005 / Saunders and Peck 1998: no data), °C. */
 export const CHARGING_COLDEST = -33
+/**
+ * Which non-inductive charging (experiment 16.11.2026, STORMLAB_CHARGING=tak for a whole run in Node): 'sp98' — the
+ * charge per collision of Saunders et al. (1991) signed by the critical rime accretion rate of Saunders & Peck (1998),
+ * the default; 'tak' — the Takahashi (1978) table by temperature and cloud water as WRF-ELEC has it (takahashi.ts,
+ * routine TAKA): times min(5 (D / 100 µm)² |ΔV| / 8 m/s, 10), at most 500 fC, the share of collisions that charge
+ * 0.5 (1 - 0.1 exp(0.1 Tc)) (ecollmx and the sticking efficiency there), down to -40 °C.
+ */
+export const CHARGING_SCHEME: 'sp98' | 'tak' = (globalThis as { process?: { env: Record<string, string | undefined> } }).process?.env?.STORMLAB_CHARGING === 'tak' ? 'tak' : 'sp98'
 /**
  * Upper limit of the charge separated per collision, C — keeps the fit, extrapolated to large aggregates and fast
  * impacts, bounded (20 fC as in Ziegler et al. 1991 and Mansell et al. 2005, by memory).
@@ -110,9 +119,10 @@ const CD = .6, GAMMA_45 = 11.6317
  * Mixing ratios in kg/kg, rho the air density (kg/m³), snowFall the snow's mass-weighted fall speed (m/s).
  */
 export function chargingRate(tc: number, rho: number, cloud: number, ice: number, snow: number, graupel: number, hail: number, snowFall: number, wetGraupel = false, wetHail = false, crystals?: number) {
-  if (tc >= 0 || tc < CHARGING_COLDEST || cloud <= 0 || ice + snow <= 0 || graupel + hail <= 0) return 0
+  const tak = CHARGING_SCHEME === 'tak'
+  if (tc >= 0 || tc < (tak ? -40 : CHARGING_COLDEST) || cloud <= 0 || ice + snow <= 0 || graupel + hail <= 0) return 0
   // Called at every mixed-phase node each step: no arrays, two rimers by two crystal kinds written out.
-  const rebound = 1 - Math.exp(.09 * tc), water = rho * cloud * 1000
+  const rebound = tak ? .5 * (1 - .1 * Math.exp(.1 * tc)) : 1 - Math.exp(.09 * tc), water = rho * cloud * 1000
   // The model's own crystals (per m³, plates of their mean mass) when it carries them, else the number estimated from the mass.
   const ni = ice <= 0 ? 0 : crystals ?? crystalNumber(tc, ice, rho)
   const di = ice <= 0 ? 0 : crystals ? Math.min(CRYSTAL_RANGE[1], Math.max(CRYSTAL_RANGE[0], plateSize(rho * ice / crystals))) : crystalDiameter(ice, rho, tc)
@@ -128,8 +138,9 @@ function rimerRate(rimer: Rimer, mass: number, tc: number, rho: number, water: n
   const lambda = (Math.PI * rimer.density * rimer.n0 / (rho * mass)) ** .25, fall = Math.sqrt(4 * G * rimer.density / (3 * CD * rho)) * GAMMA_45 / 6 / Math.sqrt(lambda)
   const impact = Math.min(fall, CHARGING_SPEED), rar = COLLECTION_EFFICIENCY * water * impact, l2 = lambda * lambda, l3 = l2 * lambda, k = Math.PI / 4 * rimer.n0 * rebound
   let rate = 0
-  if (ni > 0) rate += ni * k * (2 / l3 + 2 * di / l2 + di * di / lambda) * fall * collisionCharge(tc, rar, di, impact)
-  if (ns > 0) { const v = Math.abs(fall - vs); rate += ns * k * (2 / l3 + 2 * ds / l2 + ds * ds / lambda) * v * collisionCharge(tc, rar, ds, Math.abs(impact - vs)) }
+  const tak = CHARGING_SCHEME === 'tak'
+  if (ni > 0) rate += ni * k * (2 / l3 + 2 * di / l2 + di * di / lambda) * fall * (tak ? takahashiCollision(tc, water, di, fall) : collisionCharge(tc, rar, di, impact))
+  if (ns > 0) { const v = Math.abs(fall - vs); rate += ns * k * (2 / l3 + 2 * ds / l2 + ds * ds / lambda) * v * (tak ? takahashiCollision(tc, water, ds, v) : collisionCharge(tc, rar, ds, Math.abs(impact - vs))) }
   return rate
 }
 
@@ -184,4 +195,10 @@ export function transferCharge(charge: number[], before: number[], after: number
   const moved = gained > 0 ? Math.min(1, lost > 0 ? gained / lost : 1) : 0
   if (moved > 0) for (let k = 0; k < 4; k++) if (after[k] > before[k]) charge[k] += pool * moved * (after[k] - before[k]) / gained
   charge[AIR_CARRIER] += pool * (1 - moved)
+}
+
+/** Charge gained by the graupel in one rebounding collision of the Takahashi scheme, C: the table times WRF-ELEC's size and speed factor, within ±500 fC. */
+export function takahashiCollision(tc: number, lwc: number, d: number, dv: number) {
+  const q = takahashiCharge(tc, lwc) * Math.min(5 * (d / 100e-6) ** 2 * Math.abs(dv) / 8, 10) * 1e-15
+  return Math.max(-500e-15, Math.min(500e-15, q))
 }
