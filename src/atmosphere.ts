@@ -7,7 +7,7 @@ import { isPhone, PHONE_THREADS } from './hud'
 import type { FieldMode } from './render/fields'
 import type { InterventionKind, UhLayer } from './core'
 import { type LayerMode, type Quality, StormView, type ViewSettings } from './render/view'
-import { type GpuMode, SNAPSHOT_COLUMNS, SNAPSHOT_FIELDS, type Snapshot, type Tuned, type WorkerRequest } from './simulation'
+import { type GpuMode, type GpuTuned, SNAPSHOT_COLUMNS, SNAPSHOT_FIELDS, type Snapshot, type Tuned, type WorkerRequest } from './simulation'
 
 /** Where the browser keeps the settings' thread choice ('auto' or a number). */
 const THREAD_CHOICE = 'meteolab-threads-choice'
@@ -15,18 +15,26 @@ const THREAD_CHOICE = 'meteolab-threads-choice'
 export function threadChoice(): number | 'auto' {
   try { const v = localStorage.getItem(THREAD_CHOICE); return v && v !== 'auto' && Number(v) >= 1 ? Math.round(Number(v)) : 'auto' } catch { return 'auto' }
 }
-/** Where the browser keeps the settings' GPU choice ('auto' by default, or 'off'); ?gpu=off in the address wins. */
+/** Where the browser keeps the settings' GPU choice ('auto' by default, 'on' or 'off'); ?gpu=on|off in the address wins. */
 const GPU_CHOICE = 'meteolab-gpu'
-/** The GPU choice: the dynamics on WebGPU where the browser has it ('auto'), or never ('off'). */
+/** The GPU choice: 'auto' — the GPU where a trial finds it faster (GpuTuned); 'on' — wherever WebGPU exists; 'off'. */
 export function gpuChoice(): GpuMode {
-  if (new URLSearchParams(globalThis.location?.search ?? '').get('gpu') === 'off') return 'off'
-  try { return localStorage.getItem(GPU_CHOICE) === 'off' ? 'off' : 'auto' } catch { return 'auto' }
+  const asked = new URLSearchParams(globalThis.location?.search ?? '').get('gpu')
+  if (asked === 'off' || asked === 'on') return asked
+  try { const v = localStorage.getItem(GPU_CHOICE); return v === 'off' || v === 'on' ? v : 'auto' } catch { return 'auto' }
 }
+type Grid3 = { nx: number; ny: number; nz: number }
+/** Where the browser keeps what the GPU trial chose, per device (its cores) and grid. */
+const gpuTunedKey = (g: Grid3) => `meteolab-gpu-tuned:${navigator.hardwareConcurrency || 1}:${g.nx}x${g.ny}x${g.nz}`
 /**
- * Where the browser keeps the thread count the trial found fastest, per device (its cores), grid and GPU choice (with
- * the dynamics on the GPU the CPU threads do less, and their best count differs).
+ * Where the browser keeps the thread count the trial found fastest, per device (its cores), grid and whether the GPU
+ * takes the transport (the CPU threads do less then, and their best count differs).
  */
-const tunedKey = (g: { nx: number; ny: number; nz: number }) => `meteolab-threads:${navigator.hardwareConcurrency || 1}:${g.nx}x${g.ny}x${g.nz}${gpuChoice() === 'auto' && 'gpu' in navigator ? ':gpu' : ''}`
+const tunedKey = (g: Grid3, withGpu: boolean) => `meteolab-threads:${navigator.hardwareConcurrency || 1}:${g.nx}x${g.ny}x${g.nz}${withGpu ? ':gpu' : ''}`
+/** What the GPU trial chose here before for this grid ('auto'), if anything. */
+function gpuTuned(g: Grid3): 'gpu' | 'cpu' | undefined {
+  try { const v = localStorage.getItem(gpuTunedKey(g)); return v === 'gpu' || v === 'cpu' ? v : undefined } catch { return undefined }
+}
 
 /** How often the live sounding (src/core/live.ts) and everything derived from it is recomputed, s of model time. */
 export const LIVE_EVERY = 60
@@ -90,9 +98,17 @@ export class Atmosphere implements ViewSettings {
   gpu = 'off'
   /** Mean step time of the last batch, ms, and the GPU's part of it. */
   stepMs = { step: 0, gpu: 0 }
-  /** The settings' GPU choice, applied to the running model and remembered by the browser. */
+  /** The GPU trial's result in this run: the choice and the mean step with the GPU and without, ms (null: none ran). */
+  gpuTrial: { choice: 'gpu' | 'cpu'; gpuMs: number; cpuMs: number } | null = null
+  /**
+   * The settings' GPU choice, applied to the running model and remembered by the browser; 'auto' forgets the trial's
+   * choice for this grid and runs the trial again.
+   */
   setGpu(mode: GpuMode) {
-    try { localStorage.setItem(GPU_CHOICE, mode) } catch { /* not kept */ }
+    const grid = this.mirror.grid
+    try { localStorage.setItem(GPU_CHOICE, mode); if (mode === 'auto') localStorage.removeItem(gpuTunedKey(grid)) } catch { /* not kept */ }
+    this.gpuTrial = null
+    if (mode !== 'auto') this.tunedKey = tunedKey(grid, mode === 'on')
     this.post({ type: 'gpu', mode })
   }
   /**
@@ -132,17 +148,25 @@ export class Atmosphere implements ViewSettings {
     // Fewer threads on a phone (it would overheat), unless the address asks for a number. The count found fastest
     // here before (simulation.ts, ThreadTuning) skips the trial; an address with ?threads= neither uses nor keeps one.
     // A number chosen in the settings (threadChoice) wins over both, and there is no trial then.
+    // With the GPU on 'auto' and no choice remembered for this grid, the GPU trial runs first and the thread trial after it.
+    const grid = this.mirror.grid, gpuMode = gpuChoice(), gpuKnown = gpuMode === 'auto' ? gpuTuned(grid) : undefined
+    const withGpu = 'gpu' in navigator && (gpuMode === 'on' || gpuKnown === 'gpu')
     const chosen = threadChoice(), asked = Number(new URLSearchParams(location.search).get('threads')) || (chosen === 'auto' ? 0 : chosen)
-    const threads = asked || (isPhone() ? PHONE_THREADS : undefined), key = tunedKey(this.mirror.grid)
+    const threads = asked || (isPhone() ? PHONE_THREADS : undefined), key = tunedKey(grid, withGpu)
     let tuned: number | undefined
-    if (!asked) try { tuned = Number(localStorage.getItem(key)) || undefined } catch { /* not kept */ }
+    if (!asked && (gpuMode !== 'auto' || gpuKnown)) try { tuned = Number(localStorage.getItem(key)) || undefined } catch { /* not kept */ }
     this.tunedKey = key
-    this.worker.addEventListener('message', (event: MessageEvent<Snapshot | Tuned>) => {
+    this.worker.addEventListener('message', (event: MessageEvent<Snapshot | Tuned | GpuTuned>) => {
       const d = event.data
-      if (d.type === 'tuned') { this.tuning = d.trial; if (!Number(new URLSearchParams(location.search).get('threads')) && threadChoice() === 'auto') try { localStorage.setItem(key, String(d.threads)) } catch { /* not kept */ } return }
+      if (d.type === 'tuned') { this.tuning = d.trial; if (!Number(new URLSearchParams(location.search).get('threads')) && threadChoice() === 'auto') try { localStorage.setItem(this.tunedKey, String(d.threads)) } catch { /* not kept */ } return }
+      if (d.type === 'gpuTuned') {
+        this.gpuTrial = { choice: d.choice, gpuMs: d.gpuMs, cpuMs: d.cpuMs }; this.tunedKey = tunedKey(grid, d.choice === 'gpu')
+        if (gpuChoice() === 'auto' && !new URLSearchParams(location.search).get('gpu')) try { localStorage.setItem(gpuTunedKey(grid), d.choice) } catch { /* not kept */ }
+        return
+      }
       this.receive(d)
     })
-    this.post({ type: 'init', config: { ...config }, threads, tuned, lang: lang(), gpu: gpuChoice() })
+    this.post({ type: 'init', config: { ...config }, threads, tuned, lang: lang(), gpu: gpuMode, gpuTuned: gpuKnown })
   }
 
   get time() { return this.mirror.time }

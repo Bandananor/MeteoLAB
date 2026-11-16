@@ -4,7 +4,7 @@
 import { AtmosphereModel, controlBuffer, createGrid, domainGrid, DT, type SimConfig, SharedMemory, ThreadRunner, TRANSPORT_SLABS, applyState, readState, intervene, saveState } from './core'
 import type { GpuDynamics } from './gpu/dynamics'
 import { gpuStep } from './gpu/step'
-import { BATCH_BUDGET_MS, type GpuMode, MAX_STEPS_PER_BATCH, maxThreads, SNAPSHOT_COLUMNS, SNAPSHOT_FIELDS, type Snapshot, type Tuned, TUNE_STEPS, TUNE_WARM, TUNE_WORSE, type WorkerRequest } from './simulation'
+import { BATCH_BUDGET_MS, GPU_BETTER, type GpuMode, type GpuTuned, MAX_STEPS_PER_BATCH, maxThreads, SNAPSHOT_COLUMNS, SNAPSHOT_FIELDS, type Snapshot, type Tuned, TUNE_STEPS, TUNE_WARM, TUNE_WORSE, type WorkerRequest } from './simulation'
 import type { HelperStart } from './step.worker'
 import { setLang } from './i18n'
 
@@ -27,26 +27,74 @@ let pool: ThreadRunner | null = null, ready = true, generation = 0
 let current = 1, ceiling = 1
 
 /**
- * The dynamics on the GPU (Э3 step 5, src/gpu/dynamics.ts): the face projection and the RK3 stages of the transport with
- * the pressure in them run on WebGPU, everything else on the CPU threads. 'auto' uses it where WebGPU exists and the
- * model's transport is the one the GPU does (model.gpuDynamics()); 'off', or no WebGPU, or an error: the CPU as before.
+ * The GPU (Э3 steps 5-6, src/gpu/step.ts): the sedimentation, the transport with the pressure in its stages, the
+ * turbulence, the friction and the final projection on WebGPU, the physics on the CPU threads; only where the model's
+ * transport is the one the GPU does (model.gpuDynamics()). Setting 'on': wherever WebGPU exists; 'auto': as the GPU
+ * trial decided (gpuChoice, GpuTuned in simulation.ts); 'off', no WebGPU or an error: the CPU as before.
  */
 let gpuMode: GpuMode = 'auto', gpu: GpuDynamics | null = null, gpuState = 'off'
+/** What the GPU trial chose for this grid ('auto'), null until it has. */
+let gpuChoice: 'gpu' | 'cpu' | null = null
+/** The GPU trial running: the half it is in, its steps and their time, the GPU half's mean step. */
+let gpuTrial: { half: 'gpu' | 'cpu'; steps: number; ms: number; gpuMs: number } | null = null
+/** A thread trial that waits for the GPU trial (the best thread count depends on whether the GPU takes the transport). */
+let waitingTune: typeof tune = null
 
-/** Makes (or keeps) the GPU dynamics for the current model; the CPU steps until it is ready. */
+/** Whether the steps use the GPU now (when it is ready). */
+function wantGpu() {
+  if (gpuMode === 'on') return true
+  if (gpuMode === 'off') return false
+  return gpuTrial ? gpuTrial.half === 'gpu' : gpuChoice !== 'cpu'
+}
+
+/** Makes (or keeps, or frees) the GPU for the current model; the CPU steps until it is ready. */
 function startGpu() {
   const m = model
   if (!m) return
-  if (gpu && (gpuMode === 'off' || !gpu.matches(m.grid, m.env))) { gpu.destroy(); gpu = null }
-  if (gpu || gpuMode === 'off' || !m.gpuDynamics()) { gpuState = gpu ? gpuState : gpuMode === 'off' ? 'off' : 'cpu-transport'; return }
+  const wanted = gpuMode !== 'off' && !(gpuMode === 'auto' && !gpuTrial && gpuChoice === 'cpu')
+  if (gpu && (!wanted || !gpu.matches(m.grid, m.env))) { gpu.destroy(); gpu = null }
+  if (!wanted) { gpuState = gpuMode === 'off' ? 'off' : 'cpu-faster'; return }
+  if (gpu) return
+  if (!m.gpuDynamics()) { gpuState = 'cpu-transport'; endGpuTrial(); return }
   const nav = navigator as Navigator & { gpu?: GPU }
-  if (!nav.gpu) { gpuState = 'unavailable'; return }
+  if (!nav.gpu) { gpuState = 'unavailable'; endGpuTrial(); return }
   const id = generation
   gpuState = 'starting'
   void import('./gpu/dynamics').then(({ GpuDynamics }) => GpuDynamics.create(m.grid, m.env)).then(g => {
-    if (id !== generation || gpuMode === 'off' || model !== m) { g.destroy(); return }
+    if (id !== generation || model !== m || gpuMode === 'off') { g.destroy(); return }
     gpu = g; gpuState = g.adapter || 'WebGPU'
-  }, e => { gpuState = `error: ${String((e as Error)?.message ?? e)}` })
+  }, e => { gpuState = `error: ${String((e as Error)?.message ?? e)}`; endGpuTrial() })
+}
+
+/** Stops the GPU trial without a choice (no GPU to try) and lets a waiting thread trial run. */
+function endGpuTrial() {
+  if (!gpuTrial) return
+  gpuTrial = null
+  if (waitingTune) { tune = waitingTune; waitingTune = null }
+}
+
+/** One step of the GPU trial: counted once the GPU is ready; after both halves the faster one is kept and the page told. */
+function gpuTrialStep(ms: number) {
+  const t = gpuTrial
+  if (!t || !ready) return
+  if (t.half === 'gpu' && !gpu) return // still starting (an unavailable or failed GPU ends the trial in startGpu)
+  if (++t.steps <= TUNE_WARM) return
+  t.ms += ms
+  if (t.steps < TUNE_WARM + TUNE_STEPS) return
+  if (t.half === 'gpu') { t.gpuMs = t.ms / TUNE_STEPS; t.half = 'cpu'; t.steps = 0; t.ms = 0; return }
+  const cpuMs = t.ms / TUNE_STEPS
+  gpuChoice = t.gpuMs <= cpuMs * GPU_BETTER ? 'gpu' : 'cpu'
+  gpuTrial = null
+  startGpu()
+  scope.postMessage({ type: 'gpuTuned', choice: gpuChoice, gpuMs: t.gpuMs, cpuMs } satisfies GpuTuned, [])
+  if (waitingTune) { tune = waitingTune; waitingTune = null }
+}
+
+/** Starts the GPU trial (setting 'auto' without a remembered choice); a thread trial set up now waits for it. */
+function beginGpuTrial() {
+  gpuChoice = null
+  gpuTrial = { half: 'gpu', steps: 0, ms: 0, gpuMs: 0 }
+  if (tune) { waitingTune = tune; tune = null }
 }
 
 /** Time of the steps since the last snapshot, ms: whole steps and the wait for the GPU's part, and their count. */
@@ -55,11 +103,11 @@ const timing = { step: 0, gpu: 0, steps: 0 }
 /** One model step: on the GPU when it is ready, otherwise (or after a GPU error) all on the CPU. */
 async function stepModel(m: AtmosphereModel) {
   const g = gpu
-  if (!g || !m.gpuDynamics()) { m.step(DT); m.time += DT; return }
+  if (!g || !wantGpu() || !m.gpuDynamics()) { m.step(DT); m.time += DT; return }
   const { waitMs, failed } = await gpuStep(m, g, DT)
   timing.gpu += waitMs
   // The GPU failed: the step was finished on the CPU, and the CPU goes on from now.
-  if (failed !== null) { gpuState = `error: ${failed}`; gpu = null; g.destroy() }
+  if (failed !== null) { gpuState = `error: ${failed}`; gpu = null; g.destroy(); endGpuTrial() }
   m.time += DT
 }
 
@@ -141,11 +189,14 @@ async function handle(data: WorkerRequest) {
   switch (data.type) {
     case 'init': {
       accumulator = 0; if (data.lang) setLang(data.lang); if (data.gpu) gpuMode = data.gpu
+      gpuChoice = data.gpuTuned ?? null; gpuTrial = null; waitingTune = null
       ceiling = threadCount(data.threads)
-      start(data.config, data.tuned ? Math.min(data.tuned, ceiling) : ceiling)
       // A trial only without a remembered count and with threads to choose from: the most, then two thirds, a half, a third, one.
       const counts = [...new Set([ceiling, Math.round(ceiling * 2 / 3), Math.round(ceiling / 2), Math.round(ceiling / 3), 1])].filter(n => n >= 1 && n < ceiling)
       tune = !data.tuned && ceiling > 1 ? { left: counts, done: [], current: ceiling, steps: 0, ms: 0 } : null
+      // The GPU trial first, at the most threads (setting 'auto', nothing remembered); the thread trial after it.
+      if (gpuMode === 'auto' && !gpuChoice) beginGpuTrial()
+      start(data.config, data.tuned && !gpuTrial ? Math.min(data.tuned, ceiling) : ceiling)
       break
     }
     case 'config': if (model) Object.assign(model.config, data.config); break
@@ -159,7 +210,12 @@ async function handle(data: WorkerRequest) {
       } else { tune = null; const n = threadCount(data.count); if (n !== current) switchThreads(n) }
       break
     }
-    case 'gpu': gpuMode = data.mode; startGpu(); send(); break
+    case 'gpu': {
+      gpuMode = data.mode
+      if (gpuMode === 'auto') beginGpuTrial(); else endGpuTrial()
+      startGpu(); send()
+      break
+    }
     case 'intervene': if (model) intervene(model, data.intervention); break
     case 'release': free.push(data.buffer); break
     case 'load': if (model) { applyState(model, readState(data.buffer)); sentFlashes = flashTotal(model); loaded = true; startGpu(); send() } break
@@ -171,7 +227,8 @@ async function handle(data: WorkerRequest) {
       while (accumulator >= DT && steps < MAX_STEPS_PER_BATCH && performance.now() - start < BATCH_BUDGET_MS) {
         const t0 = performance.now(); await stepModel(model); accumulator -= DT; steps++
         timing.step += performance.now() - t0; timing.steps++
-        if (tune) { tuneStep(performance.now() - t0); if (!ready) break }
+        if (gpuTrial) gpuTrialStep(performance.now() - t0)
+        else if (tune) { tuneStep(performance.now() - t0); if (!ready) break }
       }
       // Time the budget cut off is dropped (the model falls behind the speed setting instead of catching up in a burst).
       if (steps > 0 && accumulator >= DT) accumulator = 0

@@ -18,15 +18,18 @@ export const BATCH_BUDGET_MS = 60
  */
 export const maxThreads = () => Math.max(1, (globalThis.navigator?.hardwareConcurrency || 1) - 1)
 
-/** The GPU setting: the dynamics on WebGPU where available, or never. */
-export type GpuMode = 'auto' | 'off'
+/**
+ * The GPU setting: 'auto' — a timed trial at the start (GpuTuned) keeps the GPU only where it is faster than the CPU
+ * threads; 'on' — the GPU wherever WebGPU exists; 'off' — never.
+ */
+export type GpuMode = 'auto' | 'on' | 'off'
 
 export type WorkerRequest =
   /** lang: the page's language (src/i18n.ts), for any text the worker makes. */
   /** threads: an upper limit for the physics threads (the page's ?threads= parameter, to compare speeds). */
   /** tuned: the thread count this browser found fastest for this grid before (no trial then); see ThreadTuning. */
-  /** gpu: the dynamics on the GPU — 'auto' (where WebGPU exists) or 'off' (see simulation.worker.ts). */
-  | { type: 'init'; config: SimConfig; threads?: number; tuned?: number; lang?: Lang; gpu?: GpuMode }
+  /** gpu: the GPU setting; gpuTuned: what the GPU trial chose here before for this grid (no trial then). */
+  | { type: 'init'; config: SimConfig; threads?: number; tuned?: number; lang?: Lang; gpu?: GpuMode; gpuTuned?: 'gpu' | 'cpu' }
   | { type: 'gpu'; mode: GpuMode }
   | { type: 'advance'; seconds: number }
   /** The thread count chosen in the settings: a number (within maxThreads), or 'auto' — the trial again. */
@@ -49,6 +52,16 @@ export type WorkerRequest =
  */
 export const TUNE_WARM = 15, TUNE_STEPS = 40, TUNE_WORSE = 1.08
 export interface Tuned { type: 'tuned'; threads: number; trial: { threads: number; ms: number }[] }
+
+/**
+ * The GPU trial (setting 'auto', 16.11.2026): before the thread trial, TUNE_WARM + TUNE_STEPS steps with the GPU and as
+ * many on the CPU threads alone; the GPU is kept only when its steps are GPU_BETTER of the CPU's or faster (it shares
+ * the card with the 3D view and draws power, so a tie goes to the CPU). Sent as 'gpuTuned', remembered by the page.
+ * On the author's laptop (RTX 3050, 12 threads) the GPU wins on the large domain (115-190 vs 240 ms a step) and ties on
+ * the standard one (72 vs 67 ms); with fewer cores it wins there too.
+ */
+export const GPU_BETTER = .95
+export interface GpuTuned { type: 'gpuTuned'; choice: 'gpu' | 'cpu'; gpuMs: number; cpuMs: number }
 
 export interface Snapshot {
   type: 'snapshot'; buffer: ArrayBuffer; steps: number; time: number
