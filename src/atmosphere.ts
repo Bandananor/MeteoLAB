@@ -9,6 +9,12 @@ import type { InterventionKind, UhLayer } from './core'
 import { type LayerMode, type Quality, StormView, type ViewSettings } from './render/view'
 import { SNAPSHOT_COLUMNS, SNAPSHOT_FIELDS, type Snapshot, type Tuned, type WorkerRequest } from './simulation'
 
+/** Where the browser keeps the settings' thread choice ('auto' or a number). */
+const THREAD_CHOICE = 'meteolab-threads-choice'
+/** The settings' thread choice: 'auto' (the trial, by default) or a number. */
+export function threadChoice(): number | 'auto' {
+  try { const v = localStorage.getItem(THREAD_CHOICE); return v && v !== 'auto' && Number(v) >= 1 ? Math.round(Number(v)) : 'auto' } catch { return 'auto' }
+}
 /** Where the browser keeps the thread count the trial found fastest, per device (its cores) and grid. */
 const tunedKey = (g: { nx: number; ny: number; nz: number }) => `meteolab-threads:${navigator.hardwareConcurrency || 1}:${g.nx}x${g.ny}x${g.nz}`
 
@@ -69,6 +75,16 @@ export class Atmosphere implements ViewSettings {
   threads = 1
   /** The thread trial's timings, ms per step by thread count, when this run made one (null: a remembered count, or not yet). */
   tuning: { threads: number; ms: number }[] | null = null
+  private tunedKey = ''
+  /**
+   * The settings' thread choice, applied to the running model: a number, or 'auto' — the remembered count is forgotten
+   * and the trial runs again. Remembered by the browser for the next runs.
+   */
+  setThreads(count: number | 'auto') {
+    try { localStorage.setItem(THREAD_CHOICE, String(count)); if (count === 'auto') localStorage.removeItem(this.tunedKey) } catch { /* not kept */ }
+    this.tuning = null
+    this.post({ type: 'threads', count })
+  }
   /**
    * The video recording (src/record/recorder.ts): while it runs the page neither sends real time nor draws — the
    * recorder steps the model and draws each frame itself. The last two states received (in the snapshot's layout) are
@@ -96,12 +112,15 @@ export class Atmosphere implements ViewSettings {
     this.worker = new Worker(new URL('./simulation.worker.ts', import.meta.url), { type: 'module' })
     // Fewer threads on a phone (it would overheat), unless the address asks for a number. The count found fastest
     // here before (simulation.ts, ThreadTuning) skips the trial; an address with ?threads= neither uses nor keeps one.
-    const asked = Number(new URLSearchParams(location.search).get('threads')), threads = asked || (isPhone() ? PHONE_THREADS : undefined), key = tunedKey(this.mirror.grid)
+    // A number chosen in the settings (threadChoice) wins over both, and there is no trial then.
+    const chosen = threadChoice(), asked = Number(new URLSearchParams(location.search).get('threads')) || (chosen === 'auto' ? 0 : chosen)
+    const threads = asked || (isPhone() ? PHONE_THREADS : undefined), key = tunedKey(this.mirror.grid)
     let tuned: number | undefined
     if (!asked) try { tuned = Number(localStorage.getItem(key)) || undefined } catch { /* not kept */ }
+    this.tunedKey = key
     this.worker.addEventListener('message', (event: MessageEvent<Snapshot | Tuned>) => {
       const d = event.data
-      if (d.type === 'tuned') { this.tuning = d.trial; if (!asked) try { localStorage.setItem(key, String(d.threads)) } catch { /* not kept */ } return }
+      if (d.type === 'tuned') { this.tuning = d.trial; if (!Number(new URLSearchParams(location.search).get('threads')) && threadChoice() === 'auto') try { localStorage.setItem(key, String(d.threads)) } catch { /* not kept */ } return }
       this.receive(d)
     })
     this.post({ type: 'init', config: { ...config }, threads, tuned, lang: lang() })

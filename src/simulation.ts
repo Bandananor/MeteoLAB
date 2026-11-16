@@ -13,10 +13,10 @@ export const MAX_STEPS_PER_BATCH = 12
  */
 export const BATCH_BUDGET_MS = 60
 /**
- * Most threads the physics uses (its worker plus helpers; one core is left for the page). Measured 2026-10-08 on a
- * 12-thread laptop (4 performance cores): beyond ~6 the step stops getting faster (memory bandwidth, efficiency cores).
+ * Most threads the physics may use: every core but one (left for the page). Until 16.11.2026 also at most 6 (measured
+ * 2026-10-08: beyond ~6 the step hardly got faster on the author's laptop); now the trial or the user decides.
  */
-export const MAX_THREADS = 6
+export const maxThreads = () => Math.max(1, (globalThis.navigator?.hardwareConcurrency || 1) - 1)
 
 export type WorkerRequest =
   /** lang: the page's language (src/i18n.ts), for any text the worker makes. */
@@ -24,6 +24,8 @@ export type WorkerRequest =
   /** tuned: the thread count this browser found fastest for this grid before (no trial then); see ThreadTuning. */
   | { type: 'init'; config: SimConfig; threads?: number; tuned?: number; lang?: Lang }
   | { type: 'advance'; seconds: number }
+  /** The thread count chosen in the settings: a number (within maxThreads), or 'auto' — the trial again. */
+  | { type: 'threads'; count: number | 'auto' }
   /** Exactly this many model steps, however long they take (the video recording, src/record/recorder.ts). */
   | { type: 'steps'; count: number }
   | { type: 'config'; config: SimConfig }

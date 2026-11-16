@@ -2,7 +2,7 @@
 // answers each batch of steps with a snapshot of the fields the view draws (see Atmosphere), in recycled buffers.
 // With cross-origin isolation the steps are shared with helper threads (step.worker.ts, src/core/threads.ts).
 import { AtmosphereModel, controlBuffer, createGrid, domainGrid, DT, type SimConfig, SharedMemory, ThreadRunner, TRANSPORT_SLABS, applyState, readState, intervene, saveState } from './core'
-import { BATCH_BUDGET_MS, MAX_STEPS_PER_BATCH, MAX_THREADS, SNAPSHOT_COLUMNS, SNAPSHOT_FIELDS, type Snapshot, type Tuned, TUNE_STEPS, TUNE_WARM, TUNE_WORSE, type WorkerRequest } from './simulation'
+import { BATCH_BUDGET_MS, MAX_STEPS_PER_BATCH, maxThreads, SNAPSHOT_COLUMNS, SNAPSHOT_FIELDS, type Snapshot, type Tuned, TUNE_STEPS, TUNE_WARM, TUNE_WORSE, type WorkerRequest } from './simulation'
 import type { HelperStart } from './step.worker'
 import { setLang } from './i18n'
 
@@ -25,9 +25,9 @@ let pool: ThreadRunner | null = null, ready = true, generation = 0
 let current = 1, ceiling = 1
 
 /** Threads for the physics: this worker plus helpers, leaving one core for the page. One without shared memory. */
-function threadCount(limit = MAX_THREADS) {
+function threadCount(limit = Infinity) {
   if (!scope.crossOriginIsolated || typeof SharedArrayBuffer === 'undefined') return 1
-  return Math.max(1, Math.min(limit, MAX_THREADS, (navigator.hardwareConcurrency || 1) - 1))
+  return Math.max(1, Math.min(limit, maxThreads()))
 }
 
 /** The thread trial (see TUNE_* in simulation.ts): counts still to try, the timed ones, the count running, steps done on it, their time. */
@@ -103,6 +103,16 @@ scope.addEventListener('message', ({ data }) => {
       break
     }
     case 'config': if (model) Object.assign(model.config, data.config); break
+    case 'threads': {
+      if (!model) break
+      ceiling = threadCount()
+      if (data.count === 'auto') {
+        const counts = [...new Set([ceiling, Math.round(ceiling * 2 / 3), Math.round(ceiling / 2), Math.round(ceiling / 3), 1])].filter(n => n >= 1 && n < ceiling)
+        tune = ceiling > 1 ? { left: counts, done: [], current: ceiling, steps: 0, ms: 0 } : null
+        if (ceiling !== current) switchThreads(ceiling)
+      } else { tune = null; const n = threadCount(data.count); if (n !== current) switchThreads(n) }
+      break
+    }
     case 'intervene': if (model) intervene(model, data.intervention); break
     case 'release': free.push(data.buffer); break
     case 'load': if (model) { applyState(model, readState(data.buffer)); sentFlashes = flashTotal(model); loaded = true; send() } break

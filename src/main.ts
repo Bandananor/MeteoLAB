@@ -9,7 +9,8 @@ import './styles/components.css'
 import './styles/layout.css'
 import './styles/app.css'
 import { applyTheme, chartPalette, MONO, STATION_LETTERS, themeChoice, type ThemeChoice } from './theme'
-import { Atmosphere, type Live } from './atmosphere'
+import { Atmosphere, type Live, threadChoice } from './atmosphere'
+import { maxThreads } from './simulation'
 import { RadarPanel } from './radar/panel'
 import { SkewTPanel } from './skewt/panel'
 import { StationPanel } from './station/panel'
@@ -214,6 +215,7 @@ app.innerHTML = `<div class="app">
           <div id="domainCustom" hidden><label class="field"><span class="field__head"><span class="field__label">${L('Ширина области', 'Domain width')}</span><output class="field__value" id="domainWidthOut">48 ${L('км', 'km')}</output></span><input class="range" type="range" id="domainWidth" min="24" max="144" step="12" value="48"></label><label class="field"><span class="field__head"><span class="field__label">${L('Глубина области', 'Domain depth')}</span><output class="field__value" id="domainDepthOut">36 ${L('км', 'km')}</output></span><input class="range" type="range" id="domainDepth" min="18" max="108" step="9" value="36"></label></div>
           <div class="notice" id="domainMeso" hidden><span class="notice__text">${L('Мезомасштаб — для систем крупнее одной грозы: линии шквалов, МКС, дугообразного эха. Шаг 2 км по горизонтали (уровни те же): конвекция здесь допускается, но не разрешается — ячейки шире, развиваются позже, вращение и пиковые потоки слабее, а внутреннее строение линии шквалов требует ~1 км (Weisman, Skamarock и Klemp 1997; Bryan, Wyngaard и Fritsch 2003). Запуск здесь по умолчанию — подталкиванием потока (как в CM1): тёплый пузырь на шаге 2 км грозу не запускает. Молний на 2 км примерно вдвое больше, чем на 1,2 км: канал разряда на крупной сетке короче и снимает меньше заряда (калибровка канала по сетке — в плане). Одиночную грозу и суперячейку смотрите на обычной сетке.', 'Mesoscale — for systems larger than a single storm: squall lines, MCSs, bow echoes. A 2 km horizontal spacing (the levels unchanged): convection is permitted here, not resolved — the cells are wider and develop later, the rotation and the peak updraughts are weaker, and a squall line’s inner structure wants ~1 km (Weisman, Skamarock & Klemp 1997; Bryan, Wyngaard & Fritsch 2003). The start here is by updraught nudging (as in CM1) by default: a warm thermal starts no storm on 2 km. There are about twice the flashes on 2 km as on 1.2 km: the discharge channel on a coarse grid is shorter and takes less charge (calibrating the channel to the grid is planned). Watch a single storm or a supercell on the usual grid.')}</span></div>
           <div class="notice notice--warn" id="domainWarn" hidden><span class="notice__text">${L('Большая область считается медленнее: время шага растёт с числом столбцов сетки (96 × 72 км — в ~4 раза дольше стандартной; мезомасштаб 192 × 144 км с шагом 2 км — в ~5 раз). До расчёта на видеокарте (WebGPU, в плане) очень большие области на слабом компьютере идут медленно.', 'A larger domain runs slower: a step’s time grows with the grid’s columns (96 × 72 km takes ~4 times the standard one; the mesoscale 192 × 144 km at 2 km ~5 times). Until the computation moves to the GPU (WebGPU, planned) very large domains are slow on a weak computer.')}</span></div>
+          <div class="field" title="${L('Сколько ядер процессора считают физику. «Авто» — в начале прогона модель сама пробует несколько чисел и оставляет быстрейшее, браузер его запоминает. Своё число — без пробы; больше ядер не всегда быстрее (память, энергоэффективные ядра), а одно ядро всегда остаётся странице.', 'How many processor cores compute the physics. “Auto” — at the start of a run the model tries a few counts and keeps the fastest, remembered by the browser. A number of your own — no trial; more cores are not always faster (memory, efficiency cores), and one core is always left for the page.')}"><span class="field__label">${L('Потоки расчёта', 'Computing threads')}</span><span class="select"><select id="threadChoice"><option value="auto">${L('Авто (проба)', 'Auto (trial)')}</option>${Array.from({ length: maxThreads() }, (_, k) => `<option value="${k + 1}">${k + 1}</option>`).join('')}</select></span></div>
           ${slider('speed',L('Ускорение времени', 'Time acceleration'),1,120,1,8,'×')}
           <div class="t-caption" id="speedReal"></div>
           <div class="notice notice--warn" id="speedWarn" hidden><span class="notice__text"></span></div>`, { count: 5 })}
@@ -582,6 +584,11 @@ advection.onChange = changes => { config.largeScale = changes.length ? changes :
 const surfaceSelect = document.querySelector<HTMLSelectElement>('#surfaceType')!
 const transportSelect = document.querySelector<HTMLSelectElement>('#transport')!
 transportSelect.addEventListener('change', () => { config.transport = transportSelect.value as SimConfig['transport'] })
+{
+  const threadSelect = document.querySelector<HTMLSelectElement>('#threadChoice')!, c = threadChoice()
+  threadSelect.value = c === 'auto' ? 'auto' : String(Math.min(c, maxThreads()))
+  threadSelect.addEventListener('change', () => sim.setThreads(threadSelect.value === 'auto' ? 'auto' : Number(threadSelect.value)))
+}
 const followCheck = document.querySelector<HTMLInputElement>('#followStorm')!, domainSelect = document.querySelector<HTMLSelectElement>('#domain')!
 followCheck.addEventListener('change', () => { config.followStorm = followCheck.checked; recreate() })
 // How the storm starts (roadmap E10): the nudging for any scenario, and the single-storm mode.

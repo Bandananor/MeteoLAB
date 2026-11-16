@@ -5,7 +5,7 @@
 // "More" (for advanced users): any spacing, length and frame interval, the threads, the seed and the domain.
 import { domainGrid, DT, SPACING_MIN, type SimConfig } from '../core'
 import { decimal, L, lang } from '../i18n'
-import { MAX_THREADS } from '../simulation'
+import { maxThreads } from '../simulation'
 import { PRECISE_DIR, PRECISE_FILE, type PreciseReply, type PreciseRequest } from './precise.worker'
 
 /**
@@ -49,7 +49,7 @@ export interface PreciseHost {
 /** Threads for the run: the page's limit, one without cross-origin isolation (no shared memory). */
 function threads() {
   if (!globalThis.crossOriginIsolated || typeof SharedArrayBuffer === 'undefined') return 1
-  return Math.max(1, Math.min(MAX_THREADS, (navigator.hardwareConcurrency || 1) - 1))
+  return maxThreads()
 }
 
 /** The last run's frames in the browser's storage, if any. */
