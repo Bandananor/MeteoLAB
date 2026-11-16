@@ -117,6 +117,9 @@ const CD = .6, GAMMA_45 = 11.6317
  * (V, at most CHARGING_SPEED), which is also the impact speed of the charge per collision. A rimer in wet growth
  * (`wetGraupel`, `wetHail`) does not charge: on its wet surface the crystals stick instead of rebounding.
  * Mixing ratios in kg/kg, rho the air density (kg/m³), snowFall the snow's mass-weighted fall speed (m/s).
+ * With CHARGING_SCHEME 'tak' the charge per collision is the Takahashi table's (takahashiCollision), the share that
+ * charges 0.5 (1 - 0.1 exp(0.1 Tc)) instead of the Lin rebound, down to -40 °C, and the rate is held within
+ * ±TAK_RATE_MAX for each pair of a rimer and a crystal kind, as WRF-ELEC holds it (scxacymax).
  */
 export function chargingRate(tc: number, rho: number, cloud: number, ice: number, snow: number, graupel: number, hail: number, snowFall: number, wetGraupel = false, wetHail = false, crystals?: number) {
   const tak = CHARGING_SCHEME === 'tak'
@@ -125,22 +128,31 @@ export function chargingRate(tc: number, rho: number, cloud: number, ice: number
   const rebound = tak ? .5 * (1 - .1 * Math.exp(.1 * tc)) : 1 - Math.exp(.09 * tc), water = rho * cloud * 1000
   // The model's own crystals (per m³, plates of their mean mass) when it carries them, else the number estimated from the mass.
   const ni = ice <= 0 ? 0 : crystals ?? crystalNumber(tc, ice, rho)
-  const di = ice <= 0 ? 0 : crystals ? Math.min(CRYSTAL_RANGE[1], Math.max(CRYSTAL_RANGE[0], plateSize(rho * ice / crystals))) : crystalDiameter(ice, rho, tc)
-  const snowSlope = snow > 0 ? (Math.PI * RHO_S * N0S / (rho * snow)) ** .25 : 0, ns = snow > 0 ? N0S / snowSlope : 0, ds = snow > 0 ? 1 / snowSlope : 0
+  // Crystal size: a plate of the mean mass (Mitchell 1996); with the Takahashi scheme the size WRF-ELEC scales its table
+  // by, the length of a column of that mass, 0.1871 m^0.3429 (setvtz, ixtaltype 1), and for snow the mean-volume
+  // sphere, 6^(1/3) / λ, instead of 1 / λ (read 16.11.2026, .claude/literature/takahashi-charging-table.md, section 5).
+  const size = (m: number) => tak ? .1871 * m ** .3429 : plateSize(m)
+  const di = ice <= 0 ? 0 : crystals ? Math.min(CRYSTAL_RANGE[1], Math.max(CRYSTAL_RANGE[0], size(rho * ice / crystals))) : crystalDiameter(ice, rho, tc)
+  const snowSlope = snow > 0 ? (Math.PI * RHO_S * N0S / (rho * snow)) ** .25 : 0, ns = snow > 0 ? N0S / snowSlope : 0, ds = snow > 0 ? (tak ? 1.8171 : 1) / snowSlope : 0
   let rate = 0
-  if (graupel > 0 && !wetGraupel) rate += rimerRate(GRAUPEL, graupel, tc, rho, water, rebound, ni, di, ns, ds, snowFall)
-  if (hail > 0 && !wetHail) rate += rimerRate(HAIL, hail, tc, rho, water, rebound, ni, di, ns, ds, snowFall)
+  const table = tak ? takahashiCharge(tc, water) : 0
+  if (graupel > 0 && !wetGraupel) rate += rimerRate(GRAUPEL, graupel, tc, rho, water, rebound, ni, di, ns, ds, snowFall, table)
+  if (hail > 0 && !wetHail) rate += rimerRate(HAIL, hail, tc, rho, water, rebound, ni, di, ns, ds, snowFall, table)
   return rate
 }
 
+/** Most charge separated per m³ and s by one pair of a rimer and a crystal kind with the Takahashi scheme, C m⁻³ s⁻¹ (WRF-ELEC scxacymax, per pair). */
+export const TAK_RATE_MAX = 3e-9
+
 /** One rimer's share of chargingRate: its collisions with the cloud ice (ni per m³ of diameter di, at rest) and the snow (ns, ds, falling at vs). */
-function rimerRate(rimer: Rimer, mass: number, tc: number, rho: number, water: number, rebound: number, ni: number, di: number, ns: number, ds: number, vs: number) {
+function rimerRate(rimer: Rimer, mass: number, tc: number, rho: number, water: number, rebound: number, ni: number, di: number, ns: number, ds: number, vs: number, table: number) {
   const lambda = (Math.PI * rimer.density * rimer.n0 / (rho * mass)) ** .25, fall = Math.sqrt(4 * G * rimer.density / (3 * CD * rho)) * GAMMA_45 / 6 / Math.sqrt(lambda)
   const impact = Math.min(fall, CHARGING_SPEED), rar = COLLECTION_EFFICIENCY * water * impact, l2 = lambda * lambda, l3 = l2 * lambda, k = Math.PI / 4 * rimer.n0 * rebound
   let rate = 0
   const tak = CHARGING_SCHEME === 'tak'
-  if (ni > 0) rate += ni * k * (2 / l3 + 2 * di / l2 + di * di / lambda) * fall * (tak ? takahashiCollision(tc, water, di, fall) : collisionCharge(tc, rar, di, impact))
-  if (ns > 0) { const v = Math.abs(fall - vs); rate += ns * k * (2 / l3 + 2 * ds / l2 + ds * ds / lambda) * v * (tak ? takahashiCollision(tc, water, ds, v) : collisionCharge(tc, rar, ds, Math.abs(impact - vs))) }
+  const pair = (r: number) => tak ? Math.max(-TAK_RATE_MAX, Math.min(TAK_RATE_MAX, r)) : r
+  if (ni > 0) rate += pair(ni * k * (2 / l3 + 2 * di / l2 + di * di / lambda) * fall * (tak ? takahashiScaled(table, di, fall) : collisionCharge(tc, rar, di, impact)))
+  if (ns > 0) { const v = Math.abs(fall - vs); rate += pair(ns * k * (2 / l3 + 2 * ds / l2 + ds * ds / lambda) * v * (tak ? takahashiScaled(table, ds, v) : collisionCharge(tc, rar, ds, Math.abs(impact - vs)))) }
   return rate
 }
 
@@ -198,7 +210,9 @@ export function transferCharge(charge: number[], before: number[], after: number
 }
 
 /** Charge gained by the graupel in one rebounding collision of the Takahashi scheme, C: the table times WRF-ELEC's size and speed factor, within ±500 fC. */
-export function takahashiCollision(tc: number, lwc: number, d: number, dv: number) {
-  const q = takahashiCharge(tc, lwc) * Math.min(5 * (d / 100e-6) ** 2 * Math.abs(dv) / 8, 10) * 1e-15
+export function takahashiCollision(tc: number, lwc: number, d: number, dv: number) { return takahashiScaled(takahashiCharge(tc, lwc), d, dv) }
+/** The table's charge (fC) for a crystal of size d (m) at relative speed dv (m/s), C. */
+function takahashiScaled(table: number, d: number, dv: number) {
+  const q = table * Math.min(5 * (d / 100e-6) ** 2 * Math.abs(dv) / 8, 10) * 1e-15
   return Math.max(-500e-15, Math.min(500e-15, q))
 }
