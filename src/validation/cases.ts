@@ -183,6 +183,8 @@ export function updraftCores(model: AtmosphereModel, height: number, minW: numbe
  * the right mover crossed the periodic east edge at ~52 min into its own cold pool: the domain follows the right mover.
  * The 96 x 72 km domain since 2026-10-09: on 48 x 36 km the cold pool covered 91 % of the periodic domain by 60 min and
  * the cell, breathing its own outflow, fell to 13 m/s; on the large domain it covers 22 % and the cell is still ~41 m/s.
+ * The split is checked at 45 min since 2026-11-17 (was 35): with two-moment microphysics the rain comes later and the
+ * storm splits at ~40 min (one-moment ~30, WK82 40-60); at 45 min both have two cells (.bench/wksplit, README journal).
  */
 export function weismanKlempSplit() {
   const model = new AtmosphereModel({ ...SUMMER_DAY, solarMax: 0, bubble: 0 }, createGrid(LARGE_GRID), weismanKlemp({ qvMax: .016 }))
@@ -190,9 +192,9 @@ export function weismanKlempSplit() {
   // STORMLAB_TURBULENCE=cube: the old cube-root filter width for the horizontal mixing (anisotropic is the default).
   if ((globalThis as { process?: { env: Record<string, string | undefined> } }).process?.env.STORMLAB_TURBULENCE === 'cube') model.turbulenceWidth = 'cube'
   model.injectBubble(model.grid.width * .3, model.grid.depth * .5, 1.5)
-  run(model, 35 * 60)
+  run(model, 45 * 60)
   const cores = updraftCores(model, 4500, 8), [right, left] = [...cores.slice(0, 2)].sort((a, b) => a.y - b.y)
-  run(model, 25 * 60)
+  run(model, 15 * 60)
   const late = updraftCores(model, 4500, 0)
   return { cores: cores.length, separation: left && right ? (left.y - right.y) / 1000 : 0, rightW: right?.w ?? 0, leftW: left?.w ?? 0, rightUh: right?.uh ?? 0, leftUh: left?.uh ?? 0, w60: late[0]?.w ?? 0 }
 }
@@ -284,7 +286,7 @@ export const CASES: ValidationCase[] = [
       const r = weismanKlempSplit()
       return {
         checks: [
-          check('updraught cores at 4.5 km, 35 min (w > 8 m/s)', '', r.cores, '≥ 2 (split)', [2, INF]),
+          check('updraught cores at 4.5 km, 45 min (w > 8 m/s)', '', r.cores, '≥ 2 (split)', [2, INF]),
           check('separation, left mover north of the right one', 'km', r.separation, '> 4 (two distinct cells)', [4, INF]),
           check('right mover w − left mover w', 'm/s', r.rightW - r.leftW, '> 0 (right mover dominant)', [0, INF]),
           check('right mover UH 2–5 km', 'm²/s²', r.rightUh, '> 0 (cyclonic)', [0, INF]),
