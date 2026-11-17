@@ -14,14 +14,15 @@ import type { Grid } from './grid'
 import type { AtmosphereModel } from './model'
 import { STATE_COLUMNS, STATE_FIELDS, type SavedState, type StateHeader } from './state'
 
-// Version 2 (3.0): the raindrop number (state version 4) among the fields; version 1 files (state version 3) still load.
-const MAGIC = 'MLFR', VERSION = 2
+// Version 2 (3.0): the raindrop number (state version 4) among the fields; version 3 (3.0): two-moment graupel and hail
+// (state version 5); older files still load.
+const MAGIC = 'MLFR', VERSION = 3
 /** The fields a frames file of this version holds, and the state version its frames decode to. */
-const fieldsOf = (version: number) => version === 1 ? STATE_FIELDS.slice(0, 17) : STATE_FIELDS
-const stateVersion = (version: number) => version === 1 ? 3 : 4
+const fieldsOf = (version: number) => version === 1 ? STATE_FIELDS.slice(0, 17) : version === 2 ? STATE_FIELDS.slice(0, 18) : STATE_FIELDS
+const stateVersion = (version: number) => version === 1 ? 3 : version === 2 ? 4 : 5
 /** Hydrometeors (never negative, mostly zero, spanning decades): stored as square roots. The vapour is linear: nearly
  * uniform on a level, its level's own range keeps it to ~1e-6 kg/kg. */
-const ROOTED: ReadonlySet<string> = new Set(['cloud', 'rain', 'cold', 'ice', 'snow', 'graupel', 'hail', 'iceNumber', 'rainNumber'])
+const ROOTED: ReadonlySet<string> = new Set(['cloud', 'rain', 'cold', 'ice', 'snow', 'graupel', 'hail', 'iceNumber', 'rainNumber', 'graupelNumber', 'graupelVolume', 'hailNumber', 'hailVolume'])
 /** Bytes of the record's own head: the payload's length and the frame's time. */
 export const RECORD_HEAD = 8
 
@@ -50,7 +51,7 @@ export function readFramesHeader(bytes: Uint8Array): { header: FramesHeader; sta
   const length = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getUint32(4, true)
   if (8 + length > bytes.length) throw new Error('the frames file is truncated')
   const header = JSON.parse(new TextDecoder().decode(bytes.subarray(8, 8 + length))) as FramesHeader
-  if (header?.format !== 'meteolab-frames' || header.version !== VERSION && header.version !== 1) throw new Error('unknown frames format or version')
+  if (header?.format !== 'meteolab-frames' || header.version !== VERSION && header.version !== 2 && header.version !== 1) throw new Error('unknown frames format or version')
   return { header, start: pad4(8 + length) }
 }
 

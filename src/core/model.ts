@@ -17,6 +17,7 @@ import { graupelFallSpeed, graupelProcesses, N0G, N0R, RHO_G, RHO_W } from './gr
 import { hailFallSpeed, hailMaxDiameter, hailProcesses, N0H, RHO_H, wetGrowing } from './hail'
 import { CRYSTAL_MASS, fragmentsPerKg, freezeRain, iceProcesses, N0S, RHO_S, saturationAdjustMixed, settleCrystals, snowFallSpeed, snowProcesses, SPLINTERS, splintering } from './ice'
 import { exponentialMeanMass, fallSpeeds, fallSpeedZ, G1, RAIN_MIN, rain2mProcesses, rainNumberChange } from './rain2m'
+import { densityOf, GRAUPEL_2M, HAIL_2M, ICE2M_MIN, type IceClass, ice2mProcesses, largestDiameter, momentSpeed, reflectivityFactor } from './ice2m'
 import { fallSpeed, interceptOf, N0_MP, qsatP, type RainIntercept, rainProcesses, saturationAdjust } from './microphysics'
 import { PressureSolver } from './pressure'
 import { dragCoefficient, LONGWAVE_LOSS, surfaceFluxes } from './surface'
@@ -30,7 +31,7 @@ import { EXTINCTION, sunlightThrough } from './optics'
 /** One field a step transports: WENO (monotone) or linear upwind, with the positivity fix or not, and a decay factor per second. */
 interface Carried { field: Float32Array; monotone: boolean; conserve: boolean; decay: number }
 /** At most this many fields are transported (rain, snow, graupel, hail, u, v, w, theta, vapour, cloud, ice, cold pool, 4 charges, the raindrop number). */
-const MAX_CARRIED = 18
+const MAX_CARRIED = 22
 /**
  * The heat budget's terms (SimConfig.budget, roadmap D2), each theta's change by: rain evaporating; the saturation
  * adjustment (cloud water and, below -38 °C, ice condensing or evaporating); the crystals (deposition, sublimation, rain
@@ -192,6 +193,12 @@ export class AtmosphereModel implements TaskModel {
    */
   readonly rainNumber: Float32Array; readonly rainFallNumber: Float32Array
   /**
+   * Two-moment graupel and hail (Э1 step 2, ice2m.ts; iceMoments 2 only, zero otherwise): particles per kg of air, their
+   * volume (m3 per kg: the density is q / V), and the number-weighted fall speeds.
+   */
+  readonly graupelNumber: Float32Array; readonly graupelVolume: Float32Array; readonly hailNumber: Float32Array; readonly hailVolume: Float32Array
+  readonly graupelFallNumber: Float32Array; readonly hailFallNumber: Float32Array
+  /**
    * Charge carried by the hydrometeors (2.3, charge.ts), C per kg of air: on cloud ice with snow, on graupel with hail,
    * on rain, and on the cloud droplets with the small ions (chargeAir: moves with the air, does not fall). Transported
    * like the water, falling with the carrier's mass-weighted speed; zero without ice microphysics or with lightning
@@ -287,6 +294,8 @@ export class AtmosphereModel implements TaskModel {
     const f = () => new Float32Array(grid.n)
     this.u = shared('u'); this.v = shared('v'); this.w = shared('w'); this.theta = shared('theta'); this.q = shared('q'); this.cloud = shared('cloud'); this.rain = shared('rain'); this.cold = shared('cold')
     this.rainNumber = shared('rainNumber'); this.rainFallNumber = shared('rainFallNumber')
+    this.graupelNumber = shared('graupelNumber'); this.graupelVolume = shared('graupelVolume'); this.hailNumber = shared('hailNumber'); this.hailVolume = shared('hailVolume')
+    this.graupelFallNumber = shared('graupelFallNumber'); this.hailFallNumber = shared('hailFallNumber')
     this.ice = shared('ice'); this.iceNumber = shared('iceNumber'); this.snow = shared('snow'); this.snowFall = shared('snowFall'); this.graupel = shared('graupel'); this.graupelFall = shared('graupelFall'); this.hail = shared('hail'); this.hailFall = shared('hailFall')
     this.condensate = shared('condensate')
     this.fieldZ = shared('fieldZ')
@@ -331,7 +340,7 @@ export class AtmosphereModel implements TaskModel {
       const alt = zs[z], [ue, ve] = this.env.windUV(alt)
       this.u[i] = ue - this.frame[0]; this.v[i] = ve - this.frame[1]; this.w[i] = 0
       this.theta[i] = this.env.thetaEnv(alt) + (this.rng() - .5) * .018 * noise; this.q[i] = this.env.qEnv(alt)
-      this.cloud[i] = this.rain[i] = this.rainNumber[i] = this.cold[i] = this.ice[i] = this.iceNumber[i] = this.snow[i] = this.graupel[i] = this.hail[i] = 0
+      this.cloud[i] = this.rain[i] = this.rainNumber[i] = this.graupelNumber[i] = this.graupelVolume[i] = this.hailNumber[i] = this.hailVolume[i] = this.cold[i] = this.ice[i] = this.iceNumber[i] = this.snow[i] = this.graupel[i] = this.hail[i] = 0
       this.chargeIce[i] = this.chargeGraupel[i] = this.chargeRain[i] = this.chargeAir[i] = 0
     }
     // The moving front's cold air, from the start.
@@ -613,9 +622,14 @@ export class AtmosphereModel implements TaskModel {
       const h = this.hail[i]
       if (!(h > 1e-9)) continue
       this.deposit(i, rho0 * h * this.hailFall[i] * dt, this.hailGround)
-      const size = hailMaxDiameter(h, rho0) * 1000
+      const size = this.largestHail(i, rho0) * 1000
       for (let j = 0; j < 4; j++) if (w[i * 4 + j] > 0) this.hailSize[c[i * 4 + j]] = Math.max(this.hailSize[c[i * 4 + j]], size)
     }
+  }
+
+  /** The largest hailstones at node i, m: the one-moment fixed tail (hailMaxDiameter) or the two-moment one (ice2m.ts). */
+  largestHail(i: number, rho: number) {
+    return this.ice2m() ? largestDiameter(HAIL_2M, this.hail[i], this.hailNumber[i], this.hailVolume[i], rho) : hailMaxDiameter(this.hail[i], rho)
   }
 
   /** Precipitation leaving through the ground this step: adds it to `precipitation` (mm) and returns it in level-weight (mass) units. */
@@ -715,6 +729,11 @@ export class AtmosphereModel implements TaskModel {
    */
   /** Scratch of sedimentRain2m: the reflectivity, its fall speed and the number carried at the mass's speed. */
   private rainScratch?: { z: Float64Array; vz: Float32Array; carried: Float64Array }
+  /**
+   * Moments of graupel and hail (Э1 step 2): 1 - Lin's one-moment graupel and hail (the model's for now); 2 - mass, number
+   * and volume after NSSL (ice2m.ts), with two-moment rain only. STORMLAB_ICE2M=1 sets 2.
+   */
+  iceMoments: 1 | 2 = (globalThis as { process?: { env: Record<string, string | undefined> } }).process?.env?.STORMLAB_ICE2M === '1' ? 2 : 1
   rainMoments: 1 | 2 = (globalThis as { process?: { env: Record<string, string | undefined> } }).process?.env?.STORMLAB_RAIN2M === '1' ? 2 : 1
   // Created with the model, so that their shared arrays exist before any helper thread attaches.
   private readonly flux: FluxTransport; private readonly turbulence: Turbulence
@@ -771,6 +790,7 @@ export class AtmosphereModel implements TaskModel {
     if (this.withIce()) this.collectHail(dt)
     // Two-moment rain falls here, on the CPU, either way (its mass and number together, sedimentRain2m).
     if (this.rain2m()) this.sedimentRain2m(dt)
+    if (this.ice2m()) { this.sedimentIce2m(dt, GRAUPEL_2M, this.graupel, this.graupelNumber, this.graupelVolume, this.graupelFall, this.graupelFallNumber); this.sedimentIce2m(dt, HAIL_2M, this.hail, this.hailNumber, this.hailVolume, this.hailFall, this.hailFallNumber) }
     if (sediment) this.sedimentStep(dt)
   }
 
@@ -778,7 +798,21 @@ export class AtmosphereModel implements TaskModel {
   rain2m() { return this.rainMoments === 2 && (this.config.transport ?? this.transport) === 'weno' }
 
   /** The falling fields sedimentStep and the GPU fall one by one: falling() without two-moment rain. */
-  private sedimented() { return this.rain2m() ? this.falling().filter(([f]) => f !== this.rain) : this.falling() }
+  private sedimented() {
+    const ice2m = this.ice2m()
+    return this.rain2m() ? this.falling().filter(([f]) => f !== this.rain && !(ice2m && (f === this.graupel || f === this.hail))) : this.falling()
+  }
+
+  /** Whether graupel and hail are two-moment (iceMoments 2, with ice microphysics and two-moment rain). */
+  ice2m() { return this.iceMoments === 2 && this.withIce() && this.rain2m() }
+
+  /** The fall of two-moment graupel or hail: as sedimentRain2m, the volume with the mass (ice2m.ts). */
+  private sedimentIce2m(dt: number, c: IceClass, q: Float32Array, num: Float32Array, vol: Float32Array, vm: Float32Array, vn: Float32Array) {
+    const rho = this.env.rho
+    // The reflectivity's density as NSSL's calczgr1d bounds it: 170-900 kg/m3 for both classes.
+    // The reflectivity's density as NSSL's calczgr1d takes it: the node's own now, bounded to 170-900 kg/m3 for both classes.
+    this.sediment2m(dt, q, num, vol, vm, vn, (i, z) => q[i] > ICE2M_MIN ? momentSpeed(c, q[i], num[i], vol[i], rho[z], 6) : 0, reflectivityFactor(c.alpha), i => Math.min(900, Math.max(170, densityOf(c, q[i], vol[i]))), ICE2M_MIN)
+  }
 
   /**
    * The sedimentation of a step (WENO): precipitation first falls, then every field is transported. The face fluxes of
@@ -798,20 +832,28 @@ export class AtmosphereModel implements TaskModel {
    * (a two-moment scheme's excessive size sorting) nor its tail with too many small ones. Sub-steps by the fastest speed.
    */
   private sedimentRain2m(dt: number) {
-    const { nz, layer, hz, n } = this.grid, rho = this.env.rho, q = this.rain, num = this.rainNumber, vm = this.fallSpeed, vn = this.rainFallNumber
+    const rho = this.env.rho, q = this.rain, num = this.rainNumber
+    this.sediment2m(dt, q, num, null, this.fallSpeed, this.rainFallNumber, (i, z) => q[i] > RAIN_MIN ? fallSpeedZ(q[i], num[i], rho[z]) : 0, G1, () => RHO_W, RAIN_MIN)
+  }
+
+  /**
+   * Two-moment sedimentation (NSSL sediment1d, infall 4) of mass q and number num, a volume vol with the mass if any:
+   * speedZ gives the reflectivity-weighted speed, g1 the distribution's reflectivity factor, rhoX the particle density.
+   */
+  private sediment2m(dt: number, q: Float32Array, num: Float32Array, vol: Float32Array | null, vm: Float32Array, vn: Float32Array, speedZ: (i: number, z: number) => number, g1: number, rhoX: (i: number) => number, qMin: number) {
+    const { nz, layer, hz, n } = this.grid, rho = this.env.rho
     const scratch = this.rainScratch ??= { z: new Float64Array(n), vz: new Float32Array(n), carried: new Float64Array(n) }
     const { z: refl, vz, carried } = scratch
-    const k6 = (6 / (Math.PI * RHO_W)) ** 2
     let courant = 0
     for (let z = 0; z < nz; z++) for (let i = z * layer; i < (z + 1) * layer; i++) {
-      vz[i] = q[i] > RAIN_MIN ? fallSpeedZ(q[i], num[i], rho[z]) : 0
+      vz[i] = speedZ(i, z)
       courant = Math.max(courant, dt * vz[i] / hz[z], dt * vm[i] / hz[z])
     }
     const parts = Math.max(1, Math.ceil(courant / .8)), step = dt / parts
     for (let p = 0; p < parts; p++) {
       for (let z = 0; z < nz; z++) for (let i = z * layer; i < (z + 1) * layer; i++) {
-        const rq = rho[z] * q[i], rn = rho[z] * num[i]
-        refl[i] = rq > 0 && rn > 0 ? G1 * k6 * rq * rq / rn : 0
+        const rq = rho[z] * q[i], rn = rho[z] * num[i], k6 = (6 / (Math.PI * rhoX(i))) ** 2
+        refl[i] = rq > 0 && rn > 0 ? g1 * k6 * rq * rq / rn : 0
         carried[i] = num[i]
       }
       // Ground: the mass reaching it into the rain gauge (as sediment()).
@@ -822,14 +864,15 @@ export class AtmosphereModel implements TaskModel {
         for (let i = z * layer; i < (z + 1) * layer; i++) {
           const a = i + layer
           q[i] += step * ((top ? rho[z + 1] * q[a] * vm[a] : 0) - rho[z] * q[i] * vm[i]) / m
+          if (vol) vol[i] += step * ((top ? rho[z + 1] * vol[a] * vm[a] : 0) - rho[z] * vol[i] * vm[i]) / m
           num[i] += step * ((top ? rho[z + 1] * num[a] * vn[a] : 0) - rho[z] * num[i] * vn[i]) / m
           carried[i] += step * ((top ? rho[z + 1] * carried[a] * vm[a] : 0) - rho[z] * carried[i] * vm[i]) / m
           refl[i] += step * ((top ? refl[a] * vz[a] : 0) - refl[i] * vz[i]) / hz[z]
         }
       }
       for (let z = 0; z < nz; z++) for (let i = z * layer; i < (z + 1) * layer; i++) {
-        if (!(q[i] > RAIN_MIN)) { if (q[i] < 0) q[i] = 0; num[i] = 0; continue }
-        const rq = rho[z] * q[i], fromZ = refl[i] > 0 ? G1 * k6 * rq * rq / refl[i] / rho[z] : Infinity
+        if (!(q[i] > qMin)) { if (q[i] < 0) q[i] = 0; num[i] = 0; if (vol) vol[i] = 0; continue }
+        const rq = rho[z] * q[i], k6 = (6 / (Math.PI * rhoX(i))) ** 2, fromZ = refl[i] > 0 ? g1 * k6 * rq * rq / refl[i] / rho[z] : Infinity
         num[i] = refl[i] > 0 ? Math.max(Math.min(fromZ, carried[i]), num[i]) : Math.max(carried[i], num[i])
       }
     }
@@ -1016,6 +1059,11 @@ export class AtmosphereModel implements TaskModel {
         for (let i = k * layer, end = i + layer; i < end; i++) { this.fallSpeed[i] = fallSpeed(this.rain[i], rho[k], rho[0], intercept === 'fixed' || !(this.rain[i] > 0) ? N0_MP : interceptOf(intercept, this.rain[i], rho[k])); this.snowFall[i] = snowFallSpeed(this.snow[i], rho[k], rho[0]); this.graupelFall[i] = graupelFallSpeed(this.graupel[i], rho[k]); this.hailFall[i] = hailFallSpeed(this.hail[i], rho[k]) }
         // Two-moment rain: its mass- and number-weighted speeds from both moments (rain2m.ts).
         if (this.rain2m()) for (let i = k * layer, end = i + layer; i < end; i++) { const [m, nn] = fallSpeeds(this.rain[i], this.rainNumber[i], rho[k]); this.fallSpeed[i] = m; this.rainFallNumber[i] = nn }
+        // Two-moment graupel and hail: mass- and number-weighted speeds from the moments and the density (ice2m.ts).
+        if (this.ice2m()) for (let i = k * layer, end = i + layer; i < end; i++) {
+          this.graupelFall[i] = momentSpeed(GRAUPEL_2M, this.graupel[i], this.graupelNumber[i], this.graupelVolume[i], rho[k], 3); this.graupelFallNumber[i] = momentSpeed(GRAUPEL_2M, this.graupel[i], this.graupelNumber[i], this.graupelVolume[i], rho[k], 0)
+          this.hailFall[i] = momentSpeed(HAIL_2M, this.hail[i], this.hailNumber[i], this.hailVolume[i], rho[k], 3); this.hailFallNumber[i] = momentSpeed(HAIL_2M, this.hail[i], this.hailNumber[i], this.hailVolume[i], rho[k], 0)
+        }
         if (this.electrified()) for (let i = k * layer, end = i + layer; i < end; i++) {
           const is = this.ice[i] + this.snow[i], gh = this.graupel[i] + this.hail[i]
           this.chargeFallIce[i] = is > 0 ? this.snow[i] * this.snowFall[i] / is : 0
@@ -1109,6 +1157,7 @@ export class AtmosphereModel implements TaskModel {
     water(this.rain); if (withIce) { water(this.snow); water(this.graupel); water(this.hail) }
     // The raindrop number (two-moment rain): WENO like the rain, not mass-fixed (the physics bounds it to the rain).
     if (this.rain2m()) c.push({ field: this.rainNumber, monotone: true, conserve: false, decay: 1 })
+    if (this.ice2m()) for (const field of [this.graupelNumber, this.graupelVolume, this.hailNumber, this.hailVolume]) c.push({ field, monotone: true, conserve: false, decay: 1 })
     // WENO for water and the cold-pool indicator (no overshoots); linear 5th-order upwind for the smooth u, v, w, theta.
     for (const field of [this.u, this.v, this.w, this.theta]) c.push({ field, monotone: false, conserve: false, decay: 1 })
     water(this.q); water(this.cloud); if (withIce) { water(this.ice); c.push({ field: this.iceNumber, monotone: true, conserve: false, decay: 1 }) }
@@ -1135,7 +1184,9 @@ export class AtmosphereModel implements TaskModel {
     const { nx, ny, zs, height: H, layer } = this.grid, withIce = this.withIce(), staged = this.staged()
     const cfg = this.config, e = this.env, u = this.u, v = this.v, w = this.w, theta = this.theta, q = this.q, cloud = this.cloud, rain = this.rain, cold = this.cold
     const ice = this.ice, iceNumber = this.iceNumber, snow = this.snow, graupel = this.graupel, hail = this.hail, rhoGround = e.rho[0]
-    const intercept = this.rainIntercept, rain2m = this.rain2m(), rainNumber = this.rainNumber
+    const intercept = this.rainIntercept, rain2m = this.rain2m(), rainNumber = this.rainNumber, ice2m = this.ice2m()
+    const fields2m = ice2m ? { theta, q, cloud, ice, iceNumber, snow, rain, rainNumber, graupel, graupelNumber: this.graupelNumber, graupelVolume: this.graupelVolume, hail, hailNumber: this.hailNumber, hailVolume: this.hailVolume } : null
+    let wet2m = { cooling: 0, wetG: false, wetH: false }
     const budget = this.budget, bEvap = budget?.evaporation, bCond = budget?.condensation, bIce = budget?.ice, bSnow = budget?.snow, bGraupel = budget?.graupel, bHail = budget?.hail, bSurface = budget?.surface, bOther = budget?.other
     // A pull towards a profile (sponge, fronts, zones, relaxed edges) takes the terms' share with theta's departure: the
     // pulled-in air comes from the environment (the origin), not from the node's processes.
@@ -1178,7 +1229,10 @@ export class AtmosphereModel implements TaskModel {
           if (withIce) {
             mark = theta[i]
             let rainMark = rain[i]
+            const frozenDrops = rainNumber[i], graupelMark = graupel[i]
             freezeRain(theta, rain, graupel, i, exner)
+            // Two-moment graupel: the drops frozen at once (below -38 °C) become as many graupel particles of 900 kg/m3.
+            if (ice2m && graupel[i] > graupelMark) { this.graupelNumber[i] += rainMark > 0 ? frozenDrops * (1 - rain[i] / rainMark) : 0; this.graupelVolume[i] += (graupel[i] - graupelMark) / 900 }
             // Two-moment rain: drops leave with the mass the ice takes (mean drop mass kept) and melt in as drops of the
             // melting particles' mean mass (rain2m.ts rainNumberChange).
             if (rain2m) { rainNumberChange(rain, rainNumber, i, rainMark, rhoZ, 0); rainMark = rain[i] }
@@ -1187,19 +1241,31 @@ export class AtmosphereModel implements TaskModel {
             cold[i] += iceProcesses(theta, q, ice, snow, iceNumber, i, exner, p, rhoZ, dt)
             if (budget) { bIce![i] += theta[i] - mark; given += theta[i] - mark; mark = theta[i] }
             const iceBefore = ice[i], cloudBefore = cloud[i]
-            const snowMass = rain2m ? exponentialMeanMass(snow[i], N0S, RHO_S, rhoZ) : 0
+            const snowMass = rain2m || ice2m ? exponentialMeanMass(snow[i], N0S, RHO_S, rhoZ) : 0
+            const graupelBefore = graupel[i]
             cold[i] += snowProcesses(theta, q, cloud, ice, snow, rain, i, exner, p, rhoZ, rhoGround, dt, graupel)
+            // Rimed snow turned into two-moment graupel: as many particles as snow ones, at 250 kg/m3.
+            if (ice2m && graupel[i] > graupelBefore) { const gain = graupel[i] - graupelBefore; this.graupelNumber[i] += gain / Math.max(1e-12, snowMass); this.graupelVolume[i] += gain / 250 }
             if (rain2m) { rainNumberChange(rain, rainNumber, i, rainMark, rhoZ, snowMass); rainMark = rain[i] }
             if (budget) { bSnow![i] += theta[i] - mark; given += theta[i] - mark; mark = theta[i] }
-            const rainBefore = rain[i], graupelMass = rain2m ? exponentialMeanMass(graupel[i], N0G, RHO_G, rhoZ) : 0
-            cold[i] += graupelProcesses(theta, q, cloud, ice, snow, rain, graupel, i, exner, p, rhoZ, dt)
-            if (rain2m) { rainNumberChange(rain, rainNumber, i, rainMark, rhoZ, graupelMass); rainMark = rain[i] }
-            if (budget) { bGraupel![i] += theta[i] - mark; given += theta[i] - mark; mark = theta[i] }
-            const rainFrozen = theta[i] * exner < 273.15 ? Math.max(0, rainBefore - rain[i]) : 0
-            const hailMass = rain2m ? exponentialMeanMass(hail[i], N0H, RHO_H, rhoZ) : 0
-            cold[i] += hailProcesses(theta, q, cloud, ice, snow, rain, graupel, hail, i, exner, p, rhoZ, dt)
-            if (rain2m) rainNumberChange(rain, rainNumber, i, rainMark, rhoZ, hailMass)
-            if (budget) { bHail![i] += theta[i] - mark; given += theta[i] - mark }
+            const rainBefore = rain[i]
+            let rainFrozen: number
+            if (fields2m) {
+              // Two-moment graupel and hail (ice2m.ts): their own rain drops in and out.
+              wet2m = ice2mProcesses(fields2m, i, exner, p, rhoZ, dt); cold[i] += wet2m.cooling
+              if (budget) { bGraupel![i] += theta[i] - mark; given += theta[i] - mark; mark = theta[i] }
+              rainFrozen = theta[i] * exner < 273.15 ? Math.max(0, rainBefore - rain[i]) : 0
+            } else {
+              const graupelMass = rain2m ? exponentialMeanMass(graupel[i], N0G, RHO_G, rhoZ) : 0
+              cold[i] += graupelProcesses(theta, q, cloud, ice, snow, rain, graupel, i, exner, p, rhoZ, dt)
+              if (rain2m) { rainNumberChange(rain, rainNumber, i, rainMark, rhoZ, graupelMass); rainMark = rain[i] }
+              if (budget) { bGraupel![i] += theta[i] - mark; given += theta[i] - mark; mark = theta[i] }
+              rainFrozen = theta[i] * exner < 273.15 ? Math.max(0, rainBefore - rain[i]) : 0
+              const hailMass = rain2m ? exponentialMeanMass(hail[i], N0H, RHO_H, rhoZ) : 0
+              cold[i] += hailProcesses(theta, q, cloud, ice, snow, rain, graupel, hail, i, exner, p, rhoZ, dt)
+              if (rain2m) rainNumberChange(rain, rainNumber, i, rainMark, rhoZ, hailMass)
+              if (budget) { bHail![i] += theta[i] - mark; given += theta[i] - mark }
+            }
             // Crystals aggregated or collected by snow, graupel and hail go with their mass.
             if (iceBefore > 0) iceNumber[i] *= ice[i] / iceBefore
             // Secondary ice: rime splintering at -3…-8 °C (the droplets the snow, graupel and hail froze on throw off
@@ -1223,7 +1289,7 @@ export class AtmosphereModel implements TaskModel {
               cNow[0] = cI[i]; cNow[1] = cG[i]; cNow[2] = cR[i]; cNow[3] = cA[i]
               if (cNow[0] !== 0 || cNow[1] !== 0 || cNow[2] !== 0 || cNow[3] !== 0) transferCharge(cNow, before, after)
               const tc = theta[i] * exner - 273.15
-              const wetG = wetGrowing(graupel[i], N0G, RHO_G, tc, q[i], p, rhoZ, cloud[i], rain[i], ice[i], snow[i]), wetH = wetGrowing(hail[i], N0H, RHO_H, tc, q[i], p, rhoZ, cloud[i], rain[i], ice[i], snow[i])
+              const wetG = ice2m ? wet2m.wetG : wetGrowing(graupel[i], N0G, RHO_G, tc, q[i], p, rhoZ, cloud[i], rain[i], ice[i], snow[i]), wetH = ice2m ? wet2m.wetH : wetGrowing(hail[i], N0H, RHO_H, tc, q[i], p, rhoZ, cloud[i], rain[i], ice[i], snow[i])
               const separated = chargingRate(tc, rhoZ, cloud[i], ice[i], snow[i], graupel[i], hail[i], this.snowFall[i], wetG, wetH, iceNumber[i] * rhoZ) * dt / rhoZ
               // Inductive charging in the field: the graupel-hail gains what the rebounding droplets take away.
               const induced = inductiveRate(tc, rhoZ, cloud[i], graupel[i], hail[i], this.fieldZ[i], (cNow[1] + separated) * rhoZ, wetG, wetH) * dt / rhoZ
@@ -1274,7 +1340,7 @@ export class AtmosphereModel implements TaskModel {
               const s = 1 - Math.exp(-dt / EDGE_TIME * (1 - d / EDGE_ZONE) ** 2), k = 1 - s
               u[i] = lerp(u[i], ue, s); v[i] = lerp(v[i], ve, s); w[i] *= k; const fd = frontTop > alt ? this.frontalAt(x, y, alt)[0] : 0
               mark = theta[i]; theta[i] = lerp(theta[i], thEnv - this.frontDeficit(x, y, alt) - fd, s); if (budget) { pulled += theta[i] - mark; pull(i, k) }; q[i] = lerp(q[i], qEnv * coldMoisture(fd), s)
-              cloud[i] *= k; rain[i] *= k; this.rainNumber[i] *= k; ice[i] *= k; iceNumber[i] *= k; snow[i] *= k; graupel[i] *= k; hail[i] *= k; cold[i] *= k
+              cloud[i] *= k; rain[i] *= k; this.rainNumber[i] *= k; this.graupelNumber[i] *= k; this.graupelVolume[i] *= k; this.hailNumber[i] *= k; this.hailVolume[i] *= k; ice[i] *= k; iceNumber[i] *= k; snow[i] *= k; graupel[i] *= k; hail[i] *= k; cold[i] *= k
               if (electric) { cI[i] *= k; cG[i] *= k; cR[i] *= k; cA[i] *= k }
             }
           }
@@ -1317,13 +1383,13 @@ export class AtmosphereModel implements TaskModel {
 
   /** The settings helper threads must follow (threads.ts): the config and the model's switches. */
   settings() {
-    return JSON.stringify({ config: this.config, microphysics: this.microphysics, transport: this.transport, rainFormation: this.rainFormation, windRelaxation: this.windRelaxation, fixedViscosity: this.fixedViscosity, transportSlabs: this.transportSlabs, pressureInStages: this.pressureInStages, rainIntercept: this.rainIntercept, turbulenceWidth: this.turbulenceWidth, verticalLength: this.verticalLength, verticalMixing: this.verticalMixing, moistStability: this.moistStability })
+    return JSON.stringify({ config: this.config, microphysics: this.microphysics, transport: this.transport, rainFormation: this.rainFormation, windRelaxation: this.windRelaxation, fixedViscosity: this.fixedViscosity, transportSlabs: this.transportSlabs, pressureInStages: this.pressureInStages, rainIntercept: this.rainIntercept, turbulenceWidth: this.turbulenceWidth, verticalLength: this.verticalLength, verticalMixing: this.verticalMixing, moistStability: this.moistStability, rainMoments: this.rainMoments, iceMoments: this.iceMoments })
   }
 
   applySettings(json: string) {
     const s = JSON.parse(json)
     Object.assign(this.config, s.config)
-    this.microphysics = s.microphysics; this.transport = s.transport; this.rainFormation = s.rainFormation; this.windRelaxation = s.windRelaxation; this.fixedViscosity = s.fixedViscosity; this.transportSlabs = s.transportSlabs; this.pressureInStages = s.pressureInStages; this.rainIntercept = s.rainIntercept; this.turbulenceWidth = s.turbulenceWidth; this.verticalLength = s.verticalLength; this.verticalMixing = s.verticalMixing; this.moistStability = s.moistStability ?? 'thetae'
+    this.microphysics = s.microphysics; this.transport = s.transport; this.rainFormation = s.rainFormation; this.windRelaxation = s.windRelaxation; this.fixedViscosity = s.fixedViscosity; this.transportSlabs = s.transportSlabs; this.pressureInStages = s.pressureInStages; this.rainIntercept = s.rainIntercept; this.turbulenceWidth = s.turbulenceWidth; this.verticalLength = s.verticalLength; this.verticalMixing = s.verticalMixing; this.moistStability = s.moistStability ?? 'thetae'; this.rainMoments = s.rainMoments ?? 1; this.iceMoments = s.iceMoments ?? 1
   }
 
   /** Makes the node velocities exactly free of dual-cell divergence (see PressureSolver); ground and top are rigid walls. */
@@ -1441,7 +1507,7 @@ export class AtmosphereModel implements TaskModel {
     // Largest hailstones reaching the ground now (falling through the ground node), mm.
     let hail = 0
     const cold = outflowDeficit(this)
-    for (let i = 0; i < this.grid.layer; i++) hail = Math.max(hail, hailMaxDiameter(this.hail[i], rho0) * 1000)
+    for (let i = 0; i < this.grid.layer; i++) hail = Math.max(hail, this.largestHail(i, rho0) * 1000)
     return { updraft: up, downdraft: down, rainRate, rainTotal, cloudTop: top, thermalTop, maxCloud, coldMax, cores: this.countCores(), shear06: Math.hypot(u6 - u0, v6 - v0), outflow: cold.max, outflowLow: deficitNear(cold, this.grid, this.rotation.low), gust, hail, clipped: this.clipped }
   }
 }
