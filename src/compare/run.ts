@@ -4,7 +4,7 @@
  * of the strongest echo over each column, so the screen can set the two storms side by side at the same model time.
  * Only one model runs: two at once would each go at half the speed.
  */
-import { DBZ_FLOOR, MESO_PERSISTENCE, reflectivity, type SimConfig } from '../core'
+import { DBZ_FLOOR, MESO_PERSISTENCE, momentsAt, reflectivity, type SimConfig } from '../core'
 import type { TimelinePoint } from '../timeline'
 
 /** A map of the strongest echo over each column (dBZ + 32, 0-255; 0 below DBZ_FLOOR), in the domain's frame. */
@@ -23,8 +23,8 @@ interface EchoSource {
   env: { rho: ArrayLike<number>; exner: ArrayLike<number> }
   time: number
   theta: ArrayLike<number>; rain: ArrayLike<number>; snow: ArrayLike<number>; graupel: ArrayLike<number>; hail: ArrayLike<number>
-  /** Drops per kg of two-moment rain (absent: one-moment). */
-  rainNumber?: ArrayLike<number>
+  /** The second moments of two-moment microphysics (absent: one-moment). */
+  rainNumber?: ArrayLike<number>; graupelNumber?: ArrayLike<number>; graupelVolume?: ArrayLike<number>; hailNumber?: ArrayLike<number>; hailVolume?: ArrayLike<number>
 }
 
 /** The strongest echo over each column now. */
@@ -34,7 +34,7 @@ export function echoMap(m: EchoSource): EchoMap {
     const rho = m.env.rho[k], exner = m.env.exner[k]
     for (let c = 0, i = k * layer; c < layer; c++, i++) {
       if (m.rain[i] + m.snow[i] + m.graupel[i] + m.hail[i] <= 0) continue
-      const d = reflectivity(rho, m.rain[i], m.snow[i], m.graupel[i], m.theta[i] * exner - 273.15, m.hail[i], undefined, m.rainNumber?.[i])
+      const d = reflectivity(rho, m.rain[i], m.snow[i], m.graupel[i], m.theta[i] * exner - 273.15, m.hail[i], undefined, momentsAt(m, i))
       if (d > out[c]) out[c] = d
     }
   }

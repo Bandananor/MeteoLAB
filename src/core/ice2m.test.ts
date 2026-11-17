@@ -75,3 +75,21 @@ describe('two-moment graupel and hail after NSSL (ice2m.ts, Э1 step 2)', () => 
     }
   })
 })
+
+describe('the radar and the charging on two-moment graupel and hail (Э1 step 4)', () => {
+  it('graupel given as the one-moment one (N0 4e4, 400 kg/m3) has the same reflectivity, and fewer bigger particles more', async () => {
+    const { reflectivity } = await import('./radar'), rho = .8, q = 2e-3, lambda = (Math.PI * 400 * 4e4 / (rho * q)) ** .25, n = 4e4 / lambda / rho
+    const one = reflectivity(rho, 0, 0, q, -10), two = reflectivity(rho, 0, 0, q, -10, 0, undefined, { graupelNumber: n, graupelVolume: q / 400 })
+    expect(two).toBeCloseTo(one, 6)
+    expect(reflectivity(rho, 0, 0, q, -10, 0, undefined, { graupelNumber: n / 30, graupelVolume: q / 400 })).toBeGreaterThan(one + 5)
+  })
+
+  it('charges the same by the moments as by the fixed intercept', async () => {
+    const { chargingRate } = await import('./charge'), rho = .7, q = 2e-3, lambda = (Math.PI * 400 * 4e4 / (rho * q)) ** .25, n = 4e4 / lambda / rho
+    const { rimerMoments } = await import('./ice2m')
+    const one = chargingRate(-15, rho, 1e-3, 1e-4, 2e-4, q, 0, 1, false, false, 1e5)
+    // The two-moment fall law differs (Milbrandt-Morrison against Lin's): same order, not the same number.
+    const two = chargingRate(-15, rho, 1e-3, 1e-4, 2e-4, q, 0, 1, false, false, 1e5, undefined, [rimerMoments(GRAUPEL_2M, q, n, q / 400, rho), null])
+    expect(one).not.toBe(0); expect(Math.sign(two)).toBe(Math.sign(one)); expect(Math.abs(two / one)).toBeGreaterThan(.2); expect(Math.abs(two / one)).toBeLessThan(5)
+  })
+})

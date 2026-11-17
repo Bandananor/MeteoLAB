@@ -3,12 +3,12 @@
  * temperature, vapour and the hydrometeors, reflectivity), the swaths on the ground, the base state, and what makes the
  * file reproducible — the model's version, the settings, the seed, the model time.
  */
-import { type AtmosphereModel, reflectivity, type SimConfig } from '../core'
+import { type AtmosphereModel, momentsAt, reflectivity, type SimConfig } from '../core'
 import { type NcAttribute, type NcFile, type NcVariable, writeNetCDF } from './netcdf'
 
 export interface FieldsMeta { version: string; seed: number; scenario: string; config: SimConfig; link?: string }
 
-type Model = Pick<AtmosphereModel, 'grid' | 'env' | 'frame' | 'time' | 'u' | 'v' | 'w' | 'theta' | 'q' | 'cloud' | 'rain' | 'rainNumber' | 'ice' | 'snow' | 'graupel' | 'hail' | 'precipitation' | 'hailSize' | 'uhColumn'>
+type Model = Pick<AtmosphereModel, 'grid' | 'env' | 'frame' | 'time' | 'u' | 'v' | 'w' | 'theta' | 'q' | 'cloud' | 'rain' | 'rainNumber' | 'graupelNumber' | 'graupelVolume' | 'hailNumber' | 'hailVolume' | 'ice' | 'snow' | 'graupel' | 'hail' | 'precipitation' | 'hailSize' | 'uhColumn'>
 
 /** The CF file of the model `m` now. */
 export function modelNetCDF(m: Model, meta: FieldsMeta): Uint8Array<ArrayBuffer> { return writeNetCDF(modelFields(m, meta)) }
@@ -20,7 +20,7 @@ export function modelFields(m: Model, meta: FieldsMeta): NcFile {
   const plus = (a: Float32Array, k: number) => { const out = new Float32Array(a.length); for (let i = 0; i < a.length; i++) out[i] = a[i] + k; return out }
   // Reflectivity at every node, as the radar computes it (radar.ts), from the hydrometeors and the temperature.
   const dbz = new Float32Array(m.theta.length)
-  for (let z = 0, i = 0; z < nz; z++) for (let end = i + layer; i < end; i++) dbz[i] = reflectivity(e.rho[z], m.rain[i], m.snow[i], m.graupel[i], m.theta[i] * e.exner[z] - 273.15, m.hail[i], undefined, m.rainNumber[i])
+  for (let z = 0, i = 0; z < nz; z++) for (let end = i + layer; i < end; i++) dbz[i] = reflectivity(e.rho[z], m.rain[i], m.snow[i], m.graupel[i], m.theta[i] * e.exner[z] - 273.15, m.hail[i], undefined, momentsAt(m, i))
   const mix = (long: string) => ({ units: 'kg kg-1', long_name: long })
   const offset = [fu * m.time, fv * m.time]
   return {

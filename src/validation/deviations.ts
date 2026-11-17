@@ -6,7 +6,7 @@
  * that must hold (tools/validate.ts). Deviations without a number to test (the supercell types, the tracker's splits,
  * the slow initiation by the sun) are listed in QUALITATIVE.
  */
-import { AtmosphereModel, classifyEcho, DT, lowEcho, reflectivity, SCENARIOS, type SimConfig, type StratiformKind } from '../core'
+import { AtmosphereModel, classifyEcho, DT, lowEcho, momentsAt, reflectivity, SCENARIOS, type SimConfig, type StratiformKind } from '../core'
 import { ECHO_TOP_DBZ, VIL_MAX_DBZ } from '../core/ppi'
 import { SUMMER_DAY } from '../core/fixtures'
 import { environmentOf, withMoisture, withShear } from '../regime/grid'
@@ -33,7 +33,7 @@ export function radarColumns(m: AtmosphereModel) {
     for (let z = 0; z < nz; z++) {
       const i = c + z * layer
       if (m.rain[i] + m.snow[i] + m.graupel[i] + m.hail[i] < 1e-7) continue
-      const d = reflectivity(e.rho[z], m.rain[i], m.snow[i], m.graupel[i], m.theta[i] * e.exner[z] - 273.15, m.hail[i], undefined, m.rainNumber[i])
+      const d = reflectivity(e.rho[z], m.rain[i], m.snow[i], m.graupel[i], m.theta[i] * e.exner[z] - 273.15, m.hail[i], undefined, momentsAt(m, i))
       maxDbz = Math.max(maxDbz, d)
       if (d >= ECHO_TOP_DBZ) top = Math.max(top, zs[z])
       if (d > 0) colVil += 3.44e-6 * (10 ** (Math.min(d, VIL_MAX_DBZ) / 10)) ** (4 / 7) * hz[z]

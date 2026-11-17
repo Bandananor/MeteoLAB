@@ -102,6 +102,17 @@ export function largestDiameter(c: IceClass, q: number, n: number, vol: number, 
   return (lo + hi) / 2 * dn
 }
 
+/**
+ * The moments the charging needs (charge.ts RimerMoments) of a two-moment class at a node, per m3: n, n<D>, n<D^2>, the
+ * mass-weighted fall speed and ∫ D^2 V n dD, from the gamma distribution and V = rhovt a D^b. Null without the class.
+ */
+export function rimerMoments(c: IceClass, q: number, n: number, vol: number, rho: number) {
+  if (!(q > 1e-9) || !(n > 0)) return null
+  const rhoX = densityOf(c, q, vol), nb = boundedIceNumber(c, q, n, vol), dn = characteristic(c, meanVolumeOf(c, q, nb, rhoX)), [a, b] = fallLaw(rhoX)
+  const nm3 = rho * nb, g = gammaFn(1 + c.alpha), rhovt = Math.sqrt(RHO_00 / Math.max(.05, rho))
+  return { n: nm3, d1: nm3 * dn * gammaFn(2 + c.alpha) / g, d2: nm3 * dn * dn * gammaFn(3 + c.alpha) / g, fall: momentSpeed(c, q, nb, vol, rho, 3), d2v: rhovt * a * nm3 * dn ** (2 + b) * gammaFn(3 + c.alpha + b) / g }
+}
+
 // Seifert & Beheng (2006) collection coefficients for classes in mass space: nu = (α - 2) / 3, mu = 1/3 for a gamma
 // in diameter; cloud droplets nu = 0, mu = 1 (gamma in volume); bb = 1/3 (D ∝ x^1/3).
 interface MassShape { nu: number; mu: number }

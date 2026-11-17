@@ -46,10 +46,10 @@ function extinction(band: 'S' | 'C' | 'X', wavelength: number) {
  * One-way specific attenuation (dB/km) and differential attenuation (dB/km) at a node: rain, graupel and hail mixing
  * ratios (kg/kg) in air of density rho at tc °C, height h (m), for a radar of `band` and wavelength (cm).
  */
-export function specificAttenuation(rho: number, rain: number, graupel: number, hail: number, tc: number, h: number, band: 'S' | 'C' | 'X', wavelength: number) {
+export function specificAttenuation(rho: number, rain: number, graupel: number, hail: number, tc: number, h: number, band: 'S' | 'C' | 'X', wavelength: number, rainSlope?: number) {
   const k = ATTENUATION[band], scale = KDP_WAVELENGTH / wavelength
   let a = k.gas * Math.exp(-h / GAS_SCALE), dp = 0
-  if (rain > 0) { const kdp = rainKdp(rho, rain) * scale; a += k.alpha * kdp; dp += k.beta * kdp }
+  if (rain > 0) { const kdp = rainKdp(rho, rain, rainSlope) * scale; a += k.alpha * kdp; dp += k.beta * kdp }
   if (graupel > 0 || hail > 0) {
     const t = extinction(band, wavelength), melting = tc > 0
     if (graupel > 0) a += DB_KM * (melting ? meltedIntercept(N0G, RHO_G) * t.melting(meltedSlope(rho * graupel, N0G, RHO_G)) : N0G * t.graupel(distributionSlope(rho * graupel, N0G, RHO_G)))

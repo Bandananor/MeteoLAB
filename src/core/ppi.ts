@@ -1,7 +1,7 @@
 import { heightAt, levelAt } from './grid'
 import type { AtmosphereModel } from './model'
-import { dualPol, KDP_WAVELENGTH } from './polarimetry'
-import { DBZ_FLOOR, reflectivity, reflectivityFallSpeed } from './radar'
+import { dualPol, KDP_WAVELENGTH, rainSlope2m } from './polarimetry'
+import { DBZ_FLOOR, momentsAt, reflectivity, reflectivityFallSpeed } from './radar'
 import { RADARS, type RadarProfile } from './radars'
 import { phenomenon, phenomenonGimet, RD_CRITERIA } from './phenomena'
 import { specificAttenuation } from './attenuation'
@@ -230,7 +230,7 @@ export class PPI {
       const rho = e.rho[z], exner = e.exner[z]
       for (let end = i + layer; i < end; i++) {
         const rain = m.rain[i], snow = m.snow[i], graupel = m.graupel[i], hail = m.hail[i]
-        if (att) { const a = specificAttenuation(rho, rain, graupel, hail, rain > 0 || graupel > 0 || hail > 0 ? m.theta[i] * exner - 273.15 : -1, zs[z], band, wavelength); this.nodeAtt[i] = a.a; this.nodeAttDp[i] = a.dp }
+        if (att) { const a = specificAttenuation(rho, rain, graupel, hail, rain > 0 || graupel > 0 || hail > 0 ? m.theta[i] * exner - 273.15 : -1, zs[z], band, wavelength, rainSlope2m(rain, m.rainNumber[i])); this.nodeAtt[i] = a.a; this.nodeAttDp[i] = a.dp }
         if (rain <= 0 && snow <= 0 && graupel <= 0 && hail <= 0) {
           this.nodeDbz[i] = DBZ_FLOOR; this.nodeFall[i] = 0
           if (dual) { this.nodeZdr[i] = 0; this.nodeRho[i] = 1; this.nodeKdp[i] = 0 }
@@ -238,9 +238,9 @@ export class PPI {
         }
         const tc = m.theta[i] * exner - 273.15
         const radar = this.mie ? this.profile : undefined
-        const drops = m.rainNumber[i]
+        const drops = momentsAt(m, i)
         this.nodeDbz[i] = reflectivity(rho, rain, snow, graupel, tc, hail, radar, drops); this.nodeFall[i] = reflectivityFallSpeed(rho, rhoGround, rain, snow, graupel, tc, hail, radar, drops)
-        if (dual) { const d = dualPol(rho, rain, snow, graupel, tc, hail, radar); this.nodeZdr[i] = d.zdr; this.nodeRho[i] = d.rho; this.nodeKdp[i] = d.kdp * KDP_WAVELENGTH / wavelength }
+        if (dual) { const d = dualPol(rho, rain, snow, graupel, tc, hail, radar, drops); this.nodeZdr[i] = d.zdr; this.nodeRho[i] = d.rho; this.nodeKdp[i] = d.kdp * KDP_WAVELENGTH / wavelength }
       }
     }
   }

@@ -111,6 +111,18 @@ const GRAUPEL: Rimer = { n0: N0G, density: RHO_G }, HAIL: Rimer = { n0: N0H, den
 const CD = .6, GAMMA_45 = 11.6317
 
 /**
+ * A rimer population by its moments (per m3 of air): number n, n<D> and n<D^2> (m^-2, m^-1), the mass-weighted fall speed
+ * (m/s) and the integral of D^2 V(D) n(D) (m/s): what the charging needs. One-moment rimers have them from their fixed
+ * intercept (exponentialMoments); two-moment ones from their own distribution (ice2m.ts rimerMoments).
+ */
+export interface RimerMoments { n: number; d1: number; d2: number; fall: number; d2v: number }
+/** The moments of a one-moment rimer of mixing ratio q in air of density rho: exponential, V = a D^0.5. */
+function exponentialMoments(rimer: Rimer, q: number, rho: number): RimerMoments {
+  const lambda = (Math.PI * rimer.density * rimer.n0 / (rho * q)) ** .25, a = Math.sqrt(4 * G * rimer.density / (3 * CD * rho))
+  return { n: rimer.n0 / lambda, d1: rimer.n0 / (lambda * lambda), d2: 2 * rimer.n0 / lambda ** 3, fall: a * GAMMA_45 / 6 / Math.sqrt(lambda), d2v: a * rimer.n0 * GAMMA_35 / lambda ** 3.5 }
+}
+
+/**
  * Charge separation rate at a node, C m⁻³ s⁻¹, gained by the graupel-hail carrier (the ice-snow carrier gets the
  * opposite): every rimer (graupel, hail) meets every crystal kind (cloud ice, snow); the collisions that rebound
  * (1 - exp(0.09 Tc), the sticking efficiency of Lin et al. 1983) each separate collisionCharge. Collisions per m³ and s:
@@ -123,7 +135,7 @@ const CD = .6, GAMMA_45 = 11.6317
  * charges 0.5 (1 - 0.1 exp(0.1 Tc)) instead of the Lin rebound, down to -40 °C, and the rate is held within
  * ±TAK_RATE_MAX for each pair of a rimer and a crystal kind, as WRF-ELEC holds it (scxacymax).
  */
-export function chargingRate(tc: number, rho: number, cloud: number, ice: number, snow: number, graupel: number, hail: number, snowFall: number, wetGraupel = false, wetHail = false, crystals?: number, scheme: 'sp98' | 'tak' = CHARGING_SCHEME) {
+export function chargingRate(tc: number, rho: number, cloud: number, ice: number, snow: number, graupel: number, hail: number, snowFall: number, wetGraupel = false, wetHail = false, crystals?: number, scheme: 'sp98' | 'tak' = CHARGING_SCHEME, twoMoment?: readonly [RimerMoments | null, RimerMoments | null]) {
   const tak = scheme === 'tak'
   if (tc >= 0 || tc < (tak ? -40 : CHARGING_COLDEST) || cloud <= 0 || ice + snow <= 0 || graupel + hail <= 0) return 0
   // Called at every mixed-phase node each step: no arrays, two rimers by two crystal kinds written out.
@@ -138,8 +150,10 @@ export function chargingRate(tc: number, rho: number, cloud: number, ice: number
   const snowSlope = snow > 0 ? (Math.PI * RHO_S * N0S / (rho * snow)) ** .25 : 0, ns = snow > 0 ? N0S / snowSlope : 0, ds = snow > 0 ? (tak ? 1.8171 : 1) / snowSlope : 0
   let rate = 0
   const table = tak ? takahashiCharge(tc, water) : 0
-  if (graupel > 0 && !wetGraupel) rate += rimerRate(GRAUPEL, graupel, tc, rho, water, rebound, ni, di, ns, ds, snowFall, table, tak)
-  if (hail > 0 && !wetHail) rate += rimerRate(HAIL, hail, tc, rho, water, rebound, ni, di, ns, ds, snowFall, table, tak)
+  // Two-moment graupel and hail bring their own moments (ice2m.ts); one-moment ones those of their fixed intercepts.
+  const g = graupel > 0 && !wetGraupel ? twoMoment?.[0] ?? exponentialMoments(GRAUPEL, graupel, rho) : null, h = hail > 0 && !wetHail ? twoMoment?.[1] ?? exponentialMoments(HAIL, hail, rho) : null
+  if (g) rate += rimerRate(g, tc, water, rebound, ni, di, ns, ds, snowFall, table, tak)
+  if (h) rate += rimerRate(h, tc, water, rebound, ni, di, ns, ds, snowFall, table, tak)
   return rate
 }
 
@@ -147,13 +161,14 @@ export function chargingRate(tc: number, rho: number, cloud: number, ice: number
 export const TAK_RATE_MAX = 3e-9
 
 /** One rimer's share of chargingRate: its collisions with the cloud ice (ni per m³ of diameter di, at rest) and the snow (ns, ds, falling at vs). */
-function rimerRate(rimer: Rimer, mass: number, tc: number, rho: number, water: number, rebound: number, ni: number, di: number, ns: number, ds: number, vs: number, table: number, tak: boolean) {
-  const lambda = (Math.PI * rimer.density * rimer.n0 / (rho * mass)) ** .25, fall = Math.sqrt(4 * G * rimer.density / (3 * CD * rho)) * GAMMA_45 / 6 / Math.sqrt(lambda)
-  const impact = Math.min(fall, CHARGING_SPEED), rar = COLLECTION_EFFICIENCY * water * impact, l2 = lambda * lambda, l3 = l2 * lambda, k = Math.PI / 4 * rimer.n0 * rebound
+function rimerRate(m: RimerMoments, tc: number, water: number, rebound: number, ni: number, di: number, ns: number, ds: number, vs: number, table: number, tak: boolean) {
+  const fall = m.fall, impact = Math.min(fall, CHARGING_SPEED), rar = COLLECTION_EFFICIENCY * water * impact, k = Math.PI / 4 * rebound
+  // The swept cross-section of the population for a crystal of diameter d: ∫ (D + d)² n(D) dD.
+  const swept = (d: number) => m.d2 + 2 * d * m.d1 + d * d * m.n
   let rate = 0
   const pair = (r: number) => tak ? Math.max(-TAK_RATE_MAX, Math.min(TAK_RATE_MAX, r)) : r
-  if (ni > 0) rate += pair(ni * k * (2 / l3 + 2 * di / l2 + di * di / lambda) * fall * (tak ? takahashiScaled(table, di, fall) : collisionCharge(tc, rar, di, impact)))
-  if (ns > 0) { const v = Math.abs(fall - vs); rate += pair(ns * k * (2 / l3 + 2 * ds / l2 + ds * ds / lambda) * v * (tak ? takahashiScaled(table, ds, v) : collisionCharge(tc, rar, ds, Math.abs(impact - vs)))) }
+  if (ni > 0) rate += pair(ni * k * swept(di) * fall * (tak ? takahashiScaled(table, di, fall) : collisionCharge(tc, rar, di, impact)))
+  if (ns > 0) { const v = Math.abs(fall - vs); rate += pair(ns * k * swept(ds) * v * (tak ? takahashiScaled(table, ds, v) : collisionCharge(tc, rar, ds, Math.abs(impact - vs)))) }
   return rate
 }
 
@@ -172,15 +187,15 @@ function rimerRate(rimer: Rimer, mass: number, tc: number, rho: number, water: n
 export const DROPLET_REBOUND = .01, DROPLET_SIZE = 20e-6, CONTACT_COS = .5
 const GAMMA_35 = 3.3234
 
-export function inductiveRate(tc: number, rho: number, cloud: number, graupel: number, hail: number, ez: number, rimerCharge: number, wetGraupel = false, wetHail = false) {
+export function inductiveRate(tc: number, rho: number, cloud: number, graupel: number, hail: number, ez: number, rimerCharge: number, wetGraupel = false, wetHail = false, twoMoment?: readonly [RimerMoments | null, RimerMoments | null]) {
   if (tc >= 0 || cloud <= 0) return 0
   const d = DROPLET_SIZE, droplets = rho * cloud / (Math.PI / 6 * 1000 * d ** 3), k = COLLECTION_EFFICIENCY * DROPLET_REBOUND * droplets
   let polarize = 0, mass = 0, massFall = 0
-  for (const [rimer, q, wet] of [[GRAUPEL, graupel, wetGraupel], [HAIL, hail, wetHail]] as const) {
+  for (const [rimer, q, wet, j] of [[GRAUPEL, graupel, wetGraupel, 0], [HAIL, hail, wetHail, 1]] as const) {
     if (q <= 1e-9 || wet) continue
-    const lambda = (Math.PI * rimer.density * rimer.n0 / (rho * q)) ** .25, a = Math.sqrt(4 * G * rimer.density / (3 * CD * rho))
-    polarize += Math.PI ** 4 / 8 * EPSILON0 * ez * CONTACT_COS * d * d * a * rimer.n0 * GAMMA_35 / lambda ** 3.5
-    mass += q; massFall += q * a * GAMMA_45 / 6 / Math.sqrt(lambda)
+    const m = twoMoment?.[j] ?? exponentialMoments(rimer, q, rho)
+    polarize += Math.PI ** 4 / 8 * EPSILON0 * ez * CONTACT_COS * d * d * m.d2v
+    mass += q; massFall += q * m.fall
   }
   if (mass === 0) return 0
   return k * (polarize - Math.PI ** 3 / 24 * d * d * (massFall / mass) * rimerCharge)

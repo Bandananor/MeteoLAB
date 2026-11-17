@@ -3,6 +3,32 @@ import { hailFallSpeed, N0H, RHO_H } from './hail'
 import { N0S, RHO_S, snowFallSpeed } from './ice'
 import { fallSpeed } from './microphysics'
 import { dnOf, fallSpeedZ, meanVolume, RAIN_MIN } from './rain2m'
+import { boundedIceNumber, characteristic, densityOf, gammaFn, GRAUPEL_2M, HAIL_2M, type IceClass, meanVolumeOf, momentSpeed } from './ice2m'
+
+/**
+ * The second moments at a node (two-moment microphysics, per kg of air): drops; graupel and hail particles and their
+ * volume. A plain number is the drop number alone (two-moment rain only). Absent: one-moment, fixed intercepts.
+ */
+export interface Moments { rainNumber?: number; graupelNumber?: number; graupelVolume?: number; hailNumber?: number; hailVolume?: number }
+/** The fields of the second moments (any of them may be absent). */
+export interface MomentFields { rainNumber?: ArrayLike<number>; graupelNumber?: ArrayLike<number>; graupelVolume?: ArrayLike<number>; hailNumber?: ArrayLike<number>; hailVolume?: ArrayLike<number> }
+const atNode: Moments = {}
+/** The moments at node i (one object reused: read it before the next call). */
+export function momentsAt(f: MomentFields, i: number): Moments {
+  atNode.rainNumber = f.rainNumber?.[i]; atNode.graupelNumber = f.graupelNumber?.[i]; atNode.graupelVolume = f.graupelVolume?.[i]; atNode.hailNumber = f.hailNumber?.[i]; atNode.hailVolume = f.hailVolume?.[i]
+  return atNode
+}
+const momentsOf = (m?: Moments | number): Moments | undefined => typeof m === 'number' ? { rainNumber: m } : m
+
+/**
+ * A two-moment ice class's Rayleigh reflectivity factor (mm6/m3, before the dielectric and density factors) and its
+ * slope 1/Dn (m^-1): N Dn^6 Γ(7+α) / Γ(1+α) of the gamma distribution, and its density. Null without the class.
+ */
+function iceZ(c: IceClass, rho: number, q: number, n?: number, vol?: number) {
+  if (!(q > 1e-12) || !(n !== undefined && n > 0)) return null
+  const v = vol ?? 0, rhoX = densityOf(c, q, v), nb = boundedIceNumber(c, q, n, v), dn = characteristic(c, meanVolumeOf(c, q, nb, rhoX))
+  return { z: 1e18 * rho * nb * dn ** 6 * gammaFn(7 + c.alpha) / gammaFn(1 + c.alpha), slope: 1 / dn, rhoX, q, nb, vol: v }
+}
 import { type Complex, mieRatioTable, porousIce } from './mie'
 
 // Simulated radar reflectivity (Rayleigh scattering, exponential size distributions with the intercepts and densities of
@@ -77,14 +103,20 @@ function factor(rhoQ: number, n0: number, rhoX: number) {
  * tc °C). Rayleigh scattering without `radar`; with it rain, graupel and hail scatter by Mie at its wavelength (melting
  * graupel and hail as drops of their mass, meltedSlope - a rough stand-in for a water-coated sphere; snow stays Rayleigh).
  */
-export function speciesZ(rho: number, rain: number, snow: number, graupel: number, tc: number, hail = 0, radar?: RadarBand, rainNumber?: number) {
-  const ice = (rhoX: number) => (rhoX / RHO_W) ** 2 * (tc > 0 ? 1 : ICE_DIELECTRIC), n0r = rainIntercept2m(rho, rain, rainNumber)
-  const z = { rain: factor(rho * rain, n0r, RHO_W), snow: factor(rho * snow, N0S, RHO_S) * ice(RHO_S), graupel: factor(rho * graupel, N0G, RHO_G) * ice(RHO_G), hail: factor(rho * hail, N0H, RHO_H) * ice(RHO_H) }
+export function speciesZ(rho: number, rain: number, snow: number, graupel: number, tc: number, hail = 0, radar?: RadarBand, moments?: Moments | number) {
+  const m = momentsOf(moments), ice = (rhoX: number) => (rhoX / RHO_W) ** 2 * (tc > 0 ? 1 : ICE_DIELECTRIC), n0r = rainIntercept2m(rho, rain, m?.rainNumber)
+  // Two-moment graupel and hail: their own gamma distributions and densities (ice2m.ts).
+  const g2 = iceZ(GRAUPEL_2M, rho, graupel, m?.graupelNumber, m?.graupelVolume), h2 = iceZ(HAIL_2M, rho, hail, m?.hailNumber, m?.hailVolume)
+  const z = { rain: factor(rho * rain, n0r, RHO_W), snow: factor(rho * snow, N0S, RHO_S) * ice(RHO_S),
+    graupel: g2 ? g2.z * ice(g2.rhoX) : factor(rho * graupel, N0G, RHO_G) * ice(RHO_G), hail: h2 ? h2.z * ice(h2.rhoX) : factor(rho * hail, N0H, RHO_H) * ice(RHO_H) }
   if (radar) {
     const r = mieRatios(radar)
     if (z.rain > 0) z.rain *= r.rain(distributionSlope(rho * rain, n0r, RHO_W))
-    if (z.graupel > 0) z.graupel *= tc > 0 ? r.melting(meltedSlope(rho * graupel, N0G, RHO_G)) : r.graupel(distributionSlope(rho * graupel, N0G, RHO_G))
-    if (z.hail > 0) z.hail *= tc > 0 ? r.melting(meltedSlope(rho * hail, N0H, RHO_H)) : r.hail(distributionSlope(rho * hail, N0H, RHO_H))
+    // Two-moment: the Mie ratio of the class's tables at the slope 1/Dn (melted: as drops of the particles' mass); the
+    // tables are for exponential distributions of 400 and 900 kg/m3, an approximation for other densities and hail's α 1.
+    const melted = (x: { slope: number; rhoX: number }) => x.slope * Math.cbrt(RHO_W / x.rhoX)
+    if (z.graupel > 0) z.graupel *= tc > 0 ? r.melting(g2 ? melted(g2) : meltedSlope(rho * graupel, N0G, RHO_G)) : r.graupel(g2 ? g2.slope : distributionSlope(rho * graupel, N0G, RHO_G))
+    if (z.hail > 0) z.hail *= tc > 0 ? r.melting(h2 ? melted(h2) : meltedSlope(rho * hail, N0H, RHO_H)) : r.hail(h2 ? h2.slope : distributionSlope(rho * hail, N0H, RHO_H))
   }
   return z
 }
@@ -93,8 +125,8 @@ export function speciesZ(rho: number, rain: number, snow: number, graupel: numbe
  * Radar reflectivity, dBZ, of rain, snow, graupel and hail mixing ratios (kg/kg) in air of density rho at temperature tc
  * (°C); `rainNumber`: drops per kg of two-moment rain (absent or 0: Marshall-Palmer).
  */
-export function reflectivity(rho: number, rain: number, snow: number, graupel: number, tc: number, hail = 0, radar?: RadarBand, rainNumber?: number) {
-  const s = speciesZ(rho, rain, snow, graupel, tc, hail, radar, rainNumber), z = s.rain + s.snow + s.graupel + s.hail
+export function reflectivity(rho: number, rain: number, snow: number, graupel: number, tc: number, hail = 0, radar?: RadarBand, moments?: Moments | number) {
+  const s = speciesZ(rho, rain, snow, graupel, tc, hail, radar, moments), z = s.rain + s.snow + s.graupel + s.hail
   return z > 0 ? Math.max(DBZ_FLOOR, 10 * Math.log10(z)) : DBZ_FLOOR
 }
 
@@ -102,9 +134,11 @@ export function reflectivity(rho: number, rain: number, snow: number, graupel: n
  * Reflectivity-weighted fall speed of the precipitation, m/s (what a vertically pointing Doppler radar sees on top of
  * the air's motion); rhoGround is the surface air density of the fall-speed laws.
  */
-export function reflectivityFallSpeed(rho: number, rhoGround: number, rain: number, snow: number, graupel: number, tc: number, hail = 0, radar?: RadarBand, rainNumber?: number) {
-  const s = speciesZ(rho, rain, snow, graupel, tc, hail, radar, rainNumber), z = s.rain + s.snow + s.graupel + s.hail
+export function reflectivityFallSpeed(rho: number, rhoGround: number, rain: number, snow: number, graupel: number, tc: number, hail = 0, radar?: RadarBand, moments?: Moments | number) {
+  const m = momentsOf(moments), s = speciesZ(rho, rain, snow, graupel, tc, hail, radar, m), z = s.rain + s.snow + s.graupel + s.hail
   if (!(z > 0)) return 0
-  const rainSpeed = rainNumber !== undefined && rainNumber > 0 ? fallSpeedZ(rain, rainNumber, rho) : fallSpeed(rain, rho, rhoGround)
-  return (s.rain * rainSpeed + s.snow * snowFallSpeed(snow, rho, rhoGround) + s.graupel * graupelFallSpeed(graupel, rho) + s.hail * hailFallSpeed(hail, rho)) / z
+  const rainSpeed = m?.rainNumber !== undefined && m.rainNumber > 0 ? fallSpeedZ(rain, m.rainNumber, rho) : fallSpeed(rain, rho, rhoGround)
+  const graupelSpeed = m?.graupelNumber ? momentSpeed(GRAUPEL_2M, graupel, m.graupelNumber, m.graupelVolume ?? 0, rho, 6) : graupelFallSpeed(graupel, rho)
+  const hailSpeed = m?.hailNumber ? momentSpeed(HAIL_2M, hail, m.hailNumber, m.hailVolume ?? 0, rho, 6) : hailFallSpeed(hail, rho)
+  return (s.rain * rainSpeed + s.snow * snowFallSpeed(snow, rho, rhoGround) + s.graupel * graupelSpeed + s.hail * hailSpeed) / z
 }

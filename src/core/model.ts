@@ -17,7 +17,7 @@ import { graupelFallSpeed, graupelProcesses, N0G, N0R, RHO_G, RHO_W } from './gr
 import { hailFallSpeed, hailMaxDiameter, hailProcesses, N0H, RHO_H, wetGrowing } from './hail'
 import { CRYSTAL_MASS, fragmentsPerKg, freezeRain, iceProcesses, N0S, RHO_S, saturationAdjustMixed, settleCrystals, snowFallSpeed, snowProcesses, SPLINTERS, splintering } from './ice'
 import { exponentialMeanMass, fallSpeeds, fallSpeedZ, G1, RAIN_MIN, rain2mProcesses, rainNumberChange } from './rain2m'
-import { densityOf, GRAUPEL_2M, HAIL_2M, ICE2M_MIN, type IceClass, ice2mProcesses, largestDiameter, momentSpeed, reflectivityFactor } from './ice2m'
+import { densityOf, GRAUPEL_2M, HAIL_2M, ICE2M_MIN, type IceClass, ice2mProcesses, largestDiameter, momentSpeed, reflectivityFactor, rimerMoments } from './ice2m'
 import { fallSpeed, interceptOf, N0_MP, qsatP, type RainIntercept, rainProcesses, saturationAdjust } from './microphysics'
 import { PressureSolver } from './pressure'
 import { dragCoefficient, LONGWAVE_LOSS, surfaceFluxes } from './surface'
@@ -1290,9 +1290,11 @@ export class AtmosphereModel implements TaskModel {
               if (cNow[0] !== 0 || cNow[1] !== 0 || cNow[2] !== 0 || cNow[3] !== 0) transferCharge(cNow, before, after)
               const tc = theta[i] * exner - 273.15
               const wetG = ice2m ? wet2m.wetG : wetGrowing(graupel[i], N0G, RHO_G, tc, q[i], p, rhoZ, cloud[i], rain[i], ice[i], snow[i]), wetH = ice2m ? wet2m.wetH : wetGrowing(hail[i], N0H, RHO_H, tc, q[i], p, rhoZ, cloud[i], rain[i], ice[i], snow[i])
-              const separated = chargingRate(tc, rhoZ, cloud[i], ice[i], snow[i], graupel[i], hail[i], this.snowFall[i], wetG, wetH, iceNumber[i] * rhoZ) * dt / rhoZ
+              // Two-moment graupel and hail charge by their own distributions (ice2m.ts rimerMoments).
+              const moments = ice2m ? [rimerMoments(GRAUPEL_2M, graupel[i], this.graupelNumber[i], this.graupelVolume[i], rhoZ), rimerMoments(HAIL_2M, hail[i], this.hailNumber[i], this.hailVolume[i], rhoZ)] as const : undefined
+              const separated = chargingRate(tc, rhoZ, cloud[i], ice[i], snow[i], graupel[i], hail[i], this.snowFall[i], wetG, wetH, iceNumber[i] * rhoZ, undefined, moments) * dt / rhoZ
               // Inductive charging in the field: the graupel-hail gains what the rebounding droplets take away.
-              const induced = inductiveRate(tc, rhoZ, cloud[i], graupel[i], hail[i], this.fieldZ[i], (cNow[1] + separated) * rhoZ, wetG, wetH) * dt / rhoZ
+              const induced = inductiveRate(tc, rhoZ, cloud[i], graupel[i], hail[i], this.fieldZ[i], (cNow[1] + separated) * rhoZ, wetG, wetH, moments) * dt / rhoZ
               cI[i] = cNow[0] - separated; cG[i] = cNow[1] + separated + induced; cR[i] = cNow[2]; cA[i] = cNow[3] - induced
             }
           } else { mark = theta[i]; cond = saturationAdjust(theta, q, cloud, i, exner, p); if (budget) { bCond![i] += theta[i] - mark; given += theta[i] - mark } }

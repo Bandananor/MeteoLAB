@@ -1,5 +1,6 @@
 import { N0R, RHO_W } from './graupel'
-import { type RadarBand, speciesZ } from './radar'
+import { type Moments, type RadarBand, speciesZ } from './radar'
+import { dnOf, meanVolume, RAIN_MIN } from './rain2m'
 
 // Dual polarisation (S band, 10.7 cm) from the model's precipitation: differential reflectivity ZDR, the co-polar
 // correlation coefficient rho_hv and the specific differential phase KDP. The microphysics is single-moment, so a
@@ -36,8 +37,11 @@ const RAIN = (() => {
   return { zdr, axis }
 })()
 
-function rainTable(table: Float64Array, rhoQ: number) {
-  const lambda = (Math.PI * RHO_W * N0R / rhoQ) ** .25, x = (Math.log(lambda) - LN_MIN) / (LN_MAX - LN_MIN) * (STEPS - 1)
+/** The slope (m^-1) of two-moment rain of q kg/kg and n drops per kg, 1 / Dn; undefined for one-moment rain. */
+export const rainSlope2m = (q: number, n?: number) => n !== undefined && n > 0 && q > RAIN_MIN ? 1 / dnOf(meanVolume(q, n)) : undefined
+
+function rainTable(table: Float64Array, rhoQ: number, slope?: number) {
+  const lambda = slope ?? (Math.PI * RHO_W * N0R / rhoQ) ** .25, x = (Math.log(lambda) - LN_MIN) / (LN_MAX - LN_MIN) * (STEPS - 1)
   if (x <= 0) return table[0]
   if (x >= STEPS - 1) return table[STEPS - 1]
   const k = Math.floor(x)
@@ -58,7 +62,7 @@ const KDP_FACTOR = 180 / .107 * 1e-3 * 3.75
 /** The wavelength rainKdp and dualPol give KDP for, cm: another radar's is KDP_WAVELENGTH / its wavelength times that. */
 export const KDP_WAVELENGTH = 10.7
 /** KDP of rain, deg/km at 10.7 cm, of a mixing ratio q (kg/kg) in air of density rho (Bringi and Chandrasekar 2001; scales as 1 / lambda). */
-export const rainKdp = (rho: number, q: number) => q > 0 ? KDP_FACTOR * rho * q * 1000 * (1 - rainTable(RAIN.axis, rho * q)) : 0
+export const rainKdp = (rho: number, q: number, slope?: number) => q > 0 ? KDP_FACTOR * rho * q * 1000 * (1 - rainTable(RAIN.axis, rho * q, slope)) : 0
 
 export interface DualPol { /** dB */ zdr: number; /** 0-1 */ rho: number; /** deg/km */ kdp: number }
 
@@ -67,13 +71,14 @@ export interface DualPol { /** dB */ zdr: number; /** 0-1 */ rho: number; /** de
  * temperature tc, °C; NaN everywhere without precipitation. Each species adds its horizontal and vertical reflectivity;
  * rho_hv = |sum rho_i sqrt(Zh_i Zv_i)| / sqrt(sum Zh sum Zv); KDP comes from rain alone (ice adds little).
  */
-export function dualPol(rho: number, rain: number, snow: number, graupel: number, tc: number, hail = 0, radar?: RadarBand): DualPol {
-  const z = speciesZ(rho, rain, snow, graupel, tc, hail, radar), wet = tc > 0 ? 'wet' : 'dry'
+export function dualPol(rho: number, rain: number, snow: number, graupel: number, tc: number, hail = 0, radar?: RadarBand, moments?: Moments): DualPol {
+  // Two-moment rain: the drops' own slope instead of the one of Marshall-Palmer's intercept.
+  const z = speciesZ(rho, rain, snow, graupel, tc, hail, radar, moments), slope = rainSlope2m(rain, moments?.rainNumber), wet = tc > 0 ? 'wet' : 'dry'
   let zh = 0, zv = 0, cross = 0
   const add = (h: number, zdr: number, rhoHv: number) => { if (!(h > 0)) return; const v = h / zdr; zh += h; zv += v; cross += rhoHv * Math.sqrt(h * v) }
-  if (rain > 0) add(z.rain, rainTable(RAIN.zdr, rho * rain), RAIN_RHO)
+  if (rain > 0) add(z.rain, rainTable(RAIN.zdr, rho * rain, slope), RAIN_RHO)
   add(z.snow, ICE.snow[wet][0], ICE.snow[wet][1]); add(z.graupel, ICE.graupel[wet][0], ICE.graupel[wet][1]); add(z.hail, ICE.hail[wet][0], ICE.hail[wet][1])
   if (!(zh > 0)) return { zdr: NaN, rho: NaN, kdp: NaN }
-  const kdp = rainKdp(rho, rain)
+  const kdp = rainKdp(rho, rain, slope)
   return { zdr: 10 * Math.log10(zh / zv), rho: cross / Math.sqrt(zh * zv), kdp }
 }
