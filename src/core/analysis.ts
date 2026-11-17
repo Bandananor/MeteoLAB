@@ -4,7 +4,7 @@
 // jump behind a front, the mesolow ahead); a cyclone's isobars, hundreds of km across, do not fit in it.
 import { type FrontConfig, frontDistance } from './fronts'
 import type { Flash } from './lightning'
-import { fallSpeed } from './microphysics'
+import { rainFlux } from './surfaceflux'
 import { mod } from './math'
 import { dewpointAt } from './skewt'
 import { type StationSource, surfacePressure } from './station'
@@ -131,9 +131,8 @@ export interface StationPlot { x: number; y: number; temp: number; dew: number; 
 export const SKY_RADIUS = 4000
 
 /** Rain at the ground of a column, mm/h: rho0 q_r V_t at the lowest level (as ModelDiagnostics.rainRate, rain only). */
-export function groundRain(m: Pick<StationSource, 'env' | 'rain'>, c: number) {
-  const rho0 = m.env.rho[0]
-  return rho0 * m.rain[c] * fallSpeed(m.rain[c], rho0, rho0) * 3600
+export function groundRain(m: Pick<StationSource, 'env' | 'rain'> & { rainNumber?: ArrayLike<number> }, c: number) {
+  return rainFlux(m, c, m.env.rho[0]) * 3600
 }
 
 /** How close (m) and how recent (s) a flash makes a thunderstorm at a station (thunder is heard ~10-15 km away). */

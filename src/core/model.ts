@@ -24,6 +24,7 @@ import { dragCoefficient, LONGWAVE_LOSS, surfaceFluxes } from './surface'
 import { insolation, sunDirection } from './solar'
 import { computeSounding, type Sounding } from './sounding'
 import { deficitNear, outflowDeficit } from './rkw'
+import { precipitationFlux } from './surfaceflux'
 import { type Memory, type Phase, PRIVATE_MEMORY, type StepRunner, type TaskModel } from './threads'
 import { intervene } from './intervene'
 import { EXTINCTION, sunlightThrough } from './optics'
@@ -1505,7 +1506,7 @@ export class AtmosphereModel implements TaskModel {
     let rainTotal = 0, gust = 0
     const [fu, fv] = this.frame
     for (let c = 0; c < this.grid.layer; c++) gust = Math.max(gust, Math.hypot(this.u[c] + fu, this.v[c] + fv))
-    for (let i = 0; i < this.grid.layer; i++) { rainRate = Math.max(rainRate, rho0 * (this.rain[i] * fallSpeed(this.rain[i], rho0, rho0) + this.snow[i] * snowFallSpeed(this.snow[i], rho0, rho0) + this.graupel[i] * graupelFallSpeed(this.graupel[i], rho0) + this.hail[i] * hailFallSpeed(this.hail[i], rho0)) * 3600); rainTotal = Math.max(rainTotal, this.precipitation[i]) }
+    for (let i = 0; i < this.grid.layer; i++) { rainRate = Math.max(rainRate, precipitationFlux(this, i, rho0) * 3600); rainTotal = Math.max(rainTotal, this.precipitation[i]) }
     // Largest hailstones reaching the ground now (falling through the ground node), mm.
     let hail = 0
     const cold = outflowDeficit(this)

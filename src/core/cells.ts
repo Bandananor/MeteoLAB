@@ -1,12 +1,9 @@
 import { L } from '../i18n'
-import { graupelFallSpeed } from './graupel'
-import { hailFallSpeed } from './hail'
-import { snowFallSpeed } from './ice'
-import { fallSpeed } from './microphysics'
 import { type AtmosphereModel, MESO_CORE_ZETA, MESO_PERSISTENCE, UH_ROTATING, uhThreshold } from './model'
 import { outflowDeficit } from './rkw'
 import { mesocycloneColumn, type StormFlanks, stormFlanks } from './flanks'
 import { stormMotion } from './kinematics'
+import { type FluxSource, precipitationFlux } from './surfaceflux'
 
 /** Updraught core of a cell: columns with w above this (m/s) in cloud somewhere between CORE_BASE and CORE_TOP. */
 export const CELL_W = 4
@@ -90,12 +87,9 @@ export interface Cell {
 }
 
 /** Precipitation reaching the ground per column, mm/h of water: rain, snow, graupel and hail through the ground node. */
-export function groundPrecipitation(m: Pick<AtmosphereModel, 'grid' | 'env' | 'rain' | 'snow' | 'graupel' | 'hail'>) {
+export function groundPrecipitation(m: Pick<AtmosphereModel, 'grid' | 'env'> & FluxSource) {
   const { layer } = m.grid, rho0 = m.env.rho[0], out = new Float32Array(layer)
-  for (let c = 0; c < layer; c++) {
-    const r = m.rain[c], s = m.snow[c], g = m.graupel[c], h = m.hail[c]
-    out[c] = rho0 * (r * fallSpeed(r, rho0, rho0) + s * snowFallSpeed(s, rho0, rho0) + g * graupelFallSpeed(g, rho0) + h * hailFallSpeed(h, rho0)) * 3600
-  }
+  for (let c = 0; c < layer; c++) out[c] = precipitationFlux(m, c, rho0) * 3600
   return out
 }
 
