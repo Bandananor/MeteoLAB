@@ -37,7 +37,7 @@ export interface ProbeCell { id: number; x: number; y: number; u: number; v: num
 export class SkewTPanel {
   private readonly root: HTMLDivElement; private readonly canvas: HTMLCanvasElement; private readonly ctx: CanvasRenderingContext2D
   private model: AtmosphereModel | null = null
-  private env: SkewLevel[] = []; private start: SkewLevel[] = []; private live: LiveInfo = { time: 0, quiet: 1, all: false }; private parcels: Partial<Record<ParcelKind, ParcelPath>> = {}; private summary: SkewIndices | null = null; private dcape = 0; private ship = 0
+  private env: SkewLevel[] = []; private start: SkewLevel[] = []; private live: LiveInfo = { time: 0, quiet: 1, all: false }; private parcels: Partial<Record<ParcelKind, ParcelPath>> = {}; private summary: SkewIndices | null = null; private dcape = 0; private ship = 0; private ecape = 0
   private kind: ParcelKind = 'ml'; private probe: Probe = 'inflow'; private cell: ProbeCell | null = null
   private column: SkewLevel[] = []
   /** The live sounding now and the kept ones; the moment shown (-1: now); whether earlier profiles are drawn; their levels by time. */
@@ -122,7 +122,7 @@ export class SkewTPanel {
     this.env = environmentLevels(env, height)
     this.parcels = { sb: parcelPath(env, height, 'sb'), ml: parcelPath(env, height, 'ml'), mu: parcelPath(env, height, 'mu') }
     this.summary = skewIndices(env, height)
-    const indices = parcelIndices(env, height); this.dcape = indices.dcape; this.ship = stormIndices(env, indices).ship
+    const indices = parcelIndices(env, height), storm = stormIndices(env, indices); this.dcape = indices.dcape; this.ship = storm.ship; this.ecape = storm.ecape.ecape
     const label = info.time <= 0 ? L('ИСХОДНАЯ', 'INITIAL') : `${past ? L('ПРОШЛОЕ ', 'PAST ') : ''}T+${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}, ${info.all ? L('ВСЯ ОБЛАСТЬ', 'WHOLE DOMAIN') : `${Math.round(info.quiet * 100)} % ${L('ОБЛАСТИ', 'OF THE DOMAIN')}`}`
     ;(this.root.querySelector('#skewLive') as HTMLElement).textContent = label
     if (this.open) this.draw()
@@ -334,6 +334,6 @@ export class SkewTPanel {
     const shownLive = this.shown, live = shownLive.time <= 0 ? L('исходная (расчёт ещё не шёл)', 'initial (the run has not started)') : shownLive.all ? L('вся область: столбцов без облаков и оттока меньше 5 %', 'the whole domain: fewer than 5 % of the columns are free of cloud and outflow') : L(`модель ${shownLive === this.live ? 'сейчас' : 'в выбранный момент'}, ${Math.round(shownLive.quiet * 100)} % области без облаков и оттока`, `the model ${shownLive === this.live ? 'now' : 'at the moment chosen'}, ${Math.round(shownLive.quiet * 100)} % of the domain free of cloud and outflow`)
     if (s) (this.root.querySelector('#skewEnv') as HTMLElement).innerHTML = `<span class="t-caption">${live}</span><dl class="kv">${readings([
       [L('влагосодержание', 'precipitable water'), `${s.pw.toFixed(0)} ${L('мм', 'mm')}`], [L('γ 0–3 км', 'γ 0–3 km'), `${s.lapse03.toFixed(1)} ${L('K/км', 'K/km')}`], [L('γ 700–500 гПа', 'γ 700–500 hPa'), `${s.lapse75.toFixed(1)} ${L('K/км', 'K/km')}`],
-      ['0 °C', s.freezing === null ? '—' : `${s.freezing.toFixed(1)} ${L('км', 'km')}`], ['DCAPE', `${this.dcape.toFixed(0)} ${L('Дж/кг', 'J/kg')}`], [L('сдвиг 0–6 км', 'shear 0–6 km'), `${s.shear06.toFixed(0)} ${L('м/с', 'm/s')}`], ['SHIP', this.ship.toFixed(1)]])}</dl>`
+      ['0 °C', s.freezing === null ? '—' : `${s.freezing.toFixed(1)} ${L('км', 'km')}`], ['DCAPE', `${this.dcape.toFixed(0)} ${L('Дж/кг', 'J/kg')}`], ['ECAPE (MU)', `${this.ecape.toFixed(0)} ${L('Дж/кг', 'J/kg')}`], [L('сдвиг 0–6 км', 'shear 0–6 km'), `${s.shear06.toFixed(0)} ${L('м/с', 'm/s')}`], ['SHIP', this.ship.toFixed(1)]])}</dl>`
   }
 }

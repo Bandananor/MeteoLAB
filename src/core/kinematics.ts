@@ -1,3 +1,4 @@
+import { type Ecape, entrainingCape } from './ecape'
 import type { Environment } from './environment'
 import { effectiveLayer, heightOf, type ParcelIndices } from './sounding'
 
@@ -20,6 +21,7 @@ export interface StormIndices {
    */
   effective: { base: number; top: number; srh: number; shear: number } | null
   /** The effective-layer STP (Thompson et al. 2012), 0 without an effective layer at the ground. */ stpEffective: number
+  /** Entraining CAPE of the most-unstable parcel for the right mover (Peters et al. 2023, ecape.ts). */ ecape: Ecape
 }
 
 /**
@@ -122,5 +124,6 @@ export function stormIndices(env: Environment, parcels: ParcelIndices): StormInd
     effective = { ...layer, srh: helicity(env, top, ...rightMover, layer.base), shear: el > layer.base ? Math.hypot(ut - ub, vt - vb) : 0 }
   }
   const stpEffective = effectiveStp(parcels.ml.cape, (parcels.ml.lcl ?? 99) * 1000, parcels.ml.cin, effective)
-  return { rightMover, leftMover, srh01, srh03, shear06, scp, stp, ship, lapse75, dcp, effective, stpEffective }
+  const ecape = entrainingCape(env, parcels.mu.cape, parcels.mu.lfc, parcels.mu.el, height, ...rightMover)
+  return { rightMover, leftMover, srh01, srh03, shear06, scp, stp, ship, lapse75, dcp, effective, stpEffective, ecape }
 }
