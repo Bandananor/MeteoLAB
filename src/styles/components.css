@@ -250,6 +250,7 @@
 .ov-toggle[aria-pressed="true"]::before { background: var(--overlay-ink); border-color: var(--overlay-ink); }
 .ov-chip { font: var(--fs-caption)/1 var(--font-mono); color: var(--overlay-text-2); background: var(--overlay); padding: 5px 8px; border-radius: var(--r-1); white-space: nowrap; }
 .ov-badge { font: var(--fs-caption)/1 var(--font-mono); letter-spacing: .06em; color: var(--overlay-text); background: var(--overlay); box-shadow: inset 0 0 0 1px var(--overlay-line); padding: 5px 7px; border-radius: var(--r-1); }
+.ov-badge--danger { order: 9; color: #fff; background: #B03A22; box-shadow: none; font-weight: 600; } /* the light theme's --danger: white text stays readable */
 .ov-cell { position: absolute; transform: translate(-50%, -100%); border: 0; font: var(--fw-medium) var(--fs-label)/1 var(--font-mono); padding: 3px 6px; border-radius: var(--r-1); background: var(--overlay); box-shadow: inset 0 0 0 1px var(--overlay-line); color: var(--overlay-text); }
 .ov-cell[aria-pressed="true"] { background: var(--overlay-text); color: var(--overlay-ink); box-shadow: none; }
 .ov-legend { display: flex; gap: 14px; align-items: center; padding: 6px 10px; border-radius: var(--r-2); background: var(--overlay); box-shadow: inset 0 0 0 1px var(--overlay-line); font: var(--fs-caption)/1 var(--font-mono); color: var(--overlay-text); }

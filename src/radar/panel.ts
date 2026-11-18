@@ -123,6 +123,8 @@ export class RadarPanel {
   private ppi: PPI | null = null; private image: ImageData | null = null
   private lastTime = -1; private lastDraw = 0; private lastComposite = 0; private hover: Point | null = null
   private product: Product = 'Z'
+  /** Where the model's tornado detector sees the signs of tornadogenesis (setTornado), m in the domain; null: none. */
+  private tornado: { x: number; y: number } | null = null
   /** Mesocyclone detection over the whole volume scan, rerun every MDA_EVERY ms of real time while the screen is open. */
   /** The radar profile (radars.ts): its tilts, bins, ranges and Nyquist velocity. */
   private radar = loadRadar()
@@ -312,6 +314,9 @@ export class RadarPanel {
   }
 
   /** Binds the display to a (new) model, keeping the site and tilt where possible. */
+  /** The tornado detector's mark (core/tornado.ts tornadoSpot at level 3), or none. */
+  setTornado(p: { x: number; y: number } | null) { this.tornado = p }
+
   attach(model: AtmosphereModel, stormMotion: readonly [number, number]) {
     this.motion = stormMotion
     const { width, depth } = model.grid, old = this.ppi
@@ -852,6 +857,13 @@ export class RadarPanel {
       const h = d.hook, a0 = (h.from - 90) * Math.PI / 180, a1 = (h.from + h.span - 90) * Math.PI / 180
       ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 3; ctx.setLineDash([6, 4]); ctx.beginPath(); ctx.arc(cx, cy, h.radius / 1000 * kmPx, a0, a1); ctx.stroke(); ctx.setLineDash([])
       ctx.fillStyle = '#ffffff'; ctx.fillText(L('КРЮК', 'HOOK'), cx - r * .75 - 40, cy + r * .75 + 12)
+    }
+    // The model's tornado detector (not a radar algorithm): a dashed red ring with its label where all its signs hold.
+    if (this.tornado) {
+      const [cx, cy] = this.toScreen(this.tornado), r = 4 * kmPx
+      ctx.strokeStyle = ctx.fillStyle = '#ff3b3b'; ctx.lineWidth = 3; ctx.setLineDash([8, 5])
+      ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([])
+      ctx.font = `bold 11px ${MONO}`; ctx.fillText(L('ВОЗМОЖЕН ТОРНАДО', 'TORNADO POSSIBLE'), cx + r * .75 + 4, cy + r * .75 + 12); ctx.font = `11px ${MONO}`
     }
     ctx.lineWidth = 1
     this.drawLine(kmPx)

@@ -278,6 +278,8 @@ export class StormView {
   private readonly mesoMarker: THREE.Mesh
   /** Ring around the selected cell (see setSelection). */
   private readonly selectionMarker: THREE.Mesh; private selection: { x: number; y: number } | null = null
+  /** The «tornado possible» ring at the ground (setTornado). */
+  private readonly tornadoMarker: THREE.Mesh; private tornado: { x: number; y: number } | null = null
   private readonly stationMarkers: THREE.Mesh[]; private stations: ({ x: number; y: number } | null)[] = []
   /** The camera's settings (setGrade). */
   private grade: CameraGrade = NEUTRAL_GRADE
@@ -547,6 +549,8 @@ if(abs(uSurface - 2.0) < 0.5){
     this.mesoMarker.rotation.x = Math.PI / 2; this.mesoMarker.position.y = 3.5; this.mesoMarker.renderOrder = 3; this.mesoMarker.visible = false; this.scene.add(this.mesoMarker)
     this.selectionMarker = new THREE.Mesh(new THREE.TorusGeometry(4, .09, 8, 72), new THREE.MeshBasicMaterial({ color: 0x5fd4e8, transparent: true, opacity: .85, depthWrite: false }))
     this.selectionMarker.rotation.x = Math.PI / 2; this.selectionMarker.position.y = .15; this.selectionMarker.renderOrder = 3; this.selectionMarker.visible = false; this.scene.add(this.selectionMarker)
+    this.tornadoMarker = new THREE.Mesh(new THREE.TorusGeometry(2.5, .12, 8, 72), new THREE.MeshBasicMaterial({ color: 0xff3b3b, transparent: true, opacity: .9, depthWrite: false }))
+    this.tornadoMarker.rotation.x = Math.PI / 2; this.tornadoMarker.position.y = .2; this.tornadoMarker.renderOrder = 3; this.tornadoMarker.visible = false; this.scene.add(this.tornadoMarker)
     // The weather stations: small masts standing on the ground, each in its colour.
     const mast = new THREE.ConeGeometry(.45, 1.6, 4)
     this.stationMarkers = STATION_COLORS.map(color => {
@@ -575,7 +579,7 @@ if(abs(uSurface - 2.0) < 0.5){
 
   dispose() {
     this.controls.dispose()
-    ;[this.groundState, this.windTexture, this.skyTexture, this.skyMaterial, this.skyDome.geometry, this.volumeTexture, this.noise, this.columnTexture, this.fieldTexture, this.colormap, this.volumeMaterial, this.fieldMaterial, this.sliceMaterial, this.volumeMesh.geometry, this.sliceH.geometry, this.sliceV.geometry, this.precipGeometry, this.precipMaterial, this.swathTexture, this.cityTexture, this.zoneTexture, this.frontLine?.geometry, this.frontLine?.material as THREE.Material | undefined, this.swath.geometry, this.swath.material as THREE.Material, this.mesoMarker.geometry, this.mesoMarker.material as THREE.Material, this.selectionMarker.geometry, this.selectionMarker.material as THREE.Material, this.stationMarkers[0].geometry, ...this.stationMarkers.map(m => m.material as THREE.Material), this.lightning, this.sprites, this.flanks, this.vortex, this.light, this.flashLight].forEach(r => r?.dispose())
+    ;[this.groundState, this.windTexture, this.skyTexture, this.skyMaterial, this.skyDome.geometry, this.volumeTexture, this.noise, this.columnTexture, this.fieldTexture, this.colormap, this.volumeMaterial, this.fieldMaterial, this.sliceMaterial, this.volumeMesh.geometry, this.sliceH.geometry, this.sliceV.geometry, this.precipGeometry, this.precipMaterial, this.swathTexture, this.cityTexture, this.zoneTexture, this.frontLine?.geometry, this.frontLine?.material as THREE.Material | undefined, this.swath.geometry, this.swath.material as THREE.Material, this.mesoMarker.geometry, this.mesoMarker.material as THREE.Material, this.selectionMarker.geometry, this.selectionMarker.material as THREE.Material, this.tornadoMarker.geometry, this.tornadoMarker.material as THREE.Material, this.stationMarkers[0].geometry, ...this.stationMarkers.map(m => m.material as THREE.Material), this.lightning, this.sprites, this.flanks, this.vortex, this.light, this.flashLight].forEach(r => r?.dispose())
     this.renderer.dispose()
   }
 
@@ -645,6 +649,8 @@ if(abs(uSurface - 2.0) < 0.5){
   setSelection(p: { x: number; y: number } | null) { this.selection = p }
   /** The rotating storms' flanks (CellTracker: Cell.flanks), drawn on the ground. */
   setFlanks(flanks: StormFlanks[]) { this.flanks.set(flanks) }
+  /** Rings the ground where the tornado detector sees the signs of tornadogenesis (core/tornado.ts tornadoSpot), or removes the ring. */
+  setTornado(p: { x: number; y: number } | null) { this.tornado = p }
   /** Marks the weather stations (their positions in the domain now, m; null: outside it, no mark). */
   setStations(points: ({ x: number; y: number } | null)[]) { this.stations = points }
 
@@ -1252,6 +1258,9 @@ if(abs(uSurface - 2.0) < 0.5){
     this.flanks.update(s.showFlanks && !this.observer, new THREE.Vector2(this.canvas.width, this.canvas.height), vtop ? { x: vtop.x, y: vtop.y, z: vtop.z } : null)
     this.selectionMarker.visible = !!this.selection
     if (this.selection) { const [wx, , wz] = this.toWorld(this.selection.x, this.selection.y, 0); this.selectionMarker.position.x = wx; this.selectionMarker.position.z = wz }
+    // «Tornado possible»: a red ring at the ground under the low-level rotation, pulsing so that it is noticed.
+    this.tornadoMarker.visible = !!this.tornado && !this.observer
+    if (this.tornado) { const [wx, , wz] = this.toWorld(this.tornado.x, this.tornado.y, 0); this.tornadoMarker.position.x = wx; this.tornadoMarker.position.z = wz; (this.tornadoMarker.material as THREE.MeshBasicMaterial).opacity = .55 + .35 * Math.sin(performance.now() / 250) }
     this.stationMarkers.forEach((marker, k) => {
       const p = this.stations[k]
       marker.visible = !!p && !this.observer

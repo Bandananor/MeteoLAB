@@ -4,7 +4,7 @@
 // mesocyclone above it, the environment of the inflow (STP, SRH 0-1 km, a low cloud base) and an outflow not too cold
 // (a very cold rear-flank downdraught is known to shut tornadoes off).
 import { L } from '../i18n'
-import { MESO_PERSISTENCE } from './model'
+import { type AtmosphereModel, MESO_PERSISTENCE } from './model'
 import { UH01_LOW_MESO } from './spin'
 
 export interface TornadoThresholds {
@@ -54,6 +54,15 @@ export const TORNADO_NOTES: Record<TornadoLevel, string> = {
   1: L('Среда благоприятна для смерча — но это ещё не смерч: нужна суперячейка с вращением у самой земли. И в природе в такой среде смерч дают немногие грозы.', 'The environment favours a tornado — but that is not a tornado yet: it takes a supercell rotating right at the ground. In nature, too, few storms in such an environment produce one.'),
   2: L('Восходящий поток вращается у земли (низкий мезоциклон) — так бывает перед смерчем, но условия ещё не все.', 'The updraught rotates near the ground (a low-level mesocyclone) — as before a tornado, but not every condition is met.'),
   3: L('Всё как перед смерчем. Сам смерч (сотни метров) сетка ~1 км не разрешает: модель его не покажет — это признаки, по которым синоптик даёт предупреждение.', 'Everything as before a tornado. The ~1 km grid does not resolve the tornado itself (hundreds of metres): the model will not show it — these are the signs a forecaster warns by.'),
+}
+
+/**
+ * Where the 3D view and the radar mark «tornado possible» (3.0 block Е, step 1): the ground column of the strongest
+ * UH 0-1 km (RotationState.low), m from the domain's corner. Shown at level 3 only: the signs, not a tornado.
+ */
+export function tornadoSpot(m: Pick<AtmosphereModel, 'grid' | 'rotation'>) {
+  const { nx, dx, dy } = m.grid, c = m.rotation.low
+  return { x: (c % nx) * dx, y: Math.floor(c / nx) * dy }
 }
 
 /** The level and every condition with its value. */

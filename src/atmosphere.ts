@@ -343,6 +343,8 @@ export class Atmosphere implements ViewSettings {
   private markStations() { this.view.setStations(this.stations.map(s => !s || s.outside ? null : domainPoint(this.mirror, s.x, s.y))) }
   /** Rings the selected cell in the 3D view. */
   setSelection(p: { x: number; y: number } | null) { this.view.setSelection(p) }
+  /** Rings the ground under the low-level rotation when the tornado detector shows its signs (null: none). */
+  setTornado(p: { x: number; y: number } | null) { this.view.setTornado(p) }
 
   /** The current state as a .meteolab file (src/core/state.ts), from the fields the page holds. */
   saveState() { return saveState(this.mirror, this.config) }
