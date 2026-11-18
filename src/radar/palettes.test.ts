@@ -67,4 +67,11 @@ describe('radar palettes', () => {
     expect(ticks([.7, 1.05])).toEqual([.7, .8, .9, 1])
     expect(ticks([-40, 40])).toEqual([-40, -20, 0, 20, 40])
   })
+
+  it('reads the DMRL-C rain-rate palette as R and keeps the built-in one in classes', () => {
+    const r = parsePal(['Product: R', 'Units: mm/h', 'Scale: 1', 'Offset: 0', 'Step: 5', 'RF: 0 0 0', '', 'Color: 0.1 148 148 148', 'Color: 0.3 89 89 89', 'Color: 120 165 49 140'].join('\n'), 'Z')
+    expect(r.kind).toBe('R'); expect(r.stops.map(s => s.value)).toEqual([.1, .3, 120])
+    const dmrl = BUILTIN.find(p => p.id === 'r-dmrl')!
+    expect(colorAt(dmrl, .05)).toBeNull(); expect(colorAt(dmrl, 25)).toEqual([199, 70, 0, 255]); expect(colorAt(dmrl, 200)).toEqual([165, 49, 140, 255])
+  })
 })

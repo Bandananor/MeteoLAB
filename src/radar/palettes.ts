@@ -5,8 +5,8 @@ import { L } from '../i18n'
 // "SolidColor: value R G B" (one colour up to the next stop), Color4 / SolidColor4 with an alpha, "Product:", "Units:",
 // "Scale:" and "Offset:" (file value = value x Scale + Offset), comments after ";".
 
-/** What a palette colours: reflectivity (Z, CR, the section), radial velocity (V, SRV), ZDR, rho_hv, KDP, VIL, echo tops, MESH. */
-export type PaletteKind = 'Z' | 'V' | 'ZDR' | 'RHO' | 'KDP' | 'VIL' | 'ET' | 'MESH'
+/** What a palette colours: reflectivity (Z, CR, the section), radial velocity (V, SRV), ZDR, rho_hv, KDP, VIL, echo tops, MESH, rain rate. */
+export type PaletteKind = 'Z' | 'V' | 'ZDR' | 'RHO' | 'KDP' | 'VIL' | 'ET' | 'MESH' | 'R'
 export type RGB = readonly [number, number, number]
 /** A stop: from `value` up, `color` (null: transparent); `solid` holds it to the next stop, otherwise it blends to `to` or to the next stop's colour. */
 export interface Stop { value: number; color: RGB | null; to?: RGB | null; solid?: boolean }
@@ -26,6 +26,7 @@ export const KINDS: Record<PaletteKind, { label: string; units: string; palUnits
   VIL: { label: 'VIL', units: L('кг/м²', 'kg/m²'), palUnits: 'KG/M2', min: 0, max: 100, codes: ['VIL', 'DVL'], clampBelow: false, digits: 0 },
   ET: { label: L('Высота эха (ET)', 'Echo tops (ET)'), units: L('км', 'km'), palUnits: 'KM', min: 0, max: 25, codes: ['ET', 'EET'], clampBelow: false, digits: 1 },
   MESH: { label: L('Размер града (MESH)', 'Hail size (MESH)'), units: L('мм', 'mm'), palUnits: 'MM', min: 0, max: 120, codes: ['MESH', 'HAIL'], clampBelow: false, digits: 0 },
+  R: { label: L('Интенсивность осадков (R)', 'Rain rate (R)'), units: L('мм/ч', 'mm/h'), palUnits: 'MM/H', min: 0, max: 300, codes: ['R', 'RR', 'RATE', 'PRECIP'], clampBelow: false, digits: 1 },
 }
 
 const hex = (h: string): RGB => [1, 3, 5].map(k => parseInt(h.slice(k, k + 2), 16)) as unknown as RGB
@@ -58,6 +59,9 @@ export const BUILTIN: Palette[] = ([
   { id: 'v-iram', name: L('ИРАМ', 'IRAM'), kind: 'V', stops: smooth([[-30, '#000082'], [-27, '#0000c8'], [-25, '#0000ff'], [-23, '#003cff'], [-21, '#0078ff'], [-19, '#00aaff'], [-17, '#00d2ff'], [-15, '#00ffff'], [-13, '#50ffff'], [-11, '#82ffff'], [-9, '#aaffff'], [-7, '#c8ffff'], [-5, '#e1ffff'], [-3, '#f0ffff'], [-1, '#ffffff'], [1, '#ffffff'], [3, '#ffffdc'], [5, '#ffffa0'], [7, '#ffff00'], [9, '#ffdc00'], [11, '#ffb400'], [13, '#ff8200'], [15, '#ff5000'], [17, '#ff0000'], [19, '#eb0000'], [21, '#d20000'], [23, '#be0000'], [25, '#aa0000'], [27, '#8c0000'], [29, '#6e0000'], [31, '#500000']]) },
   { id: 'v-hydromet', name: L('Гидрометцентр', 'Hydrometcentre'), kind: 'V', stops: smooth([[-50, '#a4fef8'], [-40, '#4c8568'], [-30, '#2d5836'], [-25, '#5ba960'], [-20, '#51bd42'], [-15, '#4dff4f'], [-10, '#95fe97'], [-5, '#7ca287'], [-1, '#b9f3ce'], [0, '#ffffff'], [1, '#ff00d0'], [5, '#7f005d'], [10, '#700047'], [15, '#660000'], [20, '#a32424'], [25, '#b94141'], [30, '#ea3e3e'], [40, '#fd8181'], [50, '#feb4b4']]) },
   { id: 'et-meteorad', name: L('МЕТЕОРАД (ВГО)', 'METEORAD (echo tops)'), kind: 'ET', stops: steps([[0.1, '#73ffa6'], [0.2, '#00fa81'], [0.5, '#38c692'], [1, '#499a6d'], [2, '#6e9d82'], [3, '#2b4536'], [4, '#86fff3'], [5, '#29a9c7'], [6, '#084bff'], [7, '#003a70'], [8, '#e4d900'], [9, '#ffa100'], [10, '#ff0000'], [11, '#8c0d00'], [12, '#30c300'], [13, '#154200'], [14, '#c30073'], [15, '#ff00a8'], [16, '#ff67cb']]) },
+  // The DMRL-C rain rate's classes, as sent to the project 18.11.2026 (one colour per class).
+  { id: 'r-dmrl', name: L('ДМРЛ-С', 'DMRL-C'), kind: 'R', stops: steps([[0.1, '#949494'], [0.3, '#595959'], [0.5, '#0071b8'], [1, '#022388'], [3, '#c4c700'], [5, '#a0cc00'], [7, '#d4a625'], [10, '#b38300'], [20, '#c74600'], [30, '#62ea7d'], [50, '#00b825'], [100, '#e8a6c9'], [120, '#a5318c']]) },
+  { id: 'r-cvd', name: L('Для дальтоников (viridis)', 'Colour-blind friendly (viridis)'), kind: 'R', stops: viridis(.1, 100, '#ffffff') },
   { id: 'et-iram', name: L('ИРАМ (ВГО)', 'IRAM (echo tops)'), kind: 'ET', stops: steps([[0.5, '#000080'], [1, '#0000c8'], [1.5, '#0032ff'], [2, '#0064ff'], [2.5, '#0096ff'], [3, '#00c8ff'], [3.5, '#00ffff'], [4, '#64ffff'], [4.5, '#96ffff'], [5, '#c8ffff'], [5.5, '#ffffff'], [6, '#ffffdc'], [6.5, '#ffffb4'], [7, '#ffff64'], [7.5, '#ffff00'], [8, '#ffdc00'], [8.5, '#ffb400'], [9, '#ff8c00'], [9.5, '#ff6400'], [10, '#ff3c00'], [10.5, '#ff0000'], [11, '#dc0000'], [11.5, '#be0000'], [12, '#a00000'], [12.5, '#820000'], [13, '#640000'], [13.5, '#500000'], [14, '#3c0000'], [14.5, '#280000'], [15, '#1e0000'], [15.1, '#140000']]) },
 ] as Palette[]).map(p => ({ ...p, builtin: true }))
 

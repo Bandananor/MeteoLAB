@@ -69,6 +69,13 @@ export const ECHO_TOP_DBZ = 18, VIL_MAX_DBZ = 56
  * H_ВГО at -5 dBZ, the layers Z1 (0.6-1 km) and Z2 (2-4 km), the levels H2 (0 °C) and H3 (2-2.5 km above it, here 2.25)
  * and Zmax above 1 km.
  */
+/**
+ * The DMRL-C's rain rate (ГИМЕТ-2010, .claude/literature/russian-radar-docs.md): Marshall-Palmer Z = ZR_A R^ZR_B, Z in mm⁶/m³,
+ * R in mm/h, from the echo of the lowest layer Z1 (RD 52.04.320-91 takes the layer 0-1.5 km).
+ */
+export const ZR_A = 200, ZR_B = 1.6
+/** Rain rate (mm/h) of an echo of dbz by Marshall-Palmer; 0 for no echo. */
+export const rainRateOf = (dbz: number) => dbz > DBZ_FLOOR ? (10 ** (dbz / 10) / ZR_A) ** (1 / ZR_B) : Number.isNaN(dbz) ? NaN : 0
 export const VGO_DBZ = -5, Z1_LAYER = [600, 1000] as const, Z2_LAYER = [2000, 4000] as const, H3_ABOVE = 2250, ZMAX_FROM = 1000
 /** GIMET-2010's precipitation height (heightPrecipitation), m: its Z1 is the echo there. */
 export const Z1_HEIGHT = 600
@@ -94,6 +101,8 @@ export class PPI {
   readonly echoTopped: Uint8Array
   /** The maximum expected size of hail (MESH, mm) from the volume scan, with composite(). */
   readonly mesh: Float32Array
+  /** The rain rate of the Russian radars (mm/h, rainRateOf of Z1) with composite(). */
+  readonly rainRate: Float32Array
   /**
    * The column quantities of the Russian radars from the volume scan, with composite(): the cloud top H_ВГО (km, the
    * highest beam with VGO_DBZ; 0: none), the strongest echo in the layers Z1 and Z2 and above ZMAX_FROM, and the echo
@@ -160,7 +169,7 @@ export class PPI {
   constructor(model: AtmosphereModel, w: number, h: number) {
     this.model = model; this.w = w; this.h = h
     const n = w * h, f = () => new Float32Array(n)
-    this.dbz = f(); this.velocity = f(); this.compositeDbz = f(); this.zdr = f(); this.rho = f(); this.kdp = f(); this.vil = f(); this.echoTop = f(); this.echoTopped = new Uint8Array(n); this.mesh = f(); this.vgo = f(); this.z1 = f(); this.z2 = f(); this.zmax = f(); this.zh2 = f(); this.zh3 = f(); this.zCore = f(); this.z06 = f(); this.zT15 = f(); this.ngo = f(); this.zdrColumnDepth = f(); this.codes = new Uint8Array(n); this.gx = f(); this.gy = f(); this.sinAz = f(); this.cosAz = f(); this.range = f()
+    this.dbz = f(); this.velocity = f(); this.compositeDbz = f(); this.zdr = f(); this.rho = f(); this.kdp = f(); this.vil = f(); this.echoTop = f(); this.echoTopped = new Uint8Array(n); this.mesh = f(); this.rainRate = f(); this.vgo = f(); this.z1 = f(); this.z2 = f(); this.zmax = f(); this.zh2 = f(); this.zh3 = f(); this.zCore = f(); this.z06 = f(); this.zT15 = f(); this.ngo = f(); this.zdrColumnDepth = f(); this.codes = new Uint8Array(n); this.gx = f(); this.gy = f(); this.sinAz = f(); this.cosAz = f(); this.range = f()
     this.nodeDbz = new Float32Array(model.grid.n); this.nodeFall = new Float32Array(model.grid.n)
     this.nodeZdr = new Float32Array(model.grid.n); this.nodeRho = new Float32Array(model.grid.n).fill(1); this.nodeKdp = new Float32Array(model.grid.n)
     this.site = { x: model.grid.width / 2, y: model.grid.depth / 2 }
@@ -443,6 +452,7 @@ export class PPI {
       }
     }
     for (let i = 0; i < mesh.length; i++) mesh[i] = 2.54 * Math.sqrt(mesh[i])
+    for (let i = 0; i < z1.length; i++) this.rainRate[i] = rainRateOf(z1[i])
   }
 
   /**

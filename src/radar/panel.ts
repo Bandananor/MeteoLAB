@@ -7,7 +7,7 @@ import { cssGradient, extent, KINDS, lookup, lutIndex, type Palette, type Palett
 
 type Product = RadarProduct
 /** Products of the whole volume scan (PPI.composite), not of one tilt. */
-const VOLUME: readonly Product[] = ['CR', 'VIL', 'ET', 'MESH', 'VGO', 'MAP', 'ZDC']
+const VOLUME: readonly Product[] = ['CR', 'VIL', 'ET', 'MESH', 'VGO', 'MAP', 'ZDC', 'R']
 /** The phenomena map's colours by code (RGBA). */
 const PHEN_RGBA = new Map(PHENOMENA.map(p => [p.code, p.color === 'transparent' ? [0, 0, 0, 0] : [parseInt(p.color.slice(1, 3), 16), parseInt(p.color.slice(3, 5), 16), parseInt(p.color.slice(5, 7), 16), 255]]))
 /** What the vertical section shows. */
@@ -47,6 +47,7 @@ const PRODUCTS: Record<Product, { label: string; title: string; kind: PaletteKin
   MESH: { label: L('MESH — ожидаемый размер града', 'MESH — maximum expected size of hail'), title: L('MESH · РАЗМЕР ГРАДА', 'MESH · HAIL SIZE'), kind: 'MESH' },
   MAP: { label: L('Явления — карта метеоявлений (как у ДМРЛ-С)', 'Phenomena — the phenomena map (as the DMRL-C)'), title: L('КАРТА МЕТЕОЯВЛЕНИЙ', 'PHENOMENA MAP'), kind: 'Z' },
   VGO: { label: L('ВГО — верхняя граница облачности (ДМРЛ-С)', 'ВГО — cloud top height (DMRL-C)'), title: L('ВГО · ВЕРХНЯЯ ГРАНИЦА ОБЛАЧНОСТИ', 'ВГО · CLOUD TOP HEIGHT'), kind: 'ET' },
+  R: { label: L('R — интенсивность осадков (ДМРЛ-С)', 'R — rain rate (DMRL-C)'), title: L('R · ИНТЕНСИВНОСТЬ ОСАДКОВ', 'R · RAIN RATE'), kind: 'R' },
 }
 const XS_FIELDS: Record<XsField, { name: string; short: string; reading: string; kind: PaletteKind }> = {
   Z: { name: L('отражаемость', 'reflectivity'), short: 'Z', reading: L('Отражаемость', 'Reflectivity'), kind: 'Z' }, V: { name: L('скорость вдоль луча', 'velocity along the beam'), short: 'V', reading: L('Скорость', 'Velocity'), kind: 'V' },
@@ -60,6 +61,7 @@ const HELP: Record<Product, string> = {
   Z: L('Луч идёт под углом к горизонту и с дальностью поднимается выше: низкий наклон видит осадки у земли, высокий — ядро грозы и наковальню. Щелчок по экрану переносит радар.', 'The beam leaves at an angle to the horizon and rises with range: a low tilt sees the precipitation near the ground, a high one the storm’s core and the anvil. A click on the screen moves the radar.'),
   V: L('Скорость вдоль луча: отрицательная (холодные цвета — зелёные, синие) — к радару, положительная (тёплые) — от радара. Видна только там, где есть эхо. Движение самой грозы часто маскирует вращение — для мезоциклона смотрите SRV. С «Складыванием скоростей» — как на настоящем радаре: быстрее предела (±28 м/с у S-диапазона, ±13 у C) цвет перескакивает в противоположный (ярко-красное прямо посреди ярко-зелёного без серой полосы нуля между ними), под курсором — и скорость без складывания.', 'The velocity along the beam: negative (cool colours — green, blue) towards the radar, positive (warm) away from it. Seen only where there is an echo. The storm’s own motion often masks the rotation — for a mesocyclone look at SRV. With «Velocity folding» — as on a real radar: beyond the limit (±28 m/s in S-band, ±13 in C) the colour jumps to the opposite one (bright red right amid bright green, with no grey zero band between them); under the cursor also the unfolded speed.'),
   SRV: '',
+  R: L('Интенсивность осадков, мм/ч, как её даёт ДМРЛ-С: по отражаемости нижнего слоя Z1 (0,6–1 км) через соотношение Маршалла–Пальмера Z = 200 R^1,6 (ГИМЕТ-2010). Это оценка по одной отражаемости: град и мокрая крупа в ядре завышают её (от 55 dBZ — больше 100 мм/ч), снег соотношение для дождя занижает; поляриметрическое уточнение (ZDR, KDP), которое есть у настоящего ДМРЛ-С, здесь не сделано. Вдали от радара луч проходит выше 1 км — там продукт пуст. По РД 52.04.320-91: до 3 мм/ч — слабые осадки, 3–25 — умеренные, 25–140 — сильные, больше 140 — очень сильные.', 'The rain rate, mm/h, as the DMRL-C gives it: from the echo of the lowest layer Z1 (0.6–1 km) by the Marshall–Palmer relation Z = 200 R^1.6 (ГИМЕТ-2010). An estimate from the reflectivity alone: hail and wet graupel in a core raise it (from 55 dBZ above 100 mm/h), the rain relation underestimates snow; the polarimetric correction (ZDR, KDP) of the real DMRL-C is not made here. Far from the radar the beam passes above 1 km — the product is empty there. By RD 52.04.320-91: up to 3 mm/h light, 3–25 moderate, 25–140 heavy, above 140 very heavy.'),
   CR: L('Сильнейшее эхо по всем 14 наклонам объёмного скана над каждой точкой — как обычная радарная карта.', 'The strongest echo over all 14 tilts of the volume scan above each point — like an ordinary radar map.'),
   ZDR: L(`Дифференциальная отражаемость: насколько эхо в горизонтальной поляризации сильнее, чем в вертикальной. Крупные капли сплюснуты — ZDR +1…+4 дБ; град и крупа кувыркаются и почти круглые — около 0; сухой снег — 0…+0,5. Колонна ZDR — капли, вынесенные потоком выше 0 °C (высокие наклоны и разрез): признак сильного потока, раньше роста отражаемости. Высокая Z при ZDR около 0 — ядро града. ${DUAL_NOTE}`, `Differential reflectivity: how much stronger the echo is in horizontal polarization than in vertical. Large drops are flattened — ZDR +1…+4 dB; hail and graupel tumble and are nearly round — about 0; dry snow — 0…+0.5. A ZDR column — drops lofted by the updraught above 0 °C (high tilts and the cross-section): a sign of a strong updraught, ahead of the reflectivity’s growth. High Z with ZDR near 0 — a hail core. ${DUAL_NOTE}`),
   RHO: L(`Коэффициент корреляции ρhv: насколько одинаково эхо в двух поляризациях. Чистый дождь или снег — 0,97–1; смесь разных частиц — ниже: полоса таяния (снег и крупа тают в дождь) — около 0,9, град с дождём — 0,85–0,95. Обломки смерча (TDS, ρhv < 0,8) модель не показывает: вихрь мельче её сетки. ${DUAL_NOTE}`, `The correlation coefficient ρhv: how alike the echo is in the two polarizations. Pure rain or snow — 0.97–1; a mix of particles — lower: the melting layer (snow and graupel melting into rain) — about 0.9, hail with rain — 0.85–0.95. Tornado debris (TDS, ρhv < 0.8) the model does not show: the vortex is smaller than its grid. ${DUAL_NOTE}`),
@@ -508,7 +510,7 @@ export class RadarPanel {
     const ppi = this.ppi
     if (!ppi) return null
     if (this.product === 'V' && this.folding) return this.folded(ppi.velocity, 'map')
-    return { Z: ppi.dbz, V: ppi.velocity, SRV: ppi.velocity, CR: ppi.compositeDbz, ZDR: ppi.zdr, RHO: ppi.rho, KDP: ppi.kdp, VIL: ppi.vil, ET: ppi.echoTop, MESH: ppi.mesh, VGO: ppi.vgo, MAP: ppi.compositeDbz, ZDC: ppi.zdrColumnDepth }[this.product]
+    return { Z: ppi.dbz, V: ppi.velocity, SRV: ppi.velocity, CR: ppi.compositeDbz, ZDR: ppi.zdr, RHO: ppi.rho, KDP: ppi.kdp, VIL: ppi.vil, ET: ppi.echoTop, MESH: ppi.mesh, VGO: ppi.vgo, MAP: ppi.compositeDbz, ZDC: ppi.zdrColumnDepth, R: ppi.rainRate }[this.product]
   }
 
   /** The values of the section's field. */
@@ -608,6 +610,7 @@ export class RadarPanel {
     if (this.product === 'ZDC') return v <= 0 ? L('нет колонны', 'no column') : `${v.toFixed(1)} ${L('км над 0 °C', 'km above 0 °C')}`
     if (kind === 'ET') return v <= 0 ? NO_ECHO : `${v.toFixed(1)} ${L('км', 'km')}`
     if (kind === 'MESH') return v < 1 ? L('нет града', 'no hail') : `${v.toFixed(0)} ${L('мм', 'mm')}`
+    if (kind === 'R') return v < .1 ? L('нет осадков', 'no rain') : `${v < 10 ? v.toFixed(1) : v.toFixed(0)} ${L('мм/ч', 'mm/h')}`
     return `${v.toFixed(2)} ${L('°/км', '°/km')}`
   }
 
@@ -947,14 +950,14 @@ export class RadarPanel {
     if (!this.hover || !values) { out.innerHTML = readings([[L('курсор', 'cursor'), L('вне экрана', 'off the screen')]]); return }
     const { width, depth } = ppi.model.grid
     const b = ppi.beamAt(this.hover.x, this.hover.y), px = Math.min(ppi.w - 1, Math.floor(this.hover.x / width * ppi.w)), py = Math.min(ppi.h - 1, Math.floor((depth - this.hover.y) / depth * ppi.h)), i = px + py * ppi.w
-    const kind = this.kind(), name = { Z: L('Отражаемость', 'Reflectivity'), V: L('Скорость', 'Velocity'), ZDR: 'ZDR', RHO: 'ρhv', KDP: 'KDP', VIL: 'VIL', ET: L('Высота эха', 'Echo top'), MESH: 'MESH' }[kind], volume = VOLUME.includes(this.product)
+    const kind = this.kind(), name = { Z: L('Отражаемость', 'Reflectivity'), V: L('Скорость', 'Velocity'), ZDR: 'ZDR', RHO: 'ρhv', KDP: 'KDP', VIL: 'VIL', ET: L('Высота эха', 'Echo top'), MESH: 'MESH', R: L('Интенсивность', 'Rain rate') }[kind], volume = VOLUME.includes(this.product)
     out.innerHTML = readings([[L('Азимут', 'Azimuth'), this.azimuthText(b.azimuth)], [L('Дальность', 'Range'), `${(b.range / 1000).toFixed(1)} ${L('км', 'km')}`], ...(volume ? [] : [[L('Высота луча', 'Beam height'), `${(b.height / 1000).toFixed(2)} ${L('км', 'km')}`] as [string, string]]),
       ...(kind === 'Z' ? [] : [[volume ? L('Сильнейшее эхо', 'Strongest echo') : L('Отражаемость', 'Reflectivity'), (volume ? ppi.compositeDbz : ppi.dbz)[i] < 5 ? NO_ECHO : `${(volume ? ppi.compositeDbz : ppi.dbz)[i].toFixed(0)} dBZ`] as [string, string]]),
       // VIL density (VIL over the echo top): from ~3.5 g/m³ large hail is likely (Amburn & Wolf 1997).
       // Folded: what the wind really is there, to learn to see folding (a real radar would need dealiasing for it).
       ...(this.product === 'V' && this.folding && Math.abs(ppi.velocity[i]) > RADARS[this.radar].nyquist ? [[L('Без складывания', 'Unfolded'), this.describe(ppi.velocity[i], 'V')] as [string, string]] : []),
       ...(this.product === 'MAP' ? [[L('Явление', 'Phenomenon'), PHENOMENA.find(p => p.code === ppi.codes[i])?.name ?? '—'], [L('ВГО', 'Cloud top'), ppi.vgo[i] > 0 ? `${ppi.vgo[i].toFixed(1)} ${L('км', 'km')}` : NO_ECHO], ...(this.levels && ppi.vgo[i] > 0 && ppi.zh3[i] > 18 ? [[`Y = H·lgZ3 (${L('порог', 'threshold')} ${(this.levels.h22 * 1.2).toFixed(1)})`, (ppi.vgo[i] * (ppi.zh3[i] - 18) / 10).toFixed(1)]] : [])] as [string, string][] : []),
-      ...(this.product === 'VGO' || this.product === 'MAP' ? ([['Z1 (0,6–1 км)', ppi.z1[i]], ['Z2 (2–4 км)', ppi.z2[i]], [`Z(H2 = ${(ppi.levelH2 / 1000).toFixed(1)} ${L('км', 'km')})`, ppi.zh2[i]], [`Z(H3 = ${(ppi.levelH3 / 1000).toFixed(1)} ${L('км', 'km')})`, ppi.zh3[i]], [L('Zmax выше 1 км', 'Zmax above 1 km'), ppi.zmax[i]]] as [string, number][]).map(([k, d]) => [L(k, k.replace(',', '.').replace('км', 'km')), d < 5 ? NO_ECHO : `${d.toFixed(0)} dBZ`] as [string, string]) : []),
+      ...(this.product === 'VGO' || this.product === 'MAP' || this.product === 'R' ? ([['Z1 (0,6–1 км)', ppi.z1[i]], ['Z2 (2–4 км)', ppi.z2[i]], [`Z(H2 = ${(ppi.levelH2 / 1000).toFixed(1)} ${L('км', 'km')})`, ppi.zh2[i]], [`Z(H3 = ${(ppi.levelH3 / 1000).toFixed(1)} ${L('км', 'km')})`, ppi.zh3[i]], [L('Zmax выше 1 км', 'Zmax above 1 km'), ppi.zmax[i]]] as [string, number][]).map(([k, d]) => [L(k, k.replace(',', '.').replace('км', 'km')), d < 5 ? NO_ECHO : `${d.toFixed(0)} dBZ`] as [string, string]) : []),
       ...(this.product === 'VIL' && ppi.vil[i] >= 1 && ppi.echoTop[i] > 0 ? [[L('Плотность VIL', 'VIL density'), `${(ppi.vil[i] / ppi.echoTop[i]).toFixed(1)} ${L('г/м³', 'g/m³')}`] as [string, string]] : []), [name, this.product === 'ET' && ppi.echoTopped[i] ? L(`≥ ${this.describe(values[i], kind)}: верх не виден, выше верхнего наклона`, `≥ ${this.describe(values[i], kind)}: the top is not seen, above the highest tilt`) : this.describe(values[i], kind, 'in')]])
   }
 

@@ -9,7 +9,7 @@ import { L } from '../i18n'
  * read in a primary document.
  */
 /** The radar screen's products (src/radar/panel.ts). */
-export type RadarProduct = 'Z' | 'V' | 'SRV' | 'CR' | 'ZDR' | 'RHO' | 'KDP' | 'VIL' | 'ET' | 'MESH' | 'VGO' | 'MAP' | 'ZDC'
+export type RadarProduct = 'Z' | 'V' | 'SRV' | 'CR' | 'ZDR' | 'RHO' | 'KDP' | 'VIL' | 'ET' | 'MESH' | 'VGO' | 'MAP' | 'ZDC' | 'R'
 
 export interface RadarProfile {
   name: string
@@ -57,8 +57,9 @@ export const RADARS: Record<RadarId, RadarProfile> = {
     velocityTilts: [.1, .3, .7, 1.1, 1.6, 2.2, 2.9, 3.8, 4.8, 6, 7.5, 9, 11.2, 14, 17.5, 22, 28, 35.5, 45.5, 58, 72, 86], velocityGate: 250,
     nyquist: 66, range: 250_000, velocityRange: 125_000, volume: 600,
     // GIMET-2010 (the 2014 guidelines, section 4.7): Z, V, Zdr, rhoHV, Zmax above 1 km (as CR), VIL, the cloud top ВГО and
-    // the phenomena map; it measures the differential phase but lists no KDP; no storm-relative velocity, echo top or MESH.
-    products: ['Z', 'V', 'ZDR', 'RHO', 'CR', 'VIL', 'VGO', 'MAP'],
+    // the phenomena map, the rain rate R; it measures the differential phase but lists no KDP; no storm-relative velocity,
+    // echo top or MESH.
+    products: ['Z', 'V', 'ZDR', 'RHO', 'CR', 'VIL', 'VGO', 'MAP', 'R'],
     note: L('Росгидромет: C-диапазон, двухполяризационный, цикл 10 мин; отражаемость — 24 наклона до 250 км (строб 500 м), скорость — 22 наклона до 125 км (строб 250 м)', 'Roshydromet, Russia: C band, dual-polarisation, a 10 min cycle; reflectivity on 24 tilts to 250 km (500 m gates), velocity on 22 tilts to 125 km (250 m gates)'),
     verified: L('наклоны, стробы, дальности, цикл и скорость до ±66 м/с (две частоты импульсов, периоды 1,0 и 1,2 мс) — «Временные методические указания по использованию информации ДМРЛ-С» (Росгидромет, 2014), раздел 4.5; частота и поляризация — брошюра ЛЭМЗ; ширина луча 1° — по вторичным источникам', 'tilts, gates, ranges, cycle and velocities to ±66 m/s (two pulse periods, 1.0 and 1.2 ms) — the Roshydromet guidelines on the DMRL-C (2014), section 4.5; frequency and polarisation — the LEMZ brochure; the 1° beam — secondary sources'),
   },

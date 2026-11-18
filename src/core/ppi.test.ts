@@ -1,8 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { AtmosphereModel, beamHeight, beamHeightOver, clutterAt, createGrid, noiseFloor, PPI, RADAR_TILTS, RADARS, VGO_DBZ } from '.'
+import { AtmosphereModel, beamHeight, beamHeightOver, clutterAt, createGrid, noiseFloor, PPI, RADAR_TILTS, RADARS, rainRateOf, VGO_DBZ } from '.'
 import { QUIET } from './fixtures'
 
 describe('radar PPI', () => {
+  it('turns the echo into a rain rate by Marshall-Palmer, as the DMRL-C', () => {
+    // RD 52.04.320-91 table 2.13: 30.6 dBZ is 3 mm/h by Z = 200 R^1.6; 46 dBZ 27.
+    expect(rainRateOf(30.65)).toBeCloseTo(3, 1); expect(rainRateOf(46)).toBeCloseTo(27.3, 0)
+    expect(rainRateOf(-40)).toBe(0); expect(rainRateOf(NaN)).toBeNaN()
+  })
   it('retrieves a uniform wind by VAD, and none without echo', () => {
     const model = new AtmosphereModel({ ...QUIET }, createGrid({ nx: 48, ny: 48, nz: 20, width: 57_600, depth: 57_600, height: 15_000, bottomSpacing: 100 }))
     const ppi = new PPI(model, 96, 96)
