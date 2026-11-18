@@ -69,7 +69,7 @@ export interface Snapshot {
   /** The flashes since the previous snapshot, the counts since the start and the charge carried to the ground, C. */
   flashes: Flash[]; flashCount: { ic: number; cg: number }; chargeGround: number
   /** Heat and vapour put in by hand so far (AtmosphereModel.added). */
-  added: AtmosphereModel['added']; water?: AtmosphereModel['water']
+  added: AtmosphereModel['added']; water?: AtmosphereModel['water']; charge?: AtmosphereModel['charge']
   /** Threads the physics runs on (1 without cross-origin isolation). */
   threads: number
   /**

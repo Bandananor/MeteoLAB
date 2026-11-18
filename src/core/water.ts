@@ -53,3 +53,31 @@ export function waterBudget(m: WaterSource): WaterBudget {
     remainder: w.start + w.surface + added - (vapour + condensate + aloft + ground),
   }
 }
+
+// The charge budget (3.0 block Ж, step 3): the flows the model counts (AtmosphereModel.charge) and the charge in the
+// cloud now, summed from the four carriers. The separation makes equal charges of both signs, so the cloud's net charge
+// is what went to the ground (chargeGround) with the opposite sign; the remainder is the transport's error on the charges
+// (not mass-fixed) and the charge lost through the relaxed edges.
+
+export type ChargeSource = Pick<AtmosphereModel, 'grid' | 'env' | 'chargeIce' | 'chargeGraupel' | 'chargeRain' | 'chargeAir' | 'charge' | 'chargeGround'>
+
+export interface ChargeBudget {
+  /** Flows since the start, C (see AtmosphereModel.charge). */
+  separated: number; ic: number; cgNegative: number; cgPositive: number; precipitation: number; conduction: number
+  /** The cloud's charge now, C: the positive and the negative regions (net per node over the carriers). */
+  positive: number; negative: number
+  /** What the flows do not explain, C: the cloud's net charge plus what it lost to the ground. */
+  remainder: number
+}
+
+export function chargeBudget(m: ChargeSource): ChargeBudget {
+  const { nz, dx, dy, hz, layer } = m.grid, rho = m.env.rho
+  let positive = 0, negative = 0
+  for (let z = 0; z < nz; z++) {
+    const mass = rho[z] * dx * dy * hz[z]
+    let p = 0, n = 0
+    for (let i = z * layer, e = i + layer; i < e; i++) { const c = m.chargeIce[i] + m.chargeGraupel[i] + m.chargeRain[i] + m.chargeAir[i]; if (c > 0) p += c; else n += c }
+    positive += p * mass; negative += n * mass
+  }
+  return { ...m.charge, positive, negative, remainder: positive + negative + m.chargeGround }
+}

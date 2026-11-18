@@ -215,6 +215,14 @@ export class AtmosphereModel implements TaskModel {
    * the corona gave it.
    */
   chargeGround = 0
+  /**
+   * The charge budget since the start (3.0 block Ж, step 3), C: charge separated (of each sign: the non-inductive and
+   * the inductive charging), neutralized by IC flashes (of each sign), lowered by CG flashes of either polarity
+   * (signed), carried to the ground by the precipitation and by the conduction and corona (signed: chargeGround's parts).
+   */
+  charge = { separated: 0, ic: 0, cgNegative: 0, cgPositive: 0, precipitation: 0, conduction: 0 }
+  /** This step's charge separated by level (C), each level written by its thread. */
+  private readonly levelCharge: Float32Array
   /** Heat (J) and vapour (kg) put in by hand during the run (interventions, intervene.ts), and how many times. */
   added = { heat: 0, vapour: 0, count: 0 }
   /**
@@ -322,7 +330,7 @@ export class AtmosphereModel implements TaskModel {
     this.solver = new PressureSolver(grid, this.env.rho, this.memory)
     this.pressure = this.memory.f64('pressure', this.solver.cells); this.divergence = this.memory.f64('divergence', this.solver.cells); this.scratch = f()
     this.coreW = new Float64Array(grid.layer); this.coreWZ = new Float64Array(grid.layer); this.coreLabel = new Uint8Array(grid.layer)
-    this.levelWater = shared('level-water', grid.nz * 4)
+    this.levelWater = shared('level-water', grid.nz * 4); this.levelCharge = shared('level-charge', grid.nz)
     this.surfacePattern = new Float32Array(grid.layer); this.uhColumn = new Float32Array(grid.layer); this.precipitation = new Float32Array(grid.layer); this.fallSpeed = shared('fallSpeed')
     // Mass of each level per unit area and per metre of mean spacing: rho0 times the control-volume height over dz.
     this.levelWeight = Float64Array.from({ length: grid.nz }, (_, z) => grid.hz[z] / grid.dz * this.env.rho[z])
@@ -390,6 +398,7 @@ export class AtmosphereModel implements TaskModel {
     else { bubble(W * .38, D * .45, this.config.bubble); bubble(W * .61, D * .57, .72 * this.config.bubble) }
     // The starting thermals are the setup, not something added during the run.
     this.added = { heat: 0, vapour: 0, count: 0 }; this.water = { condensed: 0, evaporated: 0, rainEvaporated: 0, surface: 0, start: 0 }
+    this.charge = { separated: 0, ic: 0, cgNegative: 0, cgPositive: 0, precipitation: 0, conduction: 0 }
     this.water.start = waterReservoirs(this)
   }
 
@@ -525,7 +534,7 @@ export class AtmosphereModel implements TaskModel {
   private sedimentPart(rain: Float32Array, vt: Float32Array, dt: number, deposit: boolean) {
     const { nz, layer } = this.grid, rho = this.env.rho, lw = this.levelWeight, dz = this.grid.dz
     if (deposit) for (let i = 0; i < layer; i++) this.deposit(i, rho[0] * rain[i] * vt[i] * dt)
-    else { let out = 0; for (let i = 0; i < layer; i++) out += rain[i] * vt[i]; this.chargeGround += rho[0] * out * dt * this.grid.dx * this.grid.dy }
+    else { let out = 0; for (let i = 0; i < layer; i++) out += rain[i] * vt[i]; const c = rho[0] * out * dt * this.grid.dx * this.grid.dy; this.chargeGround += c; this.charge.precipitation += c }
     // Level weight lw = rho0 h / dz, so dq = dt (F_in - F_out) / (lw dz). Bottom-up, so each face uses pre-step values above.
     for (let z = 0; z < nz; z++) {
       const l = z * layer, inflow = z < nz - 1 ? rho[z + 1] : 0
@@ -910,7 +919,7 @@ export class AtmosphereModel implements TaskModel {
     falls.forEach((f, j) => {
       const g = ground[j]
       if (f.deposit) { for (let i = 0; i < layer; i++) if (g[i] !== 0) this.deposit(i, g[i]) }
-      else { let out = 0; for (let i = 0; i < layer; i++) out += g[i]; this.chargeGround += out * dx * dy }
+      else { let out = 0; for (let i = 0; i < layer; i++) out += g[i]; this.chargeGround += out * dx * dy; this.charge.precipitation += out * dx * dy }
     })
   }
 
@@ -993,6 +1002,7 @@ export class AtmosphereModel implements TaskModel {
     this.runner.run('physics', this.grid.nz, dt)
     const lw = this.levelWater, wb = this.water
     for (let k = 0; k < lw.length; k += 4) { wb.condensed += lw[k]; wb.evaporated += lw[k + 1]; wb.rainEvaporated += lw[k + 2]; wb.surface += lw[k + 3] }
+    for (const c of this.levelCharge) this.charge.separated += c
   }
 
   /** After the projection: the rotation tracking and the lightning. */
@@ -1202,7 +1212,7 @@ export class AtmosphereModel implements TaskModel {
     const { nx, ny, zs, height: H, layer } = this.grid, withIce = this.withIce(), staged = this.staged()
     // The water budget of this level: kg per unit of mixing ratio at a node (rho dV), the four terms.
     const nodeMass = this.grid.dx * this.grid.dy * this.grid.hz[z] * this.env.rho[z], lw = this.levelWater, l4 = z * 4
-    let wCond = 0, wEvap = 0, wRain = 0, wSurf = 0
+    let wCond = 0, wEvap = 0, wRain = 0, wSurf = 0, wCharge = 0
     const cfg = this.config, e = this.env, u = this.u, v = this.v, w = this.w, theta = this.theta, q = this.q, cloud = this.cloud, rain = this.rain, cold = this.cold
     const ice = this.ice, iceNumber = this.iceNumber, snow = this.snow, graupel = this.graupel, hail = this.hail, rhoGround = e.rho[0]
     const intercept = this.rainIntercept, rain2m = this.rain2m(), rainNumber = this.rainNumber, ice2m = this.ice2m()
@@ -1319,6 +1329,7 @@ export class AtmosphereModel implements TaskModel {
               // Inductive charging in the field: the graupel-hail gains what the rebounding droplets take away.
               const induced = inductiveRate(tc, rhoZ, cloud[i], graupel[i], hail[i], this.fieldZ[i], (cNow[1] + separated) * rhoZ, wetG, wetH, moments) * dt / rhoZ
               cI[i] = cNow[0] - separated; cG[i] = cNow[1] + separated + induced; cR[i] = cNow[2]; cA[i] = cNow[3] - induced
+              wCharge += Math.abs(separated) + Math.abs(induced)
             }
           } else { mark = theta[i]; cond = saturationAdjust(theta, q, cloud, i, exner, p); if (budget) { bCond![i] += theta[i] - mark; given += theta[i] - mark } }
           if (cond < 0) cold[i] -= LV / CP / exner * cond * .14
@@ -1378,7 +1389,7 @@ export class AtmosphereModel implements TaskModel {
       }
     }
     if (withIce) for (let i = z * layer, e = i + layer; i < e; i++) this.condensate[i] = cloud[i] + ice[i]
-    lw[l4] = wCond * nodeMass; lw[l4 + 1] = wEvap * nodeMass; lw[l4 + 2] = wRain * nodeMass; lw[l4 + 3] = wSurf * nodeMass
+    lw[l4] = wCond * nodeMass; lw[l4 + 1] = wEvap * nodeMass; lw[l4 + 2] = wRain * nodeMass; lw[l4 + 3] = wSurf * nodeMass; this.levelCharge[z] = wCharge * nodeMass
   }
 
   /**
@@ -1391,12 +1402,12 @@ export class AtmosphereModel implements TaskModel {
     // The cloud of the channel and the conduction: the droplets, crystals and snow (in the scheme the anvil is mostly snow).
     this.lightning.cloud([this.cloud, this.ice, this.snow])
     for (const flash of this.lightning.discharge([this.chargeIce, this.chargeGraupel, this.chargeRain, this.chargeAir], this.time + dt, flashLimit(dt))) {
-      if (flash.kind === 'CG') { this.chargeGround += flash.charge; this.flashCount.cg++ } else this.flashCount.ic++
+      if (flash.kind === 'CG') { this.chargeGround += flash.charge; this.flashCount.cg++; if (flash.charge < 0) this.charge.cgNegative += flash.charge; else this.charge.cgPositive += flash.charge } else { this.flashCount.ic++; this.charge.ic += Math.abs(flash.charge) }
       this.flashes.push(flash)
     }
     if (this.flashes.length > RECENT_FLASHES) this.flashes.splice(0, this.flashes.length - RECENT_FLASHES)
     // The ions drift in the field and relax the charge (screening layers at the cloud's edges), the ground gives corona.
-    this.chargeGround += this.lightning.conduct(this.chargeAir, dt)
+    const conducted = this.lightning.conduct(this.chargeAir, dt); this.chargeGround += conducted; this.charge.conduction += conducted
     // The vertical field of the last solve (after the flashes, or as the storm stands), for the inductive charging.
     const { nz, layer, zs } = this.grid, phi = this.lightning.phi, ez = this.fieldZ
     for (let z = 1; z < nz - 1; z++) { const h = zs[z + 1] - zs[z - 1]; for (let c = 0, i = z * layer; c < layer; c++, i++) ez[i] = -(phi[i + layer] - phi[i - layer]) / h }
