@@ -20,6 +20,12 @@ describe('shared links and CSV (src/share.ts)', () => {
     for (const bad of [{ ...frontLine, kind: 'hot' }, { ...frontLine, depth: 50 }, { ...frontLine, extra: 1 }]) expect(cleanSettings({ frontLine: bad })).toEqual({})
   })
 
+  it('carries the processes switched off, and drops unknown or repeated ones', () => {
+    const base: SimConfig = { ...SUMMER_DAY }, off = ['evaporation', 'surface'] as const
+    expect(decodeSettings(encodeSettings({ ...base, off }, base, null), NAMES)!.values).toEqual({ off })
+    for (const bad of [['radiation'], ['loading', 'loading'], [], 'coriolis']) expect(cleanSettings({ off: bad })).toEqual({})
+  })
+
   it('carries the large-scale advection, and drops a broken one', () => {
     const base: SimConfig = { ...SUMMER_DAY }, largeScale = [{ quantity: 'moisture' as const, bottom: 0, top: 1, amount: 2, start: 0, hours: 3 }, { quantity: 'temperature' as const, bottom: 4, top: 9, amount: -2.5, start: 1, hours: 2 }]
     expect(decodeSettings(encodeSettings({ ...base, largeScale }, base, null), NAMES)!.values).toEqual({ largeScale })

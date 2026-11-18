@@ -1,4 +1,4 @@
-import type { SimConfig } from './config'
+import { processOn, type SimConfig } from './config'
 import { CP, DT, G, LV, OMEGA } from './constants'
 import { Environment, type EnvironmentProfile } from './environment'
 import { createGrid, domainGrid, type Grid, shiftedLevel } from './grid'
@@ -788,7 +788,7 @@ export class AtmosphereModel implements TaskModel {
   /**
    * Whether the transport is the one GpuDynamics does: flux-form WENO with the pressure and buoyancy in the stages.
    */
-  gpuDynamics() { return this.staged() }
+  gpuDynamics() { return this.staged() && processOn(this.config, 'loading') }
 
   /** The falling fields with their fall speeds (snow, graupel and hail only with ice microphysics). */
   private falling(): [Float32Array, Float32Array][] {
@@ -1057,12 +1057,12 @@ export class AtmosphereModel implements TaskModel {
    * physics() gives, against the environment or, inside a zone, the zone's own air.
    */
   private stageBuoyancy(tend: Float64Array, z0: number, z1: number) {
-    const { layer, zs } = this.grid, zones = this.zoneGround !== null
+    const { layer, zs } = this.grid, zones = this.zoneGround !== null, loading = processOn(this.config, 'loading')
     for (let z = z0; z < z1; z++) {
       const [thEnv, qEnv] = this.envNow(z), thvEnv = thEnv * (1 + .61 * qEnv), alt = zs[z], inZone = zones && alt < ZONE_DEPTH, shape = inZone ? zoneShape(alt) : 0, exner = this.env.exner[z]
       for (let i = z * layer, c = 0; c < layer; i++, c++) {
         const ref = inZone ? (thEnv + this.zoneThetaNow[c] * shape / exner) * (1 + .61 * (qEnv + this.zoneVapourNow[c] * shape)) : thvEnv
-        const loaded = this.cloud[i] + this.ice[i] + this.rain[i] + this.snow[i] + this.graupel[i] + this.hail[i]
+        const loaded = this.cloud[i] + this.ice[i] + (loading ? this.rain[i] + this.snow[i] + this.graupel[i] + this.hail[i] : 0)
         tend[i] += G * ((this.theta[i] * (1 + .61 * this.q[i]) - ref) / ref - loaded)
       }
     }
@@ -1213,7 +1213,8 @@ export class AtmosphereModel implements TaskModel {
     // pulled-in air comes from the environment (the origin), not from the node's processes.
     const pull = (i: number, keep: number) => { for (const t of BUDGET_TERMS) budget![t][i] *= keep }
     const electric = withIce && this.electrified(), cI = this.chargeIce, cG = this.chargeGraupel, cR = this.chargeRain, cA = this.chargeAir, cNow = this.chargeNow, before = this.massBefore, after = this.massAfter
-    const flux = surfaceFluxes(cfg, this.time), urban = (cfg.city ?? 0) > 0 ? surfaceFluxes(cfg, this.time, 'urban') : flux, f = 2 * OMEGA * Math.sin(cfg.latitude * Math.PI / 180)
+    const flux = surfaceFluxes(cfg, this.time), urban = (cfg.city ?? 0) > 0 ? surfaceFluxes(cfg, this.time, 'urban') : flux, f = processOn(cfg, 'coriolis') ? 2 * OMEGA * Math.sin(cfg.latitude * Math.PI / 180) : 0
+    const evaporate = processOn(cfg, 'evaporation'), loading = processOn(cfg, 'loading'), surfaceOn = processOn(cfg, 'surface')
     // Under a cloud the balance is the same with the sunlight times sunNow: the available energy max(0, A T - LW) of the
     // clear sky's A - LW (the shares of H and LE stay), so a column scales its clear-sky fluxes by it (roadmap B10).
     // sunNow is 1 wherever no cloud shades (and with the shade off): read it, not this.shaded, which is the main thread's
@@ -1241,7 +1242,7 @@ export class AtmosphereModel implements TaskModel {
           if (electric) { before[0] = ice[i] + snow[i]; before[1] = graupel[i] + hail[i]; before[2] = rain[i]; before[3] = cloud[i] }
           // Kessler warm rain, then saturation adjustment (vapour and cloud water in equilibrium after every step).
           // Evaporation of rain and cloud feeds the cold-pool indicator.
-          const evap = !this.rainFormation ? 0 : rain2m ? rain2mProcesses(q, cloud, rain, rainNumber, i, theta[i] * exner, p, rhoZ, dt, this.rainBreakup) : rainProcesses(q, cloud, rain, i, theta[i] * exner, p, rhoZ, dt, intercept)
+          const evap = !this.rainFormation ? 0 : rain2m ? rain2mProcesses(q, cloud, rain, rainNumber, i, theta[i] * exner, p, rhoZ, dt, this.rainBreakup, evaporate) : rainProcesses(q, cloud, rain, i, theta[i] * exner, p, rhoZ, dt, intercept, evaporate)
           // Evaporation takes exactly L/cp per unit mass from the air (no strength multiplier): energy is conserved.
           if (evap > 0) { const cool = LV / CP / exner * evap; mark = theta[i]; theta[i] -= cool; cold[i] += cool; if (budget) { bEvap![i] += theta[i] - mark; given += theta[i] - mark } }
           // Ice: rain freezes (Bigg into graupel, below -38 °C at once), crystals nucleate and grow by deposition (at the
@@ -1325,13 +1326,13 @@ export class AtmosphereModel implements TaskModel {
           // Inside a zone the reference is the zone's own air (each zone its own environment, as the large-scale flow
           // keeps it): its warmer air is not a giant thermal there, but becomes buoyant where it leaves the zone.
           const ref = zones && alt < ZONE_DEPTH ? (thEnv + this.zoneThetaNow[x + row] * zoneShape(alt) / exner) * (1 + .61 * (qEnv + this.zoneVapourNow[x + row] * zoneShape(alt))) : thvEnv
-          const buoy = (theta[i] * (1 + .61 * q[i]) - ref) / ref - cloud[i] - ice[i] - rain[i] - snow[i] - graupel[i] - hail[i]; if (!staged) w[i] += G * buoy * dt
+          const buoy = (theta[i] * (1 + .61 * q[i]) - ref) / ref - cloud[i] - ice[i] - (loading ? rain[i] + snow[i] + graupel[i] + hail[i] : 0); if (!staged) w[i] += G * buoy * dt
           // Damp and rotate only the departure from the environmental wind, so the imposed shear profile is not eroded.
           const du = (u[i] - ue) * keep, dv = (v[i] - ve) * keep; u[i] = ue + du + f * dv * dt; v[i] = ve + dv - f * du * dt
           // The water budget: the microphysics' net vapour change at the node, and rain's evaporation within it.
           { const dq = q[i] - q0; if (dq < 0) wCond -= dq; else wEvap += dq; if (evap > 0) wRain += evap }
           // Surface fluxes enter the lowest levels with the shares in surfaceShare, so the column receives exactly H and LE.
-          if (z < this.surfaceShare.length) {
+          if (surfaceOn && z < this.surfaceShare.length) {
             // The city (if any) blends in its own energy balance under the share of the column it covers.
             const pattern = 1 + this.patternNow[x + row] * .32, per = pattern * this.surfaceShare[z] * dt / rhoZ, c = urban === flux ? 0 : this.cityNow[x + row]
             const sunlit = this.sunNow[x + row], k = sunlit < 1 ? scale(flux.absorbed, sunlit) : 1, ku = c > 0 && sunlit < 1 ? scale(urban.absorbed, sunlit) : 1

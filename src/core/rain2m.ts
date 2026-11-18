@@ -73,7 +73,7 @@ export function fallSpeedZ(q: number, n: number, rho: number) {
  * ventilation (the mean drop mass kept: icrcev 1), then the number bounded. Returns the evaporated rain (kg/kg); the
  * caller applies the latent cooling.
  */
-export function rain2mProcesses(q: Float32Array, cloud: Float32Array, rain: Float32Array, number: Float32Array, i: number, tk: number, p: number, rho: number, dt: number, breakup: RainBreakup = 'none') {
+export function rain2mProcesses(q: Float32Array, cloud: Float32Array, rain: Float32Array, number: Float32Array, i: number, tk: number, p: number, rho: number, dt: number, breakup: RainBreakup = 'none', evaporate = true) {
   const qc = cloud[i], qr = rain[i]
   let nr = qr > RAIN_MIN ? boundedNumber(qr, number[i], rho) * rho : 0 // per m3
   // Autoconversion (cloud droplets: number fixed, radius bounded to 2-60 µm; nu = 0).
@@ -122,7 +122,7 @@ export function rain2mProcesses(q: Float32Array, cloud: Float32Array, rain: Floa
   // Evaporation in subsaturated air (rcond 2: only the loss), at most a tenth of the rain a step and never past saturation.
   let evaporation = 0
   const qs = qsatP(tk - 273.15, p)
-  if (qrNew > RAIN_MIN && nr > 0 && q[i] < qs) {
+  if (evaporate && qrNew > RAIN_MIN && nr > 0 && q[i] < qs) {
     const l = 2500837.367 * (273.15 / tk) ** (.167 + 3.67e-4 * tk), dvap = 2.11e-5 * (tk / 273.15) ** 1.94 * (101325 / p)
     const mu = 1.832e-5 * (416.16 / (tk + 120)) * (tk / 296) ** 1.5, ka = 2.43e-2 * mu / 1.718e-5, nuKin = mu / rho
     const fvent = Math.cbrt(nuKin / dvap) / Math.sqrt(nuKin)

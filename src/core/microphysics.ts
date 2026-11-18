@@ -45,13 +45,13 @@ export function fallSpeed(rain: number, rho: number, rhoGround: number, n0 = N0_
  * and the two parts of the evaporation by ^0.5 (still air: n0 / lambda^2) and ^0.27 (the ventilated part: n0 /
  * lambda^((5 + b) / 2), the exponents of rho qr in the formula, 0.525 and 0.73, giving b).
  */
-export function rainProcesses(q: Float32Array, cloud: Float32Array, rain: Float32Array, i: number, tk: number, p: number, rho: number, dt: number, intercept: RainIntercept = 'fixed') {
+export function rainProcesses(q: Float32Array, cloud: Float32Array, rain: Float32Array, i: number, tk: number, p: number, rho: number, dt: number, intercept: RainIntercept = 'fixed', evaporate = true) {
   const qc = cloud[i], qr = rain[i], n0 = intercept !== 'fixed' && qr > 0 ? interceptOf(intercept, qr, rho) / N0_MP : 1
   const rate = AUTOCONVERSION_RATE * Math.max(0, qc - AUTOCONVERSION_THRESHOLD) + (qr > 0 ? 2.2 * qc * qr ** .875 * (n0 === 1 ? 1 : n0 ** .125) : 0)
   const production = Math.min(qc, rate * dt)
   cloud[i] -= production; rain[i] += production
   const qs = qsatP(tk - 273.15, p)
-  if (rain[i] <= 0 || q[i] >= qs) return 0
+  if (!evaporate || rain[i] <= 0 || q[i] >= qs) return 0
   const rq = .001 * rho * rain[i], ventilation = n0 === 1 ? 1.6 + 124.9 * rq ** .2046 : 1.6 * n0 ** .5 + 124.9 * rq ** .2046 * n0 ** .2704
   const er = (1 - q[i] / qs) * ventilation * rq ** .525 / (.001 * rho * (5.4e5 + 2.55e6 / (p / 100 * qs)))
   const evaporation = Math.min(rain[i], er * dt, (qs - q[i]) / (1 + LV * LV * qs / (CP * RV * tk * tk)))

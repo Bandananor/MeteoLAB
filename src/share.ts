@@ -1,9 +1,9 @@
 // Sharing an experiment and taking its results away: a link that carries every setting (not only the seed), and the
 // time series as CSV files. The link is outside input, so decoding accepts only known settings of the right kind.
-import { MIN_SOUNDING_TOP, type SimConfig, type SoundingLevel, SPACING_MIN } from './core'
+import { MIN_SOUNDING_TOP, type SimConfig, type SoundingLevel, SPACING_MIN, PROCESSES } from './core'
 
 /** The settings a link may carry, with what each may be: a number, one of a few words, a flag, a pair of numbers, a sounding or zones. */
-const KINDS: Record<string, 'number' | 'boolean' | 'pair' | 'sounding' | 'zones' | 'front' | 'advection' | 'wk' | readonly string[]> = {
+const KINDS: Record<string, 'number' | 'boolean' | 'pair' | 'sounding' | 'zones' | 'front' | 'advection' | 'wk' | 'processes' | readonly string[]> = {
   surfaceTemp: 'number', lapseLow: 'number', lapseMid: 'number', lapseUpper: 'number', tropopause: 'number', stratoWarming: 'number',
   rhSurface: 'number', rhLow: 'number', rhMid: 'number', rhUpper: 'number',
   wind0: 'number', wind05: 'number', wind1: 'number', wind3: 'number', wind6: 'number', wind10: 'number',
@@ -13,7 +13,7 @@ const KINDS: Record<string, 'number' | 'boolean' | 'pair' | 'sounding' | 'zones'
   speed: 'number', bubble: 'number', bubbleRadius: 'number', city: 'number',
   surfaceType: ['grass', 'dry', 'water', 'urban'], microphysics: ['warm', 'ice'], transport: ['semi-lagrangian', 'weno'],
   profile: ['weisman-klemp'], domain: ['standard', 'large', 'custom', 'meso'], domainSize: 'pair', edges: ['periodic', 'relaxed', 'relaxed-x'], start: ['thermals', 'line', 'nudge', 'line-thermal', 'ellipsoid', 'cold-pool'], nudge: 'number', single: 'boolean', shade: 'boolean', rainN0: 'number',
-  followStorm: 'boolean', lightning: 'boolean', frameMotion: 'pair', sounding: 'sounding', zones: 'zones', frontLine: 'front', largeScale: 'advection', weismanKlemp: 'wk',
+  followStorm: 'boolean', lightning: 'boolean', off: 'processes', frameMotion: 'pair', sounding: 'sounding', zones: 'zones', frontLine: 'front', largeScale: 'advection', weismanKlemp: 'wk',
 }
 /** Numbers from a link are kept within this magnitude (a slider never goes near it). */
 const LIMIT = 1e5
@@ -21,6 +21,7 @@ const LIMIT = 1e5
 const fits = (kind: (typeof KINDS)[string], v: unknown) => {
   if (kind === 'number') return typeof v === 'number' && Number.isFinite(v) && Math.abs(v) <= LIMIT
   if (kind === 'boolean') return typeof v === 'boolean'
+  if (kind === 'processes') return Array.isArray(v) && v.length > 0 && v.every(p => (PROCESSES as readonly unknown[]).includes(p)) && new Set(v).size === v.length
   if (kind === 'pair') return Array.isArray(v) && v.length === 2 && v.every(x => typeof x === 'number' && Number.isFinite(x) && Math.abs(x) <= LIMIT)
   if (kind === 'zones') return validZones(v)
   if (kind === 'front') return validFront(v)

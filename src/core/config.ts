@@ -5,6 +5,12 @@ import type { AdvectionChange } from './largescale'
 
 export type SurfaceType = 'grass' | 'dry' | 'water' | 'urban'
 
+/** The processes a run can switch off (SimConfig.off). */
+export const PROCESSES = ['evaporation', 'loading', 'coriolis', 'surface'] as const
+export type Process = (typeof PROCESSES)[number]
+/** Whether a process is on in a configuration. */
+export const processOn = (c: { off?: readonly Process[] }, p: Process) => !c.off?.includes(p)
+
 export interface SimConfig {
   surfaceTemp: number; lapseLow: number; lapseMid: number; lapseUpper: number; tropopause: number; stratoWarming: number
   rhSurface: number; rhLow: number; rhMid: number; rhUpper: number
@@ -150,6 +156,13 @@ export interface SimConfig {
    * into what each process gave the air on its way there and where the air came from. Costs 8 more transported fields.
    */
   budget?: boolean
+  /**
+   * Processes switched off for a lesson (3.0 block Ж, step 3; absent: all on): 'evaporation' — rain does not evaporate
+   * (no evaporative cold pool); 'loading' — rain, snow, graupel and hail do not weigh on the air's buoyancy (cloud
+   * water and ice still do; the dynamics then runs on the CPU); 'coriolis' — no Coriolis force on the departures from
+   * the environment's wind; 'surface' — no sensible and latent heat fluxes from the ground.
+   */
+  off?: readonly Process[]
   /**
    * The rain's size distribution intercept, mm^-1 m^-3 as the literature gives it (absent = Marshall-Palmer's 8000; roadmap
    * D1, D2): an experiment setting for series and links, not in the interface — AtmosphereModel.rainIntercept, 100-20000.
