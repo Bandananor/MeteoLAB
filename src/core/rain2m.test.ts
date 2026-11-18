@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { AtmosphereModel, DT } from '.'
 import { SUMMER_DAY } from './fixtures'
-import { boundedNumber, dnOf, fallSpeeds, fallSpeedZ, meanVolume, RAIN_MIN, rain2mProcesses, rainNumberChange, RHO_W, XV_MAX, XV_MIN } from './rain2m'
+import { boundedNumber, dnOf, fallSpeeds, fallSpeedZ, meanVolume, RAIN_MIN, type RainBreakup, rain2mProcesses, rainNumberChange, RHO_W, XV_MAX, XV_MIN } from './rain2m'
+import { qsatP } from './microphysics'
 
 describe('two-moment rain after NSSL (rain2m.ts, Э1 step 1)', () => {
   it('bounds the mean drop between 80 µm and a 6 mm mass-weighted diameter, keeping the mass', () => {
@@ -71,5 +72,18 @@ describe('two-moment rain after NSSL (rain2m.ts, Э1 step 1)', () => {
       expect(m.rainNumber[i]).toBeGreaterThanOrEqual(0)
       if (m.rain[i] > 1e-7) { const xv = m.rain[i] / (RHO_W * m.rainNumber[i]); expect(xv).toBeGreaterThanOrEqual(XV_MIN * .999); expect(xv).toBeLessThanOrEqual(XV_MAX * 1.001) }
     }
+  })
+
+  it('breaks large drops up only with the breakup switch: to Dn ≈ 0.6 mm (Morrison), ≈ 0.72 mm (NSSL irainbreak 2)', () => {
+    // Saturated air (no evaporation), 2 g/kg of rain starting at Dn 1.2 mm, 30 min.
+    const settle = (b: RainBreakup) => {
+      const tk = 288, p = 9e4, rho = p / (287 * tk), q = Float32Array.of(qsatP(tk - 273.15, p) * 1.0001), rain = Float32Array.of(2e-3), n = Float32Array.of(2e-3 / (RHO_W * Math.PI * 1.2e-3 ** 3))
+      for (let t = 0; t < 1800; t += DT) rain2mProcesses(q, Float32Array.of(0), rain, n, 0, tk, p, rho, DT, b)
+      expect(rain[0]).toBeCloseTo(2e-3, 6)
+      return dnOf(meanVolume(rain[0], n[0])) * 1000
+    }
+    expect(settle('none')).toBeCloseTo(1.2, 2)
+    expect(settle('morrison')).toBeCloseTo(.6, 1)
+    expect(settle('nssl')).toBeGreaterThan(.65); expect(settle('nssl')).toBeLessThan(.8)
   })
 })

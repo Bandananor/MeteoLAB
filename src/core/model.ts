@@ -16,7 +16,7 @@ import { coldMoisture, FRONT_BLUR, FRONTAL_TIME, frontalDeficit, frontDistance, 
 import { graupelFallSpeed, graupelProcesses, N0G, N0R, RHO_G, RHO_W } from './graupel'
 import { hailFallSpeed, hailMaxDiameter, hailProcesses, N0H, RHO_H, wetGrowing } from './hail'
 import { CRYSTAL_MASS, fragmentsPerKg, freezeRain, iceProcesses, N0S, RHO_S, saturationAdjustMixed, settleCrystals, snowFallSpeed, snowProcesses, SPLINTERS, splintering } from './ice'
-import { exponentialMeanMass, fallSpeeds, fallSpeedZ, G1, RAIN_MIN, rain2mProcesses, rainNumberChange } from './rain2m'
+import { exponentialMeanMass, fallSpeeds, fallSpeedZ, G1, RAIN_MIN, type RainBreakup, rain2mProcesses, rainNumberChange } from './rain2m'
 import { densityOf, GRAUPEL_2M, HAIL_2M, ICE2M_MIN, type IceClass, ice2mProcesses, largestDiameter, momentSpeed, reflectivityFactor, rimerMoments } from './ice2m'
 import { fallSpeed, interceptOf, N0_MP, qsatP, type RainIntercept, rainProcesses, saturationAdjust } from './microphysics'
 import { PressureSolver } from './pressure'
@@ -736,6 +736,8 @@ export class AtmosphereModel implements TaskModel {
    */
   iceMoments: 1 | 2 = (globalThis as { process?: { env: Record<string, string | undefined> } }).process?.env?.STORMLAB_ICE2M === '1' ? 2 : 1
   rainMoments: 1 | 2 = (globalThis as { process?: { env: Record<string, string | undefined> } }).process?.env?.STORMLAB_RAIN2M === '1' ? 2 : 1
+  /** Breakup of two-moment rain (rain2m.ts RainBreakup), off by default; STORMLAB_BREAKUP=nssl or morrison sets it. */
+  rainBreakup: RainBreakup = ((b?: string) => b === 'nssl' || b === 'morrison' ? b : 'none')((globalThis as { process?: { env: Record<string, string | undefined> } }).process?.env?.STORMLAB_BREAKUP)
   // Created with the model, so that their shared arrays exist before any helper thread attaches.
   private readonly flux: FluxTransport; private readonly turbulence: Turbulence
   private readonly memory: Memory
@@ -1220,7 +1222,7 @@ export class AtmosphereModel implements TaskModel {
           if (electric) { before[0] = ice[i] + snow[i]; before[1] = graupel[i] + hail[i]; before[2] = rain[i]; before[3] = cloud[i] }
           // Kessler warm rain, then saturation adjustment (vapour and cloud water in equilibrium after every step).
           // Evaporation of rain and cloud feeds the cold-pool indicator.
-          const evap = !this.rainFormation ? 0 : rain2m ? rain2mProcesses(q, cloud, rain, rainNumber, i, theta[i] * exner, p, rhoZ, dt) : rainProcesses(q, cloud, rain, i, theta[i] * exner, p, rhoZ, dt, intercept)
+          const evap = !this.rainFormation ? 0 : rain2m ? rain2mProcesses(q, cloud, rain, rainNumber, i, theta[i] * exner, p, rhoZ, dt, this.rainBreakup) : rainProcesses(q, cloud, rain, i, theta[i] * exner, p, rhoZ, dt, intercept)
           // Evaporation takes exactly L/cp per unit mass from the air (no strength multiplier): energy is conserved.
           if (evap > 0) { const cool = LV / CP / exner * evap; mark = theta[i]; theta[i] -= cool; cold[i] += cool; if (budget) { bEvap![i] += theta[i] - mark; given += theta[i] - mark } }
           // Ice: rain freezes (Bigg into graupel, below -38 °C at once), crystals nucleate and grow by deposition (at the
@@ -1386,13 +1388,13 @@ export class AtmosphereModel implements TaskModel {
 
   /** The settings helper threads must follow (threads.ts): the config and the model's switches. */
   settings() {
-    return JSON.stringify({ config: this.config, microphysics: this.microphysics, transport: this.transport, rainFormation: this.rainFormation, windRelaxation: this.windRelaxation, fixedViscosity: this.fixedViscosity, transportSlabs: this.transportSlabs, pressureInStages: this.pressureInStages, rainIntercept: this.rainIntercept, turbulenceWidth: this.turbulenceWidth, verticalLength: this.verticalLength, verticalMixing: this.verticalMixing, moistStability: this.moistStability, rainMoments: this.rainMoments, iceMoments: this.iceMoments })
+    return JSON.stringify({ config: this.config, microphysics: this.microphysics, transport: this.transport, rainFormation: this.rainFormation, windRelaxation: this.windRelaxation, fixedViscosity: this.fixedViscosity, transportSlabs: this.transportSlabs, pressureInStages: this.pressureInStages, rainIntercept: this.rainIntercept, turbulenceWidth: this.turbulenceWidth, verticalLength: this.verticalLength, verticalMixing: this.verticalMixing, moistStability: this.moistStability, rainMoments: this.rainMoments, iceMoments: this.iceMoments, rainBreakup: this.rainBreakup })
   }
 
   applySettings(json: string) {
     const s = JSON.parse(json)
     Object.assign(this.config, s.config)
-    this.microphysics = s.microphysics; this.transport = s.transport; this.rainFormation = s.rainFormation; this.windRelaxation = s.windRelaxation; this.fixedViscosity = s.fixedViscosity; this.transportSlabs = s.transportSlabs; this.pressureInStages = s.pressureInStages; this.rainIntercept = s.rainIntercept; this.turbulenceWidth = s.turbulenceWidth; this.verticalLength = s.verticalLength; this.verticalMixing = s.verticalMixing; this.moistStability = s.moistStability ?? 'thetae'; this.rainMoments = s.rainMoments ?? 1; this.iceMoments = s.iceMoments ?? 1
+    this.microphysics = s.microphysics; this.transport = s.transport; this.rainFormation = s.rainFormation; this.windRelaxation = s.windRelaxation; this.fixedViscosity = s.fixedViscosity; this.transportSlabs = s.transportSlabs; this.pressureInStages = s.pressureInStages; this.rainIntercept = s.rainIntercept; this.turbulenceWidth = s.turbulenceWidth; this.verticalLength = s.verticalLength; this.verticalMixing = s.verticalMixing; this.moistStability = s.moistStability ?? 'thetae'; this.rainMoments = s.rainMoments ?? 1; this.iceMoments = s.iceMoments ?? 1; this.rainBreakup = s.rainBreakup ?? 'none'
   }
 
   /** Makes the node velocities exactly free of dual-cell divergence (see PressureSolver); ground and top are rigid walls. */

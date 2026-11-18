@@ -20,6 +20,17 @@ const AA1 = 9.44e15, AA2 = 5.78e3
 export const G1 = 120 / 6
 /** Rain fall speed V(D) = 10 (1 - exp(-516.575 D)) m/s (NSSL's), its moments for the distribution below. */
 const VT_A = 10, VT_B = 516.575
+/**
+ * Collisional breakup of rain (Э1, 18.11.2026; .claude/literature/rain-breakup.md). NSSL's 2M default has none beyond the
+ * self-collection efficiency falling off above 0.6 mm, and our drops at the ground came out too large (Dn 0.6-0.78 mm,
+ * D_m 2.4-3.1 mm), evaporating little: weak cold pools. 'nssl': NSSL's irainbreak = 2 (WRF; for its 3-moment rain):
+ * a number source rainbreakfac (1 - ec0) (rho q)^2, rainbreakfac 1e6 m3 kg^-2 s^-1, full above a 2 mm mean-volume
+ * diameter. 'morrison': Morrison et al. (2009), NSSL's irainbreak = 100: self-collection and breakup together,
+ * dN/dt = -5.78 Ec N q rho with Ec = 1 below Dn 300 µm, 2 - exp(2300 (Dn - 300 µm)) above (equilibrium at Dn ≈ 0.6 mm).
+ */
+export type RainBreakup = 'none' | 'nssl' | 'morrison'
+export const RAIN_BREAK_FACTOR = 1e6
+
 /** Below this much rain (kg/kg) a node has none (NSSL's qxmin); fewer drops per kg than this count as none. */
 export const RAIN_MIN = 1e-12, NUMBER_MIN = 1e-8
 
@@ -62,7 +73,7 @@ export function fallSpeedZ(q: number, n: number, rho: number) {
  * ventilation (the mean drop mass kept: icrcev 1), then the number bounded. Returns the evaporated rain (kg/kg); the
  * caller applies the latent cooling.
  */
-export function rain2mProcesses(q: Float32Array, cloud: Float32Array, rain: Float32Array, number: Float32Array, i: number, tk: number, p: number, rho: number, dt: number) {
+export function rain2mProcesses(q: Float32Array, cloud: Float32Array, rain: Float32Array, number: Float32Array, i: number, tk: number, p: number, rho: number, dt: number, breakup: RainBreakup = 'none') {
   const qc = cloud[i], qr = rain[i]
   let nr = qr > RAIN_MIN ? boundedNumber(qr, number[i], rho) * rho : 0 // per m3
   // Autoconversion (cloud droplets: number fixed, radius bounded to 2-60 µm; nu = 0).
@@ -95,9 +106,14 @@ export function rain2mProcesses(q: Float32Array, cloud: Float32Array, rain: Floa
   if (take > qc) { const s = qc / take; auto *= s; autoN *= s; accretion *= s }
   // Self-collection: none above 2 mm (icracrthresh), the efficiency falling off above 0.6 mm (ec0).
   let selfN = 0
-  if (nr > 0 && dv - 1e-4 <= 1.9e-3) {
-    const ec0 = dv < 6.1e-4 ? 1 : Math.exp(-2500 * (dv - 6e-4))
-    selfN = rwrad >= 50e-6 ? ec0 * AA2 * nr * nr * xvr : ec0 * AA1 * (nr * xvr) ** 2 * G1
+  if (breakup === 'morrison') {
+    // Morrison: one rate for both, negative (breakup) beyond the equilibrium.
+    if (nr > 0) { const dn = dnOf(xvr), ec = dn < 300e-6 ? 1 : 2 - Math.exp(2300 * (dn - 300e-6)); selfN = 5.78 * ec * nr * qr * rho }
+  } else {
+    const big = !(dv - 1e-4 <= 1.9e-3), ec0 = big ? 0 : dv < 6.1e-4 ? 1 : Math.exp(-2500 * (dv - 6e-4))
+    if (nr > 0 && !big) selfN = rwrad >= 50e-6 ? ec0 * AA2 * nr * nr * xvr : ec0 * AA1 * (nr * xvr) ** 2 * G1
+    // NSSL irainbreak = 2: breakup where self-collection fails (none at all above ~2 mm).
+    if (breakup === 'nssl' && nr > 0) selfN -= RAIN_BREAK_FACTOR * (1 - ec0) * (rho * qr) ** 2
   }
   cloud[i] = qc - (auto + accretion) * dt
   let qrNew = qr + (auto + accretion) * dt
