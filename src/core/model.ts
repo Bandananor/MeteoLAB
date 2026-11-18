@@ -25,6 +25,7 @@ import { insolation, sunDirection } from './solar'
 import { computeSounding, type Sounding } from './sounding'
 import { deficitNear, outflowDeficit } from './rkw'
 import { precipitationFlux } from './surfaceflux'
+import { waterReservoirs } from './water'
 import { type Memory, type Phase, PRIVATE_MEMORY, type StepRunner, type TaskModel } from './threads'
 import { intervene } from './intervene'
 import { EXTINCTION, sunlightThrough } from './optics'
@@ -216,6 +217,16 @@ export class AtmosphereModel implements TaskModel {
   chargeGround = 0
   /** Heat (J) and vapour (kg) put in by hand during the run (interventions, intervene.ts), and how many times. */
   added = { heat: 0, vapour: 0, count: 0 }
+  /**
+   * The domain's water budget since the start (3.0 block Ж, step 3), kg: vapour the microphysics turned into cloud and ice
+   * (net per node and step: condensation and deposition less what evaporated or sublimated there), vapour it gave back
+   * (the same, where the node gained vapour), of which rain evaporating, and the ground's evaporation (surface LE). The
+   * reservoirs (vapour, condensate, precipitation aloft and on the ground) are read from the fields (water.ts); `start`
+   * is their sum at the start (the thermals' vapour), so that the remainder starts at zero.
+   */
+  water = { condensed: 0, evaporated: 0, rainEvaporated: 0, surface: 0, start: 0 }
+  /** This step's water budget terms by level (water's four, kg), each level written by the thread that computes it. */
+  private readonly levelWater: Float32Array
   /** The latest flashes (lightning.ts), oldest first, at most RECENT_FLASHES; and the counts since the start. */
   readonly flashes: Flash[] = []
   flashCount = { ic: 0, cg: 0 }
@@ -311,6 +322,7 @@ export class AtmosphereModel implements TaskModel {
     this.solver = new PressureSolver(grid, this.env.rho, this.memory)
     this.pressure = this.memory.f64('pressure', this.solver.cells); this.divergence = this.memory.f64('divergence', this.solver.cells); this.scratch = f()
     this.coreW = new Float64Array(grid.layer); this.coreWZ = new Float64Array(grid.layer); this.coreLabel = new Uint8Array(grid.layer)
+    this.levelWater = shared('level-water', grid.nz * 4)
     this.surfacePattern = new Float32Array(grid.layer); this.uhColumn = new Float32Array(grid.layer); this.precipitation = new Float32Array(grid.layer); this.fallSpeed = shared('fallSpeed')
     // Mass of each level per unit area and per metre of mean spacing: rho0 times the control-volume height over dz.
     this.levelWeight = Float64Array.from({ length: grid.nz }, (_, z) => grid.hz[z] / grid.dz * this.env.rho[z])
@@ -377,7 +389,8 @@ export class AtmosphereModel implements TaskModel {
     else if (this.config.profile === 'weisman-klemp') bubble(W * .3, D * .5, this.config.bubble)
     else { bubble(W * .38, D * .45, this.config.bubble); bubble(W * .61, D * .57, .72 * this.config.bubble) }
     // The starting thermals are the setup, not something added during the run.
-    this.added = { heat: 0, vapour: 0, count: 0 }
+    this.added = { heat: 0, vapour: 0, count: 0 }; this.water = { condensed: 0, evaporated: 0, rainEvaporated: 0, surface: 0, start: 0 }
+    this.water.start = waterReservoirs(this)
   }
 
   /** The reference squall-line starts (LINE_THERMAL, COLD_POOL) along the domain's middle, shifted by startOffset. */
@@ -978,6 +991,8 @@ export class AtmosphereModel implements TaskModel {
     }
     // Microphysics, buoyancy, Coriolis, surface fluxes and the sponge: node by node, one task per level.
     this.runner.run('physics', this.grid.nz, dt)
+    const lw = this.levelWater, wb = this.water
+    for (let k = 0; k < lw.length; k += 4) { wb.condensed += lw[k]; wb.evaporated += lw[k + 1]; wb.rainEvaporated += lw[k + 2]; wb.surface += lw[k + 3] }
   }
 
   /** After the projection: the rotation tracking and the lightning. */
@@ -1185,6 +1200,9 @@ export class AtmosphereModel implements TaskModel {
   /** Microphysics, buoyancy, Coriolis, surface fluxes and the sponge at every node of level z (nodes are independent). */
   private physics(z: number, dt: number) {
     const { nx, ny, zs, height: H, layer } = this.grid, withIce = this.withIce(), staged = this.staged()
+    // The water budget of this level: kg per unit of mixing ratio at a node (rho dV), the four terms.
+    const nodeMass = this.grid.dx * this.grid.dy * this.grid.hz[z] * this.env.rho[z], lw = this.levelWater, l4 = z * 4
+    let wCond = 0, wEvap = 0, wRain = 0, wSurf = 0
     const cfg = this.config, e = this.env, u = this.u, v = this.v, w = this.w, theta = this.theta, q = this.q, cloud = this.cloud, rain = this.rain, cold = this.cold
     const ice = this.ice, iceNumber = this.iceNumber, snow = this.snow, graupel = this.graupel, hail = this.hail, rhoGround = e.rho[0]
     const intercept = this.rainIntercept, rain2m = this.rain2m(), rainNumber = this.rainNumber, ice2m = this.ice2m()
@@ -1219,6 +1237,7 @@ export class AtmosphereModel implements TaskModel {
           const start = theta[i]
           let mark = 0, given = 0, pulled = 0
           if (advecting) { theta[i] += addTheta; q[i] = Math.max(0, q[i] + addQ) }
+          const q0 = q[i]
           if (electric) { before[0] = ice[i] + snow[i]; before[1] = graupel[i] + hail[i]; before[2] = rain[i]; before[3] = cloud[i] }
           // Kessler warm rain, then saturation adjustment (vapour and cloud water in equilibrium after every step).
           // Evaporation of rain and cloud feeds the cold-pool indicator.
@@ -1309,13 +1328,16 @@ export class AtmosphereModel implements TaskModel {
           const buoy = (theta[i] * (1 + .61 * q[i]) - ref) / ref - cloud[i] - ice[i] - rain[i] - snow[i] - graupel[i] - hail[i]; if (!staged) w[i] += G * buoy * dt
           // Damp and rotate only the departure from the environmental wind, so the imposed shear profile is not eroded.
           const du = (u[i] - ue) * keep, dv = (v[i] - ve) * keep; u[i] = ue + du + f * dv * dt; v[i] = ve + dv - f * du * dt
+          // The water budget: the microphysics' net vapour change at the node, and rain's evaporation within it.
+          { const dq = q[i] - q0; if (dq < 0) wCond -= dq; else wEvap += dq; if (evap > 0) wRain += evap }
           // Surface fluxes enter the lowest levels with the shares in surfaceShare, so the column receives exactly H and LE.
           if (z < this.surfaceShare.length) {
             // The city (if any) blends in its own energy balance under the share of the column it covers.
             const pattern = 1 + this.patternNow[x + row] * .32, per = pattern * this.surfaceShare[z] * dt / rhoZ, c = urban === flux ? 0 : this.cityNow[x + row]
             const sunlit = this.sunNow[x + row], k = sunlit < 1 ? scale(flux.absorbed, sunlit) : 1, ku = c > 0 && sunlit < 1 ? scale(urban.absorbed, sunlit) : 1
             const heat = (k * flux.sensible + c * (ku * urban.sensible - k * flux.sensible)) * per / (CP * exner)
-            mark = theta[i]; theta[i] += heat; q[i] += (k * flux.latent + c * (ku * urban.latent - k * flux.latent)) * per / LV
+            const vapour = (k * flux.latent + c * (ku * urban.latent - k * flux.latent)) * per / LV
+            mark = theta[i]; theta[i] += heat; q[i] += vapour; wSurf += vapour
             if (budget) { bSurface![i] += theta[i] - mark; given += theta[i] - mark }
           }
           // Below 0.001 K the indicator is noise from the transport tails: zero, so the transport can skip it.
@@ -1355,6 +1377,7 @@ export class AtmosphereModel implements TaskModel {
       }
     }
     if (withIce) for (let i = z * layer, e = i + layer; i < e; i++) this.condensate[i] = cloud[i] + ice[i]
+    lw[l4] = wCond * nodeMass; lw[l4 + 1] = wEvap * nodeMass; lw[l4 + 2] = wRain * nodeMass; lw[l4 + 3] = wSurf * nodeMass
   }
 
   /**

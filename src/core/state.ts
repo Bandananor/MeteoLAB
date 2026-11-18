@@ -20,17 +20,19 @@ export interface StateHeader {
   format: 'meteolab-state'; version: number; config: unknown; time: number; persisted: number; nx: number; ny: number; nz: number
   /** Version 2: charge carried to the ground (C) and the flashes since the start. */
   chargeGround?: number; flashCount?: { ic: number; cg: number }
+  /** Since 3.0 (optional, no new version): the water budget's flows and what was put in by hand, so the budget goes on. */
+  water?: { condensed: number; evaporated: number; rainEvaporated: number; surface: number; start: number }; added?: { heat: number; vapour: number; count: number }
 }
 export interface SavedState { header: StateHeader; data: Float32Array }
 
-type StateModel = Pick<AtmosphereModel, 'grid' | 'time' | 'rotation' | 'chargeGround' | 'flashCount' | 'flashes' | (typeof STATE_FIELDS)[number] | (typeof STATE_COLUMNS)[number]>
+type StateModel = Pick<AtmosphereModel, 'grid' | 'time' | 'rotation' | 'chargeGround' | 'flashCount' | 'flashes' | 'water' | 'added' | (typeof STATE_FIELDS)[number] | (typeof STATE_COLUMNS)[number]>
 
 /** The fields a file of this version holds. */
 const fieldsOf = (version: number) => version === 1 ? STATE_FIELDS.slice(0, V1_FIELDS) : version === 2 ? STATE_FIELDS.slice(0, V2_FIELDS) : version === 3 ? STATE_FIELDS.slice(0, V3_FIELDS) : version === 4 ? STATE_FIELDS.slice(0, V4_FIELDS) : STATE_FIELDS
 
 export function saveState(m: StateModel, config: SimConfig): ArrayBuffer {
   const { nx, ny, nz, n, layer } = m.grid
-  const header: StateHeader = { format: 'meteolab-state', version: VERSION, config, time: m.time, persisted: m.rotation.persisted, nx, ny, nz, chargeGround: m.chargeGround, flashCount: { ...m.flashCount } }
+  const header: StateHeader = { format: 'meteolab-state', version: VERSION, config, time: m.time, persisted: m.rotation.persisted, nx, ny, nz, chargeGround: m.chargeGround, flashCount: { ...m.flashCount }, water: { ...m.water }, added: { ...m.added } }
   const json = new TextEncoder().encode(JSON.stringify(header)), start = Math.ceil((8 + json.length) / 4) * 4
   const buffer = new ArrayBuffer(start + (STATE_FIELDS.length * n + STATE_COLUMNS.length * layer) * 4), bytes = new Uint8Array(buffer)
   bytes.set(new TextEncoder().encode(MAGIC)); new DataView(buffer).setUint32(4, json.length, true); bytes.set(json, 8)
@@ -70,6 +72,9 @@ export function applyState(m: StateModel, state: SavedState) {
   // The rotation diagnostics are not saved: recomputed from the fields (on a model; not on a bare holder of fields).
   ;(m as { refreshRotation?: () => void }).refreshRotation?.()
   m.chargeGround = h.chargeGround ?? 0; m.flashCount = { ic: h.flashCount?.ic ?? 0, cg: h.flashCount?.cg ?? 0 }
+  // Files from before 3.0 have no budget: it starts at the file's moment (its rain on the ground then shows in the remainder).
+  m.water = { condensed: h.water?.condensed ?? 0, evaporated: h.water?.evaporated ?? 0, rainEvaporated: h.water?.rainEvaporated ?? 0, surface: h.water?.surface ?? 0, start: h.water?.start ?? 0 }
+  m.added = { heat: h.added?.heat ?? 0, vapour: h.added?.vapour ?? 0, count: h.added?.count ?? 0 }
   const kept = m.flashes.findIndex(f => f.time > h.time)
   if (kept >= 0) m.flashes.length = kept
 }

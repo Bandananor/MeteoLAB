@@ -387,7 +387,7 @@ export class Atmosphere implements ViewSettings {
     const now = performance.now(), mark = this.speedMark
     if (!mark || m.time < mark.model || now - mark.real > 5000) this.speedMark = { real: now, model: m.time }
     else if (now - mark.real > 2000) { this.realSpeed = (m.time - mark.model) / ((now - mark.real) / 1000); this.speedMark = { real: now, model: m.time } }
-    m.flashes.push(...s.flashes); m.flashCount = s.flashCount; m.chargeGround = s.chargeGround; m.added = s.added
+    m.flashes.push(...s.flashes); m.flashCount = s.flashCount; m.chargeGround = s.chargeGround; m.added = s.added; if (s.water) m.water = s.water
     if (m.flashes.length > KEPT_FLASHES) m.flashes.splice(0, m.flashes.length - KEPT_FLASHES)
     this.post({ type: 'release', buffer: s.buffer }, [s.buffer])
     this.inFlight = false

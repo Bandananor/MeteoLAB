@@ -174,7 +174,7 @@ function send() {
   for (const key of SNAPSHOT_COLUMNS) { data.set(model[key], offset); offset += layer }
   const total = flashTotal(model), flashes = model.flashes.slice(Math.max(0, model.flashes.length - (total - sentFlashes)))
   sentFlashes = total
-  const snapshot: Snapshot = { type: 'snapshot', buffer, steps: pendingSteps, flashes, flashCount: { ...model.flashCount }, chargeGround: model.chargeGround, added: { ...model.added }, time: model.time, rotation: { ...model.rotation }, diagnostics: model.diagnostics(), threads: pool ? pool.helpers + 1 : 1, gpu: gpuState, loaded,
+  const snapshot: Snapshot = { type: 'snapshot', buffer, steps: pendingSteps, flashes, flashCount: { ...model.flashCount }, chargeGround: model.chargeGround, added: { ...model.added }, water: { ...model.water }, time: model.time, rotation: { ...model.rotation }, diagnostics: model.diagnostics(), threads: pool ? pool.helpers + 1 : 1, gpu: gpuState, loaded,
     stepMs: timing.steps ? { step: timing.step / timing.steps, gpu: timing.gpu / timing.steps } : undefined }
   timing.step = timing.gpu = timing.steps = 0
   pendingSteps = 0; loaded = false
