@@ -33,6 +33,11 @@ export interface SimConfig {
   moistLayer?: number
   /** Microphysics; overrides AtmosphereModel.microphysics (default with ice) when set (the UI switch). */
   microphysics?: 'warm' | 'ice'
+  /**
+   * 2: two-moment NSSL microphysics (rain2m.ts, ice2m.ts: mass and number of the drops, graupel and hail, their volume);
+   * absent: one-moment (the default, the author's decision of 22.11.2026). STORMLAB_RAIN2M / STORMLAB_ICE2M still set it in Node.
+   */
+  moments?: number
   /** Electrification and lightning (2.3; with the ice microphysics only); default on. */
   lightning?: boolean
   /** Transport scheme; overrides AtmosphereModel.transport (default WENO) when set (the UI switch). */

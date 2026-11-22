@@ -86,4 +86,12 @@ describe('two-moment rain after NSSL (rain2m.ts, Э1 step 1)', () => {
     expect(settle('morrison')).toBeCloseTo(.6, 1)
     expect(settle('nssl')).toBeGreaterThan(.65); expect(settle('nssl')).toBeLessThan(.8)
   })
+
+  it('is switched on by the configuration (the interface setting) for the model and, through its settings, its helpers', () => {
+    const one = new AtmosphereModel({ ...SUMMER_DAY }), two = new AtmosphereModel({ ...SUMMER_DAY, moments: 2 })
+    expect(one.rain2m() || one.ice2m()).toBe(false)
+    expect(two.rain2m()).toBe(true); expect(two.ice2m()).toBe(true)
+    const helper = new AtmosphereModel({ ...SUMMER_DAY }); helper.applySettings(two.settings())
+    expect(helper.rain2m()).toBe(true); expect(helper.ice2m()).toBe(true)
+  })
 })

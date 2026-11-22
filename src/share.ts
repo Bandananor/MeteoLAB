@@ -13,7 +13,7 @@ const KINDS: Record<string, 'number' | 'boolean' | 'pair' | 'sounding' | 'zones'
   speed: 'number', bubble: 'number', bubbleRadius: 'number', city: 'number',
   surfaceType: ['grass', 'dry', 'water', 'urban'], microphysics: ['warm', 'ice'], transport: ['semi-lagrangian', 'weno'],
   profile: ['weisman-klemp'], domain: ['standard', 'large', 'custom', 'meso'], domainSize: 'pair', edges: ['periodic', 'relaxed', 'relaxed-x'], start: ['thermals', 'line', 'nudge', 'line-thermal', 'ellipsoid', 'cold-pool'], nudge: 'number', single: 'boolean', shade: 'boolean', rainN0: 'number',
-  followStorm: 'boolean', lightning: 'boolean', off: 'processes', frameMotion: 'pair', sounding: 'sounding', zones: 'zones', frontLine: 'front', largeScale: 'advection', weismanKlemp: 'wk',
+  followStorm: 'boolean', lightning: 'boolean', off: 'processes', moments: 'number', frameMotion: 'pair', sounding: 'sounding', zones: 'zones', frontLine: 'front', largeScale: 'advection', weismanKlemp: 'wk',
 }
 /** Numbers from a link are kept within this magnitude (a slider never goes near it). */
 const LIMIT = 1e5
