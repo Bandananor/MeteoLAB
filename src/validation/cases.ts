@@ -7,10 +7,10 @@
  * The dynamical core against the literature (Straka et al. 1993, Bryan & Fritsch 2002), the Weisman & Klemp (1982)
  * supercell, and every scenario with a thermal against what it is meant to show.
  */
-import { AtmosphereModel, CP, createGrid, DT, G, KAPPA, LARGE_GRID, levelAt, LV, MESO_PERSISTENCE, qsatP, RD, saturationAdjust, SCENARIOS, type SimConfig, weismanKlemp } from '../core'
+import { AtmosphereModel, CP, createGrid, DT, G, KAPPA, LARGE_GRID, levelAt, LV, MESO_PERSISTENCE, qsatP, RD, saturationAdjust, SCENARIOS, SharedMemory, type SimConfig, weismanKlemp } from '../core'
 import type { EnvironmentProfile } from '../core/environment'
 import { SUMMER_DAY } from '../core/fixtures'
-import { squallLine, type Threads } from './squall'
+import { squallGrid, squallLine, type Threads } from './squall'
 
 export interface Check {
   quantity: string; unit: string; value: number
@@ -199,6 +199,24 @@ export function weismanKlempSplit() {
   return { cores: cores.length, separation: left && right ? (left.y - right.y) / 1000 : 0, rightW: right?.w ?? 0, leftW: left?.w ?? 0, rightUh: right?.uh ?? 0, leftUh: left?.uh ?? 0, w60: late[0]?.w ?? 0 }
 }
 
+/**
+ * The same split on a finer grid (3.0 block Г, the 500 m beta): the profile from the configuration (so that helper
+ * threads build the same environment) on the 96 x 72 km domain at `spacing` km. The checks are those of the 1.2 km case.
+ */
+export function weismanKlempSplitFine(spacing: number, threads?: Threads) {
+  const config: SimConfig = { ...SUMMER_DAY, solarMax: 0, bubble: 0, profile: 'weisman-klemp', domain: 'large', spacing }, memory = new SharedMemory()
+  const model = new AtmosphereModel(structuredClone(config), squallGrid(config), undefined, { memory }), stop = threads?.(model, config, memory)
+  try {
+    model.transport = 'weno'
+    model.injectBubble(model.grid.width * .3, model.grid.depth * .5, 1.5)
+    run(model, 45 * 60)
+    const cores = updraftCores(model, 4500, 8), [right, left] = [...cores.slice(0, 2)].sort((a, b) => a.y - b.y)
+    run(model, 15 * 60)
+    const late = updraftCores(model, 4500, 0)
+    return { cores: cores.length, separation: left && right ? (left.y - right.y) / 1000 : 0, rightW: right?.w ?? 0, leftW: left?.w ?? 0, rightUh: right?.uh ?? 0, leftUh: left?.uh ?? 0, w60: late[0]?.w ?? 0, nodes: model.grid.n }
+  } finally { stop?.() }
+}
+
 function run(model: AtmosphereModel, seconds: number) {
   for (let k = 0; k < seconds; k += DT) { model.step(DT); model.time += DT }
 }
@@ -380,4 +398,20 @@ export const LONG_CASES: ValidationCase[] = ([
       note: `Every 30 min from 2 h: C ${fronts.map(f => f.c.toFixed(1)).join(', ')} m/s; C/ΔU ${fronts.map(f => f.cdU5.toFixed(2)).join(', ')}; tilt ${fronts.map(f => f.tilt.toFixed(0)).join(', ')} km; front speed ${fronts.map(f => f.speed.toFixed(1)).join(', ')} m/s; rows with w ≥ 5 m/s at 3 km ${late.map(s => (100 * s.rows).toFixed(0)).join(', ')} %.`,
     }
   },
-}))
+})).concat([{
+  id: 'weisman-klemp-500', title: 'Supercell split (Weisman & Klemp 1982) at 500 m, 96 × 72 km, 60 min', source: 'Weisman & Klemp 1982, Mon. Wea. Rev. 110 (the 500 m beta of 3.0: the 1.2 km case on a finer grid)', minutes: 40,
+  run(threads?: Threads): CaseResult {
+    const r = weismanKlempSplitFine(.5, threads)
+    return {
+      checks: [
+        check('updraught cores at 4.5 km, 45 min (w > 8 m/s)', '', r.cores, '≥ 2 (split)', [2, INF]),
+        check('separation, left mover north of the right one', 'km', r.separation, '> 4 (two distinct cells)', [4, INF]),
+        check('right mover w − left mover w', 'm/s', r.rightW - r.leftW, '> 0 (right mover dominant)', [0, INF]),
+        check('right mover UH 2–5 km', 'm²/s²', r.rightUh, '> 0 (cyclonic)', [0, INF]),
+        check('left mover UH 2–5 km', 'm²/s²', r.leftUh, '< 0 (anticyclonic)', [-INF, 0]),
+        check('strongest updraught at 60 min', 'm/s', r.w60, '> 15 (long-lived)', [15, INF]),
+      ],
+      note: `${r.nodes} nodes; right mover w ${r.rightW.toFixed(1)} m/s, left ${r.leftW.toFixed(1)} m/s.`,
+    }
+  },
+}])

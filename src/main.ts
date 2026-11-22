@@ -135,6 +135,7 @@ app.innerHTML = `<div class="app">
   <main class="app__main">
     <aside class="side side--left" aria-label="${L('Начальные условия', 'Initial conditions')}">
       <div class="side__scroll">
+        <div class="notice notice--warn" id="fineBeta" hidden><span class="notice__text">${L('<b>Сетка 500 м — бета.</b> Шаг по горизонтали 500 м вместо 1,2 км: узлов в ~5 раз больше, мезоциклон и восходящий поток резче (пороги вращения пересчитаны на шаг сетки). Проверена только «Суперячейка WK» — расщепление на правую и левую ячейки, как на 1,2 км; остальные сценарии считаются, но на этом шаге не калиброваны. Нужна видеокарта с WebGPU (настройка «Видеокарта» в «Численной схеме»).', '<b>The 500 m grid — beta.</b> A 500 m horizontal spacing instead of 1.2 km: ~5 times the nodes, a sharper mesocyclone and updraught (the rotation thresholds rescaled to the spacing). Only the “WK supercell” is checked — it splits into right and left movers as on 1.2 km; the other scenarios run but are not calibrated on this grid. It needs a graphics card with WebGPU (the “Graphics card” setting under “Numerics”).')} <span id="fineNoGpu" hidden>${L('В этом браузере WebGPU нет — всё считается на процессоре, медленно.', 'This browser has no WebGPU — the processor computes everything, slowly.')}</span> <a href="./">${L('Вернуться к 1,2 км', 'Back to 1.2 km')}</a></span></div>
         <div class="side__block">
           <h2 class="side__title d-only">${L('Сценарии', 'Scenarios')}</h2>
           <div class="scenarios d-only">${scenarioButtons(plainPresets)}</div>
@@ -465,6 +466,9 @@ addEventListener('keydown', e => {
   if (target) { e.preventDefault(); document.querySelector<HTMLButtonElement>(target)!.click() }
 })
 const config: SimConfig = { ...defaults, ...SCENARIOS[0].values }
+// The 500 m beta (3.0 block Г, the author's decision of 16.11.2026): ?grid=500 runs every scenario on a 500 m grid and
+// stays in the address; the Weisman-Klemp supercell, the only scenario checked on it, opens by default.
+const FINE_GRID = new URLSearchParams(location.search).get('grid') === '500' ? .5 : undefined
 // A shared link (?cfg=..., see share.ts) brings its scenario and settings; it is applied once and leaves the address.
 let initialPreset: number | null = 0, baseScenario: number | null = 0
 /** With a loaded sounding and no scenario: what the run started from (the sounding and its thermal), for markModified. */
@@ -479,11 +483,17 @@ let soundingBase: Partial<SimConfig> | null = null
   // A scenario card on the home page opens it by name (?scenario=...).
   const named = url.searchParams.get('scenario'), index = named === null ? -1 : SCENARIOS.findIndex(s => s.name === named)
   if (!link && index >= 0) { Object.assign(config, defaults, SCENARIOS[index].values); initialPreset = baseScenario = index }
+  if (FINE_GRID && !link && index < 0) { const wk = SCENARIOS.findIndex(s => s.name === 'Суперячейка WK'); Object.assign(config, defaults, SCENARIOS[wk].values); initialPreset = baseScenario = wk }
   if (named !== null) { url.searchParams.delete('scenario'); history.replaceState(null, '', url) }
   // A link with a sounding: that is what the run started from.
   if (config.sounding && baseScenario === null) soundingBase = { sounding: config.sounding, start: config.start }
 }
 fillLowWind(config)
+if (FINE_GRID) {
+  config.spacing = config.domain === 'meso' ? undefined : FINE_GRID
+  document.querySelector<HTMLElement>('#fineBeta')!.hidden = false
+  document.querySelector<HTMLElement>('#fineNoGpu')!.hidden = 'gpu' in navigator
+}
 // Every start, restart and scenario gets a fresh random seed, so no two runs give the same storm. The seed is not shown,
 // only kept in the address (?seed=...), so opening that link repeats the first run of the page.
 const urlSeed = Number(new URLSearchParams(location.search).get('seed'))
@@ -597,7 +607,7 @@ regime.onApply = c => { Object.assign(config, c); syncControls(); markPreset(nul
 document.querySelector('#skewOpen')!.addEventListener('click', () => skewt.toggle())
 let running = true
 let last = performance.now(), frameCount = 0
-const recreate = (seed?: number) => { endReplay(); useSeed(seed ?? compare.seed ?? nextSeed()); const level = sim.level; sim.dispose(); sim = Object.assign(new Atmosphere(canvas, config), view); useQuality(level); if (groundToggle.getAttribute('aria-pressed') === 'true') sim.standSuggested(OBSERVER_BACK); radar.attach(sim.model, sim.storm.rightMover); skewt.attach(sim.model); sim.placeStations(stationGrounds); selectCell(null); showDomain() }
+const recreate = (seed?: number) => { if (FINE_GRID) config.spacing = config.domain === 'meso' ? undefined : FINE_GRID; endReplay(); useSeed(seed ?? compare.seed ?? nextSeed()); const level = sim.level; sim.dispose(); sim = Object.assign(new Atmosphere(canvas, config), view); useQuality(level); if (groundToggle.getAttribute('aria-pressed') === 'true') sim.standSuggested(OBSERVER_BACK); radar.attach(sim.model, sim.storm.rightMover); skewt.attach(sim.model); sim.placeStations(stationGrounds); selectCell(null); showDomain() }
 // Zones of the environment (2.4): applied from their screen, the run starts again with them.
 zonesPanel.onApply = (zones, front) => { config.zones = zones.length ? zones : undefined; config.frontLine = front ?? undefined; recreate(); markModified() }
 // Large-scale advection (2.6): changed in the left column, the run starts again with it.
