@@ -59,6 +59,104 @@ export class FluxTransport {
     this.divergence(0, nz)
   }
 
+  /** The masked face solve's work arrays (terrain), made on first use; its last iterations and relative residual. */
+  private masked: { open: Uint8Array; q: Float64Array; r: Float64Array; z: Float64Array; d: Float64Array; sd: Float64Array; b: Float64Array } | null = null
+  maskedIterations = 0; maskedResidual = 0
+
+  /**
+   * setVelocity with terrain (terrain.ts): no flux through a face next to a solid node, and the projection solves the
+   * masked operator by conjugate gradients, preconditioned by the flat solve. Multiplied by h_k the operator
+   * S phi = -h div(M rho0 grad phi) is symmetric and semi-definite (M the open faces); the face fluxes then lose
+   * M rho0 grad(phi), so their divergence is zero to `tolerance` of the first one at every fluid node — the water the
+   * transport carries cannot cross the ground. On the main thread (helpers idle).
+   */
+  setVelocityMasked(u: Float32Array, v: Float32Array, w: Float32Array, solid: Uint8Array, tolerance = 1e-10, maxIterations = 400) {
+    const { n, nx, ny, nz, layer } = this.grid, { mx, my, mz, div, h, xo, yo } = this
+    // Open faces: bit 1 x (to x+1), 2 y (to y+1), 4 z (to z+1); open when both nodes are fluid.
+    const masked = this.masked ??= (() => {
+      const open = new Uint8Array(n), f = () => new Float64Array(n)
+      for (let z = 0, i = 0; z < nz; z++) for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++, i++) {
+        if (solid[i]) continue
+        const l = z * layer
+        if (!solid[xo[3][x] + y * nx + l]) open[i] |= 1
+        if (!solid[x + yo[3][y] + l]) open[i] |= 2
+        if (z < nz - 1 && !solid[i + layer]) open[i] |= 4
+      }
+      return { open, q: f(), r: f(), z: f(), d: f(), sd: f(), b: f() }
+    })()
+    const { open, q, r, z: zz, d, sd, b } = masked
+    this.faces(u, v, w, 0, nz)
+    for (let i = 0; i < n; i++) { if (!(open[i] & 1)) mx[i] = 0; if (!(open[i] & 2)) my[i] = 0; if (!(open[i] & 4)) mz[i] = 0 }
+    this.divergence(0, nz)
+    // b = -h div; S phi = b.
+    let bb = 0
+    for (let i = 0; i < n; i++) { b[i] = -h[Math.floor(i / layer)] * div[i]; bb += b[i] * b[i] }
+    q.fill(0)
+    if (bb > 0) {
+      for (let i = 0; i < n; i++) r[i] = b[i]
+      this.flatSolve(r, zz)
+      let rz = 0
+      for (let i = 0; i < n; i++) { d[i] = zz[i]; rz += r[i] * zz[i] }
+      let k = 0, rr = bb
+      for (; k < maxIterations && rr > tolerance * tolerance * bb; k++) {
+        this.applyMasked(d, sd, open)
+        let dsd = 0
+        for (let i = 0; i < n; i++) dsd += d[i] * sd[i]
+        if (!(dsd > 0)) break
+        const alpha = rz / dsd
+        rr = 0
+        for (let i = 0; i < n; i++) { q[i] += alpha * d[i]; r[i] -= alpha * sd[i]; rr += r[i] * r[i] }
+        this.flatSolve(r, zz)
+        let rzNew = 0
+        for (let i = 0; i < n; i++) rzNew += r[i] * zz[i]
+        const beta = rzNew / rz
+        rz = rzNew
+        for (let i = 0; i < n; i++) d[i] = zz[i] + beta * d[i]
+      }
+      this.maskedIterations = k; this.maskedResidual = Math.sqrt(rr / bb)
+    } else { this.maskedIterations = 0; this.maskedResidual = 0 }
+    // The fluxes lose M rho0 grad(phi).
+    this.maskedGradient(q, open, -1)
+    this.divergence(0, nz)
+  }
+
+  /** Adds sign * M rho0 grad(phi) to the face fluxes (M: the open faces). */
+  private maskedGradient(phi: Float64Array, open: Uint8Array, sign: number, fx = this.mx, fy = this.my, fz = this.mz) {
+    const { nx, ny, nz, dx, dy, dzs, layer } = this.grid, { xo, yo, rho } = this
+    for (let z = 0, i = 0; z < nz; z++) {
+      const l = z * layer, r = rho[z], rUp = z < nz - 1 ? (rho[z] + rho[z + 1]) / 2 : 0
+      for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++, i++) {
+        const o = open[i]
+        fx[i] += o & 1 ? sign * r * (phi[xo[3][x] + y * nx + l] - phi[i]) / dx : 0
+        fy[i] += o & 2 ? sign * r * (phi[x + yo[3][y] + l] - phi[i]) / dy : 0
+        fz[i] += o & 4 ? sign * rUp * (phi[i + layer] - phi[i]) / dzs[z] : 0
+      }
+    }
+  }
+
+  /** S d = -h div(M rho0 grad d), through the scratch flux arrays. */
+  private applyMasked(d: Float64Array, out: Float64Array, open: Uint8Array) {
+    const { n, nx, ny, nz, dx, dy, layer } = this.grid, { fx, fy, fz, xo, yo, h } = this
+    fx.fill(0); fy.fill(0); fz.fill(0)
+    this.maskedGradient(d, open, 1, fx, fy, fz)
+    for (let z = 0, i = 0; z < nz; z++) {
+      const l = z * layer
+      for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++, i++) {
+        const dv = (fx[i] - fx[xo[1][x] + y * nx + l]) / dx + (fy[i] - fy[x + yo[1][y] + l]) / dy + (fz[i] - (z > 0 ? fz[i - layer] : 0)) / h[z]
+        out[i] = -h[z] * dv
+      }
+    }
+    void n
+  }
+
+  /** z = S0^-1 r for the flat operator S0 = -h div(rho0 grad): the spectral solve of div(rho0 grad phi) = -r / h. */
+  private flatSolve(r: Float64Array, out: Float64Array) {
+    const { nz, ny, layer } = this.grid, { div, h, phi } = this
+    for (let i = 0; i < div.length; i++) div[i] = -r[i] / h[Math.floor(i / layer)]
+    this.forward(0, nz); this.modes(0, ny); this.inverse(0, nz)
+    for (let i = 0; i < out.length; i++) out[i] = phi[i]
+  }
+
   // setVelocity in parts, for helper threads (levels z0..z1-1, or modes with y-wavenumbers n0..n1-1): the face fluxes,
   // their divergence, its forward transform, the tridiagonal solves, the inverse transform into phi, the correction.
 

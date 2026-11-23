@@ -51,6 +51,18 @@ describe('terrain (terrain.ts, 3.0 block Д step 1)', () => {
     expect(flat).toBeLessThan(.1); expect(hill).toBeLessThan(1.3 * flat + 1e-3)
   }, 120_000)
 
+  it('carries water over a hill without losing or making any (the transport faces into the ground are closed)', () => {
+    const m = new AtmosphereModel({ ...QUIET, wind3: 12, wind6: 15, followStorm: false, bubble: 1.5, terrain: { kind: 'hill', height: 1, width: 5 } }, grid)
+    const total = () => {
+      let s = 0
+      for (let z = 0; z < grid.nz; z++) for (let c = 0; c < grid.layer; c++) { const i = c + z * grid.layer; s += (m.q[i] + m.cloud[i] + m.ice[i] + m.rain[i] + m.snow[i] + m.graupel[i] + m.hail[i]) * m.env.rho[z] * grid.hz[z] }
+      return s
+    }
+    const before = total()
+    for (let k = 0; k < 60; k++) { m.step(DT); m.time += DT }
+    expect(Math.abs(total() - before) / before).toBeLessThan(1e-7)
+  }, 120_000)
+
   it('is the flat ground bit for bit under half the lowest spacing (no solid node: the flat projection)', () => {
     const run = (terrain?: { kind: 'hill'; height: number; width: number }) => {
       const m = new AtmosphereModel({ ...QUIET, followStorm: false, bubble: 1.5, ...(terrain ? { terrain } : {}) }, grid)

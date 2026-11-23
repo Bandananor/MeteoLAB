@@ -963,7 +963,9 @@ export class AtmosphereModel implements TaskModel {
       // divergence, so water is conserved by the scheme itself: no mass fixer, only a positivity fix (fillNegative).
       // The face fluxes of the transport velocity, projected (FluxTransport.setVelocity, in parts).
       const run = (phase: Phase, tasks: number) => this.runner.run(phase, tasks, dt)
-      run('faces', nz); run('faceDivergence', nz); run('faceForward', nz); run('faceModes', this.grid.ny); run('faceInverse', nz); run('faceCorrect', nz); run('faceDivergence', nz)
+      // With terrain no flux through the faces next to solid nodes (terrain.ts; the masked solve on this thread).
+      if (this.solid) this.flux.setVelocityMasked(this.u, this.v, this.w, this.solid)
+      else { run('faces', nz); run('faceDivergence', nz); run('faceForward', nz); run('faceModes', this.grid.ny); run('faceInverse', nz); run('faceCorrect', nz); run('faceDivergence', nz) }
       const carried = this.carried(), tasks = carried.length * this.slabs()
       for (const stage of [0, 1, 2] as const) {
         this.runner.run(`tendency${stage}`, tasks, dt); this.runner.run(`update${stage}`, tasks, dt)
