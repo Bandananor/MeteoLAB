@@ -2,6 +2,7 @@ import type { SoundingLevel } from './soundingfile'
 import type { FrontConfig } from './fronts'
 import type { ZoneConfig } from './zones'
 import type { AdvectionChange } from './largescale'
+import type { TerrainConfig } from './terrain'
 
 export type SurfaceType = 'grass' | 'dry' | 'water' | 'urban'
 
@@ -168,6 +169,12 @@ export interface SimConfig {
    * the environment's wind; 'surface' — no sensible and latent heat fluxes from the ground.
    */
   off?: readonly Process[]
+  /**
+   * Terrain (3.0 block Д; terrain.ts): a hill, a ridge or a plateau rising into the grid as solid nodes (an immersed
+   * boundary). Step 1: the projection keeps the air out of it; the transport and the surface fluxes at the slope come next.
+   * The GPU path is off with terrain.
+   */
+  terrain?: TerrainConfig
   /**
    * The rain's size distribution intercept, mm^-1 m^-3 as the literature gives it (absent = Marshall-Palmer's 8000; roadmap
    * D1, D2): an experiment setting for series and links, not in the interface — AtmosphereModel.rainIntercept, 100-20000.

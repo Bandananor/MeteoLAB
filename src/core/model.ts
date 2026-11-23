@@ -26,6 +26,7 @@ import { computeSounding, type Sounding } from './sounding'
 import { deficitNear, outflowDeficit } from './rkw'
 import { precipitationFlux } from './surfaceflux'
 import { waterReservoirs } from './water'
+import { groundLevels, MaskedProjection, solidMask, terrainHeights } from './terrain'
 import { type Memory, type Phase, PRIVATE_MEMORY, type StepRunner, type TaskModel } from './threads'
 import { intervene } from './intervene'
 import { EXTINCTION, sunlightThrough } from './optics'
@@ -269,6 +270,11 @@ export class AtmosphereModel implements TaskModel {
   /** Water mass (level-weight units, summed over all fields) that the WENO positivity fix has moved since the start. */
   negativeFilled = 0
   private readonly solver: PressureSolver; private divergence: Float64Array
+  /** Terrain (SimConfig.terrain): ground height of each column (m), the solid nodes, the first fluid level of each column, the masked projection; null without. */
+  readonly terrainHeight: Float32Array | null = null; readonly solid: Uint8Array | null = null; readonly groundLevel: Int16Array | null = null
+  readonly masked: MaskedProjection | null = null
+  /** The masked projection's pressure of the first two RK stages, kept as their next first guess. */
+  private readonly stagePressure: Float64Array[] = []
   private scratch: Float32Array; private surfacePattern: Float32Array
   private backtraceCorner: Int32Array; private backtraceWeight: Float64Array
   /** Mass weight of each level: rho0 times the layer share (nodes on the ground and top walls own half a layer). */
@@ -308,7 +314,8 @@ export class AtmosphereModel implements TaskModel {
     if (config.rainN0 !== undefined) this.rainIntercept = clamp(config.rainN0, 100, 20_000) * 1000
     const shared = (name: string, length = grid.n) => this.memory.f32(name, length)
     this.env = new Environment(config, grid, profile ?? environmentProfile(config, grid.height))
-    this.frame = config.followStorm === false ? [0, 0] : config.frameMotion ?? domainMotion(this.env)
+    // Terrain is fixed to the ground: the domain does not follow the storm over it.
+    this.frame = config.followStorm === false || config.terrain ? [0, 0] : config.frameMotion ?? domainMotion(this.env)
     this.uEnv = this.env.u.map(u => u - this.frame[0]); this.vEnv = this.env.v.map(v => v - this.frame[1])
     this.sunNow = shared('sunNow', grid.layer); this.opticalDepth = new Float64Array(grid.layer); if (!options.attach) this.sunNow.fill(1)
     this.patternNow = shared('patternNow', grid.layer); this.cityNow = shared('cityNow', grid.layer); this.zoneShareNow = shared('zoneShareNow', grid.layer); this.zoneThetaNow = shared('zoneThetaNow', grid.layer); this.zoneVapourNow = shared('zoneVapourNow', grid.layer); this.groundCell = new Int32Array(grid.layer * 4); this.groundWeight = new Float64Array(grid.layer * 4)
@@ -330,6 +337,11 @@ export class AtmosphereModel implements TaskModel {
     // Anelastic: the projection makes the mass flux rho0 u divergence-free (rho0 falls ~6x over 15 km).
     this.solver = new PressureSolver(grid, this.env.rho, this.memory)
     this.pressure = this.memory.f64('pressure', this.solver.cells); this.divergence = this.memory.f64('divergence', this.solver.cells); this.scratch = f()
+    // Terrain (terrain.ts): the ground heights, the solid nodes and the projection that keeps the air out of them.
+    if (config.terrain) {
+      this.terrainHeight = terrainHeights(config.terrain, grid); this.solid = solidMask(grid, this.terrainHeight); this.groundLevel = groundLevels(grid, this.solid)
+      this.masked = new MaskedProjection(grid, this.solver, this.solid)
+    }
     this.coreW = new Float64Array(grid.layer); this.coreWZ = new Float64Array(grid.layer); this.coreLabel = new Uint8Array(grid.layer)
     this.levelWater = shared('level-water', grid.nz * 4); this.levelCharge = shared('level-charge', grid.nz)
     this.surfacePattern = new Float32Array(grid.layer); this.uhColumn = new Float32Array(grid.layer); this.precipitation = new Float32Array(grid.layer); this.fallSpeed = shared('fallSpeed')
@@ -798,7 +810,7 @@ export class AtmosphereModel implements TaskModel {
   /**
    * Whether the transport is the one GpuDynamics does: flux-form WENO with the pressure and buoyancy in the stages.
    */
-  gpuDynamics() { return this.staged() && processOn(this.config, 'loading') }
+  gpuDynamics() { return this.staged() && processOn(this.config, 'loading') && !this.config.terrain }
 
   /** The falling fields with their fall speeds (snow, graupel and hail only with ice microphysics). */
   private falling(): [Float32Array, Float32Array][] {
@@ -956,7 +968,7 @@ export class AtmosphereModel implements TaskModel {
       for (const stage of [0, 1, 2] as const) {
         this.runner.run(`tendency${stage}`, tasks, dt); this.runner.run(`update${stage}`, tasks, dt)
         // The pressure acts within the stages: each stage's velocity made divergence-free (the last by project() below).
-        if (this.pressureInStages && stage < 2) { const top = (nz - 1) * layer; for (let b = 0; b < layer; b++) { this.w[b] = 0; this.w[b + top] = 0 } this.project(dt, false) }
+        if (this.pressureInStages && stage < 2) { const top = (nz - 1) * layer; for (let b = 0; b < layer; b++) { this.w[b] = 0; this.w[b + top] = 0 } this.project(dt, false, stage) }
       }
       return
     }
@@ -1434,7 +1446,10 @@ export class AtmosphereModel implements TaskModel {
   }
 
   /** Makes the node velocities exactly free of dual-cell divergence (see PressureSolver); ground and top are rigid walls. */
-  private project(dt: number, limit = true) {
+  private project(dt: number, limit = true, stage = 2) {
+    // With terrain the masked projection (terrain.ts), on this thread: conjugate gradients around the flat solve.
+    // Each RK stage keeps its own pressure as the next step's first guess (the stages project 1/3, 1/2 and 1 of the step).
+    if (this.masked) { this.masked.project(this.u, this.v, this.w, dt, stage === 2 ? this.pressure : this.stagePressure[stage] ??= new Float64Array(this.solver.cells)); if (limit) this.clipWind(); return }
     const { nz, ny } = this.grid, run = (phase: Phase, tasks: number) => this.runner.run(phase, tasks, dt)
     run('pressureDivergence', nz - 1); run('pressureForward', nz - 1); run('pressureModes', ny); run('pressureInverse', nz - 1); run('pressureCorrect', nz)
     // The safety limits act once a step, on the final velocity, not on the stages' (clipped counts per step as before).
