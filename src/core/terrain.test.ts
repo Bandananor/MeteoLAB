@@ -22,7 +22,7 @@ describe('terrain (terrain.ts, 3.0 block Д step 1)', () => {
   it('projects a uniform wind over a hill: divergence-free over the fluid, zero in the ground, up the windward slope', () => {
     const rho = Float64Array.from({ length: grid.nz }, (_, z) => 1.2 * Math.exp(-grid.zs[z] / 9000))
     const solver = new PressureSolver(grid, rho), h = terrainHeights({ kind: 'hill', height: 1, width: 5 }, grid), solid = solidMask(grid, h)
-    const masked = new MaskedProjection(grid, solver, solid), { n, nx, ny, layer } = grid
+    const masked = new MaskedProjection(grid, solver, h), { n, nx, ny, layer } = grid
     const u = new Float32Array(n).fill(10), v = new Float32Array(n), w = new Float32Array(n), p = new Float64Array(solver.cells)
     const before = new Float64Array(solver.cells), after = new Float64Array(solver.cells)
     masked.mask(u, v, w); masked.divergence(u, v, w, before)
@@ -35,7 +35,8 @@ describe('terrain (terrain.ts, 3.0 block Д step 1)', () => {
     // The ground node (a wall node: w = 0, as level 0) keeps the air on the slope; the node above it a hill's half-width
     // upwind rises, downwind sinks (westerly flow).
     const cy = ny / 2, ground = (x: number) => { let z = 0; while (solid[x + nx * cy + z * layer]) z++; return x + nx * cy + z * layer }, first = (x: number) => ground(x) + layer
-    expect(w[ground(nx / 2 - 4)]).toBe(0)
+    // w is zero at a ground node on or under the ground (a cut cell's node below the ground height).
+    for (let x = 0; x < nx; x++) { const k = ground(x); if (grid.zs[Math.floor(k / layer)] <= h[x + nx * cy]) expect(w[k]).toBe(0) }
     const up = first(nx / 2 - 4), down = first(nx / 2 + 3)
     expect(w[up]).toBeGreaterThan(.5); expect(w[down]).toBeLessThan(-.5)
   })
@@ -167,18 +168,19 @@ describe('terrain (terrain.ts, 3.0 block Д step 1)', () => {
     expect(turbulence.km[c + (g - 1) * layer]).toBe(0)
   })
 
-  it('is the flat ground bit for bit under half the lowest spacing (no solid node: the flat projection)', () => {
-    const run = (terrain?: { kind: 'hill'; height: number; width: number }) => {
+  it('takes a 1 m plateau for the flat ground: the cut cells change the flow by a 1 m sliver, not a level', () => {
+    // A storm's first minutes over flat ground and over a plateau 1 m high (a hundredth of the lowest layer): with cut
+    // cells the plateau shaves 1 m off level 0's half layer; with a staircase it would be flat ground or a 100 m step.
+    const run = (terrain?: { kind: 'plateau'; height: number; width: number }) => {
       const m = new AtmosphereModel({ ...QUIET, followStorm: false, bubble: 1.5, ...(terrain ? { terrain } : {}) }, grid)
-      // Without the drag, which takes the low hill's slope area (1 + ~1e-5): everything else is the flat ground's.
-      m.surfaceDrag = false
       for (let t = 0; t < 3 * 60; t += DT) { m.step(DT); m.time += DT }
       return m
     }
-    const flat = run(), low = run({ kind: 'hill', height: .04, width: 5 })
+    const flat = run(), low = run({ kind: 'plateau', height: .001, width: 8 })
     expect(low.solid!.some(s => s === 1)).toBe(false)
-    let same = true
-    for (let i = 0; i < grid.n && same; i++) same = flat.w[i] === low.w[i] && flat.theta[i] === low.theta[i]
-    expect(same).toBe(true)
+    let top = 0, diff = 0
+    for (let i = 0; i < grid.n; i++) { top = Math.max(top, Math.abs(flat.w[i])); diff = Math.max(diff, Math.abs(low.w[i] - flat.w[i])) }
+    expect(top).toBeGreaterThan(1)
+    expect(diff / top).toBeLessThan(.02)
   }, 120_000)
 })

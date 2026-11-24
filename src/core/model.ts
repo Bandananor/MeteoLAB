@@ -285,8 +285,12 @@ export class AtmosphereModel implements TaskModel {
    * level, and per transported field the solid nodes' own values, kept while the ghosts stand in for them.
    */
   private readonly ghost: { solid: Int32Array; wall: Int32Array; level: Int16Array; saved: Map<Float32Array, Float32Array> } | null = null
-  /** With terrain: the surface flux shares (as surfaceShare) of a column whose ground node is level g, by g. */
-  private readonly sharesByGround: Float64Array[] = []
+  /**
+   * With terrain: each node's share of its column's surface fluxes, per unit volume (as surfaceShare): exp(-height above
+   * the ground / 300 m) over the nodes less than 500 m above the column's ground (at least two), normalised with the
+   * nodes' own volumes (the ground node's cut cell), so the column receives exactly H and LE.
+   */
+  private surfaceShares: Float64Array | null = null
   readonly masked: MaskedProjection | null = null
   /** The masked projection's pressure of the first two RK stages, kept as their next first guess. */
   private readonly stagePressure: Float64Array[] = []
@@ -356,10 +360,19 @@ export class AtmosphereModel implements TaskModel {
     if (config.terrain) {
       this.terrainHeight = terrainHeights(config.terrain, grid); this.solid = solidMask(grid, this.terrainHeight); this.groundLevel = groundLevels(grid, this.solid)
       // The masked solves hand their per-level parts to the helper threads (the runner, read when they run).
-      this.masked = new MaskedProjection(grid, this.solver, this.solid, 1e-6, 200, this.memory); this.slope = slopeArea(grid, this.terrainHeight)
+      this.masked = new MaskedProjection(grid, this.solver, this.terrainHeight, 1e-6, 200, this.memory); this.slope = slopeArea(grid, this.terrainHeight)
       this.masked.run = (phase, tasks) => this.runner.run(phase, tasks, 0)
       this.flux.parallelSolve = () => { const run = (phase: Phase, tasks: number) => this.runner.run(phase, tasks, 0); run('faceForward', grid.nz); run('faceModes', grid.ny); run('faceInverse', grid.nz) }
-      const heights = nodeHeights(grid, this.solid)
+      const heights = nodeHeights(grid, this.solid, this.terrainHeight)
+      this.surfaceShares = new Float64Array(grid.n)
+      for (let c = 0; c < grid.layer; c++) {
+        const g = this.groundLevel[c], h = this.terrainHeight[c], shape = (z: number) => Math.exp(-Math.max(0, grid.zs[z] - h) / 300)
+        let top = g + 2
+        while (top < grid.nz - 2 && grid.zs[top] - h < 500) top++
+        let total = 0
+        for (let z = g; z < top; z++) total += shape(z) * heights[c + z * grid.layer]
+        for (let z = g; z < top; z++) this.surfaceShares[c + z * grid.layer] = shape(z) / total
+      }
       this.volumeShare = heights.map((h, i) => h / grid.hz[Math.floor(i / grid.layer)])
       this.turbulence.setTerrain(this.solid, heights); this.flux.setTerrain(this.solid, heights)
       const solidNodes: number[] = [], walls: number[] = [], levels: number[] = []
@@ -743,15 +756,13 @@ export class AtmosphereModel implements TaskModel {
   groundNode(c: number) { return this.groundLevel ? c + this.groundLevel[c] * this.grid.layer : c }
 
   /**
-   * The surface flux shares of a column whose ground node is level g (surfaceShare is g = 0): exp(-height above the
-   * ground / 300 m) per unit volume over the levels less than 500 m above it (at least two), each weighted by its
-   * control-volume height, normalised, so the column receives exactly H and LE. Indexed by level (zero below g).
+   * The surface flux shares of the flat ground: exp(-height / 300 m) per unit volume over the levels below 500 m (at
+   * least two), each weighted by its control-volume height, normalised, so the column receives exactly H and LE.
    */
   private sharesAbove(g: number) {
     const { zs, hz } = this.grid, base = zs[g]
     const low = Math.max(g + 2, zs.findIndex(z => z - base >= 500)), shape = Array.from({ length: low }, (_, z) => z < g ? 0 : Math.exp(-(zs[z] - base) / 300))
-    // The ground node above level 0 is a wall node: it owns the half layer above it (terrain.ts nodeHeights).
-    const total = shape.reduce((sum, s, z) => sum + s * (z === g && g > 0 ? this.grid.dzs[g] / 2 : hz[z]), 0)
+    const total = shape.reduce((sum, s, z) => sum + s * hz[z], 0)
     return Float64Array.from(shape, s => s / total)
   }
   /**
@@ -1159,15 +1170,18 @@ export class AtmosphereModel implements TaskModel {
     // against the plain's drag does not act at the heights of the slopes, where the environment has no friction (the
     // numerics review 24.11.2026: balancing against the environment's wind there gave the summit a momentum source).
     const cd = this.surfaceDrag ? dragCoefficient(cfg, 2 * hz[0]) * dt : 0, drag = cd / hz[0], ue0 = e.u[0], ve0 = e.v[0], envSpeed = Math.hypot(ue0, ve0), [fu, fv] = this.frame
-    const ground = this.groundLevel, slope = this.slope, dzs = this.grid.dzs
+    const ground = this.groundLevel, slope = this.slope, vs = this.volumeShare
     for (let b = 0; b < layer; b++) {
-      if (ground && slope && ground[b] > 0) {
-        // The wall node owns the half layer above it, as level 0: C_D from its own spacing, over that half layer.
-        const z = ground[b], k = b + z * layer, d = (this.surfaceDrag ? dragCoefficient(cfg, dzs[z]) * dt : 0) * slope[b] / (dzs[z] / 2), speed = Math.hypot(u[k], v[k])
-        u[k] -= d * speed * u[k]; v[k] -= d * speed * v[k]; w[k] = 0
+      if (ground && slope && vs) {
+        // The ground node's cut cell (its volume above the ground, hn): C_D at the middle of it (dragCoefficient takes
+        // twice the height whose quarter is the reference), over it, times the slope's area. Balanced against the
+        // environment as on the plain, fading out over the lowest layer's height of ground (numerics review 24.11.2026).
+        const z = ground[b], k = b + z * layer, hn = vs[k] * hz[z], d = (this.surfaceDrag ? dragCoefficient(cfg, 2 * hn) * dt : 0) * slope[b] / hn, speed = Math.hypot(u[k], v[k])
+        const balance = Math.max(0, 1 - this.terrainHeight![b] / this.grid.dzs[0]) * envSpeed
+        u[k] -= d * (speed * u[k] - balance * ue0); v[k] -= d * (speed * v[k] - balance * ve0)
       } else {
-        const d = slope ? drag * slope[b] : drag, ug = u[b] + fu, vg = v[b] + fv, speed = Math.hypot(ug, vg)
-        u[b] -= d * (speed * ug - envSpeed * ue0); v[b] -= d * (speed * vg - envSpeed * ve0)
+        const ug = u[b] + fu, vg = v[b] + fv, speed = Math.hypot(ug, vg)
+        u[b] -= drag * (speed * ug - envSpeed * ue0); v[b] -= drag * (speed * vg - envSpeed * ve0)
       }
       w[b] = 0; w[b + (nz - 1) * layer] = 0
     }
@@ -1458,11 +1472,11 @@ export class AtmosphereModel implements TaskModel {
           // The water budget: the microphysics' net vapour change at the node, and rain's evaporation within it.
           { const share = vs ? vs[i] : 1, dq = (q[i] - q0) * share; if (dq < 0) wCond -= dq; else wEvap += dq; if (evap > 0) wRain += evap * share }
           // Surface fluxes enter the lowest levels with the shares in surfaceShare, so the column receives exactly H and LE.
-          // With terrain they enter above each column's ground node (sharesAbove).
-          const shares = ground ? this.sharesByGround[ground[x + row]] ??= this.sharesAbove(ground[x + row]) : this.surfaceShare
-          if (surfaceOn && z < shares.length && shares[z] > 0) {
+          // With terrain they enter above each column's ground (surfaceShares).
+          const share = ground ? this.surfaceShares![i] : z < this.surfaceShare.length ? this.surfaceShare[z] : 0
+          if (surfaceOn && share > 0) {
             // The city (if any) blends in its own energy balance under the share of the column it covers.
-            const pattern = 1 + this.patternNow[x + row] * .32, per = pattern * shares[z] * dt / rhoZ, c = urban === flux ? 0 : this.cityNow[x + row]
+            const pattern = 1 + this.patternNow[x + row] * .32, per = pattern * share * dt / rhoZ, c = urban === flux ? 0 : this.cityNow[x + row]
             const sunlit = this.sunNow[x + row], k = sunlit < 1 ? scale(flux.absorbed, sunlit) : 1, ku = c > 0 && sunlit < 1 ? scale(urban.absorbed, sunlit) : 1
             const heat = (k * flux.sensible + c * (ku * urban.sensible - k * flux.sensible)) * per / (CP * exner)
             const vapour = (k * flux.latent + c * (ku * urban.latent - k * flux.latent)) * per / LV
