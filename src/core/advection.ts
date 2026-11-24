@@ -59,38 +59,65 @@ export class FluxTransport {
     this.divergence(0, nz)
   }
 
-  /** The masked face solve's work arrays (terrain), made on first use; its last iterations and relative residual. */
-  private masked: { open: Uint8Array; q: Float64Array; r: Float64Array; z: Float64Array; d: Float64Array; sd: Float64Array; b: Float64Array } | null = null
+  /**
+   * Terrain (setTerrain): the open faces (bit 1 x, to x+1; 2 y, to y+1; 4 z, to z+1; open when both nodes are fluid),
+   * each node's control-volume height hn (terrain.ts nodeHeights; 1 in the ground, where nothing moves) and the open
+   * height of its x and y faces, ax and ay: the overlap of the two nodes' volumes, min(hn), so at a step of the slope a
+   * wall node (the ground node, which owns the half layer above it) and the full node beside it share its half face.
+   */
+  private terrain: { open: Uint8Array; hn: Float64Array; ax: Float64Array; ay: Float64Array } | null = null
+  /** The masked face solve's work arrays, made on first use; its last iterations and relative residual. */
+  private masked: { q: Float64Array; r: Float64Array; z: Float64Array; d: Float64Array; sd: Float64Array; b: Float64Array } | null = null
   maskedIterations = 0; maskedResidual = 0
 
+  /** Sets the terrain: the solid nodes and every node's control-volume height (terrain.ts nodeHeights). */
+  setTerrain(solid: Uint8Array, heights: Float64Array) {
+    const { n, nx, ny, nz, layer } = this.grid, { xo, yo } = this
+    const open = new Uint8Array(n), hn = new Float64Array(n), ax = new Float64Array(n), ay = new Float64Array(n)
+    for (let i = 0; i < n; i++) hn[i] = solid[i] ? 1 : heights[i]
+    for (let z = 0, i = 0; z < nz; z++) for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++, i++) {
+      if (solid[i]) continue
+      const l = z * layer, e = xo[3][x] + y * nx + l, north = x + yo[3][y] + l
+      if (!solid[e]) { open[i] |= 1; ax[i] = Math.min(hn[i], hn[e]) }
+      if (!solid[north]) { open[i] |= 2; ay[i] = Math.min(hn[i], hn[north]) }
+      if (z < nz - 1 && !solid[i + layer]) open[i] |= 4
+    }
+    this.terrain = { open, hn, ax, ay }
+  }
+
   /**
-   * setVelocity with terrain (terrain.ts): no flux through a face next to a solid node, and the projection solves the
-   * masked operator by conjugate gradients, preconditioned by the flat solve. Multiplied by h_k the operator
-   * S phi = -h div(M rho0 grad phi) is symmetric and semi-definite (M the open faces); the face fluxes then lose
-   * M rho0 grad(phi), so their divergence is zero to `tolerance` of the first one at every fluid node — the water the
-   * transport carries cannot cross the ground. On the main thread (helpers idle).
+   * The terrain's divergence of the face fluxes times each node's height: h div = d(a mx)/dx + d(a my)/dy + d mz with
+   * the faces' open heights a (into `out`); `div` gets it over the heights.
    */
-  setVelocityMasked(u: Float32Array, v: Float32Array, w: Float32Array, solid: Uint8Array, tolerance = 1e-10, maxIterations = 400) {
-    const { n, nx, ny, nz, layer } = this.grid, { mx, my, mz, div, h, xo, yo } = this
-    // Open faces: bit 1 x (to x+1), 2 y (to y+1), 4 z (to z+1); open when both nodes are fluid.
-    const masked = this.masked ??= (() => {
-      const open = new Uint8Array(n), f = () => new Float64Array(n)
-      for (let z = 0, i = 0; z < nz; z++) for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++, i++) {
-        if (solid[i]) continue
-        const l = z * layer
-        if (!solid[xo[3][x] + y * nx + l]) open[i] |= 1
-        if (!solid[x + yo[3][y] + l]) open[i] |= 2
-        if (z < nz - 1 && !solid[i + layer]) open[i] |= 4
+  private terrainDivergence(out: Float64Array, fx = this.mx, fy = this.my, fz = this.mz) {
+    const { nx, ny, nz, dx, dy, layer } = this.grid, { xo, yo } = this, { ax, ay } = this.terrain!
+    for (let z = 0, i = 0; z < nz; z++) {
+      const l = z * layer
+      for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++, i++) {
+        const w = xo[1][x] + y * nx + l, s = x + yo[1][y] + l
+        out[i] = (ax[i] * fx[i] - ax[w] * fx[w]) / dx + (ay[i] * fy[i] - ay[s] * fy[s]) / dy + (fz[i] - (z > 0 ? fz[i - layer] : 0))
       }
-      return { open, q: f(), r: f(), z: f(), d: f(), sd: f(), b: f() }
-    })()
-    const { open, q, r, z: zz, d, sd, b } = masked
+    }
+  }
+
+  /**
+   * setVelocity with terrain (setTerrain): no flux through a face next to a solid node, the faces' open heights and the
+   * nodes' own heights (the wall nodes' half layer), and the projection solves the masked operator by conjugate
+   * gradients, preconditioned by the flat solve. Multiplied by each node's height the operator
+   * S phi = -h div(M rho0 grad phi) is symmetric and semi-definite (M the open faces, weighted by their open heights); the
+   * face fluxes then lose M rho0 grad(phi), so their divergence is zero to `tolerance` of the first one at every fluid
+   * node — the water the transport carries cannot cross the ground. On the main thread (helpers idle).
+   */
+  setVelocityMasked(u: Float32Array, v: Float32Array, w: Float32Array, tolerance = 1e-10, maxIterations = 400) {
+    const { n, nz } = this.grid, { mx, my, mz, div } = this, { open, hn } = this.terrain!
+    const masked = this.masked ??= (() => { const f = () => new Float64Array(n); return { q: f(), r: f(), z: f(), d: f(), sd: f(), b: f() } })()
+    const { q, r, z: zz, d, sd, b } = masked
     this.faces(u, v, w, 0, nz)
     for (let i = 0; i < n; i++) { if (!(open[i] & 1)) mx[i] = 0; if (!(open[i] & 2)) my[i] = 0; if (!(open[i] & 4)) mz[i] = 0 }
-    this.divergence(0, nz)
     // b = -h div; S phi = b.
+    this.terrainDivergence(b)
     let bb = 0
-    for (let i = 0; i < n; i++) { b[i] = -h[Math.floor(i / layer)] * div[i]; bb += b[i] * b[i] }
+    for (let i = 0; i < n; i++) { b[i] = -b[i]; bb += b[i] * b[i] }
     q.fill(0)
     if (bb > 0) {
       for (let i = 0; i < n; i++) r[i] = b[i]
@@ -115,9 +142,10 @@ export class FluxTransport {
       }
       this.maskedIterations = k; this.maskedResidual = Math.sqrt(rr / bb)
     } else { this.maskedIterations = 0; this.maskedResidual = 0 }
-    // The fluxes lose M rho0 grad(phi).
+    // The fluxes lose M rho0 grad(phi); div keeps what is left, over each node's height (the tendency's q div term).
     this.maskedGradient(q, open, -1)
-    this.divergence(0, nz)
+    this.terrainDivergence(div)
+    for (let i = 0; i < n; i++) div[i] /= hn[i]
   }
 
   /** Adds sign * M rho0 grad(phi) to the face fluxes (M: the open faces). */
@@ -134,19 +162,13 @@ export class FluxTransport {
     }
   }
 
-  /** S d = -h div(M rho0 grad d), through the scratch flux arrays. */
+  /** S d = -h div(M rho0 grad d) with the faces' open heights, through the scratch flux arrays. */
   private applyMasked(d: Float64Array, out: Float64Array, open: Uint8Array) {
-    const { n, nx, ny, nz, dx, dy, layer } = this.grid, { fx, fy, fz, xo, yo, h } = this
+    const { fx, fy, fz } = this
     fx.fill(0); fy.fill(0); fz.fill(0)
     this.maskedGradient(d, open, 1, fx, fy, fz)
-    for (let z = 0, i = 0; z < nz; z++) {
-      const l = z * layer
-      for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++, i++) {
-        const dv = (fx[i] - fx[xo[1][x] + y * nx + l]) / dx + (fy[i] - fy[x + yo[1][y] + l]) / dy + (fz[i] - (z > 0 ? fz[i - layer] : 0)) / h[z]
-        out[i] = -h[z] * dv
-      }
-    }
-    void n
+    this.terrainDivergence(out, fx, fy, fz)
+    for (let i = 0; i < out.length; i++) out[i] = -out[i]
   }
 
   /** z = S0^-1 r for the flat operator S0 = -h div(rho0 grad): the spectral solve of div(rho0 grad phi) = -r / h. */
@@ -288,12 +310,32 @@ export class FluxTransport {
         }
       }
     }
+    if (this.terrain) { this.terrainTendency(q, tend, z0, z1, active); return }
     for (let z = z0, i = z0 * layer; z < z1; z++) {
       const l = z * layer, r = rho[z], hz = h[z]
       for (let y = 0; y < ny; y++) {
         if (!active[z * ny + y]) { tend.fill(0, i, i + nx); i += nx; continue }
         for (let x = 0; x < nx; x++, i++) {
           const flux = (fx[i] - fx[xm1[x] + y * nx + l]) / dx + (fy[i] - fy[x + ym1[y] + l]) / dy + (fz[i] - (z > 0 ? fz[i - layer] : 0)) / hz
+          tend[i] = -(flux - q[i] * div[i]) / r
+        }
+      }
+    }
+  }
+
+  /**
+   * The flux divergence into the tendency with terrain: each face's flux over its open height, each node's over its
+   * own height (setTerrain). `active` (WENO): rows without anything in reach get zero; null (linear): all rows.
+   */
+  private terrainTendency(q: Float32Array, tend: Float64Array, z0: number, z1: number, active: Uint8Array | null) {
+    const { nx, ny, dx, dy, layer } = this.grid, { div, fx, fy, fz, xo, yo, rho } = this, { hn, ax, ay } = this.terrain!, xm1 = xo[1], ym1 = yo[1]
+    for (let z = z0, i = z0 * layer; z < z1; z++) {
+      const l = z * layer, r = rho[z]
+      for (let y = 0; y < ny; y++) {
+        if (active && !active[z * ny + y]) { tend.fill(0, i, i + nx); i += nx; continue }
+        for (let x = 0; x < nx; x++, i++) {
+          const w = xm1[x] + y * nx + l, s = x + ym1[y] + l
+          const flux = ((ax[i] * fx[i] - ax[w] * fx[w]) / dx + (ay[i] * fy[i] - ay[s] * fy[s]) / dy + (fz[i] - (z > 0 ? fz[i - layer] : 0))) / hn[i]
           tend[i] = -(flux - q[i] * div[i]) / r
         }
       }
@@ -321,6 +363,7 @@ export class FluxTransport {
         }
       }
     }
+    if (this.terrain) { this.terrainTendency(q, tend, z0, z1, null); return }
     for (let z = z0, i = z0 * layer; z < z1; z++) {
       const l = z * layer, r = rho[z], hz = h[z]
       for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++, i++) {

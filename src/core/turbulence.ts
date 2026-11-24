@@ -59,6 +59,11 @@ export class Turbulence {
    * through the flat ground (the surface fluxes enter at the first fluid node instead).
    */
   solid: Uint8Array | null = null
+  /** With terrain: each node's control-volume height (terrain.ts nodeHeights; a wall node owns the half layer above it). */
+  private heights: Float64Array | null = null
+
+  /** Sets the terrain: the solid nodes and every node's control-volume height. */
+  setTerrain(solid: Uint8Array, heights: Float64Array) { this.solid = solid; this.heights = heights }
   private readonly tmp: Float32Array
   /** Scratch of the implicit vertical solve: the coefficients and the right-hand side of one column. */
   private readonly lower: Float64Array; private readonly upper: Float64Array; private readonly diag: Float64Array; private readonly rhs: Float64Array
@@ -138,7 +143,7 @@ export class Turbulence {
   mix(a: Float32Array, base: ArrayLike<number> | null, factor: number, dt: number) {
     const { nx, ny, nz, dx, dy, layer, xp, yp } = this.grid, km = this.km, kh = this.kh, t = this.tmp, rho = this.rho, h = this.h
     t.fill(0)
-    const dev = (i: number, z: number) => a[i] - (base ? base[z] : 0), implicit = this.implicitVertical && this.anisotropic, solid = this.solid
+    const dev = (i: number, z: number) => a[i] - (base ? base[z] : 0), implicit = this.implicitVertical && this.anisotropic, solid = this.solid, hn = this.heights
     for (let z = 0, i = 0; z < nz; z++) {
       const rUp = z < nz - 1 ? (rho[z] + rho[z + 1]) / 2 : 0
       for (let y = 0; y < ny; y++) {
@@ -149,6 +154,17 @@ export class Turbulence {
           const e = xp[x] + row, n = x + yp[y] + z * layer
           // With terrain a solid node shares no face with anything (its value never changes, nor its neighbours' by it).
           if (solid && solid[i]) continue
+          if (hn) {
+            // Terrain: each face's flux over its open height (the overlap of the two volumes), each node's over its own.
+            const hi = hn[i]
+            if (!solid![e]) { const fx = factor * (kh[i] + kh[e]) / 2 * (dev(e, z) - here) / dx, open = Math.min(hi, hn[e]); t[i] += fx * open / (hi * dx); t[e] -= fx * open / (hn[e] * dx) }
+            if (!solid![n]) { const fy = factor * (kh[i] + kh[n]) / 2 * (dev(n, z) - here) / dy, open = Math.min(hi, hn[n]); t[i] += fy * open / (hi * dy); t[n] -= fy * open / (hn[n] * dy) }
+            if (z < nz - 1 && !implicit && !solid![i + layer]) {
+              const fz = factor * rUp * (km[i] + km[i + layer]) / 2 * (dev(i + layer, z + 1) - here) / this.grid.dzs[z]
+              t[i] += fz / (rho[z] * hi); t[i + layer] -= fz / (rho[z + 1] * hn[i + layer])
+            }
+            continue
+          }
           if (!solid || !solid[e]) { const fx = factor * (kh[i] + kh[e]) / 2 * (dev(e, z) - here) / dx; t[i] += fx / dx; t[e] -= fx / dx }
           if (!solid || !solid[n]) { const fy = factor * (kh[i] + kh[n]) / 2 * (dev(n, z) - here) / dy; t[i] += fy / dy; t[n] -= fy / dy }
           if (z < nz - 1 && !implicit && (!solid || !solid[i + layer])) {
@@ -167,13 +183,14 @@ export class Turbulence {
    * same fluxes as the explicit form, solved by the Thomas algorithm; no flux through the ground and top.
    */
   private mixVertical(a: Float32Array, base: ArrayLike<number> | null, factor: number, dt: number) {
-    const { nz, layer, dzs } = this.grid, km = this.km, rho = this.rho, h = this.h, lo = this.lower, up = this.upper, dg = this.diag, r = this.rhs, solid = this.solid
+    const { nz, layer, dzs } = this.grid, km = this.km, rho = this.rho, h = this.h, lo = this.lower, up = this.upper, dg = this.diag, r = this.rhs, solid = this.solid, hn = this.heights
     for (let c = 0; c < layer; c++) {
       for (let z = 0; z < nz; z++) { lo[z] = 0; up[z] = 0; r[z] = a[c + z * layer] - (base ? base[z] : 0) }
       for (let z = 0; z < nz - 1; z++) {
         // The face between z and z + 1: its coefficient, divided by each side's mass.
         const i = c + z * layer, face = solid && (solid[i] || solid[i + layer]) ? 0 : dt * factor * (rho[z] + rho[z + 1]) / 2 * (km[i] + km[i + layer]) / 2 / dzs[z]
-        up[z] = face / (rho[z] * h[z]); lo[z + 1] = face / (rho[z + 1] * h[z + 1])
+        // With terrain each node's own height (a solid node's face is closed: 0, kept off its zero height).
+        up[z] = face / (rho[z] * (hn ? hn[i] || 1 : h[z])); lo[z + 1] = face / (rho[z + 1] * (hn ? hn[i + layer] || 1 : h[z + 1]))
       }
       for (let z = 0; z < nz; z++) dg[z] = 1 + lo[z] + up[z]
       // Forward elimination, then back substitution (diagonally dominant: no pivoting).

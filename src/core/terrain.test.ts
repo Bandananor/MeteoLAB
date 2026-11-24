@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { AtmosphereModel, createGrid, DT, MaskedProjection, solidMask, terrainHeights } from '.'
+import { AtmosphereModel, createGrid, DT, MaskedProjection, nodeHeights, solidMask, terrainHeights } from '.'
 import { PressureSolver } from './pressure'
 import { Turbulence } from './turbulence'
 import { QUIET } from './fixtures'
@@ -25,15 +25,17 @@ describe('terrain (terrain.ts, 3.0 block Д step 1)', () => {
     const masked = new MaskedProjection(grid, solver, solid), { n, nx, ny, layer } = grid
     const u = new Float32Array(n).fill(10), v = new Float32Array(n), w = new Float32Array(n), p = new Float64Array(solver.cells)
     const before = new Float64Array(solver.cells), after = new Float64Array(solver.cells)
-    masked.mask(u, v, w); solver.divergence(u, v, w, 1, before)
+    masked.mask(u, v, w); masked.divergence(u, v, w, before)
     masked.project(u, v, w, DT, p)
-    solver.divergence(u, v, w, 1, after)
+    masked.divergence(u, v, w, after)
     const norm = (a: Float64Array) => Math.sqrt(a.reduce((s, x) => s + x * x, 0))
     expect(masked.iterations).toBeGreaterThan(0); expect(masked.iterations).toBeLessThan(200)
     expect(norm(after) / norm(before)).toBeLessThan(1e-5)
     for (let i = 0; i < n; i++) if (solid[i]) { expect(u[i]).toBe(0); expect(w[i]).toBe(0) }
-    // The first fluid node above the ground a hill's half-width upwind rises, downwind sinks (westerly flow).
-    const cy = ny / 2, first = (x: number) => { let z = 0; while (solid[x + nx * cy + z * layer]) z++; return x + nx * cy + z * layer }
+    // The ground node (a wall node: w = 0, as level 0) keeps the air on the slope; the node above it a hill's half-width
+    // upwind rises, downwind sinks (westerly flow).
+    const cy = ny / 2, ground = (x: number) => { let z = 0; while (solid[x + nx * cy + z * layer]) z++; return x + nx * cy + z * layer }, first = (x: number) => ground(x) + layer
+    expect(w[ground(nx / 2 - 4)]).toBe(0)
     const up = first(nx / 2 - 4), down = first(nx / 2 + 3)
     expect(w[up]).toBeGreaterThan(.5); expect(w[down]).toBeLessThan(-.5)
   })
@@ -56,7 +58,7 @@ describe('terrain (terrain.ts, 3.0 block Д step 1)', () => {
     const m = new AtmosphereModel({ ...QUIET, wind3: 12, wind6: 15, followStorm: false, bubble: 1.5, terrain: { kind: 'hill', height: 1, width: 5 } }, grid)
     const total = () => {
       let s = 0
-      for (let z = 0; z < grid.nz; z++) for (let c = 0; c < grid.layer; c++) { const i = c + z * grid.layer; s += (m.q[i] + m.cloud[i] + m.ice[i] + m.rain[i] + m.snow[i] + m.graupel[i] + m.hail[i]) * m.env.rho[z] * grid.hz[z] }
+      for (let z = 0; z < grid.nz; z++) for (let c = 0; c < grid.layer; c++) { const i = c + z * grid.layer; s += (m.q[i] + m.cloud[i] + m.ice[i] + m.rain[i] + m.snow[i] + m.graupel[i] + m.hail[i]) * m.env.rho[z] * grid.hz[z] * m.volumeShare![i] }
       return s
     }
     const before = total()
@@ -70,10 +72,11 @@ describe('terrain (terrain.ts, 3.0 block Д step 1)', () => {
     expect(g).toBeGreaterThan(2)
     for (let z = g + 3; z < g + 10; z++) m.rain[c + z * layer] = 2e-3
     let mass = 0
-    for (let z = 0; z < grid.nz; z++) mass += m.rain[c + z * layer] * rho[z] * hz[z]
+    const vs = m.volumeShare!
+    for (let z = 0; z < grid.nz; z++) mass += m.rain[c + z * layer] * rho[z] * hz[z] * vs[c + z * layer]
     for (let k = 0; k < 400; k++) m.beginStep(DT)
     let left = 0
-    for (let z = 0; z < grid.nz; z++) left += m.rain[c + z * layer] * rho[z] * hz[z]
+    for (let z = 0; z < grid.nz; z++) left += m.rain[c + z * layer] * rho[z] * hz[z] * vs[c + z * layer]
     for (let z = 0; z < g; z++) expect(m.rain[c + z * layer]).toBe(0)
     // Nearly all of it reached the gauge of that one column (no frame motion over terrain), as mm = kg/m2, and what
     // is still falling (the slow tail of the thinning rain) makes up the rest.
@@ -90,7 +93,7 @@ describe('terrain (terrain.ts, 3.0 block Д step 1)', () => {
       const m = new AtmosphereModel({ ...sunny, ...(terrain ? { terrain } : {}) }, grid), theta = Float32Array.from(m.theta), q = Float32Array.from(m.q)
       for (let k = 0; k < 100; k++) { m.step(DT); m.time += DT }
       let heat = 0
-      for (let z = 0; z < nz; z++) for (let b = 0; b < layer; b++) { const i = b + z * layer; if (!m.solid?.[i]) heat += m.env.rho[z] * hz[z] * 1004 * m.env.exner[z] * (m.theta[i] - theta[i]) }
+      for (let z = 0; z < nz; z++) for (let b = 0; b < layer; b++) { const i = b + z * layer; heat += m.env.rho[z] * hz[z] * (m.volumeShare?.[i] ?? 1) * 1004 * m.env.exner[z] * (m.theta[i] - theta[i]) }
       return { m, theta, q, heat }
     }
     const flat = heated(), { m, theta, q, heat } = heated({ kind: 'plateau', height: .5, width: 8 }), g = m.groundLevel![c], solid = m.solid!
@@ -98,12 +101,17 @@ describe('terrain (terrain.ts, 3.0 block Д step 1)', () => {
     expect(m.theta[c + g * layer] - theta[c + g * layer]).toBeGreaterThan(.05)
     // The same sunshine heats the air by the same amount over the plateau as over the flat ground (0.02 % on 24.11).
     expect(Math.abs(heat / flat.heat - 1)).toBeLessThan(2e-3)
+    // The plateau's ground node is a wall node, as the flat ground's level 0: it warms as much (it warmed 17 % less
+    // while it owned a full layer, before the wall node).
+    const plateauTop = m.theta[c + g * layer] - theta[c + g * layer], flatGround = flat.m.theta[c] - flat.theta[c]
+    expect(Math.abs(plateauTop / flatGround - 1)).toBeLessThan(.06)
+    expect(m.w[c + g * layer]).toBe(0)
   }, 120_000)
 
   it('mixes an unstable layer over the slope: the solid node under it is a wall, not a cold neighbour', () => {
     const h = terrainHeights({ kind: 'plateau', height: .5, width: 8 }, grid), solid = solidMask(grid, h), { n, nz, layer, nx, ny, zs } = grid
     const turbulence = new Turbulence(grid, Array.from({ length: nz }, () => 1.1)), c = nx / 2 + nx * (ny / 2)
-    turbulence.solid = solid
+    turbulence.setTerrain(solid, nodeHeights(grid, solid))
     let g = 0
     while (solid[c + g * layer]) g++
     // Heated air over the ground: 2 K/km superadiabatic above every column's ground node; the solid nodes keep the cold

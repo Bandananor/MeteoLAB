@@ -45,13 +45,16 @@ export function intervene(m: AtmosphereModel, it: Intervention) {
       // The shortest way round the periodic domain.
       let ddx = x * dx - it.x, ddy = y * dy - it.y
       if (ddx > W / 2) ddx -= W; if (ddx < -W / 2) ddx += W; if (ddy > D / 2) ddy -= D; if (ddy < -D / 2) ddy += D
-      const r2 = (ddx / radius) ** 2 + (ddy / radius) ** 2, a = Math.exp(-r2 - (zs[z] / kind.depth) ** 2) * a0, i = x + nx * (y + ny * z)
-      if (kind.theta) { m.theta[i] += kind.theta * a; heat += CP * exner * kind.theta * a * mass }
+      const i = x + nx * (y + ny * z)
+      // With terrain: nothing into the ground (its nodes stay as they are), a wall node with the half layer it owns.
+      if (m.solid?.[i]) continue
+      const r2 = (ddx / radius) ** 2 + (ddy / radius) ** 2, a = Math.exp(-r2 - (zs[z] / kind.depth) ** 2) * a0, nodeMass = m.volumeShare ? mass * m.volumeShare[i] : mass
+      if (kind.theta) { m.theta[i] += kind.theta * a; heat += CP * exner * kind.theta * a * nodeMass }
       if (kind.w) m.w[i] += kind.w * a
       if (kind.vapour) {
         const before = m.q[i], cap = MOIST_CAP * qsatP(m.theta[i] * exner - 273.15, p)
         m.q[i] = kind.vapour > 0 ? Math.max(before, Math.min(cap, before + kind.vapour * a)) : Math.max(0, before + kind.vapour * a)
-        vapour += (m.q[i] - before) * mass
+        vapour += (m.q[i] - before) * nodeMass
       }
       if (kind.spin) {
         // A cyclonic (anticlockwise) vortex, non-divergent: the speed r/R exp((1 - r²/R²)/2) times spin, round the centre.

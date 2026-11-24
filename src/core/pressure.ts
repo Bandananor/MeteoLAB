@@ -24,7 +24,7 @@ export class PressureSolver {
   private readonly re: Float64Array; private readonly im: Float64Array
   private readonly cp: Float64Array; private readonly dRe: Float64Array; private readonly dIm: Float64Array
   /** Base-state density of each node level (ones: incompressible). */
-  private readonly rho: Float64Array
+  readonly rho: Float64Array
 
   /** `memory` holds the spectra, which helper threads share (threads.ts). */
   constructor(grid: Grid, density?: ArrayLike<number>, memory: Memory = PRIVATE_MEMORY) {

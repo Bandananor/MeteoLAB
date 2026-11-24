@@ -7,7 +7,7 @@ import type { AtmosphereModel } from './model'
 // domain nothing leaves through the edges, so the reservoirs' change matches the flows up to the transport's small
 // errors and the pulls towards a profile (relaxed edges, zones, fronts, the sponge), shown as the remainder.
 
-export type WaterSource = Pick<AtmosphereModel, 'grid' | 'env' | 'q' | 'cloud' | 'ice' | 'rain' | 'snow' | 'graupel' | 'hail' | 'precipitation' | 'water' | 'added'>
+export type WaterSource = Pick<AtmosphereModel, 'grid' | 'env' | 'q' | 'cloud' | 'ice' | 'rain' | 'snow' | 'graupel' | 'hail' | 'precipitation' | 'water' | 'added'> & Partial<Pick<AtmosphereModel, 'volumeShare'>>
 
 export interface WaterBudget {
   /** The reservoirs' sum at the start, kg (AtmosphereModel.water.start). */
@@ -26,12 +26,14 @@ export interface WaterBudget {
 
 /** The reservoirs (kg): vapour above the environment's profile, condensate, precipitation aloft and on the ground. */
 function reservoirs(m: Omit<WaterSource, 'water' | 'added'>) {
-  const { nx, ny, nz, dx, dy, hz, layer } = m.grid, rho = m.env.rho, qEnv = m.env.q
+  const { nx, ny, nz, dx, dy, hz, layer } = m.grid, rho = m.env.rho, qEnv = m.env.q, vs = m.volumeShare
   let vapour = 0, condensate = 0, aloft = 0
   for (let z = 0; z < nz; z++) {
     const mass = rho[z] * dx * dy * hz[z], q0 = qEnv[z]
     let v = 0, c = 0, a = 0
-    for (let i = z * layer, e = i + layer; i < e; i++) { v += m.q[i] - q0; c += m.cloud[i] + m.ice[i]; a += m.rain[i] + m.snow[i] + m.graupel[i] + m.hail[i] }
+    // With terrain each node's share of its level's volume (none in the ground, half a layer at a wall node).
+    if (vs) for (let i = z * layer, e = i + layer; i < e; i++) { const k = vs[i]; v += (m.q[i] - q0) * k; c += (m.cloud[i] + m.ice[i]) * k; a += (m.rain[i] + m.snow[i] + m.graupel[i] + m.hail[i]) * k }
+    else for (let i = z * layer, e = i + layer; i < e; i++) { v += m.q[i] - q0; c += m.cloud[i] + m.ice[i]; a += m.rain[i] + m.snow[i] + m.graupel[i] + m.hail[i] }
     vapour += v * mass; condensate += c * mass; aloft += a * mass
   }
   let ground = 0
@@ -59,7 +61,7 @@ export function waterBudget(m: WaterSource): WaterBudget {
 // is what went to the ground (chargeGround) with the opposite sign; the remainder is the transport's error on the charges
 // (not mass-fixed) and the charge lost through the relaxed edges.
 
-export type ChargeSource = Pick<AtmosphereModel, 'grid' | 'env' | 'chargeIce' | 'chargeGraupel' | 'chargeRain' | 'chargeAir' | 'charge' | 'chargeGround'>
+export type ChargeSource = Pick<AtmosphereModel, 'grid' | 'env' | 'chargeIce' | 'chargeGraupel' | 'chargeRain' | 'chargeAir' | 'charge' | 'chargeGround'> & Partial<Pick<AtmosphereModel, 'volumeShare'>>
 
 export interface ChargeBudget {
   /** Flows since the start, C (see AtmosphereModel.charge). */
@@ -71,12 +73,12 @@ export interface ChargeBudget {
 }
 
 export function chargeBudget(m: ChargeSource): ChargeBudget {
-  const { nz, dx, dy, hz, layer } = m.grid, rho = m.env.rho
+  const { nz, dx, dy, hz, layer } = m.grid, rho = m.env.rho, vs = m.volumeShare
   let positive = 0, negative = 0
   for (let z = 0; z < nz; z++) {
     const mass = rho[z] * dx * dy * hz[z]
     let p = 0, n = 0
-    for (let i = z * layer, e = i + layer; i < e; i++) { const c = m.chargeIce[i] + m.chargeGraupel[i] + m.chargeRain[i] + m.chargeAir[i]; if (c > 0) p += c; else n += c }
+    for (let i = z * layer, e = i + layer; i < e; i++) { const c = (m.chargeIce[i] + m.chargeGraupel[i] + m.chargeRain[i] + m.chargeAir[i]) * (vs ? vs[i] : 1); if (c > 0) p += c; else n += c }
     positive += p * mass; negative += n * mass
   }
   return { ...m.charge, positive, negative, remainder: positive + negative + m.chargeGround }
