@@ -26,7 +26,7 @@ import { computeSounding, type Sounding } from './sounding'
 import { deficitNear, outflowDeficit } from './rkw'
 import { precipitationFlux } from './surfaceflux'
 import { waterReservoirs } from './water'
-import { groundLevels, MaskedProjection, solidMask, terrainHeights } from './terrain'
+import { groundLevels, MaskedProjection, slopeArea, solidMask, terrainHeights } from './terrain'
 import { type Memory, type Phase, PRIVATE_MEMORY, type StepRunner, type TaskModel } from './threads'
 import { intervene } from './intervene'
 import { EXTINCTION, sunlightThrough } from './optics'
@@ -272,6 +272,10 @@ export class AtmosphereModel implements TaskModel {
   private readonly solver: PressureSolver; private divergence: Float64Array
   /** Terrain (SimConfig.terrain): ground height of each column (m), the solid nodes, the first fluid level of each column, the masked projection; null without. */
   readonly terrainHeight: Float32Array | null = null; readonly solid: Uint8Array | null = null; readonly groundLevel: Int16Array | null = null
+  /** With terrain: the slope's area per horizontal area of each column (terrain.ts slopeArea), which the drag takes. */
+  private slope: Float32Array | null = null
+  /** With terrain: the surface flux shares (as surfaceShare) of a column whose ground node is level g, by g. */
+  private readonly sharesByGround: Float64Array[] = []
   readonly masked: MaskedProjection | null = null
   /** The masked projection's pressure of the first two RK stages, kept as their next first guess. */
   private readonly stagePressure: Float64Array[] = []
@@ -340,7 +344,7 @@ export class AtmosphereModel implements TaskModel {
     // Terrain (terrain.ts): the ground heights, the solid nodes and the projection that keeps the air out of them.
     if (config.terrain) {
       this.terrainHeight = terrainHeights(config.terrain, grid); this.solid = solidMask(grid, this.terrainHeight); this.groundLevel = groundLevels(grid, this.solid)
-      this.masked = new MaskedProjection(grid, this.solver, this.solid)
+      this.masked = new MaskedProjection(grid, this.solver, this.solid); this.turbulence.solid = this.solid; this.slope = slopeArea(grid, this.terrainHeight)
     }
     this.coreW = new Float64Array(grid.layer); this.coreWZ = new Float64Array(grid.layer); this.coreLabel = new Uint8Array(grid.layer)
     this.levelWater = shared('level-water', grid.nz * 4); this.levelCharge = shared('level-charge', grid.nz)
@@ -353,9 +357,7 @@ export class AtmosphereModel implements TaskModel {
     // exp(-z / 300 m) per unit volume over the levels below 500 m (the two lowest on the uniform grid), each weighted by
     // the height of its control volume, normalised. Not higher: theta is float32 (~3e-5 K steps near 300 K), and the
     // per-step heating of thin levels near 1 km is only a few such steps, so it rounds systematically (±15 %).
-    const low = Math.max(2, grid.zs.findIndex(z => z >= 500)), shape = Array.from({ length: low }, (_, z) => Math.exp(-grid.zs[z] / 300))
-    const total = shape.reduce((sum, s, z) => sum + s * grid.hz[z], 0)
-    this.surfaceShare = Float64Array.from(shape, s => s / total)
+    this.surfaceShare = this.sharesAbove(0)
     this.rng = mulberry32(config.seed); this.cityGround = this.cityMap(); this.zoneGround = zoneMaps(grid, config.zones)
     if (!options.attach) this.initialize()
     this.sounding = computeSounding(config, this.env, grid.height)
@@ -545,13 +547,20 @@ export class AtmosphereModel implements TaskModel {
   }
 
   private sedimentPart(rain: Float32Array, vt: Float32Array, dt: number, deposit: boolean) {
-    const { nz, layer } = this.grid, rho = this.env.rho, lw = this.levelWeight, dz = this.grid.dz
-    if (deposit) for (let i = 0; i < layer; i++) this.deposit(i, rho[0] * rain[i] * vt[i] * dt)
-    else { let out = 0; for (let i = 0; i < layer; i++) out += rain[i] * vt[i]; const c = rho[0] * out * dt * this.grid.dx * this.grid.dy; this.chargeGround += c; this.charge.precipitation += c }
+    const { nz, layer } = this.grid, rho = this.env.rho, lw = this.levelWeight, dz = this.grid.dz, g = this.groundLevel
+    // The ground node of each column (level 0, or with terrain the first fluid node above the slope) falls through the ground.
+    if (deposit) for (let c = 0; c < layer; c++) { const z = g ? g[c] : 0, i = c + z * layer; this.deposit(c, rho[z] * rain[i] * vt[i] * dt) }
+    else {
+      let out = 0
+      if (g) for (let c = 0; c < layer; c++) { const z = g[c], i = c + z * layer; out += rho[z] * rain[i] * vt[i] }
+      else { for (let i = 0; i < layer; i++) out += rain[i] * vt[i]; out *= rho[0] }
+      const q = out * dt * this.grid.dx * this.grid.dy; this.chargeGround += q; this.charge.precipitation += q
+    }
     // Level weight lw = rho0 h / dz, so dq = dt (F_in - F_out) / (lw dz). Bottom-up, so each face uses pre-step values above.
+    // Nothing falls into the ground: the nodes below a column's ground node are skipped (they stay empty).
     for (let z = 0; z < nz; z++) {
       const l = z * layer, inflow = z < nz - 1 ? rho[z + 1] : 0
-      for (let i = l; i < l + layer; i++) rain[i] += dt * (inflow * (z < nz - 1 ? rain[i + layer] * vt[i + layer] : 0) - rho[z] * rain[i] * vt[i]) / (lw[z] * dz)
+      for (let i = l; i < l + layer; i++) if (!g || z >= g[i - l]) rain[i] += dt * (inflow * (z < nz - 1 ? rain[i + layer] * vt[i + layer] : 0) - rho[z] * rain[i] * vt[i]) / (lw[z] * dz)
     }
   }
 
@@ -653,13 +662,13 @@ export class AtmosphereModel implements TaskModel {
 
   /** The hail swath: hail leaving the ground nodes this step (before sedimentation moves it) and the largest stones. */
   private collectHail(dt: number) {
-    const rho0 = this.env.rho[0], c = this.groundCell, w = this.groundWeight
-    for (let i = 0; i < this.grid.layer; i++) {
-      const h = this.hail[i]
+    const rho = this.env.rho, c = this.groundCell, w = this.groundWeight, g = this.groundLevel, layer = this.grid.layer
+    for (let b = 0; b < layer; b++) {
+      const z = g ? g[b] : 0, i = b + z * layer, h = this.hail[i]
       if (!(h > 1e-9)) continue
-      this.deposit(i, rho0 * h * this.hailFall[i] * dt, this.hailGround)
-      const size = this.largestHail(i, rho0) * 1000
-      for (let j = 0; j < 4; j++) if (w[i * 4 + j] > 0) this.hailSize[c[i * 4 + j]] = Math.max(this.hailSize[c[i * 4 + j]], size)
+      this.deposit(b, rho[z] * h * this.hailFall[i] * dt, this.hailGround)
+      const size = this.largestHail(i, rho[z]) * 1000
+      for (let j = 0; j < 4; j++) if (w[b * 4 + j] > 0) this.hailSize[c[b * 4 + j]] = Math.max(this.hailSize[c[b * 4 + j]], size)
     }
   }
 
@@ -703,6 +712,27 @@ export class AtmosphereModel implements TaskModel {
    * semi-Lagrangian one (about twice as fast, diffusive, needs the mass fixer).
    */
   transport: 'semi-lagrangian' | 'weno' = 'weno'
+
+  /**
+   * The transport in use: SimConfig.transport, else `transport`. With terrain always WENO: the semi-Lagrangian backtrace
+   * would interpolate from inside the ground and its fall drops everything at level 0, under the slopes.
+   */
+  scheme() { return this.config.terrain ? 'weno' : this.config.transport ?? this.transport }
+
+  /** The ground node of column c: level 0, or with terrain the first fluid node above the slope (groundLevel). */
+  groundNode(c: number) { return this.groundLevel ? c + this.groundLevel[c] * this.grid.layer : c }
+
+  /**
+   * The surface flux shares of a column whose ground node is level g (surfaceShare is g = 0): exp(-height above the
+   * ground / 300 m) per unit volume over the levels less than 500 m above it (at least two), each weighted by its
+   * control-volume height, normalised, so the column receives exactly H and LE. Indexed by level (zero below g).
+   */
+  private sharesAbove(g: number) {
+    const { zs, hz } = this.grid, base = zs[g]
+    const low = Math.max(g + 2, zs.findIndex(z => z - base >= 500)), shape = Array.from({ length: low }, (_, z) => z < g ? 0 : Math.exp(-(zs[z] - base) / 300))
+    const total = shape.reduce((sum, s, z) => sum + s * hz[z], 0)
+    return Float64Array.from(shape, s => s / total)
+  }
   /**
    * Microphysics: with ice (default since 2026-09-29): cloud ice and snow (src/core/ice.ts) and graupel
    * (src/core/graupel.ts), Lin et al. (1983); or Kessler warm rain only (cheaper, no anvil, no heat of fusion).
@@ -833,7 +863,7 @@ export class AtmosphereModel implements TaskModel {
   }
 
   /** Whether the rain is two-moment (rainMoments 2; with the WENO transport only). */
-  rain2m() { return this.rainMoments === 2 && (this.config.transport ?? this.transport) === 'weno' }
+  rain2m() { return this.rainMoments === 2 && this.scheme() === 'weno' }
 
   /** The falling fields sedimentStep and the GPU fall one by one: falling() without two-moment rain. */
   private sedimented() {
@@ -857,7 +887,7 @@ export class AtmosphereModel implements TaskModel {
    * the transport velocity (dynamics) depend on u, v, w only, so the fall may come before them.
    */
   sedimentStep(dt: number) {
-    if ((this.config.transport ?? this.transport) !== 'weno') return
+    if (this.scheme() !== 'weno') return
     for (const [field, vt] of this.sedimented()) this.sediment(field, vt, dt)
     if (this.electrified()) for (const [field, vt] of this.chargeFalls()) this.sediment(field, vt, dt, false)
   }
@@ -879,7 +909,7 @@ export class AtmosphereModel implements TaskModel {
    * speedZ gives the reflectivity-weighted speed, g1 the distribution's reflectivity factor, rhoX the particle density.
    */
   private sediment2m(dt: number, q: Float32Array, num: Float32Array, vol: Float32Array | null, vm: Float32Array, vn: Float32Array, speedZ: (i: number, z: number) => number, g1: number, rhoX: (i: number) => number, qMin: number) {
-    const { nz, layer, hz, n } = this.grid, rho = this.env.rho
+    const { nz, layer, hz, n } = this.grid, rho = this.env.rho, g = this.groundLevel
     const scratch = this.rainScratch ??= { z: new Float64Array(n), vz: new Float32Array(n), carried: new Float64Array(n) }
     const { z: refl, vz, carried } = scratch
     let courant = 0
@@ -894,12 +924,13 @@ export class AtmosphereModel implements TaskModel {
         refl[i] = rq > 0 && rn > 0 ? g1 * k6 * rq * rq / rn : 0
         carried[i] = num[i]
       }
-      // Ground: the mass reaching it into the rain gauge (as sediment()).
-      for (let i = 0; i < layer; i++) this.deposit(i, rho[0] * q[i] * vm[i] * step)
-      // Bottom-up, so each face uses the values above from before this sub-step.
+      // Ground: the mass reaching it into the rain gauge (as sediment(); with terrain from each column's ground node).
+      for (let c = 0; c < layer; c++) { const z = g ? g[c] : 0, i = c + z * layer; this.deposit(c, rho[z] * q[i] * vm[i] * step) }
+      // Bottom-up, so each face uses the values above from before this sub-step; nothing falls into the ground.
       for (let z = 0; z < nz; z++) {
         const top = z < nz - 1, m = rho[z] * hz[z]
         for (let i = z * layer; i < (z + 1) * layer; i++) {
+          if (g && z < g[i - z * layer]) continue
           const a = i + layer
           q[i] += step * ((top ? rho[z + 1] * q[a] * vm[a] : 0) - rho[z] * q[i] * vm[i]) / m
           if (vol) vol[i] += step * ((top ? rho[z + 1] * vol[a] * vm[a] : 0) - rho[z] * vol[i] * vm[i]) / m
@@ -958,7 +989,7 @@ export class AtmosphereModel implements TaskModel {
   dynamics(dt: number) {
     const { nz, layer } = this.grid
     const withIce = this.withIce(), falling = this.falling()
-    if ((this.config.transport ?? this.transport) === 'weno') {
+    if (this.scheme() === 'weno') {
       // Flux-form WENO5 + RK3 with the velocity frozen at the start of the step. The face fluxes are projected to zero
       // divergence, so water is conserved by the scheme itself: no mass fixer, only a positivity fix (fillNegative).
       // The face fluxes of the transport velocity, projected (FluxTransport.setVelocity, in parts).
@@ -1008,7 +1039,7 @@ export class AtmosphereModel implements TaskModel {
 
   /** (WENO) the positivity fix of the transported fields, then the physics node by node. */
   physicsStep(dt: number) {
-    if ((this.config.transport ?? this.transport) === 'weno') {
+    if (this.scheme() === 'weno') {
       const carried = this.carried()
       this.runner.run('finish', carried.length, dt)
       for (let k = 0; k < carried.length; k++) if (carried[k].conserve) this.negativeFilled += this.taskNegative[k]
@@ -1066,16 +1097,26 @@ export class AtmosphereModel implements TaskModel {
     // stays steady (was: u, v *= 0.94 every step, which stopped the ground wind in ~16 s). Applied with the rigid
     // ground/top before the projection, so the transport velocity is D-free.
     // Friction acts on the wind over the ground: the model's (domain-relative) wind plus the frame velocity.
-    const drag = this.surfaceDrag ? dragCoefficient(cfg, 2 * hz[0]) * dt / hz[0] : 0, ue0 = e.u[0], ve0 = e.v[0], envSpeed = Math.hypot(ue0, ve0), [fu, fv] = this.frame
+    // With terrain the stress acts on each column's ground node (over its own control volume, times the slope's area).
+    // Above the plain's ground node it is not balanced: the large-scale flow that keeps the environment's ground wind
+    // against the plain's drag does not act at the heights of the slopes, where the environment has no friction (the
+    // numerics review 24.11.2026: balancing against the environment's wind there gave the summit a momentum source).
+    const cd = this.surfaceDrag ? dragCoefficient(cfg, 2 * hz[0]) * dt : 0, drag = cd / hz[0], ue0 = e.u[0], ve0 = e.v[0], envSpeed = Math.hypot(ue0, ve0), [fu, fv] = this.frame
+    const ground = this.groundLevel, slope = this.slope
     for (let b = 0; b < layer; b++) {
-      const ug = u[b] + fu, vg = v[b] + fv, speed = Math.hypot(ug, vg)
-      u[b] -= drag * (speed * ug - envSpeed * ue0); v[b] -= drag * (speed * vg - envSpeed * ve0)
+      if (ground && slope && ground[b] > 0) {
+        const z = ground[b], k = b + z * layer, d = cd * slope[b] / hz[z], speed = Math.hypot(u[k], v[k])
+        u[k] -= d * speed * u[k]; v[k] -= d * speed * v[k]
+      } else {
+        const d = slope ? drag * slope[b] : drag, ug = u[b] + fu, vg = v[b] + fv, speed = Math.hypot(ug, vg)
+        u[b] -= d * (speed * ug - envSpeed * ue0); v[b] -= d * (speed * vg - envSpeed * ve0)
+      }
       w[b] = 0; w[b + (nz - 1) * layer] = 0
     }
   }
 
   /** Whether this step's buoyancy goes into the transport's stages (pressureInStages, WENO only) instead of physics(). */
-  private staged() { return this.pressureInStages && (this.config.transport ?? this.transport) === 'weno' }
+  private staged() { return this.pressureInStages && this.scheme() === 'weno' }
 
   /**
    * Adds g B of the fields as they are now to the w tendency on levels z0-z1 (pressureInStages): the same buoyancy as
@@ -1239,7 +1280,7 @@ export class AtmosphereModel implements TaskModel {
     const pull = (i: number, keep: number) => { for (const t of BUDGET_TERMS) budget![t][i] *= keep }
     const electric = withIce && this.electrified(), cI = this.chargeIce, cG = this.chargeGraupel, cR = this.chargeRain, cA = this.chargeAir, cNow = this.chargeNow, before = this.massBefore, after = this.massAfter
     const flux = surfaceFluxes(cfg, this.time), urban = (cfg.city ?? 0) > 0 ? surfaceFluxes(cfg, this.time, 'urban') : flux, f = processOn(cfg, 'coriolis') ? 2 * OMEGA * Math.sin(cfg.latitude * Math.PI / 180) : 0
-    const evaporate = processOn(cfg, 'evaporation'), loading = processOn(cfg, 'loading'), surfaceOn = processOn(cfg, 'surface')
+    const evaporate = processOn(cfg, 'evaporation'), loading = processOn(cfg, 'loading'), surfaceOn = processOn(cfg, 'surface'), ground = this.groundLevel
     // Under a cloud the balance is the same with the sunlight times sunNow: the available energy max(0, A T - LW) of the
     // clear sky's A - LW (the shares of H and LE stay), so a column scales its clear-sky fluxes by it (roadmap B10).
     // sunNow is 1 wherever no cloud shades (and with the shade off): read it, not this.shaded, which is the main thread's
@@ -1358,9 +1399,11 @@ export class AtmosphereModel implements TaskModel {
           // The water budget: the microphysics' net vapour change at the node, and rain's evaporation within it.
           { const dq = q[i] - q0; if (dq < 0) wCond -= dq; else wEvap += dq; if (evap > 0) wRain += evap }
           // Surface fluxes enter the lowest levels with the shares in surfaceShare, so the column receives exactly H and LE.
-          if (surfaceOn && z < this.surfaceShare.length) {
+          // With terrain they enter above each column's ground node (sharesAbove).
+          const shares = ground ? this.sharesByGround[ground[x + row]] ??= this.sharesAbove(ground[x + row]) : this.surfaceShare
+          if (surfaceOn && z < shares.length && shares[z] > 0) {
             // The city (if any) blends in its own energy balance under the share of the column it covers.
-            const pattern = 1 + this.patternNow[x + row] * .32, per = pattern * this.surfaceShare[z] * dt / rhoZ, c = urban === flux ? 0 : this.cityNow[x + row]
+            const pattern = 1 + this.patternNow[x + row] * .32, per = pattern * shares[z] * dt / rhoZ, c = urban === flux ? 0 : this.cityNow[x + row]
             const sunlit = this.sunNow[x + row], k = sunlit < 1 ? scale(flux.absorbed, sunlit) : 1, ku = c > 0 && sunlit < 1 ? scale(urban.absorbed, sunlit) : 1
             const heat = (k * flux.sensible + c * (ku * urban.sensible - k * flux.sensible)) * per / (CP * exner)
             const vapour = (k * flux.latent + c * (ku * urban.latent - k * flux.latent)) * per / LV
@@ -1560,12 +1603,14 @@ export class AtmosphereModel implements TaskModel {
     const rho0 = this.env.rho[0]
     let rainTotal = 0, gust = 0
     const [fu, fv] = this.frame
-    for (let c = 0; c < this.grid.layer; c++) gust = Math.max(gust, Math.hypot(this.u[c] + fu, this.v[c] + fv))
-    for (let i = 0; i < this.grid.layer; i++) { rainRate = Math.max(rainRate, precipitationFlux(this, i, rho0) * 3600); rainTotal = Math.max(rainTotal, this.precipitation[i]) }
+    for (let c = 0; c < this.grid.layer; c++) { const i = this.groundNode(c); gust = Math.max(gust, Math.hypot(this.u[i] + fu, this.v[i] + fv)) }
+    // At each column's ground node (level 0, or with terrain the first fluid node above the slope).
+    const g = this.groundLevel, rho = this.env.rho
+    for (let c = 0; c < this.grid.layer; c++) { const i = this.groundNode(c); rainRate = Math.max(rainRate, precipitationFlux(this, i, g ? rho[g[c]] : rho0) * 3600); rainTotal = Math.max(rainTotal, this.precipitation[c]) }
     // Largest hailstones reaching the ground now (falling through the ground node), mm.
     let hail = 0
     const cold = outflowDeficit(this)
-    for (let i = 0; i < this.grid.layer; i++) hail = Math.max(hail, this.largestHail(i, rho0) * 1000)
+    for (let c = 0; c < this.grid.layer; c++) hail = Math.max(hail, this.largestHail(this.groundNode(c), g ? rho[g[c]] : rho0) * 1000)
     return { updraft: up, downdraft: down, rainRate, rainTotal, cloudTop: top, thermalTop, maxCloud, coldMax, cores: this.countCores(), shear06: Math.hypot(u6 - u0, v6 - v0), outflow: cold.max, outflowLow: deficitNear(cold, this.grid, this.rotation.low), gust, hail, clipped: this.clipped }
   }
 }

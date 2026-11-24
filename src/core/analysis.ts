@@ -130,9 +130,12 @@ export interface StationPlot { x: number; y: number; temp: number; dew: number; 
 /** The sky a station sees for its cloud cover: columns within this distance, m. */
 export const SKY_RADIUS = 4000
 
-/** Rain at the ground of a column, mm/h: rho0 q_r V_t at the lowest level (as ModelDiagnostics.rainRate, rain only). */
-export function groundRain(m: Pick<StationSource, 'env' | 'rain'> & { rainNumber?: ArrayLike<number> }, c: number) {
-  return rainFlux(m, c, m.env.rho[0]) * 3600
+/**
+ * Rain at the ground of a column, mm/h: rho0 q_r V_t at its ground node (as ModelDiagnostics.rainRate, rain only) —
+ * level 0, or with terrain the first fluid node above the slope (AtmosphereModel.groundNode).
+ */
+export function groundRain(m: Pick<StationSource, 'env' | 'rain'> & { rainNumber?: ArrayLike<number>; groundLevel?: ArrayLike<number> | null; groundNode?: (c: number) => number }, c: number) {
+  return m.groundLevel && m.groundNode ? rainFlux(m, m.groundNode(c), m.env.rho[m.groundLevel[c]]) * 3600 : rainFlux(m, c, m.env.rho[0]) * 3600
 }
 
 /** How close (m) and how recent (s) a flash makes a thunderstorm at a station (thunder is heard ~10-15 km away). */

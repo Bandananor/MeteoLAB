@@ -86,10 +86,14 @@ export interface Cell {
   /** Recent centres, unwrapped across the periodic edges, for the motion. */ trail: { t: number; x: number; y: number }[]
 }
 
-/** Precipitation reaching the ground per column, mm/h of water: rain, snow, graupel and hail through the ground node. */
-export function groundPrecipitation(m: Pick<AtmosphereModel, 'grid' | 'env'> & FluxSource) {
-  const { layer } = m.grid, rho0 = m.env.rho[0], out = new Float32Array(layer)
-  for (let c = 0; c < layer; c++) out[c] = precipitationFlux(m, c, rho0) * 3600
+/**
+ * Precipitation reaching the ground per column, mm/h of water: rain, snow, graupel and hail through the ground node
+ * (level 0, or with terrain the first fluid node above the slope).
+ */
+export function groundPrecipitation(m: Pick<AtmosphereModel, 'grid' | 'env'> & FluxSource & Partial<Pick<AtmosphereModel, 'groundLevel' | 'groundNode'>>) {
+  const { layer } = m.grid, rho = m.env.rho, rho0 = rho[0], out = new Float32Array(layer), g = m.groundLevel
+  if (g && m.groundNode) for (let c = 0; c < layer; c++) out[c] = precipitationFlux(m, m.groundNode(c), rho[g[c]]) * 3600
+  else for (let c = 0; c < layer; c++) out[c] = precipitationFlux(m, c, rho0) * 3600
   return out
 }
 

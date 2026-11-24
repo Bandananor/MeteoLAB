@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { AtmosphereModel, createGrid, DT, MaskedProjection, solidMask, terrainHeights } from '.'
 import { PressureSolver } from './pressure'
+import { Turbulence } from './turbulence'
 import { QUIET } from './fixtures'
 
 const grid = createGrid({ nx: 32, ny: 24, nz: 30, width: 38_400, depth: 28_800, height: 15_000, bottomSpacing: 100 })
@@ -63,9 +64,66 @@ describe('terrain (terrain.ts, 3.0 block Д step 1)', () => {
     expect(Math.abs(total() - before) / before).toBeLessThan(1e-7)
   }, 120_000)
 
+  it('drops the rain on the slope: into the rain gauge of the column under it, nothing into the ground, no water lost', () => {
+    const m = new AtmosphereModel({ ...QUIET, followStorm: false, bubble: 0, terrain: { kind: 'plateau', height: .5, width: 8 } }, grid)
+    const { nx, ny, layer, hz } = grid, c = nx / 2 + nx * (ny / 2), g = m.groundLevel![c], rho = m.env.rho
+    expect(g).toBeGreaterThan(2)
+    for (let z = g + 3; z < g + 10; z++) m.rain[c + z * layer] = 2e-3
+    let mass = 0
+    for (let z = 0; z < grid.nz; z++) mass += m.rain[c + z * layer] * rho[z] * hz[z]
+    for (let k = 0; k < 400; k++) m.beginStep(DT)
+    let left = 0
+    for (let z = 0; z < grid.nz; z++) left += m.rain[c + z * layer] * rho[z] * hz[z]
+    for (let z = 0; z < g; z++) expect(m.rain[c + z * layer]).toBe(0)
+    // Nearly all of it reached the gauge of that one column (no frame motion over terrain), as mm = kg/m2, and what
+    // is still falling (the slow tail of the thinning rain) makes up the rest.
+    expect(left).toBeLessThan(.01 * mass)
+    expect(Math.abs(m.precipitation[c] + left - mass) / mass).toBeLessThan(1e-6)
+    expect(Math.abs(m.precipitation.reduce((s, x) => s + x, 0) - m.precipitation[c])).toBe(0)
+  })
+
+  it('heats the air above the slope, not the ground: solid nodes keep their values, the air gets the flat ground\'s heat', () => {
+    const sunny = { ...QUIET, solarMax: 1000, wind0: 0, wind05: 0, wind1: 0, wind3: 0, wind6: 0, wind10: 0, followStorm: false, bubble: 0 }
+    const { nx, ny, nz, layer, n, hz } = grid, c = nx / 2 + nx * (ny / 2)
+    // The heat the air gained, J/m2: rho cp pi h dtheta over the fluid nodes.
+    const heated = (terrain?: { kind: 'plateau'; height: number; width: number }) => {
+      const m = new AtmosphereModel({ ...sunny, ...(terrain ? { terrain } : {}) }, grid), theta = Float32Array.from(m.theta), q = Float32Array.from(m.q)
+      for (let k = 0; k < 100; k++) { m.step(DT); m.time += DT }
+      let heat = 0
+      for (let z = 0; z < nz; z++) for (let b = 0; b < layer; b++) { const i = b + z * layer; if (!m.solid?.[i]) heat += m.env.rho[z] * hz[z] * 1004 * m.env.exner[z] * (m.theta[i] - theta[i]) }
+      return { m, theta, q, heat }
+    }
+    const flat = heated(), { m, theta, q, heat } = heated({ kind: 'plateau', height: .5, width: 8 }), g = m.groundLevel![c], solid = m.solid!
+    for (let i = 0; i < n; i++) if (solid[i]) { expect(m.theta[i]).toBe(theta[i]); expect(m.q[i]).toBe(q[i]) }
+    expect(m.theta[c + g * layer] - theta[c + g * layer]).toBeGreaterThan(.05)
+    // The same sunshine heats the air by the same amount over the plateau as over the flat ground (0.02 % on 24.11).
+    expect(Math.abs(heat / flat.heat - 1)).toBeLessThan(2e-3)
+  }, 120_000)
+
+  it('mixes an unstable layer over the slope: the solid node under it is a wall, not a cold neighbour', () => {
+    const h = terrainHeights({ kind: 'plateau', height: .5, width: 8 }, grid), solid = solidMask(grid, h), { n, nz, layer, nx, ny, zs } = grid
+    const turbulence = new Turbulence(grid, Array.from({ length: nz }, () => 1.1)), c = nx / 2 + nx * (ny / 2)
+    turbulence.solid = solid
+    let g = 0
+    while (solid[c + g * layer]) g++
+    // Heated air over the ground: 2 K/km superadiabatic above every column's ground node; the solid nodes keep the cold
+    // environment (300 K + 6 K/km), so a difference through them sees a stable jump.
+    const theta = new Float32Array(n), env = Float64Array.from(zs, z => 300 + .006 * z)
+    for (let b = 0; b < layer; b++) {
+      let base = 0
+      while (solid[b + base * layer]) base++
+      for (let z = 0; z < nz; z++) theta[b + z * layer] = z < base ? env[z] : 303 - .002 * (zs[z] - zs[base])
+    }
+    turbulence.viscosity(new Float32Array(n), new Float32Array(n), new Float32Array(n), theta, env, .18, DT)
+    expect(turbulence.km[c + g * layer]).toBeGreaterThan(0)
+    expect(turbulence.km[c + (g - 1) * layer]).toBe(0)
+  })
+
   it('is the flat ground bit for bit under half the lowest spacing (no solid node: the flat projection)', () => {
     const run = (terrain?: { kind: 'hill'; height: number; width: number }) => {
       const m = new AtmosphereModel({ ...QUIET, followStorm: false, bubble: 1.5, ...(terrain ? { terrain } : {}) }, grid)
+      // Without the drag, which takes the low hill's slope area (1 + ~1e-5): everything else is the flat ground's.
+      m.surfaceDrag = false
       for (let t = 0; t < 3 * 60; t += DT) { m.step(DT); m.time += DT }
       return m
     }
