@@ -355,7 +355,10 @@ export class AtmosphereModel implements TaskModel {
     // Terrain (terrain.ts): the ground heights, the solid nodes and the projection that keeps the air out of them.
     if (config.terrain) {
       this.terrainHeight = terrainHeights(config.terrain, grid); this.solid = solidMask(grid, this.terrainHeight); this.groundLevel = groundLevels(grid, this.solid)
-      this.masked = new MaskedProjection(grid, this.solver, this.solid); this.slope = slopeArea(grid, this.terrainHeight)
+      // The masked solves hand their per-level parts to the helper threads (the runner, read when they run).
+      this.masked = new MaskedProjection(grid, this.solver, this.solid, 1e-6, 200, this.memory); this.slope = slopeArea(grid, this.terrainHeight)
+      this.masked.run = (phase, tasks) => this.runner.run(phase, tasks, 0)
+      this.flux.parallelSolve = () => { const run = (phase: Phase, tasks: number) => this.runner.run(phase, tasks, 0); run('faceForward', grid.nz); run('faceModes', grid.ny); run('faceInverse', grid.nz) }
       const heights = nodeHeights(grid, this.solid)
       this.volumeShare = heights.map((h, i) => h / grid.hz[Math.floor(i / grid.layer)])
       this.turbulence.setTerrain(this.solid, heights); this.flux.setTerrain(this.solid, heights)
@@ -1244,6 +1247,7 @@ export class AtmosphereModel implements TaskModel {
       case 'pressureModes': this.solver.modes(k, k + 1); break
       case 'pressureInverse': this.solver.back(this.pressure, k, k + 1); break
       case 'pressureCorrect': this.solver.correct(this.pressure, this.u, this.v, this.w, dt, k, k + 1); break
+      case 'maskedGradient': case 'maskedDivergence': case 'maskedForward': case 'maskedModes': case 'maskedInverse': this.masked!.task(phase, k); break
       case 'viscosity': {
         // Saturated stability inside clouds (cloud water plus ice): see Turbulence.viscosity.
         const e = this.env, moist = { q: this.q, condensate: this.withIce() ? this.condensate : this.cloud, exner: e.exner }

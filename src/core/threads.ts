@@ -43,7 +43,9 @@ export class AttachedMemory implements Memory {
  */
 export const PHASES = ['fall', 'faces', 'faceDivergence', 'faceForward', 'faceModes', 'faceInverse', 'faceCorrect',
   'tendency0', 'update0', 'tendency1', 'update1', 'tendency2', 'update2', 'finish', 'physics', 'viscosity', 'mix',
-  'pressureDivergence', 'pressureForward', 'pressureModes', 'pressureInverse', 'pressureCorrect'] as const
+  'pressureDivergence', 'pressureForward', 'pressureModes', 'pressureInverse', 'pressureCorrect',
+  // The masked projection with terrain (terrain.ts MaskedProjection): its operator per level, its flat solve's phases.
+  'maskedGradient', 'maskedDivergence', 'maskedForward', 'maskedModes', 'maskedInverse'] as const
 export type Phase = typeof PHASES[number]
 
 /** Runs `tasks` tasks of one phase; the model does task k with runTask(phase, k, dt). */

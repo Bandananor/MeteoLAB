@@ -61,6 +61,25 @@ describe('threaded steps (src/core/threads.ts)', () => {
     expect(same(plain, go(true))).toBe(true)
   })
 
+  it('and over terrain: the masked solves hand their per-level parts to the helper, bit for bit', () => {
+    // 24.11.2026: the masked projections ran on the main thread alone (83 % of a step on the standard grid).
+    const cfg = () => ({ ...SUMMER_DAY, bubble: 1.4, followStorm: false, terrain: { kind: 'hill' as const, height: 1, width: 5 } })
+    const go = (helped: boolean) => {
+      const memory = new SharedMemory(), m = new AtmosphereModel(cfg(), createGrid(GRID), undefined, { memory })
+      m.transportSlabs = 10
+      let handed = 0
+      if (helped) {
+        const helper = new AtmosphereModel(cfg(), createGrid(GRID), undefined, { memory: new AttachedMemory(memory.buffers), attach: true })
+        m.runner = { run: (phase, tasks, dt) => { helper.applySettings(m.settings()); helper.time = m.time; if (phase.startsWith('masked') || phase.startsWith('face')) handed++; for (let k = 0; k < tasks; k++) (k % 2 ? helper : m).runTask(phase, k, dt) } }
+      }
+      for (let k = 0; k < 60; k++) { m.step(DT); m.time += DT }
+      return { m, handed }
+    }
+    const plain = go(false), helped = go(true)
+    expect(helped.handed).toBeGreaterThan(1000)
+    expect(same(plain.m, helped.m)).toBe(true)
+  })
+
   it('keeps it so with the vertical mixing experiments switched on (they reach the helpers in the settings)', () => {
     const variant = (m: AtmosphereModel) => { m.verticalLength = 'dz'; m.verticalMixing = 'implicit'; m.moistStability = 'durran-klemp' }
     const plain = run(m => { variant(m); return m.runner }, 200)

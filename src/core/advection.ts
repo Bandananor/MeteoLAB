@@ -69,6 +69,8 @@ export class FluxTransport {
   /** The masked face solve's work arrays, made on first use; its last iterations and relative residual. */
   private masked: { q: Float64Array; r: Float64Array; z: Float64Array; d: Float64Array; sd: Float64Array; b: Float64Array } | null = null
   maskedIterations = 0; maskedResidual = 0
+  /** The flat solve's three phases (forward, modes, inverse on div into phi) handed to helper threads, if the model sets it. */
+  parallelSolve: (() => void) | null = null
 
   /** Sets the terrain: the solid nodes and every node's control-volume height (terrain.ts nodeHeights). */
   setTerrain(solid: Uint8Array, heights: Float64Array) {
@@ -175,7 +177,7 @@ export class FluxTransport {
   private flatSolve(r: Float64Array, out: Float64Array) {
     const { nz, ny, layer } = this.grid, { div, h, phi } = this
     for (let i = 0; i < div.length; i++) div[i] = -r[i] / h[Math.floor(i / layer)]
-    this.forward(0, nz); this.modes(0, ny); this.inverse(0, nz)
+    if (this.parallelSolve) this.parallelSolve(); else { this.forward(0, nz); this.modes(0, ny); this.inverse(0, nz) }
     for (let i = 0; i < out.length; i++) out[i] = phi[i]
   }
 

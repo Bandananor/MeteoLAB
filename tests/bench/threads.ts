@@ -1,6 +1,6 @@
 // @ts-nocheck
 // Speed of threaded steps in Node (worker_threads), and a check that every thread count gives the same model:
-//   npm run bench -- [threads] [large] [warm=900] [steps=60] [s=<scenario index>]
+//   npm run bench -- [threads] [large] [terrain] [warm=900] [steps=60] [s=<scenario index>]
 // prints ms per step, the time of each phase and a fingerprint of the fields (equal for any thread count).
 import { isMainThread, Worker, workerData } from 'node:worker_threads'
 import { fileURLToPath } from 'node:url'
@@ -23,7 +23,8 @@ if (!isMainThread) {
   const args = process.argv.slice(2), large = args.includes('large'), threads = Number(args.find(a => /^\d+$/.test(a)) ?? availableParallelism())
   const steps = Number(args.find(a => a.startsWith('steps='))?.slice(6) ?? 300), warm = Number(args.find(a => a.startsWith('warm='))?.slice(5) ?? 0)
   const scenario = Number(args.find(a => a.startsWith('s='))?.slice(2) ?? 7)
-  const config: SimConfig = { ...SUMMER_DAY, ...SCENARIOS[scenario].values }, gridOptions = large ? LARGE_GRID : DEFAULT_GRID
+  // terrain: a 1 km hill (the masked solves, terrain.ts).
+  const config: SimConfig = { ...SUMMER_DAY, ...SCENARIOS[scenario].values, ...(args.includes('terrain') ? { followStorm: false, terrain: { kind: 'hill', height: 1, width: 8 } } : {}) }, gridOptions = large ? LARGE_GRID : DEFAULT_GRID
   const memory = new SharedMemory(), model = new AtmosphereModel({ ...config }, createGrid(gridOptions), undefined, { memory })
   const control = controlBuffer(), helpers: Worker[] = []
   for (let k = 0; k < threads - 1; k++) helpers.push(new Worker(fileURLToPath(import.meta.url), { workerData: { config: { ...config }, grid: gridOptions, buffers: memory.buffers, control } }))

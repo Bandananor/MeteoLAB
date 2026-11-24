@@ -1,5 +1,9 @@
 import type { Grid } from './grid'
 import type { PressureSolver } from './pressure'
+import { type Memory, type Phase, PRIVATE_MEMORY } from './threads'
+
+/** The masked projection's runner phases (threads.ts PHASES). */
+export type MaskedPhase = Extract<Phase, `masked${string}`>
 
 // Terrain (3.0 block Д, step 1; the author's choice of 22.11.2026: an immersed boundary, not terrain-following
 // coordinates — the spectral pressure solver and the GPU kernels stay). The ground rises into the grid as a staircase:
@@ -10,12 +14,17 @@ import type { PressureSolver } from './pressure'
 
 /** A terrain form (SimConfig.terrain): heights and widths in km, the centre in km from the domain's south-west corner. */
 export interface TerrainConfig {
-  /** 'hill' — a round hill (3D Witch of Agnesi); 'ridge' — a long ridge (2D Witch of Agnesi) across `heading`; 'plateau' — a flat-topped rise with smooth sides. */
-  kind: 'hill' | 'ridge' | 'plateau'
+  /**
+   * 'hill' — a round hill (3D Witch of Agnesi); 'ridge' — a long ridge (2D Witch of Agnesi) across `heading`; 'plateau' —
+   * a flat-topped rise with smooth sides; 'schar' — the long ridge of Schär et al. (2002) mountain-wave test,
+   * exp(-x²/a²) cos²(π x / λ): a Gaussian envelope (a = `width`) on short ridges `wavelength` apart.
+   */
+  kind: 'hill' | 'ridge' | 'plateau' | 'schar'
   /** Top height above the plain, km. */ height: number
   /** Half-width (the Agnesi a; the plateau's half side), km; at least two grid spacings after smoothing. */ width: number
   /** Centre, km from the domain's south-west corner (absent: the middle). */ x?: number; y?: number
   /** The ridge's axis, degrees clockwise from north (absent: north-south, across a westerly flow). */ heading?: number
+  /** 'schar': the short ridges' wavelength λ, km (absent: 4, Schär et al. 2002). */ wavelength?: number
 }
 
 /**
@@ -33,6 +42,7 @@ export function terrainHeights(t: TerrainConfig, grid: Pick<Grid, 'nx' | 'ny' | 
     let v: number
     if (t.kind === 'hill') v = top / (1 + (ex * ex + ey * ey) / (a * a)) ** 1.5
     else if (t.kind === 'ridge') { const across = ex * ay - ey * ax; v = top / (1 + across * across / (a * a)) }
+    else if (t.kind === 'schar') { const across = ex * ay - ey * ax; v = top * Math.exp(-across * across / (a * a)) * Math.cos(Math.PI * across / ((t.wavelength ?? 4) * 1000)) ** 2 }
     else { const r = Math.max(Math.abs(ex), Math.abs(ey)); v = top / (1 + Math.exp((r - a) / (.25 * a))) }
     h[i + nx * j] = v
   }
@@ -121,29 +131,55 @@ export class MaskedProjection {
   private readonly wall: Uint8Array; private readonly scale: Float64Array
   /** The dual cells below the wall nodes, which have no row (1). */
   readonly dropped: Uint8Array
-  /** The wall nodes (index), and where each one is: its column's x and y, its level. */
-  private readonly walls: Int32Array
+  /** The wall nodes (index), level by level, and where each level's start in it (nz + 1 entries). */
+  private readonly walls: Int32Array; private readonly wallsFrom: Int32Array
+  // Shared with helper threads (the operator and the preconditioner run as runner phases, see run): the gradient's
+  // node arrays, the cells' input (work), the operator's output (out) and the preconditioner's (z).
   private readonly tu: Float64Array; private readonly tv: Float64Array; private readonly tw: Float64Array
-  private readonly b: Float64Array; private readonly q: Float64Array; private readonly r: Float64Array; private readonly z: Float64Array
-  private readonly d: Float64Array; private readonly sd: Float64Array; private readonly work: Float64Array; private readonly phi: Float64Array
+  private readonly work: Float64Array; private readonly out: Float64Array; private readonly z: Float64Array
+  private readonly b: Float64Array; private readonly q: Float64Array; private readonly r: Float64Array
+  private readonly d: Float64Array; private readonly phi: Float64Array
 
   /** The relative residual the solve stops at, and its most iterations. */
   readonly tolerance: number; readonly maxIterations: number
 
-  constructor(grid: Grid, solver: PressureSolver, solid: Uint8Array, tolerance = 1e-6, maxIterations = 200) {
+  /**
+   * Runs a phase's tasks (task): here, one after another, unless the model hands them to its helper threads. The
+   * tasks write disjoint levels, so the result is the same either way, bit for bit.
+   */
+  run: (phase: MaskedPhase, tasks: number) => void = (phase, tasks) => { for (let k = 0; k < tasks; k++) this.task(phase, k) }
+
+  constructor(grid: Grid, solver: PressureSolver, solid: Uint8Array, tolerance = 1e-6, maxIterations = 200, memory: Memory = PRIVATE_MEMORY) {
     this.grid = grid; this.solver = solver; this.solid = solid; this.tolerance = tolerance; this.maxIterations = maxIterations
     this.any = solid.some(s => s === 1)
     const n = grid.n, cells = solver.cells, f = () => new Float64Array(cells), { nx, ny, nz, hz, layer } = grid
-    this.tu = new Float64Array(n); this.tv = new Float64Array(n); this.tw = new Float64Array(n)
-    this.b = f(); this.q = f(); this.r = f(); this.z = f(); this.d = f(); this.sd = f(); this.work = f(); this.phi = f()
+    this.tu = memory.f64('masked-tu', n); this.tv = memory.f64('masked-tv', n); this.tw = memory.f64('masked-tw', n)
+    this.work = memory.f64('masked-work', cells); this.out = memory.f64('masked-out', cells); this.z = memory.f64('masked-z', cells)
+    this.b = f(); this.q = f(); this.r = f(); this.d = f(); this.phi = f()
     const ground = groundLevels(grid, solid), heights = nodeHeights(grid, solid)
     this.wall = new Uint8Array(n); this.scale = new Float64Array(n).fill(1); this.dropped = new Uint8Array(cells)
     const walls: number[] = []
-    for (let z = 1; z < nz; z++) for (let c = 0; c < layer; c++) if (ground[c] === z) { const i = c + z * layer; this.wall[i] = 1; this.scale[i] = hz[z] / heights[i]; walls.push(i) }
+    this.wallsFrom = new Int32Array(nz + 1)
+    for (let z = 0; z < nz; z++) {
+      this.wallsFrom[z] = walls.length
+      if (z > 0) for (let c = 0; c < layer; c++) if (ground[c] === z) { const i = c + z * layer; this.wall[i] = 1; this.scale[i] = hz[z] / heights[i]; walls.push(i) }
+    }
+    this.wallsFrom[nz] = walls.length
     this.walls = Int32Array.from(walls)
     for (let k = 0, c = 0; k < nz - 1; k++) for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++, c++) {
       const i1 = (i + 1) % nx, j1 = ((j + 1) % ny) * nx, j0 = j * nx
       if (k + 1 <= Math.min(ground[i + j0], ground[i1 + j0], ground[i + j1], ground[i1 + j1])) this.dropped[c] = 1
+    }
+  }
+
+  /** One task of a phase: the operator's gradient of node level k or divergence of cell layer k, a part of the flat solve. */
+  task(phase: MaskedPhase, k: number) {
+    switch (phase) {
+      case 'maskedGradient': this.gradientPart(k); break
+      case 'maskedDivergence': this.divergencePart(k); break
+      case 'maskedForward': this.solver.transform(this.work, k, k + 1); break
+      case 'maskedModes': this.solver.modes(k, k + 1); break
+      case 'maskedInverse': this.solver.back(this.z, k, k + 1); break
     }
   }
 
@@ -156,10 +192,11 @@ export class MaskedProjection {
   /**
    * Takes the wall nodes' u and v out of the divergence of the cells below them (`out`, per unit time): each is the
    * upper corner of four cells of the layer below, where PressureSolver.divergence counted rho/4 (±u/dx ± v/dy).
+   * The wall nodes from..to-1 of the list (default all).
    */
-  private cutDivergence(u: ArrayLike<number>, v: ArrayLike<number>, out: Float64Array) {
+  private cutDivergence(u: ArrayLike<number>, v: ArrayLike<number>, out: Float64Array, from = 0, to = this.walls.length) {
     const { nx, ny, dx, dy, layer } = this.grid, rho = this.solver.rho, walls = this.walls
-    for (let k = 0; k < walls.length; k++) {
+    for (let k = from; k < to; k++) {
       const i = walls[k], z = Math.floor(i / layer), c = i - z * layer, x = c % nx, y = (c - x) / nx, r = rho[z] / 4, base = (z - 1) * layer
       const xm = (x + nx - 1) % nx, ym = (y + ny - 1) % ny, ux = r * u[i] / dx, vy = r * v[i] / dy
       // The node is the cells' corner t (cell x-1, y-1), s (x, y-1), h (x-1, y) and g (x, y): + for the east / north corners.
@@ -168,9 +205,9 @@ export class MaskedProjection {
   }
 
   /** Takes the cells below each wall node out of its gradient: adds back the part PressureSolver.correct took from them. */
-  private cutGradient(phi: Float64Array, tu: Float64Array, tv: Float64Array) {
+  private cutGradient(phi: Float64Array, tu: Float64Array, tv: Float64Array, from: number, to: number) {
     const { nx, ny, dx, dy, dzs, hz, layer } = this.grid, walls = this.walls
-    for (let k = 0; k < walls.length; k++) {
+    for (let k = from; k < to; k++) {
       const i = walls[k], z = Math.floor(i / layer), c = i - z * layer, x = c % nx, y = (c - x) / nx, base = (z - 1) * layer, wLo = dzs[z - 1] / hz[z]
       const xm = (x + nx - 1) % nx, ym = (y + ny - 1) % ny, P = (ii: number, jj: number) => phi[base + ii + nx * jj]
       tu[i] += wLo * (P(x, ym) + P(x, y) - P(xm, ym) - P(xm, y)) / (4 * dx)
@@ -185,28 +222,40 @@ export class MaskedProjection {
     for (let c = 0; c < layer; c++) { w[c] = 0; w[n - layer + c] = 0 }
   }
 
-  /** Adds the correction in tu, tv, tw (the solver's -G phi) times hz / H to the node velocities. */
-  private addCorrection(u: Float32Array, v: Float32Array, w: Float32Array) {
-    const { tu, tv, tw, scale } = this
-    for (let i = 0; i < u.length; i++) { const s = scale[i]; u[i] += s * tu[i]; v[i] += s * tv[i]; w[i] += s * tw[i] }
+  /** The masked gradient -M G (work) over H at node level k, into tu, tv, tw (the operator's first half). */
+  private gradientPart(k: number) {
+    const { tu, tv, tw, work, scale, solid, wall } = this, { layer, nz } = this.grid, a = k * layer, e = a + layer
+    tu.fill(0, a, e); tv.fill(0, a, e); tw.fill(0, a, e)
+    this.solver.correct(work, tu as unknown as Float32Array, tv as unknown as Float32Array, tw as unknown as Float32Array, 1, k, k + 1)
+    this.cutGradient(work, tu, tv, this.wallsFrom[k], this.wallsFrom[k + 1])
+    for (let i = a; i < e; i++) { const s = scale[i]; tu[i] *= s; tv[i] *= s; tw[i] *= s; if (solid[i]) { tu[i] = 0; tv[i] = 0; tw[i] = 0 } else if (wall[i]) tw[i] = 0 }
+    if (k === 0 || k === nz - 1) tw.fill(0, a, e)
+  }
+
+  /** The divergence of tu, tv, tw in cell layer k, the wall nodes above it cut, into `out` (the operator's second half). */
+  private divergencePart(k: number) {
+    const { tu, tv, tw, out, dropped } = this, cl = this.grid.layer
+    this.solver.divergence(tu as unknown as Float32Array, tv as unknown as Float32Array, tw as unknown as Float32Array, 1, out, k, k + 1)
+    this.cutDivergence(tu, tv, out, this.wallsFrom[k + 1], this.wallsFrom[k + 2])
+    for (let c = k * cl; c < (k + 1) * cl; c++) if (dropped[c]) out[c] = 0
   }
 
   /** Projects (u, v, w) in place over the time step dt; `pressure` (per cell) is the first guess and gets the result. */
   project(u: Float32Array, v: Float32Array, w: Float32Array, dt: number, pressure: Float64Array) {
-    const { b, q, r, z, d, sd, phi } = this, dzs = this.grid.dzs, cl = this.grid.nx * this.grid.ny, cells = this.solver.cells
+    const { b, q, r, z, d, out: sd, phi } = this, dzs = this.grid.dzs, cl = this.grid.nx * this.grid.ny, cells = this.solver.cells
     this.mask(u, v, w)
     if (!this.any) { this.iterations = 0; this.residual = 0; this.flat(u, v, w, dt, pressure); return }
     // b = D R M u* (per unit time 1: the potential phi = dt p is solved for).
-    this.solver.divergence(u, v, w, 1, b); this.cutDivergence(u, v, b)
-    const dropped = this.dropped
+    this.divergence(u, v, w, b)
     let bb = 0
-    for (let c = 0; c < cells; c++) { if (dropped[c]) b[c] = 0; bb += b[c] * b[c] }
+    for (let c = 0; c < cells; c++) bb += b[c] * b[c]
     if (!(bb > 0)) { this.iterations = 0; this.residual = 0; return }
     // q = V phi, first guess from the last pressure; r = -b - S q.
+    const dropped = this.dropped
     for (let c = 0; c < cells; c++) q[c] = dropped[c] ? 0 : pressure[c] * dt * dzs[Math.floor(c / cl)]
-    this.apply(q, sd)
+    this.apply(q)
     for (let c = 0; c < cells; c++) r[c] = -b[c] - sd[c]
-    this.precondition(r, z)
+    this.precondition(r)
     let rz = 0
     for (let c = 0; c < cells; c++) { d[c] = z[c]; rz += r[c] * z[c] }
     let k = 0, rr = 0
@@ -214,13 +263,13 @@ export class MaskedProjection {
       rr = 0
       for (let c = 0; c < cells; c++) rr += r[c] * r[c]
       if (rr <= this.tolerance * this.tolerance * bb) break
-      this.apply(d, sd)
+      this.apply(d)
       let dsd = 0
       for (let c = 0; c < cells; c++) dsd += d[c] * sd[c]
       if (!(dsd > 0)) break
       const alpha = rz / dsd
       for (let c = 0; c < cells; c++) { q[c] += alpha * d[c]; r[c] -= alpha * sd[c] }
-      this.precondition(r, z)
+      this.precondition(r)
       let rzNew = 0
       for (let c = 0; c < cells; c++) rzNew += r[c] * z[c]
       const beta = rzNew / rz
@@ -230,10 +279,10 @@ export class MaskedProjection {
     this.iterations = k; this.residual = Math.sqrt(rr / bb)
     // u = M (u* - G phi) with G over H, phi = q / V; the pressure kept is phi / dt.
     for (let c = 0; c < cells; c++) { phi[c] = q[c] / dzs[Math.floor(c / cl)]; pressure[c] = phi[c] / dt }
-    this.tu.fill(0); this.tv.fill(0); this.tw.fill(0)
-    this.solver.correct(phi, this.tu as unknown as Float32Array, this.tv as unknown as Float32Array, this.tw as unknown as Float32Array, 1)
-    this.cutGradient(phi, this.tu, this.tv)
-    this.addCorrection(u, v, w)
+    this.work.set(phi)
+    this.run('maskedGradient', this.grid.nz)
+    const { tu, tv, tw } = this
+    for (let i = 0; i < u.length; i++) { u[i] += tu[i]; v[i] += tv[i]; w[i] += tw[i] }
     this.mask(u, v, w)
   }
 
@@ -243,28 +292,21 @@ export class MaskedProjection {
     this.solver.divergence(u, v, w, dt, b); this.solver.solve(b, pressure); this.solver.correct(pressure, u, v, w, dt)
   }
 
-  /** S q = P D R M H^-1 D^T P q = div(M (-G (q / V))) over the kept cells (P drops the rest): the masked operator. */
-  private apply(q: Float64Array, out: Float64Array) {
-    const { tu, tv, tw, work, dropped, scale } = this, dzs = this.grid.dzs, cl = this.grid.nx * this.grid.ny
+  /** S q = P D R M H^-1 D^T P q = div(M (-G (q / V))) over the kept cells (P drops the rest), into `out`. */
+  private apply(q: Float64Array) {
+    const { work, dropped } = this, dzs = this.grid.dzs, cl = this.grid.nx * this.grid.ny
     for (let c = 0; c < work.length; c++) work[c] = dropped[c] ? 0 : q[c] / dzs[Math.floor(c / cl)]
-    tu.fill(0); tv.fill(0); tw.fill(0)
-    this.solver.correct(work, tu as unknown as Float32Array, tv as unknown as Float32Array, tw as unknown as Float32Array, 1)
-    this.cutGradient(work, tu, tv)
-    for (let i = 0; i < tu.length; i++) { const s = scale[i]; tu[i] *= s; tv[i] *= s; tw[i] *= s }
-    this.mask(tu, tv, tw)
-    this.solver.divergence(tu as unknown as Float32Array, tv as unknown as Float32Array, tw as unknown as Float32Array, 1, out)
-    this.cutDivergence(tu, tv, out)
-    for (let c = 0; c < out.length; c++) if (dropped[c]) out[c] = 0
+    this.run('maskedGradient', this.grid.nz); this.run('maskedDivergence', this.grid.nz - 1)
   }
 
   /**
-   * z = P S0^-1 P r with the flat operator S0 = D R H^-1 D^T: q = V phi with D R G phi = -r (PressureSolver.solve),
-   * kept to the cells with a row (symmetric and positive there).
+   * z = P S0^-1 P r with the flat operator S0 = D R H^-1 D^T: q = V phi with D R G phi = -r (PressureSolver.solve in
+   * its three phases), kept to the cells with a row (symmetric and positive there).
    */
-  private precondition(r: Float64Array, z: Float64Array) {
-    const work = this.work, dzs = this.grid.dzs, cl = this.grid.nx * this.grid.ny, dropped = this.dropped
+  private precondition(r: Float64Array) {
+    const { work, z, dropped } = this, { dzs, nz, ny } = this.grid, cl = this.grid.nx * ny
     for (let c = 0; c < work.length; c++) work[c] = -r[c]
-    this.solver.solve(work, z)
+    this.run('maskedForward', nz - 1); this.run('maskedModes', ny); this.run('maskedInverse', nz - 1)
     for (let c = 0; c < z.length; c++) z[c] = dropped[c] ? 0 : z[c] * dzs[Math.floor(c / cl)]
   }
 }
