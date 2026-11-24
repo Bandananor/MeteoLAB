@@ -280,6 +280,11 @@ export class AtmosphereModel implements TaskModel {
    * elsewhere. Every mass the model sums or divides by is rho0 hz times it (fall, positivity fix, budgets).
    */
   readonly volumeShare: Float64Array | null = null
+  /**
+   * With terrain, the transport's values in the ground (fillGround): every solid node, the wall node above it, its
+   * level, and per transported field the solid nodes' own values, kept while the ghosts stand in for them.
+   */
+  private readonly ghost: { solid: Int32Array; wall: Int32Array; level: Int16Array; saved: Map<Float32Array, Float32Array> } | null = null
   /** With terrain: the surface flux shares (as surfaceShare) of a column whose ground node is level g, by g. */
   private readonly sharesByGround: Float64Array[] = []
   readonly masked: MaskedProjection | null = null
@@ -354,6 +359,9 @@ export class AtmosphereModel implements TaskModel {
       const heights = nodeHeights(grid, this.solid)
       this.volumeShare = heights.map((h, i) => h / grid.hz[Math.floor(i / grid.layer)])
       this.turbulence.setTerrain(this.solid, heights); this.flux.setTerrain(this.solid, heights)
+      const solidNodes: number[] = [], walls: number[] = [], levels: number[] = []
+      for (let i = 0; i < grid.n; i++) if (this.solid[i]) { const c = i % grid.layer; solidNodes.push(i); walls.push(c + this.groundLevel[c] * grid.layer); levels.push(Math.floor(i / grid.layer)) }
+      this.ghost = { solid: Int32Array.from(solidNodes), wall: Int32Array.from(walls), level: Int16Array.from(levels), saved: new Map() }
     }
     this.coreW = new Float64Array(grid.layer); this.coreWZ = new Float64Array(grid.layer); this.coreLabel = new Uint8Array(grid.layer)
     this.levelWater = shared('level-water', grid.nz * 4); this.levelCharge = shared('level-charge', grid.nz)
@@ -1008,12 +1016,17 @@ export class AtmosphereModel implements TaskModel {
       // With terrain no flux through the faces next to solid nodes (terrain.ts; the masked solve on this thread).
       if (this.solid) this.flux.setVelocityMasked(this.u, this.v, this.w)
       else { run('faces', nz); run('faceDivergence', nz); run('faceForward', nz); run('faceModes', this.grid.ny); run('faceInverse', nz); run('faceCorrect', nz); run('faceDivergence', nz) }
-      const carried = this.carried(), tasks = carried.length * this.slabs()
+      const carried = this.carried(), tasks = carried.length * this.slabs(), fields = carried.map(c => c.field)
+      if (this.ghost) this.fillGround(fields, true)
       for (const stage of [0, 1, 2] as const) {
         this.runner.run(`tendency${stage}`, tasks, dt); this.runner.run(`update${stage}`, tasks, dt)
         // The pressure acts within the stages: each stage's velocity made divergence-free (the last by project() below).
         if (this.pressureInStages && stage < 2) { const top = (nz - 1) * layer; for (let b = 0; b < layer; b++) { this.w[b] = 0; this.w[b + top] = 0 } this.project(dt, false, stage) }
+        // The ghosts of the next stage from this stage's values (the update wrote the step's start into the ground, the
+        // projection zeroed the wind there): RK3 takes its boundary values at each stage's time (numerics review 24.11.2026).
+        if (this.ghost && stage < 2) this.fillGround(fields, false)
       }
+      if (this.ghost) this.restoreGround(fields)
       return
     }
     // Semi-Lagrangian: water conserved by the mass fixer. Only the cold-pool indicator decays (a diagnostic since
@@ -1033,6 +1046,36 @@ export class AtmosphereModel implements TaskModel {
       // Charges fall with their carriers and move with the air (not mass-fixed: the fast transport does not conserve them exactly).
       if (this.electrified()) { for (const [field, vt] of this.chargeFalls()) { this.advectFalling(field, dt, vt); this.commit(field, 1) } carry(this.chargeAir, 1) }
     }
+  }
+
+  /**
+   * The transport's values in the ground (roadmap Д1 (в), numerics review 24.11.2026): the stencils next to the slope
+   * read solid nodes, which hold no wind and the starting profile — a step of the slope was a jump in every field. Each
+   * solid node gets its column's wall node's departure from the base state on its own level's base state (the wall
+   * node's value itself for the fields without one), as the flat ground's stencils read level 0 repeated below it, and
+   * a resting atmosphere sees its own profile; against a cold pool carried along the slope the transport's tendency
+   * erred 2-3x less than with the wall node's value repeated (numerics review 24.11.2026). `save` keeps the solid nodes'
+   * own values first (restoreGround). The transport leaves the ghosts: every face of a solid node is closed.
+   */
+  private fillGround(fields: readonly Float32Array[], save: boolean) {
+    const g = this.ghost!, { solid, wall, level } = g, layer = this.grid.layer
+    for (const a of fields) {
+      if (save) { let kept = g.saved.get(a); if (!kept) g.saved.set(a, kept = new Float32Array(solid.length)); for (let k = 0; k < solid.length; k++) kept[k] = a[solid[k]] }
+      const base = this.baseOf(a)
+      if (base) for (let k = 0; k < solid.length; k++) { const w = wall[k]; a[solid[k]] = base[level[k]] + (a[w] - base[Math.floor(w / layer)]) }
+      else for (let k = 0; k < solid.length; k++) a[solid[k]] = a[wall[k]]
+    }
+  }
+
+  /** Gives the solid nodes their own values back after the transport (fillGround saved them). */
+  private restoreGround(fields: readonly Float32Array[]) {
+    const g = this.ghost!, solid = g.solid
+    for (const a of fields) { const kept = g.saved.get(a)!; for (let k = 0; k < solid.length; k++) a[solid[k]] = kept[k] }
+  }
+
+  /** The base state a field departs from (per level): the environment's wind, theta and vapour; null for the rest. */
+  private baseOf(a: Float32Array): ArrayLike<number> | null {
+    return a === this.u ? this.uEnv : a === this.v ? this.vEnv : a === this.theta ? this.env.theta : a === this.q ? this.env.q : null
   }
 
   /** The end of a step: physicsStep (positivity fix, physics), mixStep (turbulence, friction), the projection, afterStep. */

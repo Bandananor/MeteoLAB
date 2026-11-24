@@ -108,6 +108,46 @@ describe('terrain (terrain.ts, 3.0 block Д step 1)', () => {
     expect(m.w[c + g * layer]).toBe(0)
   }, 120_000)
 
+  it('carries a uniform warming along the slope unchanged: the stencils read ghost values in the ground, not a jump', () => {
+    // Two runs of a stable westerly over a hill, one 1 K warmer at every fluid node: their difference is the transport of
+    // a uniform 1 K. With the solid nodes' own values in the stencils it lost up to 0.14 K at the slope in 2 min.
+    const wind = { wind0: 10, wind05: 10, wind1: 10, wind3: 10, wind6: 10, wind10: 10 }
+    const model = (warm: number) => {
+      const m = new AtmosphereModel({ ...QUIET, ...wind, followStorm: false, bubble: 0, terrain: { kind: 'hill', height: 1, width: 5 } }, grid)
+      for (let i = 0; i < grid.n; i++) if (!m.solid![i]) m.theta[i] += warm
+      return m
+    }
+    const a = model(0), b = model(1)
+    for (let k = 0; k < 20; k++) { a.step(DT); a.time += DT; b.step(DT); b.time += DT }
+    let worst = 0
+    for (let i = 0; i < grid.n - 3 * grid.layer; i++) if (!a.solid![i]) worst = Math.max(worst, Math.abs(b.theta[i] - a.theta[i] - 1))
+    expect(worst).toBeLessThan(1e-3)
+    // The ground keeps its own values after the transport.
+    for (let i = 0; i < grid.n; i++) if (a.solid![i]) { expect(a.u[i]).toBe(0); expect(a.rain[i]).toBe(0) }
+  }, 120_000)
+
+  it('reads the ground as the profile continued: a cold pool along the slope gets the tendency of its own extension', () => {
+    // One transport tendency of theta = environment + a cold pool by height (-3 K at the sea-level ground, 0 at 800 m)
+    // over a hill after a minute of westerly; the reference continues the same field into the ground. The model's ghosts
+    // (the wall node's departure on each level's environment) against the wall node's value repeated, and against the
+    // solid nodes' own values (the transport before the ghosts). Private members through a cast: the transport itself.
+    const wind = { wind0: 10, wind05: 10, wind1: 10, wind3: 10, wind6: 10, wind10: 10 }
+    const m = new AtmosphereModel({ ...QUIET, ...wind, followStorm: false, bubble: 0, terrain: { kind: 'hill', height: 1, width: 5 } }, grid)
+    for (let k = 0; k < 10; k++) { m.step(DT); m.time += DT }
+    const inner = m as unknown as { flux: { setVelocityMasked(u: Float32Array, v: Float32Array, w: Float32Array): void; tendency(q: Float32Array, t: Float64Array, z0: number, z1: number, monotone: boolean): void }; fillGround(f: Float32Array[], save: boolean): void }
+    inner.flux.setVelocityMasked(m.u, m.v, m.w)
+    const { n, nz, layer, zs } = grid, solid = m.solid!, ground = m.groundLevel!, env = m.env.theta, pool = (z: number) => -3 * Math.max(0, 1 - z / 800)
+    const field = (ghost: (i: number, c: number, z: number) => number) => Float32Array.from({ length: n }, (_, i) => { const z = Math.floor(i / layer), c = i % layer; return solid[i] ? ghost(i, c, z) : env[z] + pool(zs[z]) })
+    const tendency = (a: Float32Array) => { const t = new Float64Array(n); inner.flux.tendency(a, t, 0, nz, false); return t }
+    const own = Float32Array.from(m.theta), reference = tendency(field((_, __, z) => env[z] + pool(zs[z])))
+    const error = (a: Float32Array) => { const t = tendency(a); let e = 0; for (let i = 0; i < n - 3 * layer; i++) if (!solid[i]) e = Math.max(e, Math.abs(t[i] - reference[i])); return e }
+    const ghosts = field(() => 0)
+    m.theta.set(ghosts); inner.fillGround([m.theta], false); ghosts.set(m.theta)
+    const model = error(ghosts), repeated = error(field((_, c) => env[ground[c]] + pool(zs[ground[c]]))), before = error(field(i => own[i]))
+    expect(model).toBeLessThan(.6 * repeated)
+    expect(model).toBeLessThan(.3 * before)
+  }, 120_000)
+
   it('mixes an unstable layer over the slope: the solid node under it is a wall, not a cold neighbour', () => {
     const h = terrainHeights({ kind: 'plateau', height: .5, width: 8 }, grid), solid = solidMask(grid, h), { n, nz, layer, nx, ny, zs } = grid
     const turbulence = new Turbulence(grid, Array.from({ length: nz }, () => 1.1)), c = nx / 2 + nx * (ny / 2)
