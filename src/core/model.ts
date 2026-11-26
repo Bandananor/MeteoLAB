@@ -811,6 +811,13 @@ export class AtmosphereModel implements TaskModel {
    * the damping to the step length); 0 in the reference cases.
    */
   windRelaxation = 1e-4
+  /**
+   * The sponge's Rayleigh rate at the lid, s-1 (rising linearly from 2.5 km above the tropopause, at least 14 km): .06
+   * absorbs a storm's overshoot; long mountain waves (intrinsic frequency U k ~ 1e-3 s-1) meet it as an abrupt edge,
+   * ~200 m deep, and part of them comes back (the Schär ridge's flux falls from 1.3 to 1.0 of its steady value within
+   * 6 h), so the wave check (tests/bench/waves.ts) takes .003 (26.11.2026).
+   */
+  spongeRate = .06
   /** Warm rain (Kessler); off for the reversible moist reference case: cloud water only condenses and evaporates. */
   rainFormation = true
   /**
@@ -1485,7 +1492,7 @@ export class AtmosphereModel implements TaskModel {
           }
           // Below 0.001 K the indicator is noise from the transport tails: zero, so the transport can skip it.
           cold[i] = cold[i] < 1e-3 ? 0 : Math.min(cold[i], 15)
-          if (alt > spongeStart) { const s = clamp((alt - spongeStart) / (H - spongeStart)) * .06 * dt; w[i] *= 1 - s; u[i] = lerp(u[i], ue, s); v[i] = lerp(v[i], ve, s); mark = theta[i]; theta[i] = lerp(theta[i], thEnv, s); if (budget) { pulled += theta[i] - mark; pull(i, 1 - s) } }
+          if (alt > spongeStart) { const s = clamp((alt - spongeStart) / (H - spongeStart)) * this.spongeRate * dt; w[i] *= 1 - s; u[i] = lerp(u[i], ue, s); v[i] = lerp(v[i], ve, s); mark = theta[i]; theta[i] = lerp(theta[i], thEnv, s); if (budget) { pulled += theta[i] - mark; pull(i, 1 - s) } }
           // The maintained front: the cold side is pulled to its colder profile (the warm side is left alone).
           if (front && alt < FRONT_DEPTH) { const d = this.frontDeficit(x, y, alt), s = 1 - Math.exp(-dt / FRONT_TIME * d / front / (1 - alt / FRONT_DEPTH)); mark = theta[i]; theta[i] = lerp(theta[i], thEnv - d, s); if (budget) { pulled += theta[i] - mark; pull(i, 1 - s) } }
           // The moving front: inside its cold air the air is pulled to the colder profile; behind a warm front, back to the
@@ -1555,13 +1562,13 @@ export class AtmosphereModel implements TaskModel {
 
   /** The settings helper threads must follow (threads.ts): the config and the model's switches. */
   settings() {
-    return JSON.stringify({ config: this.config, microphysics: this.microphysics, transport: this.transport, rainFormation: this.rainFormation, windRelaxation: this.windRelaxation, fixedViscosity: this.fixedViscosity, transportSlabs: this.transportSlabs, pressureInStages: this.pressureInStages, rainIntercept: this.rainIntercept, turbulenceWidth: this.turbulenceWidth, verticalLength: this.verticalLength, verticalMixing: this.verticalMixing, moistStability: this.moistStability, rainMoments: this.rainMoments, iceMoments: this.iceMoments, rainBreakup: this.rainBreakup })
+    return JSON.stringify({ config: this.config, microphysics: this.microphysics, transport: this.transport, rainFormation: this.rainFormation, windRelaxation: this.windRelaxation, spongeRate: this.spongeRate, fixedViscosity: this.fixedViscosity, transportSlabs: this.transportSlabs, pressureInStages: this.pressureInStages, rainIntercept: this.rainIntercept, turbulenceWidth: this.turbulenceWidth, verticalLength: this.verticalLength, verticalMixing: this.verticalMixing, moistStability: this.moistStability, rainMoments: this.rainMoments, iceMoments: this.iceMoments, rainBreakup: this.rainBreakup })
   }
 
   applySettings(json: string) {
     const s = JSON.parse(json)
     Object.assign(this.config, s.config)
-    this.microphysics = s.microphysics; this.transport = s.transport; this.rainFormation = s.rainFormation; this.windRelaxation = s.windRelaxation; this.fixedViscosity = s.fixedViscosity; this.transportSlabs = s.transportSlabs; this.pressureInStages = s.pressureInStages; this.rainIntercept = s.rainIntercept; this.turbulenceWidth = s.turbulenceWidth; this.verticalLength = s.verticalLength; this.verticalMixing = s.verticalMixing; this.moistStability = s.moistStability ?? 'thetae'; this.rainMoments = s.rainMoments ?? 1; this.iceMoments = s.iceMoments ?? 1; this.rainBreakup = s.rainBreakup ?? 'none'
+    this.microphysics = s.microphysics; this.transport = s.transport; this.rainFormation = s.rainFormation; this.windRelaxation = s.windRelaxation; this.spongeRate = s.spongeRate ?? .06; this.fixedViscosity = s.fixedViscosity; this.transportSlabs = s.transportSlabs; this.pressureInStages = s.pressureInStages; this.rainIntercept = s.rainIntercept; this.turbulenceWidth = s.turbulenceWidth; this.verticalLength = s.verticalLength; this.verticalMixing = s.verticalMixing; this.moistStability = s.moistStability ?? 'thetae'; this.rainMoments = s.rainMoments ?? 1; this.iceMoments = s.iceMoments ?? 1; this.rainBreakup = s.rainBreakup ?? 'none'
   }
 
   /** Makes the node velocities exactly free of dual-cell divergence (see PressureSolver); ground and top are rigid walls. */
