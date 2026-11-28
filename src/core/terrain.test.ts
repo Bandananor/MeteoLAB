@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { AtmosphereModel, createGrid, DT, MaskedProjection, nodeHeights, solidMask, terrainHeights } from '.'
+import { AtmosphereModel, createGrid, DT, faceApertures, MaskedProjection, nodeHeights, solidMask, terrainHeights } from '.'
 import { PressureSolver } from './pressure'
 import { Turbulence } from './turbulence'
 import { QUIET } from './fixtures'
@@ -152,7 +152,7 @@ describe('terrain (terrain.ts, 3.0 block Д step 1)', () => {
   it('mixes an unstable layer over the slope: the solid node under it is a wall, not a cold neighbour', () => {
     const h = terrainHeights({ kind: 'plateau', height: .5, width: 8 }, grid), solid = solidMask(grid, h), { n, nz, layer, nx, ny, zs } = grid
     const turbulence = new Turbulence(grid, Array.from({ length: nz }, () => 1.1)), c = nx / 2 + nx * (ny / 2)
-    turbulence.setTerrain(solid, nodeHeights(grid, solid))
+    turbulence.setTerrain(solid, nodeHeights(grid, solid, h))
     let g = 0
     while (solid[c + g * layer]) g++
     // Heated air over the ground: 2 K/km superadiabatic above every column's ground node; the solid nodes keep the cold
@@ -183,4 +183,46 @@ describe('terrain (terrain.ts, 3.0 block Д step 1)', () => {
     expect(top).toBeGreaterThan(1)
     expect(diff / top).toBeLessThan(.02)
   }, 120_000)
+
+  it("shaves the transport faces by the ground on the face: the column's faces add up to its open height above it", () => {
+    // A ramp along x: every face's ground is the mean of its two columns'; flat ground gives each level's whole height.
+    const { nx, ny, nz, layer, hz } = grid, flat = new Float32Array(layer), ramp = Float32Array.from({ length: layer }, (_, c) => 37 * (c % nx))
+    const plain = faceApertures(grid, solidMask(grid, flat), flat)
+    for (let i = 0; i < grid.n; i++) { expect(plain.ax[i]).toBe(hz[Math.floor(i / layer)]); expect(plain.ay[i]).toBe(hz[Math.floor(i / layer)]) }
+    const solid = solidMask(grid, ramp), { ax, ay } = faceApertures(grid, solid, ramp), lid = grid.zs[nz - 1]
+    for (let c = 0; c < layer - 1; c++) {
+      if (c % nx === nx - 1) continue
+      let x = 0, y = 0
+      for (let k = 0; k < nz; k++) { x += ax[c + k * layer]; y += ay[c + k * layer] }
+      expect(x).toBeCloseTo(lid - (ramp[c] + ramp[c + 1]) / 2, 6)
+      expect(y).toBeCloseTo(lid - ramp[c], 6)
+    }
+    // Next to a solid node the face is shut (the transport's open bits); the faces are no wider than the layer.
+    for (let i = 0; i < grid.n; i++) {
+      const k = Math.floor(i / layer), c = i % layer, e = (c % nx + 1) % nx + Math.floor(c / nx) * nx + k * layer
+      if (solid[i] || solid[e]) expect(ax[i]).toBe(0)
+    }
+    expect(ny).toBeGreaterThan(1)
+  })
+
+  it("lets the transport see the ridge the projection sees: the faces' w over a ridge matches the nodes'", () => {
+    // A uniform westerly over a Schär-like ridge (short waves on a hump), projected by the pressure projection (nodes)
+    // and by the transport's face projection: the faces' w, midway between levels, against the mean of the two nodes',
+    // above the short waves (lower down the two grids' 4 km waves decay a little differently, 0.89-0.94 either way). The
+    // faces shut up to the higher ground (min hn) raised the ridge by half a column's rise: 1.13-1.18 here (26.11.2026).
+    const g = createGrid({ nx: 96, ny: 4, nz: 40, width: 48_000, depth: 2_000, height: 15_000, bottomSpacing: 100 })
+    const m = new AtmosphereModel({ ...QUIET, followStorm: false, bubble: 0, terrain: { kind: 'schar', height: .1, width: 5, wavelength: 4 } }, g)
+    const n = g.n, U = 10, u = new Float32Array(n).fill(U), v = new Float32Array(n), w = new Float32Array(n)
+    m.masked!.project(u, v, w, 1, new Float64Array(g.layer * (g.nz - 1)))
+    const flux = (m as unknown as { flux: { setVelocityMasked(u: Float32Array, v: Float32Array, w: Float32Array): void; mz: Float64Array } }).flux, rho = m.env.rho
+    flux.setVelocityMasked(new Float32Array(n).fill(U), new Float32Array(n), new Float32Array(n))
+    for (const height of [1400, 2200, 3200]) {
+      const z = g.zs.findIndex(q => q >= height)
+      let fn = 0, nn = 0
+      for (let i = 0; i < g.layer; i++) { const node = (w[i + z * g.layer] + w[i + (z + 1) * g.layer]) / 2, face = flux.mz[i + z * g.layer] / ((rho[z] + rho[z + 1]) / 2); fn += face * node; nn += node * node }
+      expect(nn).toBeGreaterThan(0)
+      expect(fn / nn).toBeGreaterThan(.98)
+      expect(fn / nn).toBeLessThan(1.03)
+    }
+  }, 60_000)
 })

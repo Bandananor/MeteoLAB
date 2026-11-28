@@ -9,7 +9,7 @@ export type MaskedPhase = Extract<Phase, `masked${string}`>
 // coordinates — the spectral pressure solver and the GPU kernels stay). The ground rises into the grid as a staircase:
 // a node below the terrain height of its column is solid (its velocity is zero); the projection then makes the mass
 // flux divergence-free over the fluid nodes alone (MaskedProjection), so the air goes over and around the terrain.
-// Literature: .claude/literature/terrain-ibm.md (PALM and MicroHH keep their FFT solvers and accept a residual at
+// Literature: .codex/research/terrain-ibm.md (PALM and MicroHH keep their FFT solvers and accept a residual at
 // the walls; here the masked operator is solved by conjugate gradients with the flat FFT solve as preconditioner).
 
 /** A terrain form (SimConfig.terrain): heights and widths in km, the centre in km from the domain's south-west corner. */
@@ -97,6 +97,35 @@ export function nodeHeights(grid: Pick<Grid, 'nx' | 'ny' | 'nz' | 'zs' | 'hz' | 
   const { nx, ny, nz, hz, zs } = grid, layer = nx * ny, h = new Float64Array(layer * nz), levels = groundLevels(grid, solid)
   for (let z = 0, i = 0; z < nz; z++) for (let c = 0; c < layer; c++, i++) h[i] = solid[i] ? 0 : z === levels[c] ? volumeTop(grid, z) - (ground ? ground[c] : zs[z]) : hz[z]
   return h
+}
+
+/**
+ * The open height of every node's faces to x + 1 (ax) and y + 1 (ay), m, for the transport: shaved faces (Adcroft,
+ * Hill & Marshall 1997, MWR 125, 2293) on partial-cell volumes (nodeHeights, the ground at the column's middle), each
+ * face cut by the ground interpolated onto it, the mean of its two columns' heights. In each level's layer of volume (volumeTop of the level below up to its own) the face is
+ * open above that height; the open part of a layer where either node is solid goes to the first face above with both
+ * nodes fluid (the merged sliver's air moves through it), so a column's faces add up to its whole open height. The
+ * overlap of the two nodes' own volumes (min hn, the partial cells, 23.11.2026) closed the face up to the higher of the
+ * two grounds: on a slope the transport saw a ridge raised by half a column's rise — the Schär ridge's 4 km waves
+ * rectified into its long ones, w 1.2x and the waves' momentum flux 1.3-1.5x linear theory (tests/bench/potential.ts,
+ * waves.ts; 26.11.2026). Faces next to solid nodes stay closed (0). The carried part joins the lower column at the
+ * level of the upper one's ground node, up to a level above where it lies on steep hills (numerics review 26.11.2026).
+ */
+export function faceApertures(grid: Pick<Grid, 'nx' | 'ny' | 'nz' | 'zs' | 'dzs' | 'hz'>, solid: Uint8Array, ground: ArrayLike<number>) {
+  const { nx, ny, nz, hz } = grid, layer = nx * ny, ax = new Float64Array(layer * nz), ay = new Float64Array(layer * nz)
+  const shave = (out: Float64Array, c: number, other: number) => {
+    const face = (ground[c] + ground[other]) / 2
+    let carry = 0
+    for (let k = 0; k < nz; k++) {
+      const bottom = k > 0 ? volumeTop(grid, k - 1) : 0, top = volumeTop(grid, k)
+      // The ground under the layer: its whole height (hz itself, so the faces above the ground are as without terrain).
+      const open = face <= bottom ? hz[k] : Math.max(0, top - face), i = c + k * layer
+      if (solid[i] || solid[other + k * layer]) { carry += open; continue }
+      out[i] = open + carry; carry = 0
+    }
+  }
+  for (let j = 0, c = 0; j < ny; j++) for (let i = 0; i < nx; i++, c++) { shave(ax, c, (i + 1) % nx + j * nx); shave(ay, c, i + ((j + 1) % ny) * nx) }
+  return { ax, ay }
 }
 
 /**

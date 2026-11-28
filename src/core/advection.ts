@@ -62,8 +62,7 @@ export class FluxTransport {
   /**
    * Terrain (setTerrain): the open faces (bit 1 x, to x+1; 2 y, to y+1; 4 z, to z+1; open when both nodes are fluid),
    * each node's control-volume height hn (terrain.ts nodeHeights; 1 in the ground, where nothing moves) and the open
-   * height of its x and y faces, ax and ay: the overlap of the two nodes' volumes, min(hn), so at a step of the slope a
-   * wall node (the ground node, which owns the half layer above it) and the full node beside it share its half face.
+   * height of its x and y faces, ax and ay: shaved by the ground interpolated onto the face (terrain.ts faceApertures).
    */
   private terrain: { open: Uint8Array; hn: Float64Array; ax: Float64Array; ay: Float64Array } | null = null
   /** The masked face solve's work arrays, made on first use; its last iterations and relative residual. */
@@ -72,19 +71,22 @@ export class FluxTransport {
   /** The flat solve's three phases (forward, modes, inverse on div into phi) handed to helper threads, if the model sets it. */
   parallelSolve: (() => void) | null = null
 
-  /** Sets the terrain: the solid nodes and every node's control-volume height (terrain.ts nodeHeights). */
-  setTerrain(solid: Uint8Array, heights: Float64Array) {
+  /**
+   * Sets the terrain: the solid nodes, every node's control-volume height (terrain.ts nodeHeights) and the open heights
+   * of its x and y faces (terrain.ts faceApertures; 0 next to a solid node).
+   */
+  setTerrain(solid: Uint8Array, heights: Float64Array, apertures: { ax: Float64Array; ay: Float64Array }) {
     const { n, nx, ny, nz, layer } = this.grid, { xo, yo } = this
-    const open = new Uint8Array(n), hn = new Float64Array(n), ax = new Float64Array(n), ay = new Float64Array(n)
+    const open = new Uint8Array(n), hn = new Float64Array(n)
     for (let i = 0; i < n; i++) hn[i] = solid[i] ? 1 : heights[i]
     for (let z = 0, i = 0; z < nz; z++) for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++, i++) {
       if (solid[i]) continue
       const l = z * layer, e = xo[3][x] + y * nx + l, north = x + yo[3][y] + l
-      if (!solid[e]) { open[i] |= 1; ax[i] = Math.min(hn[i], hn[e]) }
-      if (!solid[north]) { open[i] |= 2; ay[i] = Math.min(hn[i], hn[north]) }
+      if (!solid[e]) open[i] |= 1
+      if (!solid[north]) open[i] |= 2
       if (z < nz - 1 && !solid[i + layer]) open[i] |= 4
     }
-    this.terrain = { open, hn, ax, ay }
+    this.terrain = { open, hn, ax: apertures.ax, ay: apertures.ay }
   }
 
   /**

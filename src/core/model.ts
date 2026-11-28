@@ -26,7 +26,7 @@ import { computeSounding, type Sounding } from './sounding'
 import { deficitNear, outflowDeficit } from './rkw'
 import { precipitationFlux } from './surfaceflux'
 import { waterReservoirs } from './water'
-import { groundLevels, MaskedProjection, nodeHeights, slopeArea, solidMask, terrainHeights } from './terrain'
+import { faceApertures, groundLevels, MaskedProjection, nodeHeights, slopeArea, solidMask, terrainHeights } from './terrain'
 import { type Memory, type Phase, PRIVATE_MEMORY, type StepRunner, type TaskModel } from './threads'
 import { intervene } from './intervene'
 import { EXTINCTION, sunlightThrough } from './optics'
@@ -374,7 +374,7 @@ export class AtmosphereModel implements TaskModel {
         for (let z = g; z < top; z++) this.surfaceShares[c + z * grid.layer] = shape(z) / total
       }
       this.volumeShare = heights.map((h, i) => h / grid.hz[Math.floor(i / grid.layer)])
-      this.turbulence.setTerrain(this.solid, heights); this.flux.setTerrain(this.solid, heights)
+      this.turbulence.setTerrain(this.solid, heights); this.flux.setTerrain(this.solid, heights, faceApertures(grid, this.solid, this.terrainHeight))
       const solidNodes: number[] = [], walls: number[] = [], levels: number[] = []
       for (let i = 0; i < grid.n; i++) if (this.solid[i]) { const c = i % grid.layer; solidNodes.push(i); walls.push(c + this.groundLevel[c] * grid.layer); levels.push(Math.floor(i / grid.layer)) }
       this.ghost = { solid: Int32Array.from(solidNodes), wall: Int32Array.from(walls), level: Int16Array.from(levels), saved: new Map() }

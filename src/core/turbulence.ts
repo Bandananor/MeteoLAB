@@ -59,7 +59,7 @@ export class Turbulence {
    * through the flat ground (the surface fluxes enter at the first fluid node instead).
    */
   solid: Uint8Array | null = null
-  /** With terrain: each node's control-volume height (terrain.ts nodeHeights; a wall node owns the half layer above it). */
+  /** With terrain: each node's control-volume height (terrain.ts nodeHeights; a ground node owns its volume above the ground). */
   private heights: Float64Array | null = null
 
   /** Sets the terrain: the solid nodes and every node's control-volume height. */
@@ -155,12 +155,18 @@ export class Turbulence {
           // With terrain a solid node shares no face with anything (its value never changes, nor its neighbours' by it).
           if (solid && solid[i]) continue
           if (hn) {
-            // Terrain: each face's flux over its open height (the overlap of the two volumes), each node's over its own.
+            // Terrain: each face's flux over its open height, each node's over its own. The mixing keeps the overlap of the
+            // two volumes (min hn): the transport's shaved faces (terrain.ts faceApertures) reach up to 3.5x a thin cut
+            // cell's height, which took the explicit diffusion number there past 1 at the K caps (numerics review 26.11.2026).
             const hi = hn[i]
             if (!solid![e]) { const fx = factor * (kh[i] + kh[e]) / 2 * (dev(e, z) - here) / dx, open = Math.min(hi, hn[e]); t[i] += fx * open / (hi * dx); t[e] -= fx * open / (hn[e] * dx) }
             if (!solid![n]) { const fy = factor * (kh[i] + kh[n]) / 2 * (dev(n, z) - here) / dy, open = Math.min(hi, hn[n]); t[i] += fy * open / (hi * dy); t[n] -= fy * open / (hn[n] * dy) }
             if (z < nz - 1 && !implicit && !solid![i + layer]) {
-              const fz = factor * rUp * (km[i] + km[i + layer]) / 2 * (dev(i + layer, z + 1) - here) / this.grid.dzs[z]
+              // A thin cut cell (down to LEAST_SHARE of its layer) takes the vertical flux over its own height: the face's
+              // K is kept to a diffusion number of 0.3 over the thinner node, level 0's on flat ground at the cap (the cap
+              // sees the spacing, not the cell: 1.5 at a 10 m cell; numerics review 26.11.2026).
+              const thin = Math.min(hi, hn[i + layer]), k = Math.min(factor * (km[i] + km[i + layer]) / 2, .3 * this.grid.dzs[z] * thin / dt)
+              const fz = k * rUp * (dev(i + layer, z + 1) - here) / this.grid.dzs[z]
               t[i] += fz / (rho[z] * hi); t[i + layer] -= fz / (rho[z + 1] * hn[i + layer])
             }
             continue
