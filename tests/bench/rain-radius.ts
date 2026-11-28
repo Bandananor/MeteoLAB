@@ -1,5 +1,5 @@
 import type { AtmosphereModel } from '../../src/core'
-import { boundedNumber, CLOUD_DROPLETS, rain2mProcesses, RAIN_MIN, RHO_00, RHO_W, XV_MIN } from '../../src/core/rain2m'
+import { boundedNumber, CLOUD_DROPLETS, G1, rain2mProcesses, RAIN_MIN, RHO_00, RHO_W, XV_MIN } from '../../src/core/rain2m'
 
 export function cloudDropVolume(qc: number) {
   return Math.min(Math.PI / 6 * 120e-6 ** 3, Math.max(Math.PI / 6 * 4e-6 ** 3, qc / (RHO_W * CLOUD_DROPLETS / RHO_00)))
@@ -11,10 +11,56 @@ export const collectionThreshold = (radius: number) => radius > 3.5e-6 ? Math.ma
 const minimumRadius = volumeRadius(XV_MIN)
 const freshBirth = () => ({ rainKg: 0, rawRadiusSum: 0, boundedRadiusSum: 0, belowLimitKg: 0, kernelErrorKg: 0 })
 
-export function trackRainRadius(model: AtmosphereModel) {
+function trackSelfCollection(model: AtmosphereModel, weight: Float64Array) {
+  if (model.rainBreakup !== 'none') throw new Error('rainSelfCollection=1 measures the default self-collection law without breakup')
+  const { layer, nz } = model.grid, { rho, exner, p } = model.env
+  const q = new Float32Array(1), cloud = new Float32Array(1), rain = new Float32Array(1), number = new Float32Array(1)
+  const empty = () => ({ numberSeconds: 0, removed: 0, rainKgSeconds: 0, radiusGainSum: 0,
+    passedKgSeconds: 0, maxGainUm: 0, kernelError: 0, nativeNumber: 0 })
+  let sample = empty()
+
+  function observe(dt: number) {
+    for (let z = 0; z < nz; z++) for (let i = z * layer; i < (z + 1) * layer; i++) {
+      const qr = model.rain[i], qc = model.cloud[i]
+      if (qr <= RAIN_MIN || qc <= 1e-9) continue
+      const nr = boundedNumber(qr, model.rainNumber[i], rho[z]), perM3 = nr * rho[z]
+      const volume = qr / (RHO_W * nr), radius = volumeRadius(volume), diameter = 2 * radius
+      const efficiency = diameter - 1e-4 > 1.9e-3 ? 0 : diameter < 6.1e-4 ? 1 : Math.exp(-2500 * (diameter - 6e-4))
+      const rate = efficiency * (radius >= 50e-6 ? 5.78e3 * perM3 ** 2 * volume : 9.44e15 * (perM3 * volume) ** 2 * G1)
+      const after = boundedNumber(qr, Math.max(0, nr - rate * dt / rho[z]), rho[z])
+      const afterRadius = volumeRadius(qr / (RHO_W * after)), gainUm = 1e6 * (afterRadius - radius)
+      const rainKgSeconds = qr * weight[z] * dt, threshold = collectionThreshold(volumeRadius(cloudDropVolume(qc)))
+      sample.numberSeconds += nr * weight[z] * dt
+      sample.removed += (nr - after) * weight[z]
+      sample.rainKgSeconds += rainKgSeconds
+      sample.radiusGainSum += rainKgSeconds * gainUm
+      if (radius <= threshold && afterRadius > threshold) sample.passedKgSeconds += rainKgSeconds
+      sample.maxGainUm = Math.max(sample.maxGainUm, gainUm)
+
+      // Zero cloud and evaporation off isolate collection of rain by rain in the native operator.
+      q[0] = model.q[i]; rain[0] = qr; number[0] = model.rainNumber[i]
+      rain2mProcesses(q, cloud, rain, number, 0, model.theta[i] * exner[z], p[z], rho[z], dt, 'none', false)
+      sample.kernelError += Math.abs(after - number[0]) * weight[z]
+      sample.nativeNumber += number[0] * weight[z]
+    }
+  }
+
+  function read() {
+    const { numberSeconds, removed, rainKgSeconds, radiusGainSum, passedKgSeconds, maxGainUm, kernelError, nativeNumber } = sample
+    sample = empty()
+    return { removedNumberFractionPerMin: numberSeconds ? 60 * removed / numberSeconds : null,
+      meanGainUmPerStep: rainKgSeconds ? radiusGainSum / rainKgSeconds : null, maxGainUmPerStep: maxGainUm,
+      newlyEligibleMassFraction: rainKgSeconds ? passedKgSeconds / rainKgSeconds : null,
+      relativeNumberError: nativeNumber ? kernelError / nativeNumber : null }
+  }
+  return { observe, read }
+}
+
+export function trackRainRadius(model: AtmosphereModel, selfCollection = false) {
   if (!model.rain2m()) throw new Error('rainRadius=1 requires two-moment rain')
   const { layer, nz, dx, dy, hz, zs } = model.grid, { rho, exner, p } = model.env
   const weight = Float64Array.from(hz, (height, z) => dx * dy * height * rho[z])
+  const self = selfCollection ? trackSelfCollection(model, weight) : null
   const q = new Float32Array(1), cloud = new Float32Array(1), rain = new Float32Array(1), number = new Float32Array(1)
   let birth = freshBirth()
   type Phase = 'sedimentation' | 'transport' | 'microphysics' | 'mixing'
@@ -76,7 +122,7 @@ export function trackRainRadius(model: AtmosphereModel) {
   model.runner.run = (phase, tasks, dt) => {
     if (phase !== 'physics') { run(phase, tasks, dt); return }
     inspect('transport', dt)
-    if (model.rainFormation) collectBirth(dt)
+    if (model.rainFormation) { collectBirth(dt); self?.observe(dt) }
     run(phase, tasks, dt)
     inspect('microphysics', dt)
   }
@@ -85,7 +131,7 @@ export function trackRainRadius(model: AtmosphereModel) {
   return () => {
     const { rainKg, rawRadiusSum, boundedRadiusSum, belowLimitKg, kernelErrorKg } = birth
     birth = freshBirth()
-    return { phases, firstPassage, firstTonne, birth: { rainKg, kernelErrorKg,
+    return { phases, firstPassage, firstTonne, ...(self ? { selfCollection: self.read() } : {}), birth: { rainKg, kernelErrorKg,
       rawRadiusUm: rainKg ? 1e6 * rawRadiusSum / rainKg : null, boundedRadiusUm: rainKg ? 1e6 * boundedRadiusSum / rainKg : null,
       belowLimitFraction: rainKg ? belowLimitKg / rainKg : null } }
   }

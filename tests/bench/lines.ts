@@ -7,6 +7,7 @@
 // Add rainBudget=1 for a per-level budget of the rain mass through every model step.
 // Add warmState=<file prefix> to save numbered end-of-step snapshots for rain-accretion.ts at each sample.
 // Add rainRadius=1 to trace two-moment drop births and the accretion gate through the step phases.
+// Add rainSelfCollection=1 for the native, one-step self-collection contribution at fixed rain mass.
 import { writeFileSync } from 'node:fs'
 import { serialize } from 'node:v8'
 import { isMainThread, Worker, workerData } from 'node:worker_threads'
@@ -149,7 +150,8 @@ if (!isMainThread) {
   const threads = Number(option('threads', 4)), t0 = performance.now()
   const profile = option('rainProfile', '0') === '1', budget = option('rainBudget', '0') === '1'
   const warmState = option('warmState', '')
-  const radius = option('rainRadius', '0') === '1', jsonl = profile || budget || radius || option('jsonl', '0') === '1'
+  const selfCollection = option('rainSelfCollection', '0') === '1', radius = selfCollection || option('rainRadius', '0') === '1'
+  const jsonl = profile || budget || radius || option('jsonl', '0') === '1'
   const options = { us: Number(option('us', 15)), depth: Number(option('depth', 2.5)), dx: Number(option('dx', 1)), hours: Number(option('hours', 4)), every: Number(option('every', 30)), speed: Number(option('speed', 12.5)), size: option('size', '288x72').split('x').map(Number), qv: Number(option('qv', 14)) }
   if ((jsonl || warmState) && (!Number.isInteger(options.every) || options.every < 1)) throw new Error('JSON lines and warm-state snapshots require a positive whole number of minutes between samples')
   let evaporatedByLevel, readRainBudget, readRainRadius
@@ -167,7 +169,7 @@ if (!isMainThread) {
     if (jsonl) console.log(JSON.stringify({ options, threads, seed: config.seed, grid: [g.nx, g.ny, g.nz], domainKm: [g.width / 1000, g.depth / 1000], rainMoments: model.rainMoments, iceMoments: model.iceMoments }))
     if (threads < 2) {
       if (budget) readRainBudget = trackRainBudget(model)
-      if (radius) readRainRadius = trackRainRadius(model)
+      if (radius) readRainRadius = trackRainRadius(model, selfCollection)
       return () => {}
     }
     const control = controlBuffer(), helpers = []
@@ -175,7 +177,7 @@ if (!isMainThread) {
     const runner = new ThreadRunner(model, control, threads - 1)
     model.transportSlabs = 10; model.runner = runner
     if (budget) readRainBudget = trackRainBudget(model)
-    if (radius) readRainRadius = trackRainRadius(model)
+    if (radius) readRainRadius = trackRainRadius(model, selfCollection)
     if (!jsonl) console.log(`us ${options.us} over ${options.depth} km, dx ${g.dx / 1000} km, ${g.nx} x ${g.ny} x ${g.nz}; dU 0-5 ${u5.toFixed(1)} m/s; frame ${options.speed} m/s`)
     return () => { runner.stop(); for (const h of helpers) void h.terminate() }
   }
