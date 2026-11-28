@@ -5,6 +5,9 @@
 // Add jsonl=1 for paired runs with STORMLAB_RAIN2M and STORMLAB_ICE2M set to 0 or 1 before launching Node.
 // Add rainProfile=1 for interval evaporation by model level and snapshot replay of the rain evaporation operators.
 // Add rainBudget=1 for a per-level budget of the rain mass through every model step.
+// Add warmState=<file prefix> to save numbered end-of-step snapshots for rain-accretion.ts at each sample.
+import { writeFileSync } from 'node:fs'
+import { serialize } from 'node:v8'
 import { isMainThread, Worker, workerData } from 'node:worker_threads'
 import { fileURLToPath } from 'node:url'
 import { AtmosphereModel, DT } from '../../src/core'
@@ -143,9 +146,10 @@ if (!isMainThread) {
 } else {
   const threads = Number(option('threads', 4)), t0 = performance.now()
   const profile = option('rainProfile', '0') === '1', budget = option('rainBudget', '0') === '1'
+  const warmState = option('warmState', '')
   const jsonl = profile || budget || option('jsonl', '0') === '1'
   const options = { us: Number(option('us', 15)), depth: Number(option('depth', 2.5)), dx: Number(option('dx', 1)), hours: Number(option('hours', 4)), every: Number(option('every', 30)), speed: Number(option('speed', 12.5)), size: option('size', '288x72').split('x').map(Number), qv: Number(option('qv', 14)) }
-  if (jsonl && (!Number.isInteger(options.every) || options.every < 1)) throw new Error('jsonl=1 requires a positive whole number of minutes between samples')
+  if ((jsonl || warmState) && (!Number.isInteger(options.every) || options.every < 1)) throw new Error('JSON lines and warm-state snapshots require a positive whole number of minutes between samples')
   let evaporatedByLevel, readRainBudget
   const spawn = (model, config, memory) => {
     const g = model.grid, [u5] = model.env.windUV(5000)
@@ -173,6 +177,13 @@ if (!isMainThread) {
   }
   let previousEvaporation = 0, previousMinutes = 0
   squallLine(options, spawn, (s, model) => {
+    if (warmState) {
+      const { nx, ny, nz, dx, dy, hz } = model.grid, { exner, p, rho } = model.env
+      writeFileSync(`${warmState}-${s.minutes}.bin`, serialize({ options, minutes: s.minutes,
+        grid: { nx, ny, nz, dx, dy, hz }, env: { exner, p, rho }, moments: [model.rainMoments, model.iceMoments],
+        theta: model.theta.slice(), q: model.q.slice(), cloud: model.cloud.slice(),
+        rain: model.rain.slice(), number: model.rainNumber.slice() }))
+    }
     if (jsonl) {
       const { nx, ny, dx, layer, zs } = model.grid, sx = dx / 1000
       const evaporation = model.water.rainEvaporated
