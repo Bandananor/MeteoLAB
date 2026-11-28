@@ -3,24 +3,73 @@
 // measured), printed every `every` minutes. The long validation cases (cases.ts LONG_CASES) run the same.
 //   npx vite build --ssr tests/bench/lines.ts --outDir .bench/lines && node .bench/lines/lines.js [us=15] [depth=2.5] [dx=1] [hours=4] [every=30] [threads=4] [speed=12.5] [size=288x72] [qv=14]
 // Add jsonl=1 for paired runs with STORMLAB_RAIN2M and STORMLAB_ICE2M set to 0 or 1 before launching Node.
+// Add rainProfile=1 for interval evaporation by model level and snapshot replay of the rain evaporation operators.
 import { isMainThread, Worker, workerData } from 'node:worker_threads'
 import { fileURLToPath } from 'node:url'
-import { AtmosphereModel } from '../../src/core'
+import { AtmosphereModel, DT } from '../../src/core'
+import { interceptOf, qsatP, rainProcesses } from '../../src/core/microphysics'
+import { exponentialMeanMass, rain2mProcesses, RHO_W } from '../../src/core/rain2m'
 import { AttachedMemory, controlBuffer, serveTasks, ThreadRunner } from '../../src/core/threads'
 import { squallGrid, squallLine } from '../../src/validation/squall'
 
 const option = (name, d) => process.argv.slice(2).find(a => a.startsWith(`${name}=`))?.slice(name.length + 1) ?? d
+
+function rainProfile(model, evaporated, seconds) {
+  const { nz, layer, dx, dy, hz, zs } = model.grid, { exner, p, rho } = model.env
+  const q = new Float32Array(1), cloud = new Float32Array(1), rain = new Float32Array(1), number = new Float32Array(1)
+  const twoMoment = model.rain2m()
+  return Array.from({ length: nz }, (_, z) => {
+    const airMass = dx * dy * hz[z] * rho[z]
+    let rainKg = 0, dryRainKg = 0, deficitSum = 0, replay1M = 0, replay2M = 0, replay2MWithMP = 0
+    for (let i = z * layer; i < (z + 1) * layer; i++) {
+      const qr = model.rain[i]
+      if (qr <= 0) continue
+      const mass = qr * airMass, vapour = model.q[i], temperature = model.theta[i] * exner[z]
+      const deficit = 1 - vapour / qsatP(temperature - 273.15, p[z])
+      rainKg += mass
+      if (deficit <= 0) continue
+      dryRainKg += mass
+      deficitSum += mass * deficit
+
+      // Cloud is zero in the replay so neither operator adds rain by autoconversion or accretion.
+      q[0] = vapour; rain[0] = qr
+      replay1M += airMass * rainProcesses(q, cloud, rain, 0, temperature, p[z], rho[z], DT, model.rainIntercept) / DT
+      if (twoMoment) {
+        q[0] = vapour; rain[0] = qr; number[0] = model.rainNumber[i]
+        replay2M += airMass * rain2mProcesses(q, cloud, rain, number, 0, temperature, p[z], rho[z], DT, model.rainBreakup) / DT
+        q[0] = vapour; rain[0] = qr
+        number[0] = qr / exponentialMeanMass(qr, interceptOf(model.rainIntercept, qr, rho[z]), RHO_W, rho[z])
+        replay2MWithMP += airMass * rain2mProcesses(q, cloud, rain, number, 0, temperature, p[z], rho[z], DT, model.rainBreakup) / DT
+      }
+    }
+    const row = { zM: zs[z], rainKg, dryRainKg, rainWeightedDeficit: dryRainKg ? deficitSum / dryRainKg : null,
+      evaporationKgPerS: evaporated[z] / seconds, replay1MKgPerS: replay1M,
+      replay2MKgPerS: twoMoment ? replay2M : null, replay2MWithMPKgPerS: twoMoment ? replay2MWithMP : null }
+    evaporated[z] = 0
+    return row
+  })
+}
 
 if (!isMainThread) {
   const { config, buffers, control } = workerData
   serveTasks(new AtmosphereModel(config, squallGrid(config), undefined, { memory: new AttachedMemory(buffers), attach: true }), control)
 } else {
   const threads = Number(option('threads', 4)), t0 = performance.now()
-  const jsonl = option('jsonl', '0') === '1'
+  const profile = option('rainProfile', '0') === '1', jsonl = profile || option('jsonl', '0') === '1'
   const options = { us: Number(option('us', 15)), depth: Number(option('depth', 2.5)), dx: Number(option('dx', 1)), hours: Number(option('hours', 4)), every: Number(option('every', 30)), speed: Number(option('speed', 12.5)), size: option('size', '288x72').split('x').map(Number), qv: Number(option('qv', 14)) }
   if (jsonl && (!Number.isInteger(options.every) || options.every < 1)) throw new Error('jsonl=1 requires a positive whole number of minutes between samples')
+  let evaporatedByLevel
   const spawn = (model, config, memory) => {
     const g = model.grid, [u5] = model.env.windUV(5000)
+    if (profile) {
+      // Read the per-level water budget immediately after every physics phase, before the next step overwrites it.
+      evaporatedByLevel = new Float64Array(g.nz)
+      const physics = model.physicsStep.bind(model)
+      model.physicsStep = (dt) => {
+        physics(dt)
+        for (let z = 0; z < g.nz; z++) evaporatedByLevel[z] += model['levelWater'][4 * z + 2]
+      }
+    }
     if (jsonl) console.log(JSON.stringify({ options, threads, seed: config.seed, grid: [g.nx, g.ny, g.nz], domainKm: [g.width / 1000, g.depth / 1000], rainMoments: model.rainMoments, iceMoments: model.iceMoments }))
     if (threads < 2) return () => {}
     const control = controlBuffer(), helpers = []
@@ -35,7 +84,8 @@ if (!isMainThread) {
     if (jsonl) {
       const { nx, ny, dx, layer, zs } = model.grid, sx = dx / 1000
       const evaporation = model.water.rainEvaporated
-      const rainEvapKgPerS = (evaporation - previousEvaporation) / (60 * (s.minutes - previousMinutes))
+      const seconds = 60 * (s.minutes - previousMinutes)
+      const rainEvapKgPerS = (evaporation - previousEvaporation) / seconds
       previousEvaporation = evaporation; previousMinutes = s.minutes
 
       // Use the minimum of the along-line mean ground theta-v departure.
@@ -62,7 +112,8 @@ if (!isMainThread) {
         }
         frontRows = active / ny
       }
-      console.log(JSON.stringify({ ...s, thetaVMin, rainEvapKgPerS, frontRows }))
+      console.log(JSON.stringify({ ...s, thetaVMin, rainEvapKgPerS, frontRows,
+        ...(profile ? { rainProfile: rainProfile(model, evaporatedByLevel, seconds) } : {}) }))
       return
     }
     const f = s.front
