@@ -4,6 +4,7 @@
 //   npx vite build --ssr tests/bench/lines.ts --outDir .bench/lines && node .bench/lines/lines.js [us=15] [depth=2.5] [dx=1] [hours=4] [every=30] [threads=4] [speed=12.5] [size=288x72] [qv=14]
 // Add jsonl=1 for paired runs with STORMLAB_RAIN2M and STORMLAB_ICE2M set to 0 or 1 before launching Node.
 // Add rainProfile=1 for interval evaporation by model level and snapshot replay of the rain evaporation operators.
+// Add rainBudget=1 for a per-level budget of the rain mass through every model step.
 import { isMainThread, Worker, workerData } from 'node:worker_threads'
 import { fileURLToPath } from 'node:url'
 import { AtmosphereModel, DT } from '../../src/core'
@@ -50,15 +51,102 @@ function rainProfile(model, evaporated, seconds) {
   })
 }
 
+function trackRainBudget(model) {
+  const { nz, layer, dx, dy, hz, zs } = model.grid, { exner, p, rho } = model.env
+  const mass = Float64Array.from(hz, (height, z) => height * rho[z] * dx * dy)
+  const q = new Float32Array(1), cloud = new Float32Array(1), rain = new Float32Array(1), number = new Float32Array(1)
+  const levels = Array.from({ length: nz }, () => ({ sediment: 0, transport: 0, auto: 0, accretion: 0, evaporation: 0, other: 0, mixing: 0 }))
+  const twoMoment = model.rain2m()
+  const produce = (i, z, dt, qr, nr) => {
+    const qc = model.cloud[i], tk = model.theta[i] * exner[z]
+    q[0] = model.q[i]; cloud[0] = qc; rain[0] = qr; number[0] = nr
+    if (twoMoment) rain2mProcesses(q, cloud, rain, number, 0, tk, p[z], rho[z], dt, model.rainBreakup, false)
+    else rainProcesses(q, cloud, rain, 0, tk, p[z], rho[z], dt, model.rainIntercept, false)
+    return (qc - cloud[0]) * mass[z]
+  }
+  const sumRain = z => {
+    let sum = 0
+    for (let i = z * layer; i < (z + 1) * layer; i++) sum += model.rain[i]
+    return sum * mass[z]
+  }
+  const afterMix = Float64Array.from(zs, (_, z) => sumRain(z)), initial = afterMix.slice()
+  const afterFall = new Float64Array(nz), beforePhysics = new Float64Array(nz), afterPhysics = new Float64Array(nz)
+
+  const begin = model.beginStep.bind(model)
+  model.beginStep = (dt, sediment) => {
+    begin(dt, sediment)
+    for (let z = 0; z < nz; z++) {
+      afterFall[z] = sumRain(z)
+      levels[z].sediment += afterFall[z] - afterMix[z]
+    }
+  }
+
+  const run = model.runner.run.bind(model.runner)
+  model.runner.run = (phase, tasks, dt) => {
+    if (phase !== 'physics') { run(phase, tasks, dt); return }
+    // The positivity fix has run. Replay just the native warm-rain production on these inputs.
+    for (let z = 0; z < nz; z++) {
+      beforePhysics[z] = sumRain(z)
+      const budget = levels[z]
+      budget.transport += beforePhysics[z] - afterFall[z]
+      if (!model.rainFormation) continue
+      for (let i = z * layer; i < (z + 1) * layer; i++) {
+        if (model.cloud[i] <= 0) continue
+        // The mass autoconversion in both operators is independent of qr and Nr. Without rain, accretion is zero.
+        const auto = produce(i, z, dt, 0, 0)
+        budget.auto += auto
+        budget.accretion += model.rain[i] > 0 ? produce(i, z, dt, model.rain[i], model.rainNumber[i]) - auto : 0
+      }
+    }
+    run(phase, tasks, dt)
+    for (let z = 0; z < nz; z++) {
+      const budget = levels[z], evaporated = model['levelWater'][4 * z + 2]
+      afterPhysics[z] = sumRain(z)
+      budget.evaporation += evaporated
+      // Retain the unsplit remainder, which includes ice processes, relaxed edges and floating-point roundoff.
+      budget.other += afterPhysics[z] - beforePhysics[z] + evaporated
+    }
+  }
+
+  const finish = model.finishStep.bind(model)
+  model.finishStep = (dt) => {
+    finish(dt)
+    for (let z = 0; z < nz; z++) {
+      afterMix[z] = sumRain(z)
+      levels[z].mixing += afterMix[z] - afterPhysics[z]
+    }
+  }
+
+  return seconds => {
+    let downward = 0
+    const rows = new Array(nz)
+    for (let z = nz - 1; z >= 0; z--) {
+      const { sediment, transport, auto, accretion, evaporation, other, mixing } = levels[z]
+      // Infer the downward flux through the lower face from the mass change above it, including roundoff.
+      downward -= sediment
+      const change = afterMix[z] - initial[z]
+      rows[z] = { zM: zs[z], rainKg: afterMix[z], changeKgPerS: change / seconds,
+        sedimentKgPerS: sediment / seconds, sedimentDownKgPerS: downward / seconds, transportKgPerS: transport / seconds,
+        autoKgPerS: auto / seconds, accretionKgPerS: accretion / seconds, evaporationKgPerS: evaporation / seconds,
+        otherPhysicsKgPerS: (other - auto - accretion) / seconds, mixingKgPerS: mixing / seconds,
+        closureKgPerS: (change - sediment - transport - other - mixing + evaporation) / seconds }
+      initial[z] = afterMix[z]
+      levels[z] = { sediment: 0, transport: 0, auto: 0, accretion: 0, evaporation: 0, other: 0, mixing: 0 }
+    }
+    return rows
+  }
+}
+
 if (!isMainThread) {
   const { config, buffers, control } = workerData
   serveTasks(new AtmosphereModel(config, squallGrid(config), undefined, { memory: new AttachedMemory(buffers), attach: true }), control)
 } else {
   const threads = Number(option('threads', 4)), t0 = performance.now()
-  const profile = option('rainProfile', '0') === '1', jsonl = profile || option('jsonl', '0') === '1'
+  const profile = option('rainProfile', '0') === '1', budget = option('rainBudget', '0') === '1'
+  const jsonl = profile || budget || option('jsonl', '0') === '1'
   const options = { us: Number(option('us', 15)), depth: Number(option('depth', 2.5)), dx: Number(option('dx', 1)), hours: Number(option('hours', 4)), every: Number(option('every', 30)), speed: Number(option('speed', 12.5)), size: option('size', '288x72').split('x').map(Number), qv: Number(option('qv', 14)) }
   if (jsonl && (!Number.isInteger(options.every) || options.every < 1)) throw new Error('jsonl=1 requires a positive whole number of minutes between samples')
-  let evaporatedByLevel
+  let evaporatedByLevel, readRainBudget
   const spawn = (model, config, memory) => {
     const g = model.grid, [u5] = model.env.windUV(5000)
     if (profile) {
@@ -71,11 +159,15 @@ if (!isMainThread) {
       }
     }
     if (jsonl) console.log(JSON.stringify({ options, threads, seed: config.seed, grid: [g.nx, g.ny, g.nz], domainKm: [g.width / 1000, g.depth / 1000], rainMoments: model.rainMoments, iceMoments: model.iceMoments }))
-    if (threads < 2) return () => {}
+    if (threads < 2) {
+      if (budget) readRainBudget = trackRainBudget(model)
+      return () => {}
+    }
     const control = controlBuffer(), helpers = []
     for (let k = 0; k < threads - 1; k++) helpers.push(new Worker(fileURLToPath(import.meta.url), { workerData: { config: structuredClone(config), buffers: memory.buffers, control } }))
     const runner = new ThreadRunner(model, control, threads - 1)
     model.transportSlabs = 10; model.runner = runner
+    if (budget) readRainBudget = trackRainBudget(model)
     if (!jsonl) console.log(`us ${options.us} over ${options.depth} km, dx ${g.dx / 1000} km, ${g.nx} x ${g.ny} x ${g.nz}; dU 0-5 ${u5.toFixed(1)} m/s; frame ${options.speed} m/s`)
     return () => { runner.stop(); for (const h of helpers) void h.terminate() }
   }
@@ -113,7 +205,8 @@ if (!isMainThread) {
         frontRows = active / ny
       }
       console.log(JSON.stringify({ ...s, thetaVMin, rainEvapKgPerS, frontRows,
-        ...(profile ? { rainProfile: rainProfile(model, evaporatedByLevel, seconds) } : {}) }))
+        ...(profile ? { rainProfile: rainProfile(model, evaporatedByLevel, seconds) } : {}),
+        ...(budget ? { rainBudget: readRainBudget(seconds) } : {}) }))
       return
     }
     const f = s.front
