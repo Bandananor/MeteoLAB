@@ -6,6 +6,7 @@
 // Add rainProfile=1 for interval evaporation by model level and snapshot replay of the rain evaporation operators.
 // Add rainBudget=1 for a per-level budget of the rain mass through every model step.
 // Add warmState=<file prefix> to save numbered end-of-step snapshots for rain-accretion.ts at each sample.
+// Add rainRadius=1 to trace two-moment drop births and the accretion gate through the step phases.
 import { writeFileSync } from 'node:fs'
 import { serialize } from 'node:v8'
 import { isMainThread, Worker, workerData } from 'node:worker_threads'
@@ -15,6 +16,7 @@ import { interceptOf, qsatP, rainProcesses } from '../../src/core/microphysics'
 import { exponentialMeanMass, rain2mProcesses, RHO_W } from '../../src/core/rain2m'
 import { AttachedMemory, controlBuffer, serveTasks, ThreadRunner } from '../../src/core/threads'
 import { squallGrid, squallLine } from '../../src/validation/squall'
+import { trackRainRadius } from './rain-radius'
 
 const option = (name, d) => process.argv.slice(2).find(a => a.startsWith(`${name}=`))?.slice(name.length + 1) ?? d
 
@@ -147,10 +149,10 @@ if (!isMainThread) {
   const threads = Number(option('threads', 4)), t0 = performance.now()
   const profile = option('rainProfile', '0') === '1', budget = option('rainBudget', '0') === '1'
   const warmState = option('warmState', '')
-  const jsonl = profile || budget || option('jsonl', '0') === '1'
+  const radius = option('rainRadius', '0') === '1', jsonl = profile || budget || radius || option('jsonl', '0') === '1'
   const options = { us: Number(option('us', 15)), depth: Number(option('depth', 2.5)), dx: Number(option('dx', 1)), hours: Number(option('hours', 4)), every: Number(option('every', 30)), speed: Number(option('speed', 12.5)), size: option('size', '288x72').split('x').map(Number), qv: Number(option('qv', 14)) }
   if ((jsonl || warmState) && (!Number.isInteger(options.every) || options.every < 1)) throw new Error('JSON lines and warm-state snapshots require a positive whole number of minutes between samples')
-  let evaporatedByLevel, readRainBudget
+  let evaporatedByLevel, readRainBudget, readRainRadius
   const spawn = (model, config, memory) => {
     const g = model.grid, [u5] = model.env.windUV(5000)
     if (profile) {
@@ -165,6 +167,7 @@ if (!isMainThread) {
     if (jsonl) console.log(JSON.stringify({ options, threads, seed: config.seed, grid: [g.nx, g.ny, g.nz], domainKm: [g.width / 1000, g.depth / 1000], rainMoments: model.rainMoments, iceMoments: model.iceMoments }))
     if (threads < 2) {
       if (budget) readRainBudget = trackRainBudget(model)
+      if (radius) readRainRadius = trackRainRadius(model)
       return () => {}
     }
     const control = controlBuffer(), helpers = []
@@ -172,6 +175,7 @@ if (!isMainThread) {
     const runner = new ThreadRunner(model, control, threads - 1)
     model.transportSlabs = 10; model.runner = runner
     if (budget) readRainBudget = trackRainBudget(model)
+    if (radius) readRainRadius = trackRainRadius(model)
     if (!jsonl) console.log(`us ${options.us} over ${options.depth} km, dx ${g.dx / 1000} km, ${g.nx} x ${g.ny} x ${g.nz}; dU 0-5 ${u5.toFixed(1)} m/s; frame ${options.speed} m/s`)
     return () => { runner.stop(); for (const h of helpers) void h.terminate() }
   }
@@ -217,7 +221,8 @@ if (!isMainThread) {
       }
       console.log(JSON.stringify({ ...s, thetaVMin, rainEvapKgPerS, frontRows,
         ...(profile ? { rainProfile: rainProfile(model, evaporatedByLevel, seconds) } : {}),
-        ...(budget ? { rainBudget: readRainBudget(seconds) } : {}) }))
+        ...(budget ? { rainBudget: readRainBudget(seconds) } : {}),
+        ...(radius ? { rainRadius: readRainRadius() } : {}) }))
       return
     }
     const f = s.front

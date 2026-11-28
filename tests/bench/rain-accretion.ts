@@ -6,6 +6,7 @@ import { deserialize } from 'node:v8'
 import { DT } from '../../src/core'
 import { N0_MP, rainProcesses } from '../../src/core/microphysics'
 import { boundedNumber, CLOUD_DROPLETS, exponentialMeanMass, G1, rain2mProcesses, RHO_00, RHO_W } from '../../src/core/rain2m'
+import { cloudDropVolume, collectionThreshold, volumeRadius } from './rain-radius'
 
 type Snapshot = {
   minutes: number
@@ -48,10 +49,9 @@ function evaluate(result: ReturnType<typeof newCase>, i: number, z: number, qr: 
   const qc = state.cloud[i], density = rho[z], perM3 = density * boundedNumber(qr, Math.fround(nr), density)
   if (!(perM3 > 0)) return
   const nc = CLOUD_DROPLETS * density / RHO_00
-  const cloudVolume = Math.min(Math.PI / 6 * 120e-6 ** 3, Math.max(Math.PI / 6 * 4e-6 ** 3, density * qc / (RHO_W * nc)))
-  const cloudRadius = .5 * Math.cbrt(6 * cloudVolume / Math.PI)
-  const rainVolume = density * qr / (RHO_W * perM3), rainRadius = .5 * Math.cbrt(6 * rainVolume / Math.PI)
-  const threshold = cloudRadius > 3.5e-6 ? Math.max(41e-6, 6.3e-4 / (1e6 * (cloudRadius - 3.5e-6))) : 41e-6
+  const cloudVolume = cloudDropVolume(qc)
+  const rainVolume = density * qr / (RHO_W * perM3), rainRadius = volumeRadius(rainVolume)
+  const threshold = collectionThreshold(volumeRadius(cloudVolume))
   const open = rainRadius > threshold
   const nativeAccretion = production(i, z, true, qr, nr) - auto
 
