@@ -16,7 +16,17 @@ const params = new URLSearchParams(location.search), name = params.get('scenario
 const out = document.getElementById('out'), log = (s: string) => { out.textContent += '\n' + s }
 const result: any = { scenario: name, minutes, fields: [] }
 ;(window as any).__gpucheck = result
+// Preserve zero-scale mismatches and non-finite values for the automated check.
+const relativeError = (error: number, scale: number) => error === 0 ? 0 : error / scale
 try {
+  if (params.has('report') && !await navigator.gpu?.requestAdapter()) {
+    result.unavailable = 'Chrome returned no WebGPU adapter'
+  } else await runCheck()
+} catch (e) { result.error = String(e?.stack ?? e); log(result.error) }
+result.done = true
+if (params.has('report')) await fetch('/__gpucheck', { method: 'POST', body: JSON.stringify(result) })
+
+async function runCheck() {
   const spacing = Number(params.get('spacing') ?? 0), base0 = { ...SUMMER_DAY, ...SCENARIOS.find(s => s.name === name).values }, config0 = spacing ? { ...base0, spacing } : base0
   // ?zones=1: a warm moist zone of 20 km at the domain's middle (checks the buoyancy against a zone's own air).
   const config = params.get('zones') ? { ...config0, zones: [{ points: [[10, 10], [30, 10], [30, 30], [10, 30]], temperature: 3, moisture: 2 }] } : config0
@@ -43,7 +53,7 @@ try {
     const label = names.find(f => model[f] === c.field) ?? `#${k}`
     let scale = 0, err = 0, sq = 0, sqs = 0
     for (let i = 0; i < n; i++) { const a = cpu[k][i], b = tend[k][i]; scale = Math.max(scale, Math.abs(a)); err = Math.max(err, Math.abs(a - b)); sq += (a - b) ** 2; sqs += a * a }
-    const row = { field: label, monotone: c.monotone, maxRel: scale ? +(err / scale).toExponential(2) : 0, rmsRel: sqs ? +Math.sqrt(sq / sqs).toExponential(2) : 0 }
+    const row = { field: label, monotone: c.monotone, maxRel: relativeError(err, scale), rmsRel: Math.sqrt(relativeError(sq, sqs)) }
     result.fields.push(row); log(JSON.stringify(row))
   })
   // Step 2: the three RK3 stages of the scalar fields (all but u, v, w) by DT, as the model does them (float64
@@ -72,13 +82,13 @@ try {
       const before = c.field[i], cpuNew = ref[k][i], gpuNew = theta ? after[k][i] + thetaEnv[i] : after[k][i]
       scale = Math.max(scale, Math.abs(cpuNew - before)); err = Math.max(err, Math.abs(gpuNew - cpuNew))
     }
-    const row = { field: label, changeMax: +scale.toExponential(2), maxRelOfChange: scale ? +(err / scale).toExponential(2) : 0 }
+    const row = { field: label, changeMax: +scale.toExponential(2), maxRelOfChange: relativeError(err, scale) }
     result.step.fields.push(row); log('step ' + JSON.stringify(row))
   })
   // Step 3: the face projection and the pressure projection on the GPU (src/gpu/elliptic.ts).
   {
     const ell = await GpuElliptic.create(grid, model.env.rho), maxAbs = (a: ArrayLike<number>) => { let m = 0; for (let i = 0; i < a.length; i++) m = Math.max(m, Math.abs(a[i])); return m }
-    const diffRel = (a: ArrayLike<number>, b: ArrayLike<number>) => { let s = 0, e = 0; for (let i = 0; i < a.length; i++) { s = Math.max(s, Math.abs(a[i])); e = Math.max(e, Math.abs(a[i] - b[i])) } return s ? e / s : 0 }
+    const diffRel = (a: ArrayLike<number>, b: ArrayLike<number>) => { let s = 0, e = 0; for (let i = 0; i < a.length; i++) { s = Math.max(s, Math.abs(a[i])); e = Math.max(e, Math.abs(a[i] - b[i])) } return relativeError(e, s) }
     // Faces: CPU after setVelocity (above) against the GPU's.
     ell.setVelocity(model.u, model.v, model.w)
     let faceMs = Infinity; for (let r = 0; r < 5; r++) faceMs = Math.min(faceMs, await ell.faceProjection())
@@ -133,7 +143,7 @@ try {
       const label = names.find(f => model[f] === c.field) ?? `#${k}`
       let scale = 0, err = 0, big = 0
       for (let i = 0; i < n; i++) { const cpuNew = c.field[i]; scale = Math.max(scale, Math.abs(cpuNew - fieldsNow[k][i])); err = Math.max(err, Math.abs(after[k][i] - cpuNew)); big = Math.max(big, Math.abs(cpuNew)) }
-      const row = { field: label, changeMax: +scale.toExponential(2), maxRelOfChange: scale ? +(err / scale).toExponential(2) : 0, maxAbs: +big.toExponential(2) }
+      const row = { field: label, changeMax: +scale.toExponential(2), maxRelOfChange: relativeError(err, scale), maxAbs: +big.toExponential(2) }
       result.dynamics.fields.push(row); log('dynamics ' + JSON.stringify(row))
     })
     result.dynamicsErrors = dyn.errors.slice(0, 5)
@@ -149,7 +159,7 @@ try {
     const compare = (when: number) => fieldNames.forEach(f => {
       let scale = 0, err = 0
       for (let i = 0; i < n; i++) { scale = Math.max(scale, Math.abs(cpu[f][i] - start[f][i])); err = Math.max(err, Math.abs(gpuModel[f][i] - cpu[f][i])) }
-      rows.push({ steps: when, field: f, changeMax: +scale.toExponential(2), maxRelOfChange: scale ? +(err / scale).toExponential(2) : 0 })
+      rows.push({ steps: when, field: f, changeMax: +scale.toExponential(2), maxRelOfChange: relativeError(err, scale) })
     })
     for (let s = 1; s <= steps; s++) {
       let t0 = performance.now(); cpu.step(DT); cpu.time += DT; cpuMs += performance.now() - t0
@@ -157,16 +167,15 @@ try {
       if (r.failed) { result.stepFailed = r.failed; break }
       if (s === 1) compare(1)
     }
-    compare(steps)
+    if (steps !== 1) compare(steps)
     const sum = (a: ArrayLike<number>) => { let t = 0; for (let i = 0; i < a.length; i++) t += a[i]; return t }
     const p0 = sum(start.precipitation), pc = sum(cpu.precipitation) - p0, pg = sum(gpuModel.precipitation) - p0
     let pScale = 0, pErr = 0; for (let c = 0; c < cpu.pressure.length; c++) { pScale = Math.max(pScale, Math.abs(cpu.pressure[c])); pErr = Math.max(pErr, Math.abs(cpu.pressure[c] - gpuModel.pressure[c])) }
     result.fullStep = { steps, cpuMsPerStep: +(cpuMs / steps).toFixed(1), gpuPathMsPerStep: +(gpuMs / steps).toFixed(1), gpuWaitMsPerStep: +(wait / steps).toFixed(1),
       rainCpu: +pc.toExponential(3), rainGpu: +pg.toExponential(3), chargeGroundCpu: +(cpu.chargeGround - start.chargeGround).toExponential(3), chargeGroundGpu: +(gpuModel.chargeGround - start.chargeGround).toExponential(3),
-      pressureRel: pScale ? +(pErr / pScale).toExponential(2) : 0, clipped: [cpu.clipped, gpuModel.clipped], rows, errors: dyn.errors.slice(0, 5) }
+      pressureRel: relativeError(pErr, pScale), clipped: [cpu.clipped, gpuModel.clipped], rows, errors: dyn.errors.slice(0, 5) }
     log('fullStep ' + JSON.stringify(result.fullStep))
   }
   result.errors = gpu.errors.slice(0, 5)
   log(`CPU ${result.cpuMs} ms, GPU ${result.gpuMs} ms for ${carried.length} fields (${result.adapter})`)
-} catch (e) { result.error = String(e?.stack ?? e); log(result.error) }
-result.done = true
+}
